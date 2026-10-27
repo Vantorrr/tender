@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { getDb, readAppData } from "@/server/db";
 import { config } from "@/server/config";
 import { hashPassword, verifyPassword } from "@/server/passwords";
@@ -8,6 +8,7 @@ import type { User } from "@/lib/types";
 export { hashPassword, verifyPassword };
 
 export const SESSION_COOKIE = "tk_session";
+export const TOKEN_HEADER = "authorization";
 
 export function createSession(userId: string): string {
   const token = randomBytes(32).toString("hex");
@@ -41,15 +42,47 @@ export function getUserIdByToken(
   return row.user_id;
 }
 
-export async function getSessionUser(): Promise<User | null> {
-  const jar = await cookies();
-  const token = jar.get(SESSION_COOKIE)?.value;
-  const userId = getUserIdByToken(token);
+function userById(userId: string | null): User | null {
   if (!userId) return null;
   const data = readAppData();
   const user = data.users.find((u) => u.id === userId) ?? null;
   if (!user || user.blocked) return null;
   return user;
+}
+
+/** Extract bearer token from Authorization header value */
+export function bearerFromHeader(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const m = value.match(/^Bearer\s+(.+)$/i);
+  return m?.[1]?.trim() || null;
+}
+
+export async function getSessionUser(req?: Request): Promise<User | null> {
+  // 1) Explicit request Authorization
+  if (req) {
+    const fromReq = bearerFromHeader(req.headers.get("authorization"));
+    const byBearer = userById(getUserIdByToken(fromReq));
+    if (byBearer) return byBearer;
+  }
+
+  // 2) Incoming headers() Authorization (App Router)
+  try {
+    const h = await headers();
+    const fromHeaders = bearerFromHeader(h.get("authorization"));
+    const byBearer = userById(getUserIdByToken(fromHeaders));
+    if (byBearer) return byBearer;
+  } catch {
+    /* headers() unavailable outside request */
+  }
+
+  // 3) Cookie session
+  try {
+    const jar = await cookies();
+    const token = jar.get(SESSION_COOKIE)?.value;
+    return userById(getUserIdByToken(token));
+  } catch {
+    return null;
+  }
 }
 
 export function publicUser(user: User) {
@@ -63,4 +96,13 @@ export function recoveryToken(email: string): string {
     .update(`recover:${email}:tma361`)
     .digest("hex")
     .slice(0, 12);
+}
+
+export function sessionCookieOptions(maxAgeSeconds: number) {
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    path: "/",
+    maxAge: maxAgeSeconds,
+  };
 }

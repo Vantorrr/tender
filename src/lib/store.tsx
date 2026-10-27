@@ -10,7 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { createSeedData } from "./seed";
-import { api } from "./api";
+import { api, setClientToken } from "./api";
 import type {
   AppData,
   Calculation,
@@ -109,6 +109,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     try {
       const me = await api<{ user: PublicUser | null }>("/api/auth/me");
       if (!me.user) {
+        setClientToken(null);
         setUser(null);
         setData(createSeedData());
         return;
@@ -116,6 +117,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const boot = await api<BootstrapResponse>("/api/bootstrap");
       applyBootstrap(boot, setUser, setData);
     } catch {
+      setClientToken(null);
       setUser(null);
     }
   }, []);
@@ -124,20 +126,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     refresh().finally(() => setReady(true));
   }, [refresh]);
 
-  const applyBoot = useCallback((boot: BootstrapResponse) => {
+  const applyBoot = useCallback((boot: BootstrapResponse & { token?: string }) => {
+    if (boot.token) setClientToken(boot.token);
     applyBootstrap(boot, setUser, setData);
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
     try {
-      await api("/api/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ email, password }),
-      });
+      const res = await api<{ user: PublicUser; token: string }>(
+        "/api/auth/login",
+        {
+          method: "POST",
+          body: JSON.stringify({ email, password }),
+        }
+      );
+      setClientToken(res.token);
       const boot = await api<BootstrapResponse>("/api/bootstrap");
       applyBootstrap(boot, setUser, setData);
       return { ok: true };
     } catch (e) {
+      setClientToken(null);
       return {
         ok: false,
         error: e instanceof Error ? e.message : "Ошибка входа",
@@ -146,7 +154,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
-    await api("/api/auth/logout", { method: "POST" });
+    try {
+      await api("/api/auth/logout", { method: "POST" });
+    } catch {
+      /* ignore */
+    }
+    setClientToken(null);
     setUser(null);
     setData(createSeedData());
   }, []);

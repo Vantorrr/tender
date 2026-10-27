@@ -1,36 +1,43 @@
 import { createDocument, getBootstrap, updateDocument } from "@/server/repo";
-import { json, requireUser } from "@/server/http";
+import { withUser, json } from "@/server/http";
 import type { DocumentItem } from "@/lib/types";
 
-export async function GET() {
-  const auth = await requireUser();
-  if ("error" in auth) return auth.error;
-  return json({ items: getBootstrap(auth.user).data.documents });
+export async function GET(req: Request) {
+  return withUser(req, (user) =>
+    json({ items: getBootstrap(user).data.documents })
+  );
 }
 
 export async function POST(req: Request) {
-  const auth = await requireUser();
-  if ("error" in auth) return auth.error;
-  const body = (await req.json()) as {
-    procurementId: string;
-    title: string;
-    fileName: string;
-    fileType: "pdf" | "docx" | "xlsx";
-  };
-  createDocument(auth.user.id, {
-    orgId: auth.user.orgId,
-    procurementId: body.procurementId || "p-1",
-    title: body.title || body.fileName,
-    fileName: body.fileName,
-    fileType: body.fileType || "pdf",
+  return withUser(req, async (user) => {
+    const body = (await req.json()) as {
+      procurementId?: string;
+      title?: string;
+      fileName?: string;
+      fileType?: "pdf" | "docx" | "xlsx";
+    };
+    if (!body.fileName) return json({ error: "Укажите имя файла" }, 400);
+    createDocument(user.id, {
+      orgId: user.orgId,
+      procurementId: body.procurementId || "p-1",
+      title: body.title || body.fileName,
+      fileName: body.fileName,
+      fileType: body.fileType || "pdf",
+    });
+    return json(getBootstrap(user));
   });
-  return json(getBootstrap(auth.user));
 }
 
 export async function PATCH(req: Request) {
-  const auth = await requireUser();
-  if ("error" in auth) return auth.error;
-  const body = (await req.json()) as { id: string; patch: Partial<DocumentItem> };
-  updateDocument(auth.user.id, body.id, body.patch);
-  return json(getBootstrap(auth.user));
+  return withUser(req, async (user) => {
+    const body = (await req.json()) as {
+      id?: string;
+      patch?: Partial<DocumentItem>;
+    };
+    if (!body.id || !body.patch) {
+      return json({ error: "Нужны id и patch" }, 400);
+    }
+    updateDocument(user.id, body.id, body.patch);
+    return json(getBootstrap(user));
+  });
 }

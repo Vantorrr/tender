@@ -76,6 +76,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const { ready, user, logout, data, markNotificationRead, unreadCount } =
     useStore();
   const router = useRouter();
+  const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
 

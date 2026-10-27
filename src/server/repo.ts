@@ -15,6 +15,20 @@ import type {
 } from "@/lib/types";
 import { mutateAppData, readAppData, resetAppData } from "@/server/db";
 import { hashPassword } from "@/server/passwords";
+import { createSession } from "@/server/auth";
+
+function assertOrgAccess(user: User, orgId: string, label = "записи") {
+  if (user.role === "superadmin") return;
+  if (orgId !== user.orgId) {
+    throw new Error(`Нет доступа к данным другой организации (${label})`);
+  }
+}
+
+function actorUser(data: AppData, actorId: string): User {
+  const u = data.users.find((x) => x.id === actorId);
+  if (!u || u.blocked) throw new Error("Пользователь не найден");
+  return u;
+}
 
 function audit(
   data: AppData,
@@ -37,11 +51,15 @@ function audit(
 
 export function getBootstrap(user: User) {
   const data = readAppData();
-  const orgId = user.orgId;
-  const isSuper = user.role === "superadmin";
+  const fresh = data.users.find((u) => u.id === user.id);
+  if (!fresh || fresh.blocked) {
+    throw new Error("Требуется вход");
+  }
+  const orgId = fresh.orgId;
+  const isSuper = fresh.role === "superadmin";
   return {
     user: (() => {
-      const { password: _p, ...rest } = user;
+      const { password: _p, ...rest } = fresh;
       return rest;
     })(),
     data: {
@@ -57,11 +75,11 @@ export function getBootstrap(user: User) {
       risks: data.risks.filter((r) => r.orgId === orgId),
       planFacts: data.planFacts.filter((p) => p.orgId === orgId),
       objects: data.objects.filter((o) => o.orgId === orgId),
-      notifications: data.notifications.filter((n) => n.userId === user.id),
+      notifications: data.notifications.filter((n) => n.userId === fresh.id),
       organizations: isSuper
         ? data.organizations
         : data.organizations.filter((o) => o.id === orgId),
-      auditLog: isSuper || user.role === "admin" ? data.auditLog : [],
+      auditLog: isSuper || fresh.role === "admin" ? data.auditLog : [],
       smetaExchanges: data.smetaExchanges,
       directories: data.directories,
       roleHistory: data.roleHistory.filter((h) =>
@@ -84,6 +102,11 @@ export function markNotificationRead(userId: string, id: string) {
 
 export function createUser(actorId: string, input: Omit<User, "id" | "createdAt">) {
   return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    assertOrgAccess(actor, input.orgId, "организации");
+    if (data.users.some((u) => u.email.toLowerCase() === input.email.toLowerCase())) {
+      throw new Error("Пользователь с таким email уже существует");
+    }
     const id = `u-${Date.now()}`;
     data.users.push({
       ...input,
@@ -111,7 +134,21 @@ export function updateUser(
   patch: Partial<User>
 ) {
   return mutateAppData((data) => {
-    data.users = data.users.map((u) => (u.id === id ? { ...u, ...patch } : u));
+    const actor = actorUser(data, actorId);
+    const target = data.users.find((u) => u.id === id);
+    if (!target) throw new Error("Пользователь не найден");
+    assertOrgAccess(actor, target.orgId, "пользователя");
+    const nextPatch = { ...patch };
+    if (typeof nextPatch.password === "string" && nextPatch.password) {
+      nextPatch.password = nextPatch.password.includes(":")
+        ? nextPatch.password
+        : hashPassword(nextPatch.password);
+    } else {
+      delete nextPatch.password;
+    }
+    data.users = data.users.map((u) =>
+      u.id === id ? { ...u, ...nextPatch } : u
+    );
     audit(data, actorId, "update", "user", id, "Обновление пользователя");
     return data;
   });
@@ -124,8 +161,10 @@ export function setUserRole(
   comment: string
 ) {
   return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
     const current = data.users.find((u) => u.id === userId);
-    if (!current) return data;
+    if (!current) throw new Error("Пользователь не найден");
+    assertOrgAccess(actor, current.orgId, "пользователя");
     data.users = data.users.map((u) =>
       u.id === userId ? { ...u, role, sections: DEFAULT_SECTIONS[role] } : u
     );
@@ -149,6 +188,10 @@ export function setProcurementReview(
   status: ReviewStatus
 ) {
   return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.procurements.find((p) => p.id === id);
+    if (!item) throw new Error("Закупка не найдена");
+    assertOrgAccess(actor, item.orgId, "закупки");
     data.procurements = data.procurements.map((p) =>
       p.id === id ? { ...p, reviewStatus: status } : p
     );
@@ -163,8 +206,15 @@ export function updateProcurement(
   patch: Record<string, unknown>
 ) {
   return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.procurements.find((p) => p.id === id);
+    if (!item) throw new Error("Закупка не найдена");
+    assertOrgAccess(actor, item.orgId, "закупки");
+    const { orgId: _o, id: _i, ...safe } = patch;
+    void _o;
+    void _i;
     data.procurements = data.procurements.map((p) =>
-      p.id === id ? { ...p, ...patch } : p
+      p.id === id ? { ...p, ...safe } : p
     );
     audit(data, actorId, "update", "procurement", id, "Обновление закупки");
     return data;
@@ -177,9 +227,16 @@ export function updateCalculation(
   patch: Partial<Calculation>
 ) {
   return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.calculations.find((c) => c.id === id);
+    if (!item) throw new Error("Расчёт не найден");
+    assertOrgAccess(actor, item.orgId, "расчёта");
+    const { orgId: _o, id: _i, ...safe } = patch;
+    void _o;
+    void _i;
     data.calculations = data.calculations.map((c) =>
       c.id === id
-        ? { ...c, ...patch, updatedAt: new Date().toISOString() }
+        ? { ...c, ...safe, updatedAt: new Date().toISOString() }
         : c
     );
     audit(data, actorId, "update", "calculation", id, "Обновление расчёта");
@@ -211,8 +268,15 @@ export function updateDocument(
   patch: Partial<DocumentItem>
 ) {
   return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.documents.find((d) => d.id === id);
+    if (!item) throw new Error("Документ не найден");
+    assertOrgAccess(actor, item.orgId, "документа");
+    const { orgId: _o, id: _i, ...safe } = patch;
+    void _o;
+    void _i;
     data.documents = data.documents.map((d) =>
-      d.id === id ? { ...d, ...patch } : d
+      d.id === id ? { ...d, ...safe } : d
     );
     audit(data, actorId, "update", "document", id, "Обновление документа");
     return data;
@@ -221,6 +285,10 @@ export function updateDocument(
 
 export function reanalyzeDocument(actorId: string, id: string) {
   return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.documents.find((d) => d.id === id);
+    if (!item) throw new Error("Документ не найден");
+    assertOrgAccess(actor, item.orgId, "документа");
     data.documents = data.documents.map((d) => {
       if (d.id !== id) return d;
       const nextVersion = d.versions.length + 1;
@@ -268,6 +336,10 @@ export function createDocument(
   }
 ) {
   return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    assertOrgAccess(actor, input.orgId, "документа");
+    const proc = data.procurements.find((p) => p.id === input.procurementId);
+    if (proc) assertOrgAccess(actor, proc.orgId, "закупки");
     const id = `d-${Date.now()}`;
     const doc: DocumentItem = {
       id,
@@ -293,7 +365,6 @@ export function createDocument(
       uploadedAt: new Date().toISOString(),
     };
     data.documents.unshift(doc);
-    const proc = data.procurements.find((p) => p.id === input.procurementId);
     if (proc) proc.documentIds = [...proc.documentIds, id];
     audit(data, actorId, "upload", "document", id, `Загружен ${input.fileName}`);
     return data;
@@ -306,9 +377,16 @@ export function updateSchedule(
   patch: Partial<GprSchedule>
 ) {
   return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.schedules.find((s) => s.id === id);
+    if (!item) throw new Error("ГПР не найден");
+    assertOrgAccess(actor, item.orgId, "ГПР");
+    const { orgId: _o, id: _i, ...safe } = patch;
+    void _o;
+    void _i;
     data.schedules = data.schedules.map((s) =>
       s.id === id
-        ? { ...s, ...patch, updatedAt: new Date().toISOString() }
+        ? { ...s, ...safe, updatedAt: new Date().toISOString() }
         : s
     );
     audit(data, actorId, "update", "gpr", id, "Обновление ГПР");
@@ -322,9 +400,16 @@ export function updateMoney(
   patch: Partial<MoneyPlan>
 ) {
   return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.moneyPlans.find((m) => m.id === id);
+    if (!item) throw new Error("Денежный план не найден");
+    assertOrgAccess(actor, item.orgId, "денежного плана");
+    const { orgId: _o, id: _i, ...safe } = patch;
+    void _o;
+    void _i;
     data.moneyPlans = data.moneyPlans.map((m) =>
       m.id === id
-        ? { ...m, ...patch, updatedAt: new Date().toISOString() }
+        ? { ...m, ...safe, updatedAt: new Date().toISOString() }
         : m
     );
     audit(data, actorId, "update", "money", id, "Обновление денежного плана");
@@ -338,9 +423,16 @@ export function updateRisk(
   patch: Partial<RiskRegistry>
 ) {
   return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.risks.find((r) => r.id === id);
+    if (!item) throw new Error("Реестр рисков не найден");
+    assertOrgAccess(actor, item.orgId, "реестра рисков");
+    const { orgId: _o, id: _i, ...safe } = patch;
+    void _o;
+    void _i;
     data.risks = data.risks.map((r) =>
       r.id === id
-        ? { ...r, ...patch, updatedAt: new Date().toISOString() }
+        ? { ...r, ...safe, updatedAt: new Date().toISOString() }
         : r
     );
     audit(data, actorId, "update", "risk", id, "Обновление реестра рисков");
@@ -354,9 +446,16 @@ export function updatePlanFact(
   patch: Partial<PlanFact>
 ) {
   return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.planFacts.find((p) => p.id === id);
+    if (!item) throw new Error("План/факт не найден");
+    assertOrgAccess(actor, item.orgId, "план/факт");
+    const { orgId: _o, id: _i, ...safe } = patch;
+    void _o;
+    void _i;
     data.planFacts = data.planFacts.map((p) =>
       p.id === id
-        ? { ...p, ...patch, updatedAt: new Date().toISOString() }
+        ? { ...p, ...safe, updatedAt: new Date().toISOString() }
         : p
     );
     audit(data, actorId, "update", "planfact", id, "Обновление план/факт");
@@ -458,10 +557,18 @@ export function setUserSections(
   return updateUser(actorId, userId, { sections });
 }
 
-export function resetDemo(actorId: string) {
+export function resetDemo(actorId: string): { token: string; actorId: string } {
   resetAppData();
-  return mutateAppData((d) => {
-    audit(d, actorId, "reset", "system", "all", "Сброс демо-данных");
+  let resolvedActorId = actorId;
+  mutateAppData((d) => {
+    if (!d.users.some((u) => u.id === resolvedActorId)) {
+      const superUser = d.users.find((u) => u.role === "superadmin");
+      resolvedActorId = superUser?.id ?? resolvedActorId;
+    }
+    audit(d, resolvedActorId, "reset", "system", "all", "Сброс демо-данных");
     return d;
   });
+  // sessions were wiped — выдаём новый токен, чтобы UI не получил 401
+  const token = createSession(resolvedActorId);
+  return { token, actorId: resolvedActorId };
 }
