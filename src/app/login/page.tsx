@@ -31,11 +31,10 @@ export default function LoginPage() {
 
   if (!ready) return <LoadingState />;
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function doLogin(nextEmail: string, nextPassword: string) {
     setLoading(true);
     setError("");
-    const result = await login(email, password);
+    const result = await login(nextEmail, nextPassword);
     setLoading(false);
     if (!result.ok) {
       setError(result.error ?? "Ошибка входа");
@@ -43,6 +42,11 @@ export default function LoginPage() {
     }
     toast.success("Добро пожаловать в ТендерКонтур");
     router.push("/cabinet");
+  }
+
+  async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    await doLogin(email, password);
   }
 
   return (
@@ -136,10 +140,12 @@ export default function LoginPage() {
                 <button
                   key={d.email}
                   type="button"
-                  className="rounded-lg border border-[var(--tk-line)] px-3 py-2 text-left text-sm transition hover:border-[var(--tk-copper)]/50 hover:bg-[var(--tk-steel-50)]"
+                  disabled={loading}
+                  className="rounded-lg border border-[var(--tk-line)] px-3 py-2 text-left text-sm transition hover:border-[var(--tk-copper)]/50 hover:bg-[var(--tk-steel-50)] disabled:opacity-50"
                   onClick={() => {
                     setEmail(d.email);
                     setPassword(d.password);
+                    void doLogin(d.email, d.password);
                   }}
                 >
                   <span className="font-medium text-[var(--tk-ink)]">

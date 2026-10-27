@@ -43,12 +43,19 @@ function Button({
   className,
   variant = "default",
   size = "default",
+  nativeButton,
+  render,
   ...props
 }: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+  // Link/span via `render` is not a native <button> — avoid Base UI console errors
+  const resolvedNative =
+    nativeButton ?? (render === undefined ? undefined : false)
   return (
     <ButtonPrimitive
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
+      nativeButton={resolvedNative}
+      render={render}
       {...props}
     />
   )
