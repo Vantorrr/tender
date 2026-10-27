@@ -162,7 +162,7 @@ export default function ZakupkiPage() {
           description="Измените фильтры или дождитесь следующей синхронизации источника."
         />
       ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="tk-stagger grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {filtered.map((p) => (
             <EntityCard
               key={p.id}

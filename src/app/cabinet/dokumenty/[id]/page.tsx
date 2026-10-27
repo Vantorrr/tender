@@ -45,10 +45,10 @@ export default function DocumentDetailPage() {
               variant="outline"
               onClick={async () => {
                 await reanalyzeDocument(doc.id);
-                toast.success("Серверный pipeline разбора выполнен");
+                toast.success("Мок-ИИ pipeline: записка и версия обновлены");
               }}
             >
-              Переразобрать
+              Переразобрать (мок-ИИ)
             </Button>
             <Button
               onClick={() => {

@@ -239,9 +239,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="relative flex-1 px-4 py-5 sm:px-6 sm:py-7 lg:px-8">
+        <main className="relative flex-1 px-4 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-6 sm:py-7 lg:px-8">
           <div className="tk-noise absolute inset-0" aria-hidden />
-          <div className="tk-page relative">{children}</div>
+          <div key={pathname} className="tk-page relative">
+            {children}
+          </div>
         </main>
       </div>
     </div>
