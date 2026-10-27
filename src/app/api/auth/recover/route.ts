@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { recoveryToken } from "@/server/auth";
+import { demoPasswordFor } from "@/server/demo-accounts";
 import { readAppData } from "@/server/db";
 
 export async function POST(req: Request) {
@@ -14,7 +15,8 @@ export async function POST(req: Request) {
     });
   }
   const token = recoveryToken(user.email);
+  const demo = demoPasswordFor(user.email);
   return NextResponse.json({
-    message: `Письмо отправлено на ${user.email}. Демо-пароль: ${user.password ?? "—"}. Код восстановления: ${token}`,
+    message: `Письмо отправлено на ${user.email}. Демо-пароль: ${demo ?? "—"}. Код восстановления: ${token}`,
   });
 }

@@ -3,27 +3,33 @@ import fs from "node:fs";
 import path from "node:path";
 import { createSeedData } from "@/lib/seed";
 import type { AppData } from "@/lib/types";
+import { config, dbPath } from "@/server/config";
+import { hashPassword } from "@/server/passwords";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const DB_PATH = path.join(DATA_DIR, "tenderkontur.sqlite");
+const SCHEMA_VERSION = "3";
 
 declare global {
   // eslint-disable-next-line no-var
   var __tkDb: DatabaseSync | undefined;
   // eslint-disable-next-line no-var
-  var __tkSeeded: boolean | undefined;
+  var __tkWriteLock: boolean | undefined;
 }
 
 function ensureDir() {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  if (!fs.existsSync(config.dataDir)) {
+    fs.mkdirSync(config.dataDir, { recursive: true });
+  }
 }
 
 export function getDb(): DatabaseSync {
   if (globalThis.__tkDb) return globalThis.__tkDb;
   ensureDir();
-  const db = new DatabaseSync(DB_PATH);
+  const db = new DatabaseSync(dbPath());
   db.exec(`
     PRAGMA journal_mode = WAL;
+    PRAGMA foreign_keys = ON;
+    PRAGMA busy_timeout = 5000;
+
     CREATE TABLE IF NOT EXISTS meta (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
@@ -31,8 +37,12 @@ export function getDb(): DatabaseSync {
     CREATE TABLE IF NOT EXISTS sessions (
       token TEXT PRIMARY KEY,
       user_id TEXT NOT NULL,
-      expires_at TEXT NOT NULL
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_sessions_exp ON sessions(expires_at);
+
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
       type TEXT NOT NULL,
@@ -41,6 +51,8 @@ export function getDb(): DatabaseSync {
       created_at TEXT NOT NULL,
       finished_at TEXT
     );
+    CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at DESC);
+
     CREATE TABLE IF NOT EXISTS app_blob (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       payload TEXT NOT NULL,
@@ -48,32 +60,75 @@ export function getDb(): DatabaseSync {
     );
   `);
   globalThis.__tkDb = db;
-  seedIfNeeded(db);
+  migrate(db);
   return db;
 }
 
-function seedIfNeeded(db: DatabaseSync) {
+function metaGet(db: DatabaseSync, key: string): string | undefined {
+  const row = db.prepare("SELECT value FROM meta WHERE key = ?").get(key) as
+    | { value: string }
+    | undefined;
+  return row?.value;
+}
+
+function metaSet(db: DatabaseSync, key: string, value: string) {
+  db.prepare(
+    "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)"
+  ).run(key, value);
+}
+
+function hashSeedUsers(data: AppData): AppData {
+  return {
+    ...data,
+    users: data.users.map((u) => ({
+      ...u,
+      password:
+        u.password && u.password.includes(":")
+          ? u.password
+          : hashPassword(u.password ?? "Demo123!"),
+    })),
+  };
+}
+
+function migrate(db: DatabaseSync) {
   const row = db.prepare("SELECT payload FROM app_blob WHERE id = 1").get() as
     | { payload: string }
     | undefined;
-  if (row) return;
-  const seed = createSeedData();
-  const now = new Date().toISOString();
-  db.prepare(
-    "INSERT INTO app_blob (id, payload, updated_at) VALUES (1, ?, ?)"
-  ).run(JSON.stringify(seed), now);
-  db.prepare(
-    "INSERT OR REPLACE INTO meta (key, value) VALUES ('seeded_at', ?)"
-  ).run(now);
-  db.prepare(
-    "INSERT INTO jobs (id, type, status, detail, created_at, finished_at) VALUES (?, ?, ?, ?, ?, ?)"
-  ).run(
-    "job-seed-sync",
-    "procurement_sync",
-    "done",
-    "Первичная синхронизация согласованного источника при инициализации БД",
-    now,
-    now
+
+  if (!row) {
+    const seed = hashSeedUsers(createSeedData());
+    const now = new Date().toISOString();
+    db.prepare(
+      "INSERT INTO app_blob (id, payload, updated_at) VALUES (1, ?, ?)"
+    ).run(JSON.stringify(seed), now);
+    metaSet(db, "seeded_at", now);
+    metaSet(db, "schema_version", SCHEMA_VERSION);
+    db.prepare(
+      "INSERT INTO jobs (id, type, status, detail, created_at, finished_at) VALUES (?, ?, ?, ?, ?, ?)"
+    ).run(
+      "job-seed-sync",
+      "procurement_sync",
+      "done",
+      "Первичная инициализация БД ТендерКонтур",
+      now,
+      now
+    );
+    return;
+  }
+
+  const version = metaGet(db, "schema_version") ?? "1";
+  if (version !== SCHEMA_VERSION) {
+    const data = hashSeedUsers(JSON.parse(row.payload) as AppData);
+    db.prepare(
+      "UPDATE app_blob SET payload = ?, updated_at = ? WHERE id = 1"
+    ).run(JSON.stringify(data), new Date().toISOString());
+    metaSet(db, "schema_version", SCHEMA_VERSION);
+    metaSet(db, "migrated_at", new Date().toISOString());
+  }
+
+  // purge expired sessions
+  db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(
+    new Date().toISOString()
   );
 }
 
@@ -93,15 +148,25 @@ export function writeAppData(data: AppData): void {
 }
 
 export function mutateAppData(mutator: (data: AppData) => AppData): AppData {
-  const current = readAppData();
-  const next = mutator(structuredClone(current));
-  writeAppData(next);
-  return next;
+  while (globalThis.__tkWriteLock) {
+    /* spin briefly — sync API, rare contention */
+  }
+  globalThis.__tkWriteLock = true;
+  try {
+    const current = readAppData();
+    const next = mutator(structuredClone(current));
+    writeAppData(next);
+    return next;
+  } finally {
+    globalThis.__tkWriteLock = false;
+  }
 }
 
 export function resetAppData(): AppData {
-  const seed = createSeedData();
+  const seed = hashSeedUsers(createSeedData());
   writeAppData(seed);
+  getDb().prepare("DELETE FROM sessions").run();
+  metaSet(getDb(), "reset_at", new Date().toISOString());
   return seed;
 }
 
@@ -163,4 +228,38 @@ export function listJobs(limit = 20) {
     createdAt: string;
     finishedAt: string | null;
   }>;
+}
+
+export function healthSnapshot() {
+  const db = getDb();
+  const blob = db
+    .prepare("SELECT updated_at, length(payload) as bytes FROM app_blob WHERE id = 1")
+    .get() as { updated_at: string; bytes: number };
+  const sessions = db
+    .prepare("SELECT count(*) as c FROM sessions")
+    .get() as { c: number };
+  const jobs = db
+    .prepare("SELECT count(*) as c FROM jobs")
+    .get() as { c: number };
+  const data = readAppData();
+  return {
+    ok: true,
+    app: config.appName,
+    contract: config.contract,
+    schemaVersion: metaGet(db, "schema_version") ?? SCHEMA_VERSION,
+    dbPath: dbPath(),
+    updatedAt: blob.updated_at,
+    payloadBytes: blob.bytes,
+    sessions: sessions.c,
+    jobs: jobs.c,
+    organizations: data.organizations.length,
+    users: data.users.length,
+    procurements: data.procurements.length,
+    syncIntervalMs: config.syncIntervalMs,
+  };
+}
+
+export function ensureReady() {
+  getDb();
+  return healthSnapshot();
 }

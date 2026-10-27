@@ -3,10 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "doctor": "node scripts/doctor.mjs",
     "dev": "next dev --port 43141 --hostname 127.0.0.1",
     "build": "next build",
     "start": "next start --port 43141 --hostname 127.0.0.1",
-    "lint": "eslint"
+    "lint": "eslint",
+    "turnkey": "npm run setup && npm run build && npm run start"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

@@ -1,0 +1,23 @@
+services:
+  tenderkontur:
+    build: .
+    ports:
+      - "43141:43141"
+    environment:
+      PORT: "43141"
+      HOST: "0.0.0.0"
+      DATA_DIR: /app/data
+      SYNC_INTERVAL_MS: "300000"
+      SESSION_DAYS: "7"
+    volumes:
+      - tk_data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:43141/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+volumes:
+  tk_data:

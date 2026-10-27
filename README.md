@@ -1,19 +1,32 @@
-# ТендерКонтур (TMA361)
+# ТендерКонтур (TMA361) — под ключ
 
-Веб-платформа отбора строительных тендеров по договору № TMA361 (26.10.2026).
+Платформа отбора строительных тендеров. Договор № TMA361 (26.10.2026).
 
-Стек: **Next.js (App Router) · TypeScript · Tailwind · shadcn/ui · SQLite (`node:sqlite`)**.
+**Стек:** Next.js App Router · TypeScript · Tailwind · shadcn/ui · SQLite (`node:sqlite`) · exceljs / pdf-lib.
 
-Серверные cookie-сессии, CRUD API по всем модулям, jobs синхронизации/разбора, Excel/PDF export. Данные в `data/tenderkontur.sqlite` (создаётся при первом запуске).
-
-## Запуск
+## Быстрый старт
 
 ```bash
 npm install
+npm run setup
 npm run dev
 ```
 
 Откройте [http://127.0.0.1:43141](http://127.0.0.1:43141).
+
+Проверка:
+
+```bash
+npm run doctor          # GET /api/health
+```
+
+Docker:
+
+```bash
+docker compose up --build
+```
+
+Данные живут в `data/tenderkontur.sqlite` (volume `tk_data` в Docker). Пароли в БД — scrypt-хеши. Автосинхронизация закупок — каждые 5 мин (`SYNC_INTERVAL_MS`).
 
 ## Демо-учётки
 
@@ -22,19 +35,26 @@ npm run dev
 | Суперадмин | `super@tenderkontur.ru` | `Super123!` |
 | Руководитель | `ruk@alfastroy.ru` | `Ruk123!` |
 | Тендерный специалист | `tender@alfastroy.ru` | `Tender123!` |
-| Сметчик / экономист | `smeta@alfastroy.ru` | `Smeta123!` |
-| Ответственный за объект | `object@alfastroy.ru` | `Object123!` |
+| Сметчик | `smeta@alfastroy.ru` | `Smeta123!` |
+| Ответственный | `object@alfastroy.ru` | `Object123!` |
 | Администратор | `admin@alfastroy.ru` | `Admin123!` |
-| Тендер (орг. Бета) | `tender@betain.ru` | `Beta123!` |
+| Тендер (Бета) | `tender@betain.ru` | `Beta123!` |
 
-Инструкция: `/cabinet/instrukciya`. Аудит ТЗ: `internal/tma361-tz-audit.md` в Project store.
+## Что внутри
 
-## API (кратко)
+- Cookie-сессии, CRUD API по всем модулям ЛК
+- Jobs: sync закупок, re-analyze документов, recalc
+- Excel/PDF export, обмен со сметным ПО (XLSX + расхождения)
+- Изоляция данных организаций
+- `/api/health` для мониторинга
 
-- `POST /api/auth/login|logout|recover`, `GET /api/auth/me`
-- `GET /api/bootstrap` — данные с изоляцией по организации
-- CRUD: `/api/zakupki`, `/dokumenty`, `/raschety`, `/gpr`, `/dengi`, `/riski`, `/proizvodstvo`, `/spravochniki`, `/users`, `/admin`, `/smeta`
-- Jobs: `POST /api/jobs` (`procurement_sync`, `document_reanalyze`)
-- Export: `GET /api/export?kind=calc-xlsx|calc-pdf|money-xlsx|gpr-xlsx|risks-xlsx|planfact-xlsx|smeta-xlsx|dir-template`
+Конфиг: скопируйте `.env.example` → `.env` при необходимости.
 
-Вне объёма: ПТО / полный комплект закрывающих; реальный API источника тендеров.
+Инструкция в продукте: `/cabinet/instrukciya`.
+
+## Вне объёма / kickoff
+
+- Реальный API источника тендеров  
+- SSO / IdP  
+- Именованный вендор сметного ПО  
+- Модуль ПТО / закрывающие

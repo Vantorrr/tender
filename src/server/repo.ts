@@ -14,6 +14,7 @@ import type {
   User,
 } from "@/lib/types";
 import { mutateAppData, readAppData, resetAppData } from "@/server/db";
+import { hashPassword } from "@/server/passwords";
 
 function audit(
   data: AppData,
@@ -84,7 +85,12 @@ export function markNotificationRead(userId: string, id: string) {
 export function createUser(actorId: string, input: Omit<User, "id" | "createdAt">) {
   return mutateAppData((data) => {
     const id = `u-${Date.now()}`;
-    data.users.push({ ...input, id, createdAt: new Date().toISOString() });
+    data.users.push({
+      ...input,
+      password: hashPassword(input.password ?? "Demo123!"),
+      id,
+      createdAt: new Date().toISOString(),
+    });
     data.roleHistory.unshift({
       id: `rh-${Date.now()}`,
       userId: id,

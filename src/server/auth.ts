@@ -1,31 +1,18 @@
-import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
 import { getDb, readAppData } from "@/server/db";
+import { config } from "@/server/config";
+import { hashPassword, verifyPassword } from "@/server/passwords";
 import type { User } from "@/lib/types";
 
+export { hashPassword, verifyPassword };
+
 export const SESSION_COOKIE = "tk_session";
-const SESSION_DAYS = 7;
-
-export function hashPassword(password: string, salt?: string): string {
-  const s = salt ?? randomBytes(16).toString("hex");
-  const hash = scryptSync(password, s, 32).toString("hex");
-  return `${s}:${hash}`;
-}
-
-export function verifyPassword(password: string, stored: string): boolean {
-  // Demo seed stores plain passwords; support both formats.
-  if (!stored.includes(":")) return password === stored;
-  const [salt, hash] = stored.split(":");
-  const next = scryptSync(password, salt, 32);
-  const prev = Buffer.from(hash, "hex");
-  if (prev.length !== next.length) return false;
-  return timingSafeEqual(prev, next);
-}
 
 export function createSession(userId: string): string {
   const token = randomBytes(32).toString("hex");
   const expires = new Date(
-    Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000
+    Date.now() + config.sessionDays * 24 * 60 * 60 * 1000
   ).toISOString();
   getDb()
     .prepare(
@@ -39,7 +26,9 @@ export function destroySession(token: string) {
   getDb().prepare("DELETE FROM sessions WHERE token = ?").run(token);
 }
 
-export function getUserIdByToken(token: string | undefined | null): string | null {
+export function getUserIdByToken(
+  token: string | undefined | null
+): string | null {
   if (!token) return null;
   const row = getDb()
     .prepare("SELECT user_id, expires_at FROM sessions WHERE token = ?")
@@ -70,5 +59,8 @@ export function publicUser(user: User) {
 }
 
 export function recoveryToken(email: string): string {
-  return createHash("sha256").update(`recover:${email}:tma361`).digest("hex").slice(0, 12);
+  return createHash("sha256")
+    .update(`recover:${email}:tma361`)
+    .digest("hex")
+    .slice(0, 12);
 }
