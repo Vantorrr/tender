@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatDate, formatMoney } from "@/lib/format";
+import { REVIEW_LABELS, STATUS_LABELS } from "@/lib/roles";
 import type { CardStatus, ReviewStatus } from "@/lib/types";
 import { useStore } from "@/lib/store";
 
