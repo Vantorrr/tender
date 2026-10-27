@@ -10,19 +10,21 @@ export function PageHeader({
   actions?: ReactNode;
 }) {
   return (
-    <div className="mb-6 flex flex-col gap-4 sm:mb-8 sm:flex-row sm:items-end sm:justify-between">
-      <div className="min-w-0">
-        <h1 className="font-[family-name:var(--font-display)] text-2xl tracking-tight text-[var(--tk-ink)] sm:text-3xl">
+    <div className="mb-6 flex flex-col gap-4 sm:mb-9 sm:flex-row sm:items-end sm:justify-between">
+      <div className="min-w-0 animate-fade-slide">
+        <h1 className="font-[family-name:var(--font-display)] text-[1.65rem] leading-[1.15] tracking-tight text-[var(--tk-ink)] sm:text-3xl">
           {title}
         </h1>
         {description ? (
-          <p className="mt-1.5 max-w-2xl text-sm text-[var(--tk-muted)] sm:text-base">
+          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-[var(--tk-muted)] sm:text-[0.975rem]">
             {description}
           </p>
         ) : null}
       </div>
       {actions ? (
-        <div className="flex flex-wrap items-center gap-2">{actions}</div>
+        <div className="flex flex-wrap items-center gap-2 animate-fade-slide">
+          {actions}
+        </div>
       ) : null}
     </div>
   );

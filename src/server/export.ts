@@ -1,0 +1,189 @@
+import ExcelJS from "exceljs";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import { readAppData } from "@/server/db";
+
+export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
+  const data = readAppData();
+  const calc = data.calculations.find((c) => c.id === calcId);
+  if (!calc) throw new Error("Расчёт не найден");
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "ТендерКонтур";
+  const ws = wb.addWorksheet("Расчёт");
+  ws.columns = [
+    { header: "Код", key: "code", width: 22 },
+    { header: "Наименование", key: "name", width: 42 },
+    { header: "Ед.", key: "unit", width: 10 },
+    { header: "Кол-во", key: "qty", width: 12 },
+    { header: "Расценка", key: "rate", width: 14 },
+    { header: "Сумма", key: "sum", width: 16 },
+  ];
+  ws.getRow(1).font = { bold: true };
+
+  let total = 0;
+  for (const p of calc.positions) {
+    const sum = p.quantity * p.rate * calc.scenarioFactor;
+    total += sum;
+    ws.addRow({
+      code: p.code,
+      name: p.name,
+      unit: p.unit,
+      qty: p.quantity,
+      rate: p.rate,
+      sum,
+    });
+  }
+  ws.addRow({});
+  ws.addRow({ code: "Итого", sum: total });
+  ws.addRow({ code: "Сценарий", name: calc.scenario, rate: calc.scenarioFactor });
+
+  const buf = await wb.xlsx.writeBuffer();
+  return Buffer.from(buf);
+}
+
+export async function buildCalculationPdf(calcId: string): Promise<Buffer> {
+  const data = readAppData();
+  const calc = data.calculations.find((c) => c.id === calcId);
+  if (!calc) throw new Error("Расчёт не найден");
+
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([595, 842]);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
+  let y = 800;
+  const draw = (text: string, size = 11, b = false) => {
+    page.drawText(text, {
+      x: 40,
+      y,
+      size,
+      font: b ? bold : font,
+      color: rgb(0.08, 0.14, 0.18),
+    });
+    y -= size + 8;
+  };
+
+  draw(`TenderKontur / Raschet ${calc.id}`, 14, true);
+  draw(calc.title.replace(/[^\x00-\x7F]/g, "?"), 12, true);
+  draw(`Scenario: ${calc.scenario} x${calc.scenarioFactor}`);
+  y -= 6;
+  let total = 0;
+  for (const p of calc.positions) {
+    const sum = p.quantity * p.rate * calc.scenarioFactor;
+    total += sum;
+    const line = `${p.code} | ${p.quantity} x ${p.rate} = ${Math.round(sum)}`;
+    draw(line.replace(/[^\x00-\x7F]/g, "?"), 9);
+    if (y < 60) break;
+  }
+  draw(`TOTAL: ${Math.round(total)} RUB`, 12, true);
+  const bytes = await pdf.save();
+  return Buffer.from(bytes);
+}
+
+export async function buildMoneyXlsx(planId: string): Promise<Buffer> {
+  const data = readAppData();
+  const plan = data.moneyPlans.find((m) => m.id === planId);
+  if (!plan) throw new Error("План не найден");
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Деньги");
+  ws.addRow(["Тип", "Название", "Сумма", "Дата", "Неделя", "Месяц", "Комментарий"]);
+  ws.getRow(1).font = { bold: true };
+  for (const p of plan.payments) {
+    ws.addRow([p.type, p.title, p.amount, p.date, p.week, p.month, p.note ?? ""]);
+  }
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+export async function buildGprXlsx(gprId: string): Promise<Buffer> {
+  const data = readAppData();
+  const g = data.schedules.find((s) => s.id === gprId);
+  if (!g) throw new Error("ГПР не найден");
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("ГПР");
+  ws.addRow(["Этап", "Начало", "Окончание", "Порядок", "Зависит от"]);
+  ws.getRow(1).font = { bold: true };
+  for (const s of g.stages) {
+    ws.addRow([s.name, s.start, s.end, s.sequence, s.dependsOn ?? ""]);
+  }
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+export async function buildRisksXlsx(riskId: string): Promise<Buffer> {
+  const data = readAppData();
+  const r = data.risks.find((x) => x.id === riskId);
+  if (!r) throw new Error("Реестр не найден");
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Риски");
+  ws.addRow(["Замечание", "Фрагмент", "Статус", "Критичность", "Решение"]);
+  ws.getRow(1).font = { bold: true };
+  for (const rem of r.remarks) {
+    ws.addRow([rem.text, rem.sourceExcerpt, rem.status, rem.severity, rem.decision ?? ""]);
+  }
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+export async function buildPlanFactXlsx(id: string): Promise<Buffer> {
+  const data = readAppData();
+  const pf = data.planFacts.find((x) => x.id === id);
+  if (!pf) throw new Error("План/факт не найден");
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("ПланФакт");
+  ws.addRow(["Работа", "Ед.", "План", "Факт", "Отклонение"]);
+  ws.getRow(1).font = { bold: true };
+  for (const e of pf.entries) {
+    ws.addRow([e.workName, e.unit, e.plan, e.fact, e.fact - e.plan]);
+  }
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+export async function buildSmetaExportXlsx(calcId?: string): Promise<Buffer> {
+  const data = readAppData();
+  const calc = data.calculations.find((c) => c.id === (calcId ?? "c-1")) ?? data.calculations[0];
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Works");
+  ws.addRow(["code", "name", "unit", "quantity"]);
+  ws.getRow(1).font = { bold: true };
+  if (calc) {
+    for (const p of calc.positions) {
+      ws.addRow([p.code, p.name, p.unit, p.quantity]);
+    }
+  }
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+export async function buildDirectoryTemplate(
+  type: "normy" | "rascenki" | "ceny" | "profil"
+): Promise<Buffer> {
+  const headers =
+    type === "normy"
+      ? ["code", "name", "unit", "labor"]
+      : type === "rascenki"
+        ? ["code", "work", "rate"]
+        : type === "ceny"
+          ? ["sku", "name", "unit", "price"]
+          : ["region", "okpd", "maxNmck"];
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Template");
+  ws.addRow(headers);
+  ws.getRow(1).font = { bold: true };
+  return Buffer.from(await wb.xlsx.writeBuffer());
+}
+
+export async function parseSmetaXlsx(buf: Buffer): Promise<{ code: string; quantity: number; name?: string }[]> {
+  const wb = new ExcelJS.Workbook();
+  // exceljs load accepts Uint8Array
+  await wb.xlsx.load(buf as unknown as ExcelJS.Buffer);
+  const ws = wb.worksheets[0];
+  if (!ws) return [];
+  const rows: { code: string; quantity: number; name?: string }[] = [];
+  ws.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return;
+    const code = String(row.getCell(1).value ?? "").trim();
+    const name = String(row.getCell(2).value ?? "").trim();
+    const qtyRaw = row.getCell(4).value ?? row.getCell(3).value;
+    const quantity = Number(qtyRaw);
+    if (code && Number.isFinite(quantity)) {
+      rows.push({ code, quantity, name });
+    }
+  });
+  return rows;
+}

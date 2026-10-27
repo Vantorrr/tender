@@ -15,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { downloadTextFile, toCsv } from "@/lib/format";
+import { downloadUrl } from "@/lib/api";
 import type { RiskRemark } from "@/lib/types";
 import { useStore } from "@/lib/store";
 
@@ -58,22 +58,8 @@ export default function RiskiPage() {
               </Button>
               <Button
                 onClick={() => {
-                  const rows = [
-                    ["Замечание", "Фрагмент", "Статус", "Критичность", "Решение"],
-                    ...risk.remarks.map((r) => [
-                      r.text,
-                      r.sourceExcerpt,
-                      statusLabel[r.status],
-                      r.severity,
-                      r.decision ?? "",
-                    ]),
-                  ];
-                  downloadTextFile(
-                    `riski-${risk.id}.csv`,
-                    "\uFEFF" + toCsv(rows),
-                    "text/csv;charset=utf-8"
-                  );
-                  toast.success("Реестр экспортирован");
+                  downloadUrl(`/api/export?kind=risks-xlsx&id=${risk.id}`);
+                  toast.success("Скачивание XLSX…");
                 }}
               >
                 Экспорт

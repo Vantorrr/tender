@@ -22,7 +22,7 @@ import type { CardStatus, ReviewStatus } from "@/lib/types";
 import { useStore } from "@/lib/store";
 
 export default function ZakupkiPage() {
-  const { orgProcurements, addAudit } = useStore();
+  const { orgProcurements, runSyncJob } = useStore();
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<string>("all");
   const [review, setReview] = useState<string>("all");
@@ -56,14 +56,9 @@ export default function ZakupkiPage() {
         actions={
           <Button
             variant="outline"
-            onClick={() =>
-              addAudit(
-                "sync",
-                "procurement",
-                "feed",
-                "Ручной запрос синхронизации (мок)"
-              )
-            }
+            onClick={async () => {
+              await runSyncJob();
+            }}
           >
             <RefreshCw className="h-4 w-4" />
             Синхронизировать
@@ -120,7 +115,7 @@ export default function ZakupkiPage() {
               ] as CardStatus[]
             ).map((s) => (
               <SelectItem key={s} value={s}>
-                {s}
+                {STATUS_LABELS[s]}
               </SelectItem>
             ))}
           </SelectContent>
@@ -141,7 +136,7 @@ export default function ZakupkiPage() {
               ] as ReviewStatus[]
             ).map((s) => (
               <SelectItem key={s} value={s}>
-                {s}
+                {REVIEW_LABELS[s]}
               </SelectItem>
             ))}
           </SelectContent>

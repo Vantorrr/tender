@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -12,11 +13,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { downloadTextFile, formatDateTime, formatNumber, toCsv } from "@/lib/format";
+import { downloadUrl } from "@/lib/api";
+import { formatDateTime, formatNumber } from "@/lib/format";
 import { useStore } from "@/lib/store";
 
 export default function ObmenPage() {
-  const { data, user, confirmSmetaExchange, addAudit } = useStore();
+  const { data, user, confirmSmetaExchange, importSmetaFile } = useStore();
+  const inputRef = useRef<HTMLInputElement>(null);
   if (!user) return null;
 
   return (
@@ -26,41 +29,29 @@ export default function ObmenPage() {
         description="XLSX экспорт/импорт работ и объёмов, сопоставление позиций, версии и контроль расхождений."
         actions={
           <>
+            <input
+              ref={inputRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                await importSmetaFile(file, "c-1");
+                toast.success("Импорт XLSX выполнен. Проверьте расхождения.");
+                e.target.value = "";
+              }}
+            />
             <Button
               variant="outline"
               onClick={() => {
-                const rows = [
-                  ["code", "name", "unit", "quantity"],
-                  ["ГЭСН 15-01-047-01", "Штукатурка стен", "м²", 2180],
-                  ["ГЭСН 12-01-002-01", "Кровля металлочерепица", "м²", 960],
-                ];
-                downloadTextFile(
-                  "export-smeta.xlsx.csv",
-                  "\uFEFF" + toCsv(rows),
-                  "text/csv;charset=utf-8"
-                );
-                addAudit(
-                  "export",
-                  "smeta",
-                  "works",
-                  "Экспорт работ/объёмов в сметное ПО"
-                );
-                toast.success("Экспорт работ/объёмов готов");
+                downloadUrl("/api/export?kind=smeta-xlsx&id=c-1");
+                toast.success("Экспорт XLSX…");
               }}
             >
               Экспорт XLSX
             </Button>
-            <Button
-              onClick={() => {
-                addAudit(
-                  "import",
-                  "smeta",
-                  "works",
-                  "Импорт из сметного ПО (мок)"
-                );
-                toast.success("Импорт принят (мок). Проверьте расхождения ниже.");
-              }}
-            >
+            <Button onClick={() => inputRef.current?.click()}>
               Импорт XLSX
             </Button>
           </>
@@ -73,15 +64,14 @@ export default function ObmenPage() {
         </h2>
         <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-relaxed text-[var(--tk-ink-soft)]">
           <li>
-            Экспортируйте ведомость работ и объёмов из ТендерКонтур в CSV/XLSX.
+            Экспортируйте ведомость работ и объёмов из ТендерКонтур в XLSX.
           </li>
           <li>
-            Импортируйте файл в ваше сметное ПО (Гранд-Смета, Smeta.ru и т.п.),
-            выполните расчёт локально.
+            Импортируйте файл в ваше сметное ПО, выполните расчёт локально.
           </li>
           <li>
-            Выгрузите обратно файл с кодами позиций и объёмами, загрузите в
-            раздел «Импорт XLSX».
+            Выгрузите обратно файл с кодами позиций и объёмами, загрузите через
+            «Импорт XLSX».
           </li>
           <li>
             Сопоставьте позиции по коду, просмотрите расхождения, подтвердите
@@ -112,8 +102,8 @@ export default function ObmenPage() {
                 {!sx.confirmed ? (
                   <Button
                     size="sm"
-                    onClick={() => {
-                      confirmSmetaExchange(sx.id);
+                    onClick={async () => {
+                      await confirmSmetaExchange(sx.id);
                       toast.success("Версия обмена подтверждена");
                     }}
                   >

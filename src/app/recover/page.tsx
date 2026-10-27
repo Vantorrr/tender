@@ -12,9 +12,9 @@ export default function RecoverPage() {
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState("");
 
-  function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    const result = requestRecovery(email);
+    const result = await requestRecovery(email);
     setMessage(result.message);
   }
 

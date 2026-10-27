@@ -22,7 +22,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { downloadTextFile, formatDate, formatMoney, toCsv } from "@/lib/format";
+import { downloadUrl } from "@/lib/api";
+import { formatDate, formatMoney } from "@/lib/format";
 import { useStore } from "@/lib/store";
 
 const typeLabel = {
@@ -76,24 +77,8 @@ export default function DengiPage() {
           plan ? (
             <Button
               onClick={() => {
-                const rows = [
-                  ["Тип", "Название", "Сумма", "Дата", "Неделя", "Месяц", "Комментарий"],
-                  ...plan.payments.map((p) => [
-                    typeLabel[p.type],
-                    p.title,
-                    p.amount,
-                    p.date,
-                    p.week,
-                    p.month,
-                    p.note ?? "",
-                  ]),
-                ];
-                downloadTextFile(
-                  `dengi-${plan.id}.csv`,
-                  "\uFEFF" + toCsv(rows),
-                  "text/csv;charset=utf-8"
-                );
-                toast.success("Excel-экспорт готов");
+                downloadUrl(`/api/export?kind=money-xlsx&id=${plan.id}`);
+                toast.success("Скачивание XLSX…");
               }}
             >
               Экспорт Excel

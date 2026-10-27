@@ -1,0 +1,461 @@
+import { DEFAULT_SECTIONS } from "@/lib/roles";
+import type {
+  AppData,
+  Calculation,
+  CardStatus,
+  DocumentItem,
+  GprSchedule,
+  MoneyPlan,
+  PlanFact,
+  ReviewStatus,
+  RiskRegistry,
+  Role,
+  SectionKey,
+  User,
+} from "@/lib/types";
+import { mutateAppData, readAppData, resetAppData } from "@/server/db";
+
+function audit(
+  data: AppData,
+  actorId: string,
+  action: string,
+  entity: string,
+  entityId: string,
+  detail: string
+) {
+  data.auditLog.unshift({
+    id: `aud-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    at: new Date().toISOString(),
+    actorId,
+    action,
+    entity,
+    entityId,
+    detail,
+  });
+}
+
+export function getBootstrap(user: User) {
+  const data = readAppData();
+  const orgId = user.orgId;
+  const isSuper = user.role === "superadmin";
+  return {
+    user: (() => {
+      const { password: _p, ...rest } = user;
+      return rest;
+    })(),
+    data: {
+      ...data,
+      users: data.users
+        .filter((u) => isSuper || u.orgId === orgId)
+        .map(({ password: _p, ...rest }) => rest),
+      procurements: data.procurements.filter((p) => p.orgId === orgId),
+      documents: data.documents.filter((d) => d.orgId === orgId),
+      calculations: data.calculations.filter((c) => c.orgId === orgId),
+      schedules: data.schedules.filter((s) => s.orgId === orgId),
+      moneyPlans: data.moneyPlans.filter((m) => m.orgId === orgId),
+      risks: data.risks.filter((r) => r.orgId === orgId),
+      planFacts: data.planFacts.filter((p) => p.orgId === orgId),
+      objects: data.objects.filter((o) => o.orgId === orgId),
+      notifications: data.notifications.filter((n) => n.userId === user.id),
+      organizations: isSuper
+        ? data.organizations
+        : data.organizations.filter((o) => o.id === orgId),
+      auditLog: isSuper || user.role === "admin" ? data.auditLog : [],
+      smetaExchanges: data.smetaExchanges,
+      directories: data.directories,
+      roleHistory: data.roleHistory.filter((h) =>
+        data.users.some(
+          (u) => u.id === h.userId && (isSuper || u.orgId === orgId)
+        )
+      ),
+    } satisfies AppData,
+  };
+}
+
+export function markNotificationRead(userId: string, id: string) {
+  return mutateAppData((data) => {
+    data.notifications = data.notifications.map((n) =>
+      n.id === id && n.userId === userId ? { ...n, read: true } : n
+    );
+    return data;
+  });
+}
+
+export function createUser(actorId: string, input: Omit<User, "id" | "createdAt">) {
+  return mutateAppData((data) => {
+    const id = `u-${Date.now()}`;
+    data.users.push({ ...input, id, createdAt: new Date().toISOString() });
+    data.roleHistory.unshift({
+      id: `rh-${Date.now()}`,
+      userId: id,
+      fromRole: null,
+      toRole: input.role,
+      changedBy: actorId,
+      at: new Date().toISOString(),
+      comment: "Создание пользователя",
+    });
+    audit(data, actorId, "create", "user", id, `Создан ${input.email}`);
+    return data;
+  });
+}
+
+export function updateUser(
+  actorId: string,
+  id: string,
+  patch: Partial<User>
+) {
+  return mutateAppData((data) => {
+    data.users = data.users.map((u) => (u.id === id ? { ...u, ...patch } : u));
+    audit(data, actorId, "update", "user", id, "Обновление пользователя");
+    return data;
+  });
+}
+
+export function setUserRole(
+  actorId: string,
+  userId: string,
+  role: Role,
+  comment: string
+) {
+  return mutateAppData((data) => {
+    const current = data.users.find((u) => u.id === userId);
+    if (!current) return data;
+    data.users = data.users.map((u) =>
+      u.id === userId ? { ...u, role, sections: DEFAULT_SECTIONS[role] } : u
+    );
+    data.roleHistory.unshift({
+      id: `rh-${Date.now()}`,
+      userId,
+      fromRole: current.role,
+      toRole: role,
+      changedBy: actorId,
+      at: new Date().toISOString(),
+      comment,
+    });
+    audit(data, actorId, "role_change", "user", userId, comment);
+    return data;
+  });
+}
+
+export function setProcurementReview(
+  actorId: string,
+  id: string,
+  status: ReviewStatus
+) {
+  return mutateAppData((data) => {
+    data.procurements = data.procurements.map((p) =>
+      p.id === id ? { ...p, reviewStatus: status } : p
+    );
+    audit(data, actorId, "review", "procurement", id, `Статус: ${status}`);
+    return data;
+  });
+}
+
+export function updateProcurement(
+  actorId: string,
+  id: string,
+  patch: Record<string, unknown>
+) {
+  return mutateAppData((data) => {
+    data.procurements = data.procurements.map((p) =>
+      p.id === id ? { ...p, ...patch } : p
+    );
+    audit(data, actorId, "update", "procurement", id, "Обновление закупки");
+    return data;
+  });
+}
+
+export function updateCalculation(
+  actorId: string,
+  id: string,
+  patch: Partial<Calculation>
+) {
+  return mutateAppData((data) => {
+    data.calculations = data.calculations.map((c) =>
+      c.id === id
+        ? { ...c, ...patch, updatedAt: new Date().toISOString() }
+        : c
+    );
+    audit(data, actorId, "update", "calculation", id, "Обновление расчёта");
+    return data;
+  });
+}
+
+export function recalcCalculation(
+  actorId: string,
+  id: string,
+  scenario: Calculation["scenario"]
+) {
+  const factor =
+    scenario === "optimisticheskiy"
+      ? 0.95
+      : scenario === "pessimisticheskiy"
+        ? 1.08
+        : 1;
+  return updateCalculation(actorId, id, {
+    scenario,
+    scenarioFactor: factor,
+    status: "trebuet_proverki" as CardStatus,
+  });
+}
+
+export function updateDocument(
+  actorId: string,
+  id: string,
+  patch: Partial<DocumentItem>
+) {
+  return mutateAppData((data) => {
+    data.documents = data.documents.map((d) =>
+      d.id === id ? { ...d, ...patch } : d
+    );
+    audit(data, actorId, "update", "document", id, "Обновление документа");
+    return data;
+  });
+}
+
+export function reanalyzeDocument(actorId: string, id: string) {
+  return mutateAppData((data) => {
+    data.documents = data.documents.map((d) => {
+      if (d.id !== id) return d;
+      const nextVersion = d.versions.length + 1;
+      return {
+        ...d,
+        status: "gotovo" as CardStatus,
+        versions: [
+          ...d.versions,
+          {
+            id: `dv-${Date.now()}`,
+            version: nextVersion,
+            authorId: actorId,
+            at: new Date().toISOString(),
+            note: "Повторный разбор (серверный pipeline)",
+          },
+        ],
+        analyticalNote:
+          d.analyticalNote +
+          "\n\n[Повторный разбор] Уточнены цитаты и подсветки. Pipeline выполнен на сервере.",
+        highlights: [
+          ...d.highlights,
+          {
+            id: `h-re-${Date.now()}`,
+            text: "Автоматическая проверка после re-analyze",
+            reason: "Требует подтверждения специалистом",
+            severity: "info" as const,
+            page: 1,
+          },
+        ],
+      };
+    });
+    audit(data, actorId, "reanalyze", "document", id, "Серверный разбор документа");
+    return data;
+  });
+}
+
+export function createDocument(
+  actorId: string,
+  input: {
+    orgId: string;
+    procurementId: string;
+    title: string;
+    fileName: string;
+    fileType: "pdf" | "docx" | "xlsx";
+  }
+) {
+  return mutateAppData((data) => {
+    const id = `d-${Date.now()}`;
+    const doc: DocumentItem = {
+      id,
+      orgId: input.orgId,
+      procurementId: input.procurementId,
+      title: input.title,
+      fileName: input.fileName,
+      fileType: input.fileType,
+      status: "v_rabote",
+      versions: [
+        {
+          id: `dv-${Date.now()}`,
+          version: 1,
+          authorId: actorId,
+          at: new Date().toISOString(),
+          note: "Загрузка на сервер",
+        },
+      ],
+      analyticalNote: "Разбор поставлен в очередь. Предварительная записка сформируется после pipeline.",
+      citations: [],
+      highlights: [],
+      uploadedBy: actorId,
+      uploadedAt: new Date().toISOString(),
+    };
+    data.documents.unshift(doc);
+    const proc = data.procurements.find((p) => p.id === input.procurementId);
+    if (proc) proc.documentIds = [...proc.documentIds, id];
+    audit(data, actorId, "upload", "document", id, `Загружен ${input.fileName}`);
+    return data;
+  });
+}
+
+export function updateSchedule(
+  actorId: string,
+  id: string,
+  patch: Partial<GprSchedule>
+) {
+  return mutateAppData((data) => {
+    data.schedules = data.schedules.map((s) =>
+      s.id === id
+        ? { ...s, ...patch, updatedAt: new Date().toISOString() }
+        : s
+    );
+    audit(data, actorId, "update", "gpr", id, "Обновление ГПР");
+    return data;
+  });
+}
+
+export function updateMoney(
+  actorId: string,
+  id: string,
+  patch: Partial<MoneyPlan>
+) {
+  return mutateAppData((data) => {
+    data.moneyPlans = data.moneyPlans.map((m) =>
+      m.id === id
+        ? { ...m, ...patch, updatedAt: new Date().toISOString() }
+        : m
+    );
+    audit(data, actorId, "update", "money", id, "Обновление денежного плана");
+    return data;
+  });
+}
+
+export function updateRisk(
+  actorId: string,
+  id: string,
+  patch: Partial<RiskRegistry>
+) {
+  return mutateAppData((data) => {
+    data.risks = data.risks.map((r) =>
+      r.id === id
+        ? { ...r, ...patch, updatedAt: new Date().toISOString() }
+        : r
+    );
+    audit(data, actorId, "update", "risk", id, "Обновление реестра рисков");
+    return data;
+  });
+}
+
+export function updatePlanFact(
+  actorId: string,
+  id: string,
+  patch: Partial<PlanFact>
+) {
+  return mutateAppData((data) => {
+    data.planFacts = data.planFacts.map((p) =>
+      p.id === id
+        ? { ...p, ...patch, updatedAt: new Date().toISOString() }
+        : p
+    );
+    audit(data, actorId, "update", "planfact", id, "Обновление план/факт");
+    return data;
+  });
+}
+
+export function setDirectoryCurrent(actorId: string, id: string) {
+  return mutateAppData((data) => {
+    const target = data.directories.find((d) => d.id === id);
+    if (!target) return data;
+    data.directories = data.directories.map((d) =>
+      d.type === target.type ? { ...d, current: d.id === id } : d
+    );
+    audit(data, actorId, "directory", "directory", id, "Текущая версия справочника");
+    return data;
+  });
+}
+
+export function importDirectoryRows(
+  actorId: string,
+  type: AppData["directories"][0]["type"],
+  rows: Record<string, string | number>[]
+) {
+  return mutateAppData((data) => {
+    const same = data.directories.filter((d) => d.type === type);
+    const nextVersion = Math.max(0, ...same.map((d) => d.version)) + 1;
+    const id = `dir-${type}-${nextVersion}`;
+    data.directories = data.directories.map((d) =>
+      d.type === type ? { ...d, current: false } : d
+    );
+    data.directories.push({
+      id,
+      type,
+      name:
+        type === "normy"
+          ? "Нормы (импорт Excel)"
+          : type === "rascenki"
+            ? "Расценки (импорт Excel)"
+            : type === "ceny"
+              ? "Цены (импорт Excel)"
+              : "Профиль закупок (импорт)",
+      version: nextVersion,
+      authorId: actorId,
+      at: new Date().toISOString(),
+      current: true,
+      rows,
+    });
+    audit(data, actorId, "import", "directory", id, `Импорт v${nextVersion}`);
+    return data;
+  });
+}
+
+export function confirmSmetaExchange(actorId: string, id: string) {
+  return mutateAppData((data) => {
+    data.smetaExchanges = data.smetaExchanges.map((s) =>
+      s.id === id ? { ...s, confirmed: true } : s
+    );
+    audit(data, actorId, "confirm", "smeta", id, "Подтверждён обмен");
+    return data;
+  });
+}
+
+export function importSmetaExchange(
+  actorId: string,
+  name: string,
+  mapped: { code: string; quantity: number }[],
+  ours: { code: string; quantity: number }[]
+) {
+  return mutateAppData((data) => {
+    const discrepancies = mapped
+      .map((t) => {
+        const o = ours.find((x) => x.code === t.code);
+        if (!o) return { code: t.code, ours: 0, theirs: t.quantity };
+        if (o.quantity === t.quantity) return null;
+        return { code: t.code, ours: o.quantity, theirs: t.quantity };
+      })
+      .filter(Boolean) as { code: string; ours: number; theirs: number }[];
+    const id = `sx-${Date.now()}`;
+    data.smetaExchanges.unshift({
+      id,
+      name,
+      at: new Date().toISOString(),
+      authorId: actorId,
+      positionsMapped: mapped.length,
+      discrepancies,
+      confirmed: false,
+    });
+    audit(data, actorId, "import", "smeta", id, `Импорт XLSX: ${mapped.length} позиций`);
+    return data;
+  });
+}
+
+export function setUserSections(
+  actorId: string,
+  userId: string,
+  sections: SectionKey[]
+) {
+  return updateUser(actorId, userId, { sections });
+}
+
+export function resetDemo(actorId: string) {
+  resetAppData();
+  return mutateAppData((d) => {
+    audit(d, actorId, "reset", "system", "all", "Сброс демо-данных");
+    return d;
+  });
+}

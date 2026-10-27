@@ -1,9 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
-  cacheComponents: true,
-  partialPrefetching: true,
+  // API + SQLite session routes need request-time rendering
+  cacheComponents: false,
+  serverExternalPackages: ["exceljs"],
   turbopack: {
     rules: {
       "*.css": {

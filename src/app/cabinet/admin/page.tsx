@@ -41,8 +41,8 @@ export default function AdminPage() {
           user.role === "superadmin" ? (
             <Button
               variant="outline"
-              onClick={() => {
-                resetData();
+              onClick={async () => {
+                await resetData();
                 toast.success("Данные сброшены к демо-набору");
               }}
             >

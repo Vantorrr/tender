@@ -226,8 +226,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
-                  onClick={() => {
-                    logout();
+                  onClick={async () => {
+                    await logout();
                     router.push("/login");
                   }}
                 >
@@ -239,7 +239,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="flex-1 px-4 py-6 sm:px-6 lg:px-8">{children}</main>
+        <main className="relative flex-1 px-4 py-5 sm:px-6 sm:py-7 lg:px-8">
+          <div className="tk-noise absolute inset-0" aria-hidden />
+          <div className="tk-page relative">{children}</div>
+        </main>
       </div>
     </div>
   );

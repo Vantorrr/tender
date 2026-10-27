@@ -9,11 +9,11 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { createSeedData, SESSION_KEY, STORAGE_KEY } from "./seed";
+import { createSeedData } from "./seed";
+import { api } from "./api";
 import type {
   AppData,
   Calculation,
-  CardStatus,
   DocumentItem,
   GprSchedule,
   MoneyPlan,
@@ -26,41 +26,64 @@ import type {
   SectionKey,
   User,
 } from "./types";
-import { DEFAULT_SECTIONS } from "./roles";
 
-interface Session {
-  userId: string;
+type PublicUser = Omit<User, "password">;
+
+interface BootstrapResponse {
+  user: PublicUser;
+  data: AppData;
+  jobs?: unknown[];
 }
 
 interface StoreContextValue {
   ready: boolean;
   data: AppData;
-  user: User | null;
-  login: (email: string, password: string) => { ok: boolean; error?: string };
-  logout: () => void;
-  requestRecovery: (email: string) => { ok: boolean; message: string };
-  resetData: () => void;
-  markNotificationRead: (id: string) => void;
-  updateUser: (id: string, patch: Partial<User>) => void;
-  createUser: (input: Omit<User, "id" | "createdAt">) => void;
-  setUserRole: (userId: string, role: Role, comment: string) => void;
-  setUserSections: (userId: string, sections: SectionKey[]) => void;
-  setProcurementReview: (id: string, status: ReviewStatus) => void;
-  updateCalculation: (id: string, patch: Partial<Calculation>) => void;
-  recalcCalculation: (id: string, scenario: Calculation["scenario"]) => void;
-  updateDocument: (id: string, patch: Partial<DocumentItem>) => void;
-  reanalyzeDocument: (id: string) => void;
-  updateSchedule: (id: string, patch: Partial<GprSchedule>) => void;
-  updateMoney: (id: string, patch: Partial<MoneyPlan>) => void;
-  updateRisk: (id: string, patch: Partial<RiskRegistry>) => void;
-  updatePlanFact: (id: string, patch: Partial<PlanFact>) => void;
-  setDirectoryCurrent: (id: string) => void;
+  user: PublicUser | null;
+  login: (
+    email: string,
+    password: string
+  ) => Promise<{ ok: boolean; error?: string }>;
+  logout: () => Promise<void>;
+  requestRecovery: (email: string) => Promise<{ ok: boolean; message: string }>;
+  resetData: () => Promise<void>;
+  refresh: () => Promise<void>;
+  markNotificationRead: (id: string) => Promise<void>;
+  updateUser: (id: string, patch: Partial<User>) => Promise<void>;
+  createUser: (input: Omit<User, "id" | "createdAt">) => Promise<void>;
+  setUserRole: (userId: string, role: Role, comment: string) => Promise<void>;
+  setUserSections: (userId: string, sections: SectionKey[]) => Promise<void>;
+  setProcurementReview: (id: string, status: ReviewStatus) => Promise<void>;
+  updateCalculation: (id: string, patch: Partial<Calculation>) => Promise<void>;
+  recalcCalculation: (
+    id: string,
+    scenario: Calculation["scenario"]
+  ) => Promise<void>;
+  updateDocument: (id: string, patch: Partial<DocumentItem>) => Promise<void>;
+  reanalyzeDocument: (id: string) => Promise<void>;
+  createDocumentUpload: (input: {
+    procurementId: string;
+    title: string;
+    fileName: string;
+    fileType: "pdf" | "docx" | "xlsx";
+  }) => Promise<void>;
+  updateSchedule: (id: string, patch: Partial<GprSchedule>) => Promise<void>;
+  updateMoney: (id: string, patch: Partial<MoneyPlan>) => Promise<void>;
+  updateRisk: (id: string, patch: Partial<RiskRegistry>) => Promise<void>;
+  updatePlanFact: (id: string, patch: Partial<PlanFact>) => Promise<void>;
+  setDirectoryCurrent: (id: string) => Promise<void>;
   importDirectoryRows: (
     type: AppData["directories"][0]["type"],
     rows: Record<string, string | number>[]
+  ) => Promise<void>;
+  confirmSmetaExchange: (id: string) => Promise<void>;
+  importSmetaFile: (file: File, calcId?: string) => Promise<void>;
+  runSyncJob: () => Promise<void>;
+  addAudit: (
+    action: string,
+    entity: string,
+    entityId: string,
+    detail: string
   ) => void;
-  confirmSmetaExchange: (id: string) => void;
-  addAudit: (action: string, entity: string, entityId: string, detail: string) => void;
   orgProcurements: Procurement[];
   orgDocuments: DocumentItem[];
   unreadCount: number;
@@ -68,444 +91,325 @@ interface StoreContextValue {
 
 const StoreContext = createContext<StoreContextValue | null>(null);
 
-function loadData(): AppData {
-  if (typeof window === "undefined") return createSeedData();
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw) as AppData;
-  } catch {
-    /* ignore */
-  }
-  return createSeedData();
-}
-
-function loadSession(): Session | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem(SESSION_KEY);
-    if (raw) return JSON.parse(raw) as Session;
-  } catch {
-    /* ignore */
-  }
-  return null;
+function applyBootstrap(
+  payload: BootstrapResponse,
+  setUser: (u: PublicUser | null) => void,
+  setData: (d: AppData) => void
+) {
+  setUser(payload.user);
+  setData(payload.data);
 }
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [data, setData] = useState<AppData>(createSeedData);
-  const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<PublicUser | null>(null);
 
-  useEffect(() => {
-    setData(loadData());
-    setSession(loadSession());
-    setReady(true);
+  const refresh = useCallback(async () => {
+    try {
+      const me = await api<{ user: PublicUser | null }>("/api/auth/me");
+      if (!me.user) {
+        setUser(null);
+        setData(createSeedData());
+        return;
+      }
+      const boot = await api<BootstrapResponse>("/api/bootstrap");
+      applyBootstrap(boot, setUser, setData);
+    } catch {
+      setUser(null);
+    }
   }, []);
 
   useEffect(() => {
-    if (!ready) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-  }, [data, ready]);
+    refresh().finally(() => setReady(true));
+  }, [refresh]);
 
-  useEffect(() => {
-    if (!ready) return;
-    if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
-    else localStorage.removeItem(SESSION_KEY);
-  }, [session, ready]);
-
-  const user = useMemo(
-    () => data.users.find((u) => u.id === session?.userId) ?? null,
-    [data.users, session]
-  );
-
-  const persist = useCallback((updater: (prev: AppData) => AppData) => {
-    setData((prev) => updater(prev));
+  const applyBoot = useCallback((boot: BootstrapResponse) => {
+    applyBootstrap(boot, setUser, setData);
   }, []);
 
-  const addAudit = useCallback(
-    (action: string, entity: string, entityId: string, detail: string) => {
-      persist((prev) => ({
-        ...prev,
-        auditLog: [
-          {
-            id: `aud-${Date.now()}`,
-            at: new Date().toISOString(),
-            actorId: session?.userId ?? "system",
-            action,
-            entity,
-            entityId,
-            detail,
-          },
-          ...prev.auditLog,
-        ],
-      }));
-    },
-    [persist, session?.userId]
-  );
-
-  const login = useCallback(
-    (email: string, password: string) => {
-      const found = data.users.find(
-        (u) => u.email.toLowerCase() === email.trim().toLowerCase()
-      );
-      if (!found || found.password !== password) {
-        return { ok: false, error: "Неверный email или пароль" };
-      }
-      if (found.blocked) {
-        return { ok: false, error: "Учётная запись заблокирована" };
-      }
-      setSession({ userId: found.id });
+  const login = useCallback(async (email: string, password: string) => {
+    try {
+      await api("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ email, password }),
+      });
+      const boot = await api<BootstrapResponse>("/api/bootstrap");
+      applyBootstrap(boot, setUser, setData);
       return { ok: true };
-    },
-    [data.users]
-  );
-
-  const logout = useCallback(() => setSession(null), []);
-
-  const requestRecovery = useCallback(
-    (email: string) => {
-      const found = data.users.find(
-        (u) => u.email.toLowerCase() === email.trim().toLowerCase()
-      );
-      if (!found) {
-        return {
-          ok: true,
-          message:
-            "Если аккаунт существует, на почту отправлена ссылка для восстановления (мок: проверьте демо-пароли в инструкции).",
-        };
-      }
+    } catch (e) {
       return {
-        ok: true,
-        message: `Письмо отправлено на ${found.email}. Демо-пароль: ${found.password}`,
+        ok: false,
+        error: e instanceof Error ? e.message : "Ошибка входа",
       };
-    },
-    [data.users]
-  );
-
-  const resetData = useCallback(() => {
-    const seed = createSeedData();
-    setData(seed);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(seed));
+    }
   }, []);
+
+  const logout = useCallback(async () => {
+    await api("/api/auth/logout", { method: "POST" });
+    setUser(null);
+    setData(createSeedData());
+  }, []);
+
+  const requestRecovery = useCallback(async (email: string) => {
+    const res = await api<{ message: string }>("/api/auth/recover", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    });
+    return { ok: true, message: res.message };
+  }, []);
+
+  const resetData = useCallback(async () => {
+    const boot = await api<BootstrapResponse>("/api/admin", {
+      method: "POST",
+      body: JSON.stringify({ action: "reset" }),
+    });
+    applyBoot(boot);
+  }, [applyBoot]);
 
   const markNotificationRead = useCallback(
-    (id: string) => {
-      persist((prev) => ({
-        ...prev,
-        notifications: prev.notifications.map((n) =>
-          n.id === id ? { ...n, read: true } : n
-        ),
-      }));
+    async (id: string) => {
+      const boot = await api<BootstrapResponse>("/api/notifications", {
+        method: "PATCH",
+        body: JSON.stringify({ id }),
+      });
+      applyBoot(boot);
     },
-    [persist]
+    [applyBoot]
   );
 
   const updateUser = useCallback(
-    (id: string, patch: Partial<User>) => {
-      persist((prev) => ({
-        ...prev,
-        users: prev.users.map((u) => (u.id === id ? { ...u, ...patch } : u)),
-      }));
-      addAudit("update", "user", id, "Обновление пользователя");
+    async (id: string, patch: Partial<User>) => {
+      const boot = await api<BootstrapResponse>("/api/users", {
+        method: "PATCH",
+        body: JSON.stringify({ id, patch }),
+      });
+      applyBoot(boot);
     },
-    [persist, addAudit]
+    [applyBoot]
   );
 
   const createUser = useCallback(
-    (input: Omit<User, "id" | "createdAt">) => {
-      const id = `u-${Date.now()}`;
-      persist((prev) => ({
-        ...prev,
-        users: [
-          ...prev.users,
-          { ...input, id, createdAt: new Date().toISOString() },
-        ],
-        roleHistory: [
-          {
-            id: `rh-${Date.now()}`,
-            userId: id,
-            fromRole: null,
-            toRole: input.role,
-            changedBy: session?.userId ?? "system",
-            at: new Date().toISOString(),
-            comment: "Создание пользователя",
-          },
-          ...prev.roleHistory,
-        ],
-      }));
-      addAudit("create", "user", id, `Создан пользователь ${input.email}`);
+    async (input: Omit<User, "id" | "createdAt">) => {
+      const boot = await api<BootstrapResponse>("/api/users", {
+        method: "POST",
+        body: JSON.stringify(input),
+      });
+      applyBoot(boot);
     },
-    [persist, addAudit, session?.userId]
+    [applyBoot]
   );
 
   const setUserRole = useCallback(
-    (userId: string, role: Role, comment: string) => {
-      persist((prev) => {
-        const current = prev.users.find((u) => u.id === userId);
-        if (!current) return prev;
-        return {
-          ...prev,
-          users: prev.users.map((u) =>
-            u.id === userId
-              ? { ...u, role, sections: DEFAULT_SECTIONS[role] }
-              : u
-          ),
-          roleHistory: [
-            {
-              id: `rh-${Date.now()}`,
-              userId,
-              fromRole: current.role,
-              toRole: role,
-              changedBy: session?.userId ?? "system",
-              at: new Date().toISOString(),
-              comment,
-            },
-            ...prev.roleHistory,
-          ],
-        };
+    async (userId: string, role: Role, comment: string) => {
+      const boot = await api<BootstrapResponse>("/api/users", {
+        method: "PATCH",
+        body: JSON.stringify({ id: userId, role, comment }),
       });
-      addAudit("role_change", "user", userId, comment);
+      applyBoot(boot);
     },
-    [persist, addAudit, session?.userId]
+    [applyBoot]
   );
 
   const setUserSections = useCallback(
-    (userId: string, sections: SectionKey[]) => {
-      updateUser(userId, { sections });
+    async (userId: string, sections: SectionKey[]) => {
+      const boot = await api<BootstrapResponse>("/api/users", {
+        method: "PATCH",
+        body: JSON.stringify({ id: userId, sections }),
+      });
+      applyBoot(boot);
     },
-    [updateUser]
+    [applyBoot]
   );
 
   const setProcurementReview = useCallback(
-    (id: string, status: ReviewStatus) => {
-      persist((prev) => ({
-        ...prev,
-        procurements: prev.procurements.map((p) =>
-          p.id === id ? { ...p, reviewStatus: status } : p
-        ),
-      }));
-      addAudit("review", "procurement", id, `Статус рассмотрения: ${status}`);
+    async (id: string, status: ReviewStatus) => {
+      const boot = await api<BootstrapResponse>("/api/zakupki", {
+        method: "PATCH",
+        body: JSON.stringify({ id, reviewStatus: status }),
+      });
+      applyBoot(boot);
     },
-    [persist, addAudit]
+    [applyBoot]
   );
 
   const updateCalculation = useCallback(
-    (id: string, patch: Partial<Calculation>) => {
-      persist((prev) => ({
-        ...prev,
-        calculations: prev.calculations.map((c) =>
-          c.id === id
-            ? { ...c, ...patch, updatedAt: new Date().toISOString() }
-            : c
-        ),
-      }));
+    async (id: string, patch: Partial<Calculation>) => {
+      const boot = await api<BootstrapResponse>("/api/raschety", {
+        method: "PATCH",
+        body: JSON.stringify({ id, patch }),
+      });
+      applyBoot(boot);
     },
-    [persist]
+    [applyBoot]
   );
 
   const recalcCalculation = useCallback(
-    (id: string, scenario: Calculation["scenario"]) => {
-      const factor =
-        scenario === "optimisticheskiy"
-          ? 0.95
-          : scenario === "pessimisticheskiy"
-            ? 1.08
-            : 1;
-      updateCalculation(id, {
-        scenario,
-        scenarioFactor: factor,
-        status: "trebuet_proverki" as CardStatus,
+    async (id: string, scenario: Calculation["scenario"]) => {
+      const boot = await api<BootstrapResponse>("/api/raschety", {
+        method: "PATCH",
+        body: JSON.stringify({ id, recalcScenario: scenario }),
       });
-      addAudit("recalc", "calculation", id, `Сценарий: ${scenario}`);
+      applyBoot(boot);
     },
-    [updateCalculation, addAudit]
+    [applyBoot]
   );
 
   const updateDocument = useCallback(
-    (id: string, patch: Partial<DocumentItem>) => {
-      persist((prev) => ({
-        ...prev,
-        documents: prev.documents.map((d) =>
-          d.id === id ? { ...d, ...patch } : d
-        ),
-      }));
+    async (id: string, patch: Partial<DocumentItem>) => {
+      const boot = await api<BootstrapResponse>("/api/dokumenty", {
+        method: "PATCH",
+        body: JSON.stringify({ id, patch }),
+      });
+      applyBoot(boot);
     },
-    [persist]
+    [applyBoot]
   );
 
   const reanalyzeDocument = useCallback(
-    (id: string) => {
-      persist((prev) => ({
-        ...prev,
-        documents: prev.documents.map((d) => {
-          if (d.id !== id) return d;
-          const nextVersion = d.versions.length + 1;
-          return {
-            ...d,
-            status: "gotovo" as CardStatus,
-            versions: [
-              ...d.versions,
-              {
-                id: `dv-${Date.now()}`,
-                version: nextVersion,
-                authorId: session?.userId ?? "system",
-                at: new Date().toISOString(),
-                note: "Повторный разбор",
-              },
-            ],
-            analyticalNote:
-              d.analyticalNote +
-              "\n\n[Повторный разбор] Уточнены цитаты и подсветки для ручной проверки.",
-          };
+    async (id: string) => {
+      const boot = await api<BootstrapResponse>("/api/jobs", {
+        method: "POST",
+        body: JSON.stringify({
+          type: "document_reanalyze",
+          documentId: id,
         }),
-      }));
-      addAudit("reanalyze", "document", id, "Повторный разбор документа");
+      });
+      applyBoot(boot);
     },
-    [persist, addAudit, session?.userId]
+    [applyBoot]
+  );
+
+  const createDocumentUpload = useCallback(
+    async (input: {
+      procurementId: string;
+      title: string;
+      fileName: string;
+      fileType: "pdf" | "docx" | "xlsx";
+    }) => {
+      const boot = await api<BootstrapResponse>("/api/dokumenty", {
+        method: "POST",
+        body: JSON.stringify(input),
+      });
+      applyBoot(boot);
+    },
+    [applyBoot]
   );
 
   const updateSchedule = useCallback(
-    (id: string, patch: Partial<GprSchedule>) => {
-      persist((prev) => ({
-        ...prev,
-        schedules: prev.schedules.map((s) =>
-          s.id === id
-            ? { ...s, ...patch, updatedAt: new Date().toISOString() }
-            : s
-        ),
-      }));
+    async (id: string, patch: Partial<GprSchedule>) => {
+      const boot = await api<BootstrapResponse>("/api/gpr", {
+        method: "PATCH",
+        body: JSON.stringify({ id, patch }),
+      });
+      applyBoot(boot);
     },
-    [persist]
+    [applyBoot]
   );
 
   const updateMoney = useCallback(
-    (id: string, patch: Partial<MoneyPlan>) => {
-      persist((prev) => ({
-        ...prev,
-        moneyPlans: prev.moneyPlans.map((m) =>
-          m.id === id
-            ? { ...m, ...patch, updatedAt: new Date().toISOString() }
-            : m
-        ),
-      }));
+    async (id: string, patch: Partial<MoneyPlan>) => {
+      const boot = await api<BootstrapResponse>("/api/dengi", {
+        method: "PATCH",
+        body: JSON.stringify({ id, patch }),
+      });
+      applyBoot(boot);
     },
-    [persist]
+    [applyBoot]
   );
 
   const updateRisk = useCallback(
-    (id: string, patch: Partial<RiskRegistry>) => {
-      persist((prev) => ({
-        ...prev,
-        risks: prev.risks.map((r) =>
-          r.id === id
-            ? { ...r, ...patch, updatedAt: new Date().toISOString() }
-            : r
-        ),
-      }));
+    async (id: string, patch: Partial<RiskRegistry>) => {
+      const boot = await api<BootstrapResponse>("/api/riski", {
+        method: "PATCH",
+        body: JSON.stringify({ id, patch }),
+      });
+      applyBoot(boot);
     },
-    [persist]
+    [applyBoot]
   );
 
   const updatePlanFact = useCallback(
-    (id: string, patch: Partial<PlanFact>) => {
-      persist((prev) => ({
-        ...prev,
-        planFacts: prev.planFacts.map((p) =>
-          p.id === id
-            ? { ...p, ...patch, updatedAt: new Date().toISOString() }
-            : p
-        ),
-      }));
+    async (id: string, patch: Partial<PlanFact>) => {
+      const boot = await api<BootstrapResponse>("/api/proizvodstvo", {
+        method: "PATCH",
+        body: JSON.stringify({ id, patch }),
+      });
+      applyBoot(boot);
     },
-    [persist]
+    [applyBoot]
   );
 
   const setDirectoryCurrent = useCallback(
-    (id: string) => {
-      persist((prev) => {
-        const target = prev.directories.find((d) => d.id === id);
-        if (!target) return prev;
-        return {
-          ...prev,
-          directories: prev.directories.map((d) =>
-            d.type === target.type
-              ? { ...d, current: d.id === id }
-              : d
-          ),
-        };
+    async (id: string) => {
+      const boot = await api<BootstrapResponse>("/api/spravochniki", {
+        method: "POST",
+        body: JSON.stringify({ action: "setCurrent", id }),
       });
-      addAudit("directory", "directory", id, "Установлена текущая версия справочника");
+      applyBoot(boot);
     },
-    [persist, addAudit]
+    [applyBoot]
   );
 
   const importDirectoryRows = useCallback(
-    (
+    async (
       type: AppData["directories"][0]["type"],
       rows: Record<string, string | number>[]
     ) => {
-      const sameType = data.directories.filter((d) => d.type === type);
-      const nextVersion =
-        Math.max(0, ...sameType.map((d) => d.version)) + 1;
-      const id = `dir-${type}-${nextVersion}`;
-      persist((prev) => ({
-        ...prev,
-        directories: [
-          ...prev.directories.map((d) =>
-            d.type === type ? { ...d, current: false } : d
-          ),
-          {
-            id,
-            type,
-            name:
-              type === "normy"
-                ? "Нормы (импорт Excel)"
-                : type === "rascenki"
-                  ? "Расценки (импорт Excel)"
-                  : type === "ceny"
-                    ? "Цены (импорт Excel)"
-                    : "Профиль закупок (импорт)",
-            version: nextVersion,
-            authorId: session?.userId ?? "system",
-            at: new Date().toISOString(),
-            current: true,
-            rows,
-          },
-        ],
-      }));
-      addAudit("import", "directory", id, `Импорт Excel, версия ${nextVersion}`);
+      const boot = await api<BootstrapResponse>("/api/spravochniki", {
+        method: "POST",
+        body: JSON.stringify({ action: "import", type, rows }),
+      });
+      applyBoot(boot);
     },
-    [data.directories, persist, addAudit, session?.userId]
+    [applyBoot]
   );
 
   const confirmSmetaExchange = useCallback(
-    (id: string) => {
-      persist((prev) => ({
-        ...prev,
-        smetaExchanges: prev.smetaExchanges.map((s) =>
-          s.id === id ? { ...s, confirmed: true } : s
-        ),
-      }));
-      addAudit("confirm", "smeta", id, "Подтверждён обмен со сметным ПО");
+    async (id: string) => {
+      const boot = await api<BootstrapResponse>("/api/smeta", {
+        method: "POST",
+        body: JSON.stringify({ action: "confirm", id }),
+      });
+      applyBoot(boot);
     },
-    [persist, addAudit]
+    [applyBoot]
   );
 
-  const orgId = user?.orgId;
+  const importSmetaFile = useCallback(
+    async (file: File, calcId = "c-1") => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("calcId", calcId);
+      const boot = await api<BootstrapResponse>("/api/smeta", {
+        method: "POST",
+        body: form,
+      });
+      applyBoot(boot);
+    },
+    [applyBoot]
+  );
+
+  const runSyncJob = useCallback(async () => {
+    const boot = await api<BootstrapResponse>("/api/jobs", {
+      method: "POST",
+      body: JSON.stringify({ type: "procurement_sync" }),
+    });
+    applyBoot(boot);
+  }, [applyBoot]);
+
+  const addAudit = useCallback(() => {
+    /* audit is server-side now */
+  }, []);
 
   const orgProcurements = useMemo(
-    () => data.procurements.filter((p) => p.orgId === orgId),
-    [data.procurements, orgId]
+    () => data.procurements,
+    [data.procurements]
   );
-
-  const orgDocuments = useMemo(
-    () => data.documents.filter((d) => d.orgId === orgId),
-    [data.documents, orgId]
-  );
-
+  const orgDocuments = useMemo(() => data.documents, [data.documents]);
   const unreadCount = useMemo(() => {
     if (!user) return 0;
-    return data.notifications.filter((n) => n.userId === user.id && !n.read)
-      .length;
+    return data.notifications.filter((n) => !n.read).length;
   }, [data.notifications, user]);
 
   const value: StoreContextValue = {
@@ -516,6 +420,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     logout,
     requestRecovery,
     resetData,
+    refresh,
     markNotificationRead,
     updateUser,
     createUser,
@@ -526,6 +431,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     recalcCalculation,
     updateDocument,
     reanalyzeDocument,
+    createDocumentUpload,
     updateSchedule,
     updateMoney,
     updateRisk,
@@ -533,6 +439,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setDirectoryCurrent,
     importDirectoryRows,
     confirmSmetaExchange,
+    importSmetaFile,
+    runSyncJob,
     addAudit,
     orgProcurements,
     orgDocuments,
@@ -552,7 +460,7 @@ export function useStore() {
 
 export function userNotifications(
   notifications: NotificationItem[],
-  userId: string
+  _userId: string
 ) {
-  return notifications.filter((n) => n.userId === userId);
+  return notifications;
 }

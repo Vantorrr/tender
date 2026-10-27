@@ -22,11 +22,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  downloadTextFile,
-  formatNumber,
-  toCsv,
-} from "@/lib/format";
+import { downloadUrl } from "@/lib/api";
+import { formatNumber } from "@/lib/format";
 import { useStore } from "@/lib/store";
 
 export default function ProizvodstvoPage() {
@@ -67,25 +64,8 @@ export default function ProizvodstvoPage() {
           plan ? (
             <Button
               onClick={() => {
-                const rows = [
-                  ["Работа", "Ед.", "План", "Факт", "Отклонение", "%"],
-                  ...plan.entries.map((e) => [
-                    e.workName,
-                    e.unit,
-                    e.plan,
-                    e.fact,
-                    e.fact - e.plan,
-                    e.plan
-                      ? Math.round(((e.fact - e.plan) / e.plan) * 100)
-                      : 0,
-                  ]),
-                ];
-                downloadTextFile(
-                  `plan-fact-${plan.id}.csv`,
-                  "\uFEFF" + toCsv(rows),
-                  "text/csv;charset=utf-8"
-                );
-                toast.success("Сводка экспортирована");
+                downloadUrl(`/api/export?kind=planfact-xlsx&id=${plan.id}`);
+                toast.success("Скачивание XLSX…");
               }}
             >
               Экспорт

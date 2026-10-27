@@ -43,9 +43,9 @@ export default function DocumentDetailPage() {
             <StatusBadge status={doc.status} />
             <Button
               variant="outline"
-              onClick={() => {
-                reanalyzeDocument(doc.id);
-                toast.success("Повторный разбор выполнен");
+              onClick={async () => {
+                await reanalyzeDocument(doc.id);
+                toast.success("Серверный pipeline разбора выполнен");
               }}
             >
               Переразобрать

@@ -14,7 +14,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { downloadTextFile, formatDateTime, toCsv } from "@/lib/format";
+import { downloadUrl } from "@/lib/api";
+import { formatDateTime } from "@/lib/format";
 import { useStore } from "@/lib/store";
 import type { DirectoryVersion } from "@/lib/types";
 
@@ -36,23 +37,11 @@ export default function SpravochnikiPage() {
   const current = items.find((d) => d.current) ?? items[0];
 
   function downloadTemplate() {
-    const headers =
-      tab === "normy"
-        ? ["code", "name", "unit", "labor"]
-        : tab === "rascenki"
-          ? ["code", "work", "rate"]
-          : tab === "ceny"
-            ? ["sku", "name", "unit", "price"]
-            : ["region", "okpd", "maxNmck"];
-    downloadTextFile(
-      `shablon-${tab}.csv`,
-      "\uFEFF" + toCsv([headers, headers.map(() => "")]),
-      "text/csv;charset=utf-8"
-    );
-    toast.success("Шаблон Excel/CSV скачан");
+    downloadUrl(`/api/export?kind=dir-template&type=${tab}`);
+    toast.success("Шаблон XLSX скачивается…");
   }
 
-  function mockImport() {
+  async function mockImport() {
     const sample =
       tab === "normy"
         ? [{ code: "ГЭСН NEW", name: "Импортированная норма", unit: "м²", labor: 0.3 }]
@@ -61,7 +50,7 @@ export default function SpravochnikiPage() {
           : tab === "ceny"
             ? [{ sku: "MAT-NEW", name: "Материал импорт", unit: "шт", price: 500 }]
             : [{ region: "Рязань", okpd: "41.20", maxNmck: 50000000 }];
-    importDirectoryRows(tab, sample);
+    await importDirectoryRows(tab, sample);
     toast.success("Импорт выполнен, создана новая текущая версия");
   }
 

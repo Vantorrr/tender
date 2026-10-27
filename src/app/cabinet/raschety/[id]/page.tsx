@@ -21,12 +21,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  downloadTextFile,
-  formatMoney,
-  formatNumber,
-  toCsv,
-} from "@/lib/format";
+import { downloadUrl } from "@/lib/api";
+import { formatMoney, formatNumber } from "@/lib/format";
 import type { Calculation } from "@/lib/types";
 import { useStore } from "@/lib/store";
 
@@ -52,48 +48,13 @@ export default function RaschetDetailPage() {
   const total = base * calc.scenarioFactor;
 
   function exportExcelLike() {
-    const rows = [
-      ["Код", "Наименование", "Ед.", "Кол-во", "Расценка", "Сумма"],
-      ...calc!.positions.map((p) => [
-        p.code,
-        p.name,
-        p.unit,
-        p.quantity,
-        p.rate,
-        Math.round(p.quantity * p.rate * calc!.scenarioFactor),
-      ]),
-      [],
-      ["Итого", "", "", "", "", Math.round(total)],
-      ["Сценарий", calc!.scenario, "Коэфф.", calc!.scenarioFactor],
-    ];
-    downloadTextFile(
-      `raschet-${calc!.id}.csv`,
-      "\uFEFF" + toCsv(rows),
-      "text/csv;charset=utf-8"
-    );
-    toast.success("Экспорт CSV (Excel) готов");
+    downloadUrl(`/api/export?kind=calc-xlsx&id=${calc!.id}`);
+    toast.success("Скачивание XLSX…");
   }
 
   function exportPdfLike() {
-    const lines = [
-      calc!.title,
-      `Версия ${calc!.version}`,
-      `Итого: ${formatMoney(total)}`,
-      "",
-      ...calc!.positions.map(
-        (p) =>
-          `${p.code} | ${p.name} | ${p.quantity} ${p.unit} × ${p.rate} = ${formatMoney(p.quantity * p.rate * calc!.scenarioFactor)}`
-      ),
-      "",
-      "Допущения:",
-      ...calc!.assumptions.map((a) => `- ${a}`),
-    ];
-    downloadTextFile(
-      `raschet-${calc!.id}.txt`,
-      lines.join("\n"),
-      "text/plain;charset=utf-8"
-    );
-    toast.success("Экспорт PDF-макета (текст) готов");
+    downloadUrl(`/api/export?kind=calc-pdf&id=${calc!.id}`);
+    toast.success("Скачивание PDF…");
   }
 
   return (

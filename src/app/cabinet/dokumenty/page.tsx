@@ -11,7 +11,8 @@ import { formatDateTime } from "@/lib/format";
 import { useStore } from "@/lib/store";
 
 export default function DokumentyPage() {
-  const { orgDocuments, user, addAudit } = useStore();
+  const { orgDocuments, user, createDocumentUpload, orgProcurements } =
+    useStore();
   const [q, setQ] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -32,16 +33,21 @@ export default function DokumentyPage() {
               type="file"
               accept=".pdf,.docx,.xlsx"
               className="hidden"
-              onChange={(e) => {
+              onChange={async (e) => {
                 const file = e.target.files?.[0];
                 if (!file) return;
-                toast.success(`Файл «${file.name}» принят (мок-загрузка)`);
-                addAudit(
-                  "upload",
-                  "document",
-                  "new",
-                  `Загружен файл ${file.name}`
-                );
+                const ext = file.name.split(".").pop()?.toLowerCase();
+                const fileType =
+                  ext === "docx" || ext === "xlsx" || ext === "pdf"
+                    ? ext
+                    : "pdf";
+                await createDocumentUpload({
+                  procurementId: orgProcurements[0]?.id ?? "p-1",
+                  title: file.name.replace(/\.[^.]+$/, ""),
+                  fileName: file.name,
+                  fileType,
+                });
+                toast.success(`Файл «${file.name}» загружен на сервер`);
                 e.target.value = "";
               }}
             />

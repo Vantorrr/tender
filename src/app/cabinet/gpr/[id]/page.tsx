@@ -7,11 +7,8 @@ import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  downloadTextFile,
-  formatDate,
-  toCsv,
-} from "@/lib/format";
+import { downloadUrl } from "@/lib/api";
+import { formatDate } from "@/lib/format";
 import { useStore } from "@/lib/store";
 
 function daysBetween(a: string, b: string) {
@@ -59,22 +56,8 @@ export default function GprDetailPage() {
             </Button>
             <Button
               onClick={() => {
-                const rows = [
-                  ["Этап", "Начало", "Окончание", "Порядок", "Зависит от"],
-                  ...schedule.stages.map((s) => [
-                    s.name,
-                    s.start,
-                    s.end,
-                    s.sequence,
-                    s.dependsOn ?? "",
-                  ]),
-                ];
-                downloadTextFile(
-                  `gpr-${schedule.id}.csv`,
-                  "\uFEFF" + toCsv(rows),
-                  "text/csv;charset=utf-8"
-                );
-                toast.success("ГПР экспортирован");
+                downloadUrl(`/api/export?kind=gpr-xlsx&id=${schedule.id}`);
+                toast.success("Скачивание XLSX…");
               }}
             >
               Экспорт
