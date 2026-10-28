@@ -1,12 +1,19 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { EntityCard } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { formatDateTime } from "@/lib/format";
 import { useStore } from "@/lib/store";
 
@@ -14,20 +21,61 @@ export default function DokumentyPage() {
   const { orgDocuments, user, createDocumentUpload, orgProcurements } =
     useStore();
   const [q, setQ] = useState("");
+  const [procurementId, setProcurementId] = useState<string | undefined>(
+    undefined
+  );
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!procurementId && orgProcurements[0]?.id) {
+      setProcurementId(orgProcurements[0].id);
+    }
+  }, [orgProcurements, procurementId]);
 
   const filtered = orgDocuments.filter((d) => {
     if (!q) return true;
     return `${d.title} ${d.fileName}`.toLowerCase().includes(q.toLowerCase());
   });
 
+  async function handleFile(file: File) {
+    if (!procurementId) {
+      toast.error("Сначала выберите закупку");
+      return;
+    }
+    try {
+      await createDocumentUpload({
+        procurementId,
+        title: file.name.replace(/\.[^.]+$/, ""),
+        file,
+      });
+      toast.success(`Файл «${file.name}» сохранён на сервере`);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка загрузки");
+    }
+  }
+
   return (
     <div>
       <PageHeader
         title="Документы"
-        description="Загрузка PDF/DOCX/XLSX, аналитическая записка с цитатами, версии и повторный разбор."
+        description="Загрузка PDF/DOCX/XLSX на сервер, аналитическая записка, версии и повторный разбор."
         actions={
           <>
+            <Select
+              value={procurementId || undefined}
+              onValueChange={(v) => setProcurementId(v ?? "")}
+            >
+              <SelectTrigger className="w-[220px]">
+                <SelectValue placeholder="Закупка" />
+              </SelectTrigger>
+              <SelectContent>
+                {orgProcurements.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.number}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <input
               ref={inputRef}
               type="file"
@@ -36,22 +84,14 @@ export default function DokumentyPage() {
               onChange={async (e) => {
                 const file = e.target.files?.[0];
                 if (!file) return;
-                const ext = file.name.split(".").pop()?.toLowerCase();
-                const fileType =
-                  ext === "docx" || ext === "xlsx" || ext === "pdf"
-                    ? ext
-                    : "pdf";
-                await createDocumentUpload({
-                  procurementId: orgProcurements[0]?.id ?? "p-1",
-                  title: file.name.replace(/\.[^.]+$/, ""),
-                  fileName: file.name,
-                  fileType,
-                });
-                toast.success(`Файл «${file.name}» загружен на сервер`);
+                await handleFile(file);
                 e.target.value = "";
               }}
             />
-            <Button onClick={() => inputRef.current?.click()}>
+            <Button
+              onClick={() => inputRef.current?.click()}
+              disabled={!procurementId}
+            >
               Загрузить документ
             </Button>
           </>
@@ -68,7 +108,7 @@ export default function DokumentyPage() {
       {filtered.length === 0 ? (
         <EmptyState
           title="Документов пока нет"
-          description="Загрузите PDF, DOCX или XLSX по закупке, чтобы запустить разбор."
+          description="Выберите закупку и загрузите PDF, DOCX или XLSX."
           actionLabel="Загрузить"
           onAction={() => inputRef.current?.click()}
         />
@@ -85,9 +125,12 @@ export default function DokumentyPage() {
                 <div className="space-y-1">
                   <div>Версий: {d.versions.length}</div>
                   <div>Цитат: {d.citations.length}</div>
-                  <div>
-                    Подсветок для проверки: {d.highlights.length}
-                  </div>
+                  <div>Подсветок для проверки: {d.highlights.length}</div>
+                  {d.fileSize ? (
+                    <div>
+                      Размер: {(d.fileSize / 1024).toFixed(1)} КБ
+                    </div>
+                  ) : null}
                 </div>
               }
               footer={

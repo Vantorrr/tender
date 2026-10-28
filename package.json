@@ -9,6 +9,7 @@
     "build": "next build",
     "start": "next start --port 43141 --hostname 0.0.0.0",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "turnkey": "npm run setup && npm run build && npm run start"
   },
   "dependencies": {

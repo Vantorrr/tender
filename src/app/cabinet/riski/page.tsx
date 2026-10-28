@@ -27,7 +27,7 @@ const statusLabel: Record<RiskRemark["status"], string> = {
 };
 
 export default function RiskiPage() {
-  const { data, user, updateRisk } = useStore();
+  const { data, user, updateRisk, parseRiskContract } = useStore();
   const [riskId, setRiskId] = useState("");
 
   const risks = useMemo(
@@ -49,17 +49,31 @@ export default function RiskiPage() {
             <>
               <Button
                 variant="outline"
-                onClick={() => {
-                  updateRisk(risk.id, { contractParsed: true });
-                  toast.success("Договор разобран (мок-помощник)");
+                onClick={async () => {
+                  try {
+                    await parseRiskContract(risk.id);
+                    toast.success("Договор разобран — добавлены замечания");
+                  } catch (e) {
+                    toast.error(
+                      e instanceof Error ? e.message : "Ошибка разбора"
+                    );
+                  }
                 }}
               >
                 Разобрать договор
               </Button>
               <Button
-                onClick={() => {
-                  downloadUrl(`/api/export?kind=risks-xlsx&id=${risk.id}`);
-                  toast.success("Скачивание XLSX…");
+                onClick={async () => {
+                  try {
+                    await downloadUrl(
+                      `/api/export?kind=risks-xlsx&id=${risk.id}`
+                    );
+                    toast.success("XLSX скачан");
+                  } catch (e) {
+                    toast.error(
+                      e instanceof Error ? e.message : "Ошибка экспорта"
+                    );
+                  }
                 }}
               >
                 Экспорт

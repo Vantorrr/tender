@@ -243,6 +243,7 @@ export function createSeedData(): AppData {
         objectId: "obj-2",
         documentIds: ["d-3"],
         calculationId: "c-2",
+        planFactId: "pf-2",
         tags: ["склад", "223-ФЗ"],
         createdAt: "2026-10-22T11:30:00Z",
       },
@@ -1051,6 +1052,7 @@ export function createSeedData(): AppData {
     smetaExchanges: [
       {
         id: "sx-1",
+        orgId: "org-alfa",
         name: "Импорт из Гранд-Смета — школа №12",
         at: "2026-10-24T14:00:00Z",
         authorId: "u-smet",
@@ -1063,6 +1065,7 @@ export function createSeedData(): AppData {
       },
       {
         id: "sx-2",
+        orgId: "org-alfa",
         name: "Экспорт в сметное ПО — очистные",
         at: "2026-10-18T12:00:00Z",
         authorId: "u-smet",

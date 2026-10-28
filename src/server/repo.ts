@@ -79,8 +79,17 @@ export function getBootstrap(user: User) {
       organizations: isSuper
         ? data.organizations
         : data.organizations.filter((o) => o.id === orgId),
-      auditLog: isSuper || fresh.role === "admin" ? data.auditLog : [],
-      smetaExchanges: data.smetaExchanges,
+      auditLog: isSuper
+        ? data.auditLog
+        : fresh.role === "admin"
+          ? data.auditLog.filter((a) => {
+              const actor = data.users.find((u) => u.id === a.actorId);
+              return !actor || actor.orgId === orgId;
+            })
+          : [],
+      smetaExchanges: data.smetaExchanges.filter(
+        (s) => isSuper || (s.orgId ?? "org-alfa") === orgId
+      ),
       directories: data.directories,
       roleHistory: data.roleHistory.filter((h) =>
         data.users.some(
@@ -95,6 +104,42 @@ export function markNotificationRead(userId: string, id: string) {
   return mutateAppData((data) => {
     data.notifications = data.notifications.map((n) =>
       n.id === id && n.userId === userId ? { ...n, read: true } : n
+    );
+    return data;
+  });
+}
+
+export function markAllNotificationsRead(userId: string) {
+  return mutateAppData((data) => {
+    data.notifications = data.notifications.map((n) =>
+      n.userId === userId ? { ...n, read: true } : n
+    );
+    return data;
+  });
+}
+
+export function setOrganizationActive(
+  actorId: string,
+  orgId: string,
+  active: boolean
+) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    if (actor.role !== "superadmin") {
+      throw new Error("Нет доступа к управлению организациями");
+    }
+    const org = data.organizations.find((o) => o.id === orgId);
+    if (!org) throw new Error("Организация не найдена");
+    data.organizations = data.organizations.map((o) =>
+      o.id === orgId ? { ...o, active } : o
+    );
+    audit(
+      data,
+      actorId,
+      active ? "activate" : "deactivate",
+      "organization",
+      orgId,
+      active ? "Организация активирована" : "Организация отключена"
     );
     return data;
   });
@@ -185,15 +230,45 @@ export function setUserRole(
 export function setProcurementReview(
   actorId: string,
   id: string,
-  status: ReviewStatus
+  status: ReviewStatus,
+  duplicateOf?: string
 ) {
   return mutateAppData((data) => {
     const actor = actorUser(data, actorId);
     const item = data.procurements.find((p) => p.id === id);
     if (!item) throw new Error("Закупка не найдена");
     assertOrgAccess(actor, item.orgId, "закупки");
+    let resolvedDup = duplicateOf;
+    if (status === "dublirovana" && !resolvedDup) {
+      const norm = item.number
+        .trim()
+        .toUpperCase()
+        .replace(/-(DUP|AUTO)(\d*)?$/i, "");
+      const original = data.procurements.find(
+        (p) =>
+          p.orgId === item.orgId &&
+          p.id !== id &&
+          p.reviewStatus !== "dublirovana" &&
+          p.number
+            .trim()
+            .toUpperCase()
+            .replace(/-(DUP|AUTO)(\d*)?$/i, "") === norm
+      );
+      resolvedDup = original?.id ?? item.duplicateOf;
+    }
     data.procurements = data.procurements.map((p) =>
-      p.id === id ? { ...p, reviewStatus: status } : p
+      p.id === id
+        ? {
+            ...p,
+            reviewStatus: status,
+            duplicateOf:
+              status === "dublirovana" ? resolvedDup : undefined,
+            tags:
+              status === "dublirovana" && !p.tags.includes("дубликат")
+                ? [...p.tags, "дубликат"]
+                : p.tags,
+          }
+        : p
     );
     audit(data, actorId, "review", "procurement", id, `Статус: ${status}`);
     return data;
@@ -333,14 +408,22 @@ export function createDocument(
     title: string;
     fileName: string;
     fileType: "pdf" | "docx" | "xlsx";
+    storedPath?: string;
+    fileSize?: number;
   }
-) {
-  return mutateAppData((data) => {
+): { documentId: string } {
+  let documentId = "";
+  mutateAppData((data) => {
     const actor = actorUser(data, actorId);
     assertOrgAccess(actor, input.orgId, "документа");
+    if (!input.procurementId) {
+      throw new Error("Укажите закупку для документа");
+    }
     const proc = data.procurements.find((p) => p.id === input.procurementId);
-    if (proc) assertOrgAccess(actor, proc.orgId, "закупки");
+    if (!proc) throw new Error("Закупка не найдена");
+    assertOrgAccess(actor, proc.orgId, "закупки");
     const id = `d-${Date.now()}`;
+    documentId = id;
     const doc: DocumentItem = {
       id,
       orgId: input.orgId,
@@ -358,15 +441,188 @@ export function createDocument(
           note: "Загрузка на сервер",
         },
       ],
-      analyticalNote: "Разбор поставлен в очередь. Предварительная записка сформируется после pipeline.",
+      analyticalNote:
+        "Разбор поставлен в очередь. Предварительная записка сформируется после pipeline.",
       citations: [],
       highlights: [],
       uploadedBy: actorId,
       uploadedAt: new Date().toISOString(),
+      storedPath: input.storedPath,
+      fileSize: input.fileSize,
     };
     data.documents.unshift(doc);
-    if (proc) proc.documentIds = [...proc.documentIds, id];
+    proc.documentIds = [...proc.documentIds, id];
     audit(data, actorId, "upload", "document", id, `Загружен ${input.fileName}`);
+    return data;
+  });
+  return { documentId };
+}
+
+/** Ensure calc/GPR/money/risk/plan-fact exist for a procurement (create stubs). */
+export function ensureProcurementChain(actorId: string, procurementId: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const p = data.procurements.find((x) => x.id === procurementId);
+    if (!p) throw new Error("Закупка не найдена");
+    assertOrgAccess(actor, p.orgId, "закупки");
+    const now = new Date().toISOString();
+    const created: string[] = [];
+
+    if (!p.calculationId) {
+      const id = `c-${Date.now()}`;
+      const currentDir =
+        data.directories.find((d) => d.type === "rascenki" && d.current) ??
+        data.directories[0];
+      data.calculations.unshift({
+        id,
+        orgId: p.orgId,
+        procurementId: p.id,
+        title: `Черновой расчёт — ${p.title.slice(0, 48)}`,
+        status: "v_rabote",
+        positions: [
+          {
+            id: `cp-${Date.now()}`,
+            code: "01-01-001-01",
+            name: "Подготовительные работы (авто)",
+            unit: "компл",
+            quantity: 1,
+            rate: Math.round(p.nmck * 0.02),
+          },
+        ],
+        assumptions: [
+          "Сформировано из карточки закупки",
+          "Требует проверки сметчика",
+        ],
+        scenario: "bazovyy",
+        scenarioFactor: 1,
+        participateDecision: "na_rassmotrenii",
+        directoryVersionId: currentDir?.id ?? "dir-rascenki-1",
+        version: 1,
+        authorId: actorId,
+        updatedAt: now,
+      });
+      p.calculationId = id;
+      created.push("расчёт");
+    }
+
+    if (!p.gprId) {
+      const id = `g-${Date.now()}`;
+      const start = now.slice(0, 10);
+      const stage1 = `gs-${Date.now()}`;
+      const stage2 = `gs-${Date.now() + 1}`;
+      data.schedules.unshift({
+        id,
+        orgId: p.orgId,
+        procurementId: p.id,
+        calculationId: p.calculationId ?? "",
+        title: `ГПР — ${p.title.slice(0, 48)}`,
+        status: "v_rabote",
+        version: 1,
+        authorId: actorId,
+        stages: [
+          {
+            id: stage1,
+            name: "Подготовка",
+            start,
+            end: new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10),
+            sequence: 1,
+          },
+          {
+            id: stage2,
+            name: "Основные работы",
+            start: new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10),
+            end: new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10),
+            sequence: 2,
+            dependsOn: stage1,
+          },
+        ],
+        updatedAt: now,
+      });
+      p.gprId = id;
+      created.push("ГПР");
+    }
+
+    if (!p.moneyId) {
+      const id = `m-${Date.now()}`;
+      data.moneyPlans.unshift({
+        id,
+        orgId: p.orgId,
+        procurementId: p.id,
+        title: `Деньги — ${p.title.slice(0, 48)}`,
+        status: "v_rabote",
+        payments: [
+          {
+            id: `mp-${Date.now()}`,
+            type: "avans",
+            title: "Аванс 30%",
+            amount: Math.round(p.nmck * 0.3),
+            date: now.slice(0, 10),
+            week: Math.ceil(
+              (new Date().getTime() -
+                new Date(new Date().getFullYear(), 0, 1).getTime()) /
+                604800000
+            ),
+            month: new Date().getMonth() + 1,
+          },
+        ],
+        updatedAt: now,
+      });
+      p.moneyId = id;
+      created.push("деньги");
+    }
+
+    const hasRisk = data.risks.some((r) => r.procurementId === p.id);
+    if (!hasRisk) {
+      data.risks.unshift({
+        id: `r-${Date.now()}`,
+        orgId: p.orgId,
+        procurementId: p.id,
+        title: `Риски — ${p.title.slice(0, 48)}`,
+        status: "v_rabote",
+        contractParsed: false,
+        remarks: [],
+        updatedAt: now,
+      });
+      created.push("риски");
+    }
+
+    if (!p.planFactId) {
+      const obj =
+        data.objects.find((o) => o.id === p.objectId) ??
+        data.objects.find((o) => o.orgId === p.orgId);
+      const id = `pf-${Date.now()}`;
+      data.planFacts.unshift({
+        id,
+        orgId: p.orgId,
+        objectId: obj?.id ?? "obj-1",
+        procurementId: p.id,
+        title: `План/факт — ${p.title.slice(0, 48)}`,
+        status: "v_rabote",
+        entries: [
+          {
+            id: `pfe-${Date.now()}`,
+            workName: "Общий объём",
+            unit: "%",
+            plan: 100,
+            fact: 0,
+          },
+        ],
+        updatedAt: now,
+      });
+      p.planFactId = id;
+      created.push("план/факт");
+    }
+
+    audit(
+      data,
+      actorId,
+      "ensure_chain",
+      "procurement",
+      procurementId,
+      created.length
+        ? `Создано: ${created.join(", ")}`
+        : "Цепочка уже полная"
+    );
     return data;
   });
 }
@@ -526,6 +782,7 @@ export function importSmetaExchange(
   ours: { code: string; quantity: number }[]
 ) {
   return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
     const discrepancies = mapped
       .map((t) => {
         const o = ours.find((x) => x.code === t.code);
@@ -537,6 +794,7 @@ export function importSmetaExchange(
     const id = `sx-${Date.now()}`;
     data.smetaExchanges.unshift({
       id,
+      orgId: actor.orgId,
       name,
       at: new Date().toISOString(),
       authorId: actorId,
@@ -545,6 +803,52 @@ export function importSmetaExchange(
       confirmed: false,
     });
     audit(data, actorId, "import", "smeta", id, `Импорт XLSX: ${mapped.length} позиций`);
+    return data;
+  });
+}
+
+export function injectRiskParse(actorId: string, riskId: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.risks.find((r) => r.id === riskId);
+    if (!item) throw new Error("Реестр рисков не найден");
+    assertOrgAccess(actor, item.orgId, "реестра рисков");
+    const now = Date.now();
+    data.risks = data.risks.map((r) =>
+      r.id !== riskId
+        ? r
+        : {
+            ...r,
+            contractParsed: true,
+            status: "trebuet_proverki" as const,
+            remarks: [
+              ...r.remarks,
+              {
+                id: `rm-${now}`,
+                text: "Штраф за срыв сроков свыше 0,1% в сутки",
+                sourceExcerpt: "п. 8.3 договора подряда",
+                status: "otkryto" as const,
+                severity: "high" as const,
+              },
+              {
+                id: `rm-${now + 1}`,
+                text: "Обеспечение исполнения контракта 10%",
+                sourceExcerpt: "п. 5.1",
+                status: "otkryto" as const,
+                severity: "medium" as const,
+              },
+              {
+                id: `rm-${now + 2}`,
+                text: "Гарантийный срок 60 месяцев",
+                sourceExcerpt: "п. 12.2",
+                status: "otkryto" as const,
+                severity: "low" as const,
+              },
+            ],
+            updatedAt: new Date().toISOString(),
+          }
+    );
+    audit(data, actorId, "parse", "risk", riskId, "Разбор договора (мок)");
     return data;
   });
 }

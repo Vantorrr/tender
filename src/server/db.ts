@@ -6,7 +6,7 @@ import type { AppData } from "@/lib/types";
 import { config, dbPath } from "@/server/config";
 import { hashPassword } from "@/server/passwords";
 
-const SCHEMA_VERSION = "3";
+const SCHEMA_VERSION = "4";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -119,6 +119,20 @@ function migrate(db: DatabaseSync) {
   const version = metaGet(db, "schema_version") ?? "1";
   if (version !== SCHEMA_VERSION) {
     const data = hashSeedUsers(JSON.parse(row.payload) as AppData);
+    // v4: orgId на обменах со сметным ПО
+    data.smetaExchanges = (data.smetaExchanges ?? []).map((sx) => {
+      if (sx.orgId) return sx;
+      const author = data.users.find((u) => u.id === sx.authorId);
+      return { ...sx, orgId: author?.orgId ?? "org-alfa" };
+    });
+    // link orphan plan/fact on p-2 if missing
+    data.procurements = data.procurements.map((p) => {
+      if (p.id === "p-2" && !p.planFactId) {
+        const pf = data.planFacts.find((x) => x.procurementId === "p-2");
+        return pf ? { ...p, planFactId: pf.id } : p;
+      }
+      return p;
+    });
     db.prepare(
       "UPDATE app_blob SET payload = ?, updated_at = ? WHERE id = 1"
     ).run(JSON.stringify(data), new Date().toISOString());
@@ -260,6 +274,11 @@ export function healthSnapshot() {
 }
 
 export function ensureReady() {
-  getDb();
+  const db = getDb();
+  // allow hot-reload to pick up SCHEMA_VERSION bumps without process restart
+  const version = metaGet(db, "schema_version") ?? "1";
+  if (version !== SCHEMA_VERSION) {
+    migrate(db);
+  }
   return healthSnapshot();
 }

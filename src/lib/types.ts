@@ -136,6 +136,8 @@ export interface DocumentItem {
   highlights: Highlight[];
   uploadedBy: string;
   uploadedAt: string;
+  storedPath?: string;
+  fileSize?: number;
 }
 
 export interface CalcPosition {
@@ -280,6 +282,7 @@ export interface AuditEntry {
 
 export interface SmetaExchangeVersion {
   id: string;
+  orgId: string;
   name: string;
   at: string;
   authorId: string;

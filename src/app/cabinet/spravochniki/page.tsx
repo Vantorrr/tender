@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -27,8 +27,10 @@ const typeLabel: Record<DirectoryVersion["type"], string> = {
 };
 
 export default function SpravochnikiPage() {
-  const { data, setDirectoryCurrent, importDirectoryRows } = useStore();
+  const { data, setDirectoryCurrent, importDirectoryRows, importDirectoryFile } =
+    useStore();
   const [tab, setTab] = useState<DirectoryVersion["type"]>("normy");
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const items = useMemo(
     () => data.directories.filter((d) => d.type === tab),
@@ -36,9 +38,13 @@ export default function SpravochnikiPage() {
   );
   const current = items.find((d) => d.current) ?? items[0];
 
-  function downloadTemplate() {
-    downloadUrl(`/api/export?kind=dir-template&type=${tab}`);
-    toast.success("Шаблон XLSX скачивается…");
+  async function downloadTemplate() {
+    try {
+      await downloadUrl(`/api/export?kind=dir-template&type=${tab}`);
+      toast.success("Шаблон XLSX скачан");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка скачивания");
+    }
   }
 
   async function mockImport() {
@@ -51,7 +57,7 @@ export default function SpravochnikiPage() {
             ? [{ sku: "MAT-NEW", name: "Материал импорт", unit: "шт", price: 500 }]
             : [{ region: "Рязань", okpd: "41.20", maxNmck: 50000000 }];
     await importDirectoryRows(tab, sample);
-    toast.success("Импорт выполнен, создана новая текущая версия");
+    toast.success("Демо-импорт выполнен, создана новая текущая версия");
   }
 
   return (
@@ -61,10 +67,34 @@ export default function SpravochnikiPage() {
         description="Нормы, расценки, цены и профиль закупок. Расчёты используют текущую версию."
         actions={
           <>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".xlsx,.xls"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (!file) return;
+                try {
+                  await importDirectoryFile(tab, file);
+                  toast.success("Импорт Excel выполнен");
+                } catch (err) {
+                  toast.error(
+                    err instanceof Error ? err.message : "Ошибка импорта"
+                  );
+                }
+                e.target.value = "";
+              }}
+            />
             <Button variant="outline" onClick={downloadTemplate}>
               Скачать шаблон
             </Button>
-            <Button onClick={mockImport}>Импорт Excel</Button>
+            <Button variant="outline" onClick={() => fileRef.current?.click()}>
+              Импорт Excel
+            </Button>
+            <Button variant="secondary" onClick={mockImport}>
+              Демо-строки
+            </Button>
           </>
         }
       />

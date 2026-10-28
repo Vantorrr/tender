@@ -62,22 +62,29 @@ interface StoreContextValue {
   reanalyzeDocument: (id: string) => Promise<void>;
   createDocumentUpload: (input: {
     procurementId: string;
-    title: string;
-    fileName: string;
-    fileType: "pdf" | "docx" | "xlsx";
+    title?: string;
+    file: File;
   }) => Promise<void>;
   updateSchedule: (id: string, patch: Partial<GprSchedule>) => Promise<void>;
   updateMoney: (id: string, patch: Partial<MoneyPlan>) => Promise<void>;
   updateRisk: (id: string, patch: Partial<RiskRegistry>) => Promise<void>;
+  parseRiskContract: (id: string) => Promise<void>;
   updatePlanFact: (id: string, patch: Partial<PlanFact>) => Promise<void>;
   setDirectoryCurrent: (id: string) => Promise<void>;
   importDirectoryRows: (
     type: AppData["directories"][0]["type"],
     rows: Record<string, string | number>[]
   ) => Promise<void>;
+  importDirectoryFile: (
+    type: AppData["directories"][0]["type"],
+    file: File
+  ) => Promise<void>;
   confirmSmetaExchange: (id: string) => Promise<void>;
   importSmetaFile: (file: File, calcId?: string) => Promise<void>;
   runSyncJob: () => Promise<void>;
+  ensureChain: (procurementId: string) => Promise<void>;
+  markAllNotificationsRead: () => Promise<void>;
+  setOrganizationActive: (orgId: string, active: boolean) => Promise<void>;
   addAudit: (
     action: string,
     entity: string,
@@ -191,6 +198,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [applyBoot]
   );
 
+  const markAllNotificationsRead = useCallback(async () => {
+    const boot = await api<BootstrapResponse>("/api/notifications", {
+      method: "PATCH",
+      body: JSON.stringify({ markAll: true }),
+    });
+    applyBoot(boot);
+  }, [applyBoot]);
+
+  const setOrganizationActive = useCallback(
+    async (orgId: string, active: boolean) => {
+      const boot = await api<BootstrapResponse & { token?: string }>(
+        "/api/admin",
+        {
+          method: "POST",
+          body: JSON.stringify({ action: "setOrgActive", orgId, active }),
+        }
+      );
+      applyBoot(boot);
+    },
+    [applyBoot]
+  );
+
   const updateUser = useCallback(
     async (id: string, patch: Partial<User>) => {
       const boot = await api<BootstrapResponse>("/api/users", {
@@ -296,13 +325,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const createDocumentUpload = useCallback(
     async (input: {
       procurementId: string;
-      title: string;
-      fileName: string;
-      fileType: "pdf" | "docx" | "xlsx";
+      title?: string;
+      file: File;
     }) => {
+      const form = new FormData();
+      form.append("file", input.file);
+      form.append("procurementId", input.procurementId);
+      if (input.title) form.append("title", input.title);
       const boot = await api<BootstrapResponse>("/api/dokumenty", {
         method: "POST",
-        body: JSON.stringify(input),
+        body: form,
       });
       applyBoot(boot);
     },
@@ -336,6 +368,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const boot = await api<BootstrapResponse>("/api/riski", {
         method: "PATCH",
         body: JSON.stringify({ id, patch }),
+      });
+      applyBoot(boot);
+    },
+    [applyBoot]
+  );
+
+  const parseRiskContract = useCallback(
+    async (id: string) => {
+      const boot = await api<BootstrapResponse>("/api/riski", {
+        method: "PATCH",
+        body: JSON.stringify({ id, action: "parse" }),
       });
       applyBoot(boot);
     },
@@ -378,6 +421,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [applyBoot]
   );
 
+  const importDirectoryFile = useCallback(
+    async (type: AppData["directories"][0]["type"], file: File) => {
+      const form = new FormData();
+      form.append("file", file);
+      form.append("type", type);
+      const boot = await api<BootstrapResponse>("/api/spravochniki", {
+        method: "POST",
+        body: form,
+      });
+      applyBoot(boot);
+    },
+    [applyBoot]
+  );
+
   const confirmSmetaExchange = useCallback(
     async (id: string) => {
       const boot = await api<BootstrapResponse>("/api/smeta", {
@@ -411,6 +468,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     applyBoot(boot);
   }, [applyBoot]);
 
+  const ensureChain = useCallback(
+    async (procurementId: string) => {
+      const boot = await api<BootstrapResponse>("/api/zakupki", {
+        method: "POST",
+        body: JSON.stringify({ action: "ensureChain", id: procurementId }),
+      });
+      applyBoot(boot);
+    },
+    [applyBoot]
+  );
+
   const addAudit = useCallback(() => {
     /* audit is server-side now */
   }, []);
@@ -435,6 +503,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     resetData,
     refresh,
     markNotificationRead,
+    markAllNotificationsRead,
+    setOrganizationActive,
     updateUser,
     createUser,
     setUserRole,
@@ -448,12 +518,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     updateSchedule,
     updateMoney,
     updateRisk,
+    parseRiskContract,
     updatePlanFact,
     setDirectoryCurrent,
     importDirectoryRows,
+    importDirectoryFile,
     confirmSmetaExchange,
     importSmetaFile,
     runSyncJob,
+    ensureChain,
     addAudit,
     orgProcurements,
     orgDocuments,
@@ -473,7 +546,7 @@ export function useStore() {
 
 export function userNotifications(
   notifications: NotificationItem[],
-  _userId: string
+  userId: string
 ) {
-  return notifications;
+  return notifications.filter((n) => n.userId === userId);
 }

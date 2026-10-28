@@ -168,6 +168,36 @@ export async function buildDirectoryTemplate(
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
+export async function parseDirectoryXlsx(
+  buf: Buffer
+): Promise<Record<string, string | number>[]> {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buf as unknown as ExcelJS.Buffer);
+  const ws = wb.worksheets[0];
+  if (!ws) return [];
+  const headerRow = ws.getRow(1);
+  const headers: string[] = [];
+  headerRow.eachCell((cell, col) => {
+    headers[col] = String(cell.value ?? `col${col}`).trim();
+  });
+  const rows: Record<string, string | number>[] = [];
+  ws.eachRow((row, rowNumber) => {
+    if (rowNumber === 1) return;
+    const obj: Record<string, string | number> = {};
+    let empty = true;
+    headers.forEach((h, col) => {
+      if (!h) return;
+      const raw = row.getCell(col).value;
+      if (raw === null || raw === undefined || raw === "") return;
+      empty = false;
+      const num = Number(raw);
+      obj[h] = Number.isFinite(num) && String(raw).trim() !== "" ? num : String(raw);
+    });
+    if (!empty) rows.push(obj);
+  });
+  return rows;
+}
+
 export async function parseSmetaXlsx(buf: Buffer): Promise<{ code: string; quantity: number; name?: string }[]> {
   const wb = new ExcelJS.Workbook();
   // exceljs load accepts Uint8Array

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { toast } from "sonner";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { EntityCard } from "@/components/entity-card";
@@ -27,6 +28,7 @@ export default function ZakupkiPage() {
   const [status, setStatus] = useState<string>("all");
   const [review, setReview] = useState<string>("all");
   const [region, setRegion] = useState<string>("all");
+  const [syncing, setSyncing] = useState(false);
 
   const regions = useMemo(
     () => [...new Set(orgProcurements.map((p) => p.region))],
@@ -56,12 +58,23 @@ export default function ZakupkiPage() {
         actions={
           <Button
             variant="outline"
+            disabled={syncing}
             onClick={async () => {
-              await runSyncJob();
+              setSyncing(true);
+              try {
+                await runSyncJob();
+                toast.success("Синхронизация завершена");
+              } catch (e) {
+                toast.error(
+                  e instanceof Error ? e.message : "Ошибка синхронизации"
+                );
+              } finally {
+                setSyncing(false);
+              }
             }}
           >
-            <RefreshCw className="h-4 w-4" />
-            Синхронизировать
+            <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+            {syncing ? "Синхронизация…" : "Синхронизировать"}
           </Button>
         }
       />

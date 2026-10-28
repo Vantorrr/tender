@@ -49,9 +49,19 @@ export default function DengiPage() {
     if (!plan) return [];
     if (period === "all") return plan.payments;
     if (period === "week") {
-      const currentWeek = 43; // demo week late Oct
+      const now = new Date();
+      const currentWeek = Math.max(
+        1,
+        Math.ceil(
+          (now.getTime() - new Date(now.getFullYear(), 0, 1).getTime()) /
+            604800000
+        )
+      );
+      const currentMonth = now.getMonth() + 1;
       return plan.payments.filter(
-        (p) => Math.abs(p.week - currentWeek) <= 4 || p.month >= 11
+        (p) =>
+          Math.abs(p.week - currentWeek) <= 6 ||
+          Math.abs(p.month - currentMonth) <= 1
       );
     }
     return plan.payments.filter((p) => p.month === 12 || p.month <= 6);

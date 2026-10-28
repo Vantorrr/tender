@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -13,12 +13,66 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { api } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import { ROLE_LABELS } from "@/lib/roles";
 import { useStore } from "@/lib/store";
 
+type JobRow = {
+  id: string;
+  type: string;
+  status: string;
+  detail: string;
+  createdAt: string;
+  finishedAt: string | null;
+};
+
+function AdminJobs({ reloadKey }: { reloadKey: number }) {
+  const [jobs, setJobs] = useState<JobRow[]>([]);
+  const load = useCallback(async () => {
+    try {
+      const res = await api<{ jobs: JobRow[] }>("/api/admin");
+      setJobs(res.jobs ?? []);
+    } catch {
+      setJobs([]);
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load, reloadKey]);
+  if (jobs.length === 0) {
+    return (
+      <p className="mt-3 text-sm text-[var(--tk-muted)]">Заданий пока нет</p>
+    );
+  }
+  return (
+    <ul className="mt-3 max-h-48 space-y-2 overflow-y-auto text-sm">
+      {jobs.slice(0, 12).map((j) => (
+        <li
+          key={j.id}
+          className="flex flex-wrap items-baseline justify-between gap-2 rounded-lg border border-[var(--tk-line)] px-3 py-2"
+        >
+          <span>
+            <Badge variant="outline" className="mr-2">
+              {j.status}
+            </Badge>
+            {j.type}
+          </span>
+          <span className="text-xs text-[var(--tk-muted)]">
+            {formatDateTime(j.createdAt)}
+          </span>
+          <span className="w-full text-xs text-[var(--tk-muted)]">
+            {j.detail}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export default function AdminPage() {
-  const { data, user, resetData } = useStore();
+  const { data, user, resetData, setOrganizationActive } = useStore();
+  const [jobsKey, setJobsKey] = useState(0);
   if (!user) return null;
 
   if (user.role !== "superadmin" && user.role !== "admin") {
@@ -78,9 +132,45 @@ export default function AdminPage() {
               <p className="mt-3 text-sm">
                 Пользователей: {count} · закупок: {procs}
               </p>
+              {user.role === "superadmin" ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-3"
+                  onClick={async () => {
+                    await setOrganizationActive(org.id, !org.active);
+                    toast.success(
+                      org.active
+                        ? "Организация отключена"
+                        : "Организация активирована"
+                    );
+                  }}
+                >
+                  {org.active ? "Отключить" : "Активировать"}
+                </Button>
+              ) : null}
             </div>
           );
         })}
+      </section>
+
+      <section className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="font-[family-name:var(--font-display)] text-base">
+            Фоновые задания
+          </h2>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setJobsKey((k) => k + 1);
+              toast.success("Обновлено");
+            }}
+          >
+            Обновить
+          </Button>
+        </div>
+        <AdminJobs reloadKey={jobsKey} />
       </section>
 
       <section className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
@@ -103,14 +193,8 @@ export default function AdminPage() {
           / Beta123! для проверки.
         </p>
         <p className="mt-2 text-sm">
-          Цепочка артефактов:{" "}
-          <Link
-            className="text-[var(--tk-copper-deep)] underline"
-            href="/cabinet/zakupki/p-1"
-          >
-            закупка p-1
-          </Link>{" "}
-          → документы → расчёт → ГПР → деньги → план/факт.
+          Цепочка артефактов доступна из карточки любой закупки организации
+          («Создать недостающие артефакты»).
         </p>
       </section>
 

@@ -14,13 +14,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { downloadUrl } from "@/lib/api";
 import { formatDate, formatDateTime, formatMoney } from "@/lib/format";
 import type { ReviewStatus } from "@/lib/types";
 import { useStore } from "@/lib/store";
 
 export default function ZakupkaDetailPage() {
   const params = useParams<{ id: string }>();
-  const { data, orgProcurements, setProcurementReview, user } = useStore();
+  const {
+    data,
+    orgProcurements,
+    setProcurementReview,
+    user,
+    ensureChain,
+  } = useStore();
   const procurement = orgProcurements.find((p) => p.id === params.id);
 
   if (!procurement) {
@@ -35,6 +42,11 @@ export default function ZakupkaDetailPage() {
   const docs = data.documents.filter((d) =>
     procurement.documentIds.includes(d.id)
   );
+  const chainIncomplete =
+    !procurement.calculationId ||
+    !procurement.gprId ||
+    !procurement.moneyId ||
+    !procurement.planFactId;
 
   return (
     <div>
@@ -117,11 +129,38 @@ export default function ZakupkaDetailPage() {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() =>
-                        toast.message("Скачивание (мок)", {
-                          description: a.name,
-                        })
-                      }
+                      onClick={async () => {
+                        const linked = docs.find((d) =>
+                          d.fileName
+                            .toLowerCase()
+                            .includes(a.name.split(".")[0].toLowerCase())
+                        );
+                        try {
+                          if (linked) {
+                            await downloadUrl(
+                              `/api/dokumenty/file?id=${linked.id}`
+                            );
+                          } else {
+                            const blob = new Blob(
+                              [
+                                `ТендерКонтур\nВложение: ${a.name}\nЗакупка: ${procurement.number}\n`,
+                              ],
+                              { type: "text/plain;charset=utf-8" }
+                            );
+                            const url = URL.createObjectURL(blob);
+                            const el = document.createElement("a");
+                            el.href = url;
+                            el.download = `${a.name}.txt`;
+                            el.click();
+                            URL.revokeObjectURL(url);
+                          }
+                          toast.success("Файл скачан");
+                        } catch (e) {
+                          toast.error(
+                            e instanceof Error ? e.message : "Ошибка скачивания"
+                          );
+                        }
+                      }}
                     >
                       Скачать
                     </Button>
@@ -164,7 +203,10 @@ export default function ZakupkaDetailPage() {
             </h2>
             <ol className="mt-3 space-y-2 text-sm">
               <li>
-                <Link className="text-[var(--tk-copper-deep)] underline" href={`/cabinet/zakupki/${procurement.id}`}>
+                <Link
+                  className="text-[var(--tk-copper-deep)] underline"
+                  href={`/cabinet/zakupki/${procurement.id}`}
+                >
                   Закупка
                 </Link>
               </li>
@@ -229,6 +271,24 @@ export default function ZakupkaDetailPage() {
                 )}
               </li>
             </ol>
+            {chainIncomplete ? (
+              <Button
+                className="mt-4 w-full"
+                variant="outline"
+                onClick={async () => {
+                  try {
+                    await ensureChain(procurement.id);
+                    toast.success("Цепочка создана");
+                  } catch (e) {
+                    toast.error(
+                      e instanceof Error ? e.message : "Ошибка создания"
+                    );
+                  }
+                }}
+              >
+                Создать недостающие артефакты
+              </Button>
+            ) : null}
             {user?.orgId === "org-alfa" ? (
               <p className="mt-3 text-xs text-[var(--tk-muted)]">
                 Данные организации «АльфаСтрой». Закупки «БетаИнжиниринг»

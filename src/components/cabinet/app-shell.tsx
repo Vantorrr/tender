@@ -73,8 +73,15 @@ function NavList({
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const { ready, user, logout, data, markNotificationRead, unreadCount } =
-    useStore();
+  const {
+    ready,
+    user,
+    logout,
+    data,
+    markNotificationRead,
+    markAllNotificationsRead,
+    unreadCount,
+  } = useStore();
   const router = useRouter();
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
@@ -146,8 +153,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               >
                 <Menu className="h-4 w-4" />
               </SheetTrigger>
-              <SheetContent side="left" className="w-[280px] p-0">
-                <div className="flex h-16 items-center gap-2 border-b border-[var(--tk-line)] px-4">
+              <SheetContent
+                side="left"
+                className="flex w-[280px] flex-col overflow-hidden p-0"
+              >
+                <div className="flex h-16 shrink-0 items-center gap-2 border-b border-[var(--tk-line)] px-4">
                   <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--tk-steel)] font-[family-name:var(--font-display)] text-sm font-bold text-white">
                     ТК
                   </span>
@@ -155,7 +165,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     ТендерКонтур
                   </span>
                 </div>
-                <NavList onNavigate={() => setMobileOpen(false)} />
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <NavList onNavigate={() => setMobileOpen(false)} />
+                </div>
               </SheetContent>
             </Sheet>
             <div className="hidden text-sm text-[var(--tk-muted)] sm:block">
@@ -173,8 +185,25 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   </span>
                 ) : null}
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-80">
-                <DropdownMenuLabel>Уведомления</DropdownMenuLabel>
+              <DropdownMenuContent
+                align="end"
+                className="w-80 max-w-[calc(100vw-2rem)]"
+              >
+                <DropdownMenuLabel className="flex items-center justify-between gap-2">
+                  <span>Уведомления</span>
+                  {unreadCount > 0 ? (
+                    <button
+                      type="button"
+                      className="text-xs font-normal text-[var(--tk-copper-deep)] hover:underline"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        void markAllNotificationsRead();
+                      }}
+                    >
+                      Прочитать все
+                    </button>
+                  ) : null}
+                </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 {notes.length === 0 ? (
                   <div className="px-2 py-6 text-center text-sm text-[var(--tk-muted)]">

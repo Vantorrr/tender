@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { downloadUrl } from "@/lib/api";
 import { downloadTextFile, formatDateTime } from "@/lib/format";
 import { useStore } from "@/lib/store";
 
@@ -41,6 +42,21 @@ export default function DocumentDetailPage() {
         actions={
           <>
             <StatusBadge status={doc.status} />
+            <Button
+              variant="outline"
+              onClick={async () => {
+                try {
+                  await downloadUrl(`/api/dokumenty/file?id=${doc.id}`);
+                  toast.success("Файл скачан");
+                } catch (e) {
+                  toast.error(
+                    e instanceof Error ? e.message : "Ошибка скачивания"
+                  );
+                }
+              }}
+            >
+              Скачать файл
+            </Button>
             <Button
               variant="outline"
               onClick={async () => {

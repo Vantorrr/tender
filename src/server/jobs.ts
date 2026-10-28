@@ -1,6 +1,14 @@
 import { insertJob, listJobs, mutateAppData, updateJob } from "@/server/db";
 import { reanalyzeDocument } from "@/server/repo";
 
+/** Normalized notice number for dedup (strip -DUP/-AUTO suffixes). */
+export function normalizeProcurementNumber(number: string): string {
+  return number
+    .trim()
+    .toUpperCase()
+    .replace(/-(DUP|AUTO)(\d*)?$/i, "");
+}
+
 export function runProcurementSync(actorId: string) {
   const id = `job-sync-${Date.now()}`;
   const createdAt = new Date().toISOString();
@@ -17,6 +25,8 @@ export function runProcurementSync(actorId: string) {
     const actor = data.users.find((u) => u.id === actorId);
     const isSuper = actor?.role === "superadmin";
     let updated = 0;
+    let duplicates = 0;
+
     data.procurements = data.procurements.map((p) => {
       if (actor && !isSuper && p.orgId !== actor.orgId) return p;
       updated += 1;
@@ -34,8 +44,47 @@ export function runProcurementSync(actorId: string) {
       return { ...p, syncAt: now, syncStatus: "aktualno" as const };
     });
 
+    // Dedup within each org by normalized number
+    const byOrg = new Map<string, typeof data.procurements>();
+    for (const p of data.procurements) {
+      const list = byOrg.get(p.orgId) ?? [];
+      list.push(p);
+      byOrg.set(p.orgId, list);
+    }
+    const canon = new Map<string, string>(); // key org|norm -> first id
+    for (const [orgId, list] of byOrg) {
+      const sorted = [...list].sort(
+        (a, b) =>
+          new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      );
+      for (const p of sorted) {
+        const key = `${orgId}|${normalizeProcurementNumber(p.number)}`;
+        if (!canon.has(key)) {
+          canon.set(key, p.id);
+          continue;
+        }
+        const originalId = canon.get(key)!;
+        if (p.id === originalId || p.duplicateOf === originalId) continue;
+        duplicates += 1;
+        data.procurements = data.procurements.map((x) =>
+          x.id === p.id
+            ? {
+                ...x,
+                reviewStatus: "dublirovana" as const,
+                duplicateOf: originalId,
+                tags: x.tags.includes("дубликат")
+                  ? x.tags
+                  : [...x.tags, "дубликат"],
+              }
+            : x
+        );
+      }
+    }
+
     const orgId = actor?.orgId ?? "org-alfa";
-    const exists = data.procurements.some((p) => p.number.endsWith("-AUTO"));
+    const exists = data.procurements.some(
+      (p) => p.orgId === orgId && p.number.endsWith("-AUTO")
+    );
     if (!exists) {
       data.procurements.unshift({
         id: `p-auto-${Date.now()}`,
@@ -68,7 +117,20 @@ export function runProcurementSync(actorId: string) {
         id: `n-sync-${Date.now()}`,
         userId: actorId,
         title: "Синхронизация завершена",
-        body: "Добавлена новая закупка из согласованного источника",
+        body:
+          duplicates > 0
+            ? `Добавлена закупка. Найдено дублей: ${duplicates}`
+            : "Добавлена новая закупка из согласованного источника",
+        read: false,
+        at: now,
+        href: "/cabinet/zakupki",
+      });
+    } else if (duplicates > 0) {
+      data.notifications.unshift({
+        id: `n-dedup-${Date.now()}`,
+        userId: actorId,
+        title: "Дедупликация",
+        body: `При синхронизации отмечено дублей: ${duplicates}`,
         read: false,
         at: now,
         href: "/cabinet/zakupki",
@@ -82,7 +144,7 @@ export function runProcurementSync(actorId: string) {
       action: "sync",
       entity: "procurement",
       entityId: "feed",
-      detail: `Синхронизация: обновлено записей ${updated}`,
+      detail: `Синхронизация: обновлено ${updated}, дублей ${duplicates}`,
     });
     return data;
   });
