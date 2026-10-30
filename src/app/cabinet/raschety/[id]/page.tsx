@@ -142,7 +142,13 @@ export default function RaschetDetailPage() {
             }}
           >
             <SelectTrigger className="w-[220px]">
-              <SelectValue />
+              <SelectValue>
+                {{
+                  bazovyy: "Базовый",
+                  optimisticheskiy: "Оптимистичный ×0,95",
+                  pessimisticheskiy: "Пессимистичный ×1,08",
+                }[calc.scenario] ?? calc.scenario}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="bazovyy">Базовый</SelectItem>
@@ -169,7 +175,14 @@ export default function RaschetDetailPage() {
             }}
           >
             <SelectTrigger className="w-[220px]">
-              <SelectValue />
+              <SelectValue>
+                {{
+                  none: "Не принято",
+                  uchastvovat: "Участвовать",
+                  otkaz: "Отказ",
+                  na_rassmotrenii: "На рассмотрении",
+                }[calc.participateDecision ?? "none"] ?? "Не принято"}
+              </SelectValue>
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="none">Не принято</SelectItem>
@@ -237,10 +250,17 @@ export default function RaschetDetailPage() {
                 if (!v) return;
                 setDirType(v as "rascenki" | "ceny" | "park");
                 setCode("");
+                setFilter("");
               }}
             >
               <SelectTrigger className="w-[200px]">
-                <SelectValue />
+                <SelectValue>
+                  {{
+                    rascenki: "Нормо-час",
+                    ceny: "Тарифы АТС/ДСМ",
+                    park: "Парк техники",
+                  }[dirType]}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="rascenki">Нормо-час</SelectItem>
@@ -254,7 +274,14 @@ export default function RaschetDetailPage() {
               <p className="mb-1 text-xs text-[var(--tk-muted)]">Колонка ставки</p>
               <Select value={rateKey} onValueChange={(v) => v && setRateKey(v)}>
                 <SelectTrigger className="w-[200px]">
-                  <SelectValue />
+                  <SelectValue>
+                    {{
+                      price: "1 смена КПИ 0,85",
+                      rate_2s_kpi085: "2 смены КПИ 0,85",
+                      rate_1s_kpi10: "1 смена КПИ 1,0",
+                      rate_2s_kpi10: "2 смены КПИ 1,0",
+                    }[rateKey] ?? rateKey}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="price">1 смена КПИ 0,85</SelectItem>
@@ -289,54 +316,70 @@ export default function RaschetDetailPage() {
           </Button>
         </div>
         <div className="mt-4 max-h-64 overflow-auto rounded-lg border border-[var(--tk-line)]">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Код</TableHead>
-                <TableHead>Наименование</TableHead>
-                <TableHead className="text-right">Ставка</TableHead>
-                <TableHead />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {pickerRows.map((r) => {
-                const rowCode = String(r.code ?? r.sku ?? "");
-                const label = String(r.name ?? r.work ?? "");
-                const rate =
-                  dirType === "ceny"
-                    ? Number(r[rateKey] ?? r.price ?? 0)
-                    : Number(r.rate ?? r.price ?? 0);
-                return (
-                  <TableRow
-                    key={rowCode + label}
-                    className={code === rowCode ? "bg-[var(--tk-steel)]/5" : undefined}
-                  >
-                    <TableCell className="font-mono text-xs">{rowCode}</TableCell>
-                    <TableCell>
-                      <div>{label}</div>
-                      {r.category ? (
-                        <div className="text-xs text-[var(--tk-muted)]">
-                          {String(r.category)}
-                        </div>
-                      ) : null}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {formatMoney(rate)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => addSelected(rowCode)}
-                      >
-                        В расчёт
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+          {pickerRows.length === 0 ? (
+            <p className="p-4 text-sm text-[var(--tk-muted)]">
+              Ничего не найдено в «
+              {dirType === "rascenki"
+                ? "Нормо-час"
+                : dirType === "ceny"
+                  ? "Тарифы АТС/ДСМ"
+                  : "Парк техники"}
+              ». Смените тип справочника или очистите поиск.
+            </p>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Код</TableHead>
+                  <TableHead>Наименование</TableHead>
+                  <TableHead className="text-right">Ставка</TableHead>
+                  <TableHead />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {pickerRows.map((r) => {
+                  const rowCode = String(r.code ?? r.sku ?? "");
+                  const label = String(r.name ?? r.work ?? "");
+                  const rate =
+                    dirType === "ceny"
+                      ? Number(r[rateKey] ?? r.price ?? 0)
+                      : Number(r.rate ?? r.price ?? 0);
+                  return (
+                    <TableRow
+                      key={rowCode + label}
+                      className={
+                        code === rowCode ? "bg-[var(--tk-steel)]/5" : undefined
+                      }
+                    >
+                      <TableCell className="font-mono text-xs">
+                        {rowCode}
+                      </TableCell>
+                      <TableCell>
+                        <div>{label}</div>
+                        {r.category ? (
+                          <div className="text-xs text-[var(--tk-muted)]">
+                            {String(r.category)}
+                          </div>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {formatMoney(rate)}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => addSelected(rowCode)}
+                        >
+                          В расчёт
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
         </div>
       </section>
 
