@@ -151,16 +151,28 @@ export async function buildSmetaExportXlsx(calcId?: string): Promise<Buffer> {
 }
 
 export async function buildDirectoryTemplate(
-  type: "normy" | "rascenki" | "ceny" | "profil"
+  type: "normy" | "rascenki" | "ceny" | "profil" | "park"
 ): Promise<Buffer> {
   const headers =
     type === "normy"
       ? ["code", "name", "unit", "labor"]
       : type === "rascenki"
-        ? ["code", "work", "rate"]
+        ? ["code", "category", "work", "department", "unit", "rate"]
         : type === "ceny"
-          ? ["sku", "name", "unit", "price"]
-          : ["region", "okpd", "maxNmck"];
+          ? [
+              "code",
+              "category",
+              "name",
+              "unit",
+              "rate_1s_kpi085",
+              "rate_2s_kpi085",
+              "rate_1s_kpi10",
+              "rate_2s_kpi10",
+              "price",
+            ]
+          : type === "park"
+            ? ["code", "category", "name", "qty", "unit"]
+            : ["region", "okpd", "maxNmck"];
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("Template");
   ws.addRow(headers);

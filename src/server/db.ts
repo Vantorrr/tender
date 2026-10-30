@@ -1,12 +1,17 @@
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import {
+  CLIENT_BUNDLE,
+  clientSchoolPositions,
+  mergeClientDirectoriesInto,
+} from "@/lib/client-dirs";
 import { createSeedData } from "@/lib/seed";
 import type { AppData } from "@/lib/types";
 import { config, dbPath } from "@/server/config";
 import { hashPassword } from "@/server/passwords";
 
-const SCHEMA_VERSION = "4";
+const SCHEMA_VERSION = "5";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -133,6 +138,43 @@ function migrate(db: DatabaseSync) {
       }
       return p;
     });
+    // v5: клиентские справочники + согласованный c-1
+    data.directories = mergeClientDirectoriesInto(data.directories, "u-super");
+    // ensure rows match committed bundle (xlsx may have been stale)
+    data.directories = data.directories.map((d) => {
+      if (d.type === "ceny" && d.current) {
+        return { ...d, rows: CLIENT_BUNDLE.equipment, name: "Тарифы АТС и ДСМ 2026 (клиент)" };
+      }
+      if (d.type === "rascenki" && d.current) {
+        return {
+          ...d,
+          rows: CLIENT_BUNDLE.labor,
+          name: "Себестоимость нормо-часа 2026 (клиент)",
+        };
+      }
+      if (d.type === "park" && d.current) {
+        return { ...d, rows: CLIENT_BUNDLE.fleet, name: "Парк техники (клиент)" };
+      }
+      return d;
+    });
+    const rasc = data.directories.find((d) => d.type === "rascenki" && d.current);
+    const now = new Date().toISOString();
+    data.calculations = data.calculations.map((c) =>
+      c.id === "c-1"
+        ? {
+            ...c,
+            positions: clientSchoolPositions(),
+            directoryVersionId: rasc?.id ?? "dir-rascenki-client-1",
+            assumptions: [
+              "Клиентские тарифы АТС/ДСМ и нормо-час 2026 (приказ)",
+              "Объёмы: 2400 н-ч дорожных, 320 н-ч сварки, 480 маш-час JCB",
+              "НР 15% и СП 8% от трудозатрат и техники",
+            ],
+            updatedAt: now,
+          }
+        : c
+    );
+    metaSet(db, "client_xlsx_imported", "1");
     db.prepare(
       "UPDATE app_blob SET payload = ?, updated_at = ? WHERE id = 1"
     ).run(JSON.stringify(data), new Date().toISOString());
@@ -273,28 +315,43 @@ export function healthSnapshot() {
   };
 }
 
-let clientImportScheduled = false;
-
-/** Подтягивает клиентские XLSX в справочники один раз после seed. */
-function maybeScheduleClientImport(db: DatabaseSync) {
-  if (clientImportScheduled) return;
-  if (metaGet(db, "client_xlsx_imported") === "1") return;
-  clientImportScheduled = true;
-  void import("@/server/client-import")
-    .then(async ({ importClientDirectories }) => {
-      const data = readAppData();
-      const already = data.directories.some(
-        (d) => d.current && /клиент/i.test(d.name)
+/** Если seed/migrate не дали клиентские dirs — дожимаем из JSON-бандла. */
+function ensureClientDirectoriesPresent(db: DatabaseSync) {
+  if (metaGet(db, "client_xlsx_imported") === "1") {
+    const data = readAppData();
+    const ok =
+      data.directories.some((d) => d.type === "park" && d.current) &&
+      data.directories.some(
+        (d) => d.type === "rascenki" && d.current && /клиент/i.test(d.name)
       );
-      if (!already) {
-        await importClientDirectories("u-super");
-      }
-      metaSet(getDb(), "client_xlsx_imported", "1");
-    })
-    .catch((err) => {
-      console.error("[tk] client xlsx auto-import failed", err);
-      clientImportScheduled = false;
-    });
+    if (ok) return;
+  }
+  const data = readAppData();
+  data.directories = mergeClientDirectoriesInto(data.directories, "u-super");
+  data.directories = data.directories.map((d) => {
+    if (d.type === "ceny" && d.current) {
+      return { ...d, rows: CLIENT_BUNDLE.equipment };
+    }
+    if (d.type === "rascenki" && d.current) {
+      return { ...d, rows: CLIENT_BUNDLE.labor };
+    }
+    if (d.type === "park" && d.current) {
+      return { ...d, rows: CLIENT_BUNDLE.fleet };
+    }
+    return d;
+  });
+  const rasc = data.directories.find((d) => d.type === "rascenki" && d.current);
+  data.calculations = data.calculations.map((c) =>
+    c.id === "c-1"
+      ? {
+          ...c,
+          positions: clientSchoolPositions(),
+          directoryVersionId: rasc?.id ?? c.directoryVersionId,
+        }
+      : c
+  );
+  writeAppData(data);
+  metaSet(db, "client_xlsx_imported", "1");
 }
 
 export function markClientImportDone() {
@@ -303,7 +360,6 @@ export function markClientImportDone() {
 
 export function clearClientImportFlag() {
   metaSet(getDb(), "client_xlsx_imported", "0");
-  clientImportScheduled = false;
 }
 
 export function ensureReady() {
@@ -313,6 +369,6 @@ export function ensureReady() {
   if (version !== SCHEMA_VERSION) {
     migrate(db);
   }
-  maybeScheduleClientImport(db);
+  ensureClientDirectoriesPresent(db);
   return healthSnapshot();
 }

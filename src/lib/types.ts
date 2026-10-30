@@ -261,7 +261,7 @@ export interface ProjectObject {
 
 export interface DirectoryVersion {
   id: string;
-  type: "normy" | "rascenki" | "ceny" | "profil";
+  type: "normy" | "rascenki" | "ceny" | "profil" | "park";
   name: string;
   version: number;
   authorId: string;

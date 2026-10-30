@@ -25,6 +25,17 @@ if (fs.existsSync(fixturesImports)) {
   console.log("→ клиентские XLSX → data/client-imports");
 }
 
+const buildDirs = spawnSync(
+  process.execPath,
+  [path.join(root, "scripts/build-client-dirs.mjs")],
+  { cwd: root, encoding: "utf8", env: process.env }
+);
+if (buildDirs.status === 0) {
+  console.log(buildDirs.stdout.trim());
+} else if (buildDirs.stderr) {
+  console.warn("→ build-client-dirs:", buildDirs.stderr.slice(0, 300));
+}
+
 const init = spawnSync(
   process.execPath,
   [path.join(root, "scripts/init-db.mjs")],

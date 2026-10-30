@@ -10,6 +10,7 @@
     "start": "next start --port 43141 --hostname 0.0.0.0",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "build:client-dirs": "node scripts/build-client-dirs.mjs",
     "import:client": "node scripts/import-client-xlsx.mjs",
     "turnkey": "npm run setup && npm run build && npm run start"
   },

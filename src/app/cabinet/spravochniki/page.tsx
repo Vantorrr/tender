@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Table,
@@ -21,9 +22,10 @@ import type { DirectoryVersion } from "@/lib/types";
 
 const typeLabel: Record<DirectoryVersion["type"], string> = {
   normy: "Нормы",
-  rascenki: "Расценки / нормо-час",
-  ceny: "Цены / тарифы АТС",
-  profil: "Профиль / парк",
+  rascenki: "Нормо-час",
+  ceny: "Тарифы АТС/ДСМ",
+  park: "Парк техники",
+  profil: "Профиль закупок",
 };
 
 const colLabel: Record<string, string> = {
@@ -47,10 +49,18 @@ const colLabel: Record<string, string> = {
   rate_2s_kpi10: "2 смены КПИ 1,0",
 };
 
+const TAB_ORDER: DirectoryVersion["type"][] = [
+  "rascenki",
+  "ceny",
+  "park",
+  "profil",
+  "normy",
+];
+
 export default function SpravochnikiPage() {
-  const { data, setDirectoryCurrent, importDirectoryRows, importDirectoryFile } =
-    useStore();
-  const [tab, setTab] = useState<DirectoryVersion["type"]>("normy");
+  const { data, setDirectoryCurrent, importDirectoryFile } = useStore();
+  const [tab, setTab] = useState<DirectoryVersion["type"]>("rascenki");
+  const [query, setQuery] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   const items = useMemo(
@@ -58,6 +68,14 @@ export default function SpravochnikiPage() {
     [data.directories, tab]
   );
   const current = items.find((d) => d.current) ?? items[0];
+  const filteredRows = useMemo(() => {
+    const rows = current?.rows ?? [];
+    const q = query.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter((row) =>
+      Object.values(row).some((v) => String(v).toLowerCase().includes(q))
+    );
+  }, [current, query]);
 
   async function downloadTemplate() {
     try {
@@ -68,24 +86,11 @@ export default function SpravochnikiPage() {
     }
   }
 
-  async function mockImport() {
-    const sample =
-      tab === "normy"
-        ? [{ code: "ГЭСН NEW", name: "Импортированная норма", unit: "м²", labor: 0.3 }]
-        : tab === "rascenki"
-          ? [{ code: "R-NEW", work: "Импорт", rate: 1000 }]
-          : tab === "ceny"
-            ? [{ sku: "MAT-NEW", name: "Материал импорт", unit: "шт", price: 500 }]
-            : [{ region: "Рязань", okpd: "41.20", maxNmck: 50000000 }];
-    await importDirectoryRows(tab, sample);
-    toast.success("Демо-импорт выполнен, создана новая текущая версия");
-  }
-
   return (
     <div>
       <PageHeader
         title="Справочники"
-        description="Нормы, расценки, цены и профиль закупок. Расчёты используют текущую версию."
+        description="Клиентские тарифы, нормо-час и парк — текущие версии участвуют в расчётах."
         actions={
           <>
             <input
@@ -113,19 +118,19 @@ export default function SpravochnikiPage() {
             <Button variant="outline" onClick={() => fileRef.current?.click()}>
               Импорт Excel
             </Button>
-            <Button variant="secondary" onClick={mockImport}>
-              Демо-строки
-            </Button>
           </>
         }
       />
 
       <Tabs
         value={tab}
-        onValueChange={(v) => setTab(v as DirectoryVersion["type"])}
+        onValueChange={(v) => {
+          setTab(v as DirectoryVersion["type"]);
+          setQuery("");
+        }}
       >
         <TabsList>
-          {(Object.keys(typeLabel) as DirectoryVersion["type"][]).map((t) => (
+          {TAB_ORDER.map((t) => (
             <TabsTrigger key={t} value={t}>
               {typeLabel[t]}
             </TabsTrigger>
@@ -153,6 +158,7 @@ export default function SpravochnikiPage() {
                 >
                   v{d.version}
                   {d.current ? " · текущая" : ""}
+                  {/клиент/i.test(d.name) ? " · клиент" : ""}
                 </button>
               ))}
           </div>
@@ -167,18 +173,30 @@ export default function SpravochnikiPage() {
                 {current.current ? (
                   <Badge className="bg-emerald-600">для расчётов</Badge>
                 ) : null}
+                {/клиент/i.test(current.name) ? (
+                  <Badge variant="secondary">приказ 2026</Badge>
+                ) : null}
                 <span className="text-xs text-[var(--tk-muted)]">
                   {formatDateTime(current.at)} · автор{" "}
                   {data.users.find((u) => u.id === current.authorId)?.name ??
                     current.authorId}
                 </span>
               </div>
-              <p className="mb-2 text-xs text-[var(--tk-muted)]">
-                Строк: {current.rows.length}
-                {current.rows.length > 80
-                  ? " (показаны первые 80)"
-                  : ""}
-              </p>
+              <div className="mb-3 flex flex-wrap items-center gap-3">
+                <p className="text-xs text-[var(--tk-muted)]">
+                  Строк: {filteredRows.length}
+                  {filteredRows.length !== current.rows.length
+                    ? ` из ${current.rows.length}`
+                    : ""}
+                  {filteredRows.length > 100 ? " (показаны первые 100)" : ""}
+                </p>
+                <Input
+                  className="max-w-xs"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Поиск по справочнику…"
+                />
+              </div>
               <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
@@ -189,7 +207,7 @@ export default function SpravochnikiPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {current.rows.slice(0, 80).map((row, idx) => (
+                    {filteredRows.slice(0, 100).map((row, idx) => (
                       <TableRow key={idx}>
                         {Object.values(row).map((v, i) => (
                           <TableCell key={i}>{String(v)}</TableCell>
@@ -202,7 +220,8 @@ export default function SpravochnikiPage() {
             </div>
           ) : (
             <p className="text-sm text-[var(--tk-muted)]">
-              Нет версий для этого типа. Импортируйте шаблон.
+              Нет версий для этого типа. Импортируйте шаблон или клиентские XLSX
+              в админке.
             </p>
           )}
         </TabsContent>

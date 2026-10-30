@@ -13,6 +13,7 @@ import type {
   SectionKey,
   User,
 } from "@/lib/types";
+import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
 import { mutateAppData, readAppData, resetAppData } from "@/server/db";
 import { hashPassword } from "@/server/passwords";
 import { createSession } from "@/server/auth";
@@ -330,10 +331,116 @@ export function recalcCalculation(
       : scenario === "pessimisticheskiy"
         ? 1.08
         : 1;
-  return updateCalculation(actorId, id, {
-    scenario,
-    scenarioFactor: factor,
-    status: "trebuet_proverki" as CardStatus,
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.calculations.find((c) => c.id === id);
+    if (!item) throw new Error("Расчёт не найден");
+    assertOrgAccess(actor, item.orgId, "расчёта");
+    const positions = item.positions.map((p) => {
+      if (p.code === "НР" || p.code === "СП") return p;
+      const hit = resolveDirectoryRate(data.directories, p.code);
+      if (!hit) return p;
+      return {
+        ...p,
+        rate: hit.rate,
+        name: hit.name ?? p.name,
+        unit: hit.unit && !hit.unit.startsWith("руб") ? hit.unit : p.unit,
+      };
+    });
+    const works = positions
+      .filter((p) => p.code !== "НР" && p.code !== "СП")
+      .reduce((s, p) => s + p.quantity * p.rate, 0);
+    const withExtras = positions.map((p) => {
+      if (p.code === "НР") {
+        return { ...p, rate: Math.round(works * 0.15), unit: "руб" };
+      }
+      if (p.code === "СП") {
+        return { ...p, rate: Math.round(works * 0.08), unit: "руб" };
+      }
+      return p;
+    });
+    const rasc = data.directories.find((d) => d.type === "rascenki" && d.current);
+    data.calculations = data.calculations.map((c) =>
+      c.id === id
+        ? {
+            ...c,
+            positions: withExtras,
+            scenario,
+            scenarioFactor: factor,
+            directoryVersionId: rasc?.id ?? c.directoryVersionId,
+            status: "trebuet_proverki" as CardStatus,
+            updatedAt: new Date().toISOString(),
+          }
+        : c
+    );
+    audit(
+      data,
+      actorId,
+      "recalc",
+      "calculation",
+      id,
+      `Пересчёт сценария ${scenario} по текущим справочникам`
+    );
+    return data;
+  });
+}
+
+export function addCalcPositionFromDirectory(
+  actorId: string,
+  calcId: string,
+  input: {
+    type: "rascenki" | "ceny" | "park";
+    code: string;
+    quantity?: number;
+    rateKey?: string;
+  }
+) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.calculations.find((c) => c.id === calcId);
+    if (!item) throw new Error("Расчёт не найден");
+    assertOrgAccess(actor, item.orgId, "расчёта");
+    const dir = data.directories.find(
+      (d) => d.type === input.type && d.current
+    );
+    if (!dir) throw new Error("Нет текущей версии справочника");
+    const row = dir.rows.find(
+      (r) => String(r.code ?? r.sku ?? "") === input.code
+    );
+    if (!row) throw new Error("Позиция не найдена в справочнике");
+    const rate = rateFromRow(row, input.rateKey);
+    if (rate == null) throw new Error("В строке нет ставки");
+    const pos = {
+      id: `cp-${Date.now()}`,
+      code: String(row.code ?? row.sku ?? input.code),
+      name: String(row.name ?? row.work ?? input.code),
+      unit:
+        typeof row.unit === "string"
+          ? row.unit.replace(/^руб\//, "")
+          : "ед.",
+      quantity: input.quantity ?? 1,
+      rate,
+    };
+    data.calculations = data.calculations.map((c) =>
+      c.id === calcId
+        ? {
+            ...c,
+            positions: [...c.positions.filter((p) => p.code !== "НР" && p.code !== "СП"), pos, ...c.positions.filter((p) => p.code === "НР" || p.code === "СП")],
+            directoryVersionId: dir.id,
+            updatedAt: new Date().toISOString(),
+            status: "trebuet_proverki" as CardStatus,
+          }
+        : c
+    );
+    audit(
+      data,
+      actorId,
+      "add",
+      "calculation",
+      calcId,
+      `Позиция ${pos.code} из ${dir.name}`
+    );
+    return data;
   });
 }
 
@@ -753,7 +860,9 @@ export function importDirectoryRows(
             ? "Расценки (импорт Excel)"
             : type === "ceny"
               ? "Цены (импорт Excel)"
-              : "Профиль закупок (импорт)",
+              : type === "park"
+                ? "Парк техники (импорт)"
+                : "Профиль закупок (импорт)",
       version: nextVersion,
       authorId: actorId,
       at: new Date().toISOString(),

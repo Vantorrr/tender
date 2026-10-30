@@ -98,7 +98,8 @@ export async function GET(req: Request) {
         | "normy"
         | "rascenki"
         | "ceny"
-        | "profil";
+        | "profil"
+        | "park";
       return fileResponse(
         await buildDirectoryTemplate(type),
         `shablon-${type}.xlsx`,

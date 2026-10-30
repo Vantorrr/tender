@@ -58,6 +58,15 @@ interface StoreContextValue {
     id: string,
     scenario: Calculation["scenario"]
   ) => Promise<void>;
+  addCalcFromDirectory: (
+    id: string,
+    input: {
+      type: "rascenki" | "ceny" | "park";
+      code: string;
+      quantity?: number;
+      rateKey?: string;
+    }
+  ) => Promise<void>;
   updateDocument: (id: string, patch: Partial<DocumentItem>) => Promise<void>;
   reanalyzeDocument: (id: string) => Promise<void>;
   createDocumentUpload: (input: {
@@ -89,6 +98,8 @@ interface StoreContextValue {
     equipment: number;
     labor: number;
     fleet: number;
+    files?: string[];
+    source?: string;
   }>;
   addAudit: (
     action: string,
@@ -228,7 +239,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const importClientXlsx = useCallback(async () => {
     const boot = await api<
       BootstrapResponse & {
-        importResult?: { equipment: number; labor: number; fleet: number };
+        importResult?: {
+          equipment: number;
+          labor: number;
+          fleet: number;
+          files?: string[];
+          source?: string;
+        };
       }
     >("/api/admin", {
       method: "POST",
@@ -311,6 +328,25 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const boot = await api<BootstrapResponse>("/api/raschety", {
         method: "PATCH",
         body: JSON.stringify({ id, recalcScenario: scenario }),
+      });
+      applyBoot(boot);
+    },
+    [applyBoot]
+  );
+
+  const addCalcFromDirectory = useCallback(
+    async (
+      id: string,
+      input: {
+        type: "rascenki" | "ceny" | "park";
+        code: string;
+        quantity?: number;
+        rateKey?: string;
+      }
+    ) => {
+      const boot = await api<BootstrapResponse>("/api/raschety", {
+        method: "PATCH",
+        body: JSON.stringify({ id, addFromDirectory: input }),
       });
       applyBoot(boot);
     },
@@ -533,6 +569,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setProcurementReview,
     updateCalculation,
     recalcCalculation,
+    addCalcFromDirectory,
     updateDocument,
     reanalyzeDocument,
     createDocumentUpload,

@@ -108,7 +108,7 @@ export default function AdminPage() {
                 try {
                   const r = await importClientXlsx();
                   toast.success(
-                    `Импорт: техника ${r.equipment}, труд ${r.labor}, парк ${r.fleet}`
+                    `Клиентские XLSX: АТС ${r.equipment}, нормо-час ${r.labor}, парк ${r.fleet}`
                   );
                   setJobsKey((k) => k + 1);
                 } catch (e) {
@@ -127,7 +127,9 @@ export default function AdminPage() {
                 variant="outline"
                 onClick={async () => {
                   await resetData();
-                  toast.success("Данные сброшены к демо-набору");
+                  toast.success(
+                    "Сброс выполнен: демо + клиентские справочники 2026"
+                  );
                 }}
               >
                 Сбросить демо-данные
