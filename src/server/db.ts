@@ -273,6 +273,39 @@ export function healthSnapshot() {
   };
 }
 
+let clientImportScheduled = false;
+
+/** Подтягивает клиентские XLSX в справочники один раз после seed. */
+function maybeScheduleClientImport(db: DatabaseSync) {
+  if (clientImportScheduled) return;
+  if (metaGet(db, "client_xlsx_imported") === "1") return;
+  clientImportScheduled = true;
+  void import("@/server/client-import")
+    .then(async ({ importClientDirectories }) => {
+      const data = readAppData();
+      const already = data.directories.some(
+        (d) => d.current && /клиент/i.test(d.name)
+      );
+      if (!already) {
+        await importClientDirectories("u-super");
+      }
+      metaSet(getDb(), "client_xlsx_imported", "1");
+    })
+    .catch((err) => {
+      console.error("[tk] client xlsx auto-import failed", err);
+      clientImportScheduled = false;
+    });
+}
+
+export function markClientImportDone() {
+  metaSet(getDb(), "client_xlsx_imported", "1");
+}
+
+export function clearClientImportFlag() {
+  metaSet(getDb(), "client_xlsx_imported", "0");
+  clientImportScheduled = false;
+}
+
 export function ensureReady() {
   const db = getDb();
   // allow hot-reload to pick up SCHEMA_VERSION bumps without process restart
@@ -280,5 +313,6 @@ export function ensureReady() {
   if (version !== SCHEMA_VERSION) {
     migrate(db);
   }
+  maybeScheduleClientImport(db);
   return healthSnapshot();
 }

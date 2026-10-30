@@ -21,9 +21,30 @@ import type { DirectoryVersion } from "@/lib/types";
 
 const typeLabel: Record<DirectoryVersion["type"], string> = {
   normy: "Нормы",
-  rascenki: "Расценки",
-  ceny: "Цены",
-  profil: "Профиль закупок",
+  rascenki: "Расценки / нормо-час",
+  ceny: "Цены / тарифы АТС",
+  profil: "Профиль / парк",
+};
+
+const colLabel: Record<string, string> = {
+  code: "Код",
+  category: "Категория",
+  name: "Наименование",
+  work: "Должность / работа",
+  department: "Подразделение",
+  unit: "Ед.",
+  rate: "Ставка",
+  price: "Цена",
+  qty: "Кол-во",
+  labor: "Трудозатраты",
+  sku: "SKU",
+  region: "Регион",
+  okpd: "ОКПД",
+  maxNmck: "Макс. НМЦК",
+  rate_1s_kpi085: "1 смена КПИ 0,85",
+  rate_2s_kpi085: "2 смены КПИ 0,85",
+  rate_1s_kpi10: "1 смена КПИ 1,0",
+  rate_2s_kpi10: "2 смены КПИ 1,0",
 };
 
 export default function SpravochnikiPage() {
@@ -152,17 +173,23 @@ export default function SpravochnikiPage() {
                     current.authorId}
                 </span>
               </div>
+              <p className="mb-2 text-xs text-[var(--tk-muted)]">
+                Строк: {current.rows.length}
+                {current.rows.length > 80
+                  ? " (показаны первые 80)"
+                  : ""}
+              </p>
               <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
                       {Object.keys(current.rows[0] ?? {}).map((k) => (
-                        <TableHead key={k}>{k}</TableHead>
+                        <TableHead key={k}>{colLabel[k] ?? k}</TableHead>
                       ))}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {current.rows.map((row, idx) => (
+                    {current.rows.slice(0, 80).map((row, idx) => (
                       <TableRow key={idx}>
                         {Object.values(row).map((v, i) => (
                           <TableCell key={i}>{String(v)}</TableCell>

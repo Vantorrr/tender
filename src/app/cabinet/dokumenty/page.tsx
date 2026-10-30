@@ -62,8 +62,8 @@ export default function DokumentyPage() {
         actions={
           <>
             <Select
-              value={procurementId || undefined}
-              onValueChange={(v) => setProcurementId(v ?? "")}
+              value={procurementId}
+              onValueChange={(v) => setProcurementId(v ?? undefined)}
             >
               <SelectTrigger className="w-[220px]">
                 <SelectValue placeholder="Закупка" />

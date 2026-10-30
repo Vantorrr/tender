@@ -71,8 +71,15 @@ function AdminJobs({ reloadKey }: { reloadKey: number }) {
 }
 
 export default function AdminPage() {
-  const { data, user, resetData, setOrganizationActive } = useStore();
+  const {
+    data,
+    user,
+    resetData,
+    setOrganizationActive,
+    importClientXlsx,
+  } = useStore();
   const [jobsKey, setJobsKey] = useState(0);
+  const [importing, setImporting] = useState(false);
   if (!user) return null;
 
   if (user.role !== "superadmin" && user.role !== "admin") {
@@ -92,17 +99,41 @@ export default function AdminPage() {
         title="Администрирование"
         description="Организации, роли, журнал аудита и демонстрация изоляции данных."
         actions={
-          user.role === "superadmin" ? (
+          <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
+              disabled={importing}
               onClick={async () => {
-                await resetData();
-                toast.success("Данные сброшены к демо-набору");
+                setImporting(true);
+                try {
+                  const r = await importClientXlsx();
+                  toast.success(
+                    `Импорт: техника ${r.equipment}, труд ${r.labor}, парк ${r.fleet}`
+                  );
+                  setJobsKey((k) => k + 1);
+                } catch (e) {
+                  toast.error(
+                    e instanceof Error ? e.message : "Ошибка импорта"
+                  );
+                } finally {
+                  setImporting(false);
+                }
               }}
             >
-              Сбросить демо-данные
+              {importing ? "Импорт…" : "Импорт клиентских XLSX"}
             </Button>
-          ) : null
+            {user.role === "superadmin" ? (
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  await resetData();
+                  toast.success("Данные сброшены к демо-набору");
+                }}
+              >
+                Сбросить демо-данные
+              </Button>
+            ) : null}
+          </div>
         }
       />
 

@@ -15,6 +15,16 @@ if (!fs.existsSync(envFile) && fs.existsSync(envExample)) {
   console.log("→ создан .env из .env.example");
 }
 
+const fixturesImports = path.join(root, "fixtures", "client-imports");
+const runtimeImports = path.join(dataDir, "client-imports");
+if (fs.existsSync(fixturesImports)) {
+  fs.mkdirSync(runtimeImports, { recursive: true });
+  for (const f of fs.readdirSync(fixturesImports).filter((x) => x.endsWith(".xlsx"))) {
+    fs.copyFileSync(path.join(fixturesImports, f), path.join(runtimeImports, f));
+  }
+  console.log("→ клиентские XLSX → data/client-imports");
+}
+
 const init = spawnSync(
   process.execPath,
   [path.join(root, "scripts/init-db.mjs")],

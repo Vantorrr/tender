@@ -85,6 +85,11 @@ interface StoreContextValue {
   ensureChain: (procurementId: string) => Promise<void>;
   markAllNotificationsRead: () => Promise<void>;
   setOrganizationActive: (orgId: string, active: boolean) => Promise<void>;
+  importClientXlsx: () => Promise<{
+    equipment: number;
+    labor: number;
+    fleet: number;
+  }>;
   addAudit: (
     action: string,
     entity: string,
@@ -219,6 +224,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     },
     [applyBoot]
   );
+
+  const importClientXlsx = useCallback(async () => {
+    const boot = await api<
+      BootstrapResponse & {
+        importResult?: { equipment: number; labor: number; fleet: number };
+      }
+    >("/api/admin", {
+      method: "POST",
+      body: JSON.stringify({ action: "importClientXlsx" }),
+    });
+    applyBoot(boot);
+    return (
+      boot.importResult ?? { equipment: 0, labor: 0, fleet: 0 }
+    );
+  }, [applyBoot]);
 
   const updateUser = useCallback(
     async (id: string, patch: Partial<User>) => {
@@ -505,6 +525,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     markNotificationRead,
     markAllNotificationsRead,
     setOrganizationActive,
+    importClientXlsx,
     updateUser,
     createUser,
     setUserRole,
