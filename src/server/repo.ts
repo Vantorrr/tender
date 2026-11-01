@@ -16,7 +16,8 @@ import type {
 import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
 import { mutateAppData, readAppData, resetAppData } from "@/server/db";
 import { hashPassword } from "@/server/passwords";
-import { createSession } from "@/server/auth";
+import { createSession, publicUser } from "@/server/auth";
+import { randomBytes } from "node:crypto";
 
 function assertOrgAccess(user: User, orgId: string, label = "записи") {
   if (user.role === "superadmin") return;
@@ -29,6 +30,24 @@ function actorUser(data: AppData, actorId: string): User {
   const u = data.users.find((x) => x.id === actorId);
   if (!u || u.blocked) throw new Error("Пользователь не найден");
   return u;
+}
+
+function assertCanManageUsers(actor: User) {
+  if (actor.role !== "superadmin" && actor.role !== "admin") {
+    throw new Error("Нет доступа к управлению пользователями");
+  }
+}
+
+function assertCanManageTarget(actor: User, target: User) {
+  assertCanManageUsers(actor);
+  assertOrgAccess(actor, target.orgId, "пользователя");
+  if (actor.role === "admin" && target.role === "superadmin") {
+    throw new Error("Нет доступа к учётной записи суперадмина");
+  }
+}
+
+function keyRole(role: Role) {
+  return role === "superadmin" || role === "admin";
 }
 
 function audit(
@@ -59,15 +78,12 @@ export function getBootstrap(user: User) {
   const orgId = fresh.orgId;
   const isSuper = fresh.role === "superadmin";
   return {
-    user: (() => {
-      const { password: _p, ...rest } = fresh;
-      return rest;
-    })(),
+    user: publicUser(fresh),
     data: {
       ...data,
       users: data.users
         .filter((u) => isSuper || u.orgId === orgId)
-        .map(({ password: _p, ...rest }) => rest),
+        .map((u) => publicUser(u)),
       procurements: data.procurements.filter((p) => p.orgId === orgId),
       documents: data.documents.filter((d) => d.orgId === orgId),
       calculations: data.calculations.filter((c) => c.orgId === orgId),
@@ -149,13 +165,21 @@ export function setOrganizationActive(
 export function createUser(actorId: string, input: Omit<User, "id" | "createdAt">) {
   return mutateAppData((data) => {
     const actor = actorUser(data, actorId);
+    assertCanManageUsers(actor);
     assertOrgAccess(actor, input.orgId, "организации");
+    if (input.role === "superadmin" && actor.role !== "superadmin") {
+      throw new Error("Нет доступа к назначению роли суперадмина");
+    }
     if (data.users.some((u) => u.email.toLowerCase() === input.email.toLowerCase())) {
       throw new Error("Пользователь с таким email уже существует");
     }
     const id = `u-${Date.now()}`;
+    const { secretKey: _sk, secretKeyHash: _sh, hasSecretKey: _hk, ...clean } = input;
+    void _sk;
+    void _sh;
+    void _hk;
     data.users.push({
-      ...input,
+      ...clean,
       password: hashPassword(input.password ?? "Demo123!"),
       id,
       createdAt: new Date().toISOString(),
@@ -183,8 +207,15 @@ export function updateUser(
     const actor = actorUser(data, actorId);
     const target = data.users.find((u) => u.id === id);
     if (!target) throw new Error("Пользователь не найден");
-    assertOrgAccess(actor, target.orgId, "пользователя");
+    assertCanManageTarget(actor, target);
     const nextPatch = { ...patch };
+    delete nextPatch.secretKey;
+    delete nextPatch.secretKeyHash;
+    delete nextPatch.hasSecretKey;
+    delete nextPatch.id;
+    delete nextPatch.role;
+    delete nextPatch.orgId;
+    delete nextPatch.createdAt;
     if (typeof nextPatch.password === "string" && nextPatch.password) {
       nextPatch.password = nextPatch.password.includes(":")
         ? nextPatch.password
@@ -210,10 +241,20 @@ export function setUserRole(
     const actor = actorUser(data, actorId);
     const current = data.users.find((u) => u.id === userId);
     if (!current) throw new Error("Пользователь не найден");
-    assertOrgAccess(actor, current.orgId, "пользователя");
-    data.users = data.users.map((u) =>
-      u.id === userId ? { ...u, role, sections: DEFAULT_SECTIONS[role] } : u
-    );
+    assertCanManageTarget(actor, current);
+    if (role === "superadmin" && actor.role !== "superadmin") {
+      throw new Error("Нет доступа к назначению роли суперадмина");
+    }
+    data.users = data.users.map((u) => {
+      if (u.id !== userId) return u;
+      const next: User = { ...u, role, sections: DEFAULT_SECTIONS[role] };
+      if (!keyRole(role)) {
+        delete next.secretKeyHash;
+        delete next.secretKey;
+        delete next.hasSecretKey;
+      }
+      return next;
+    });
     data.roleHistory.unshift({
       id: `rh-${Date.now()}`,
       userId,
@@ -960,6 +1001,39 @@ export function injectRiskParse(actorId: string, riskId: string) {
     audit(data, actorId, "parse", "risk", riskId, "Разбор договора (мок)");
     return data;
   });
+}
+
+export function issueSecretKey(actorId: string, userId: string) {
+  let issued = "";
+  mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const target = data.users.find((u) => u.id === userId);
+    if (!target) throw new Error("Пользователь не найден");
+    assertCanManageTarget(actor, target);
+    if (!keyRole(target.role)) {
+      throw new Error(
+        "Некорректный запрос: секретный ключ только для суперадмина и администратора"
+      );
+    }
+    if (actor.role === "admin" && target.role !== "admin") {
+      throw new Error("Нет доступа к ключу этой учётной записи");
+    }
+    const key = `TK-${randomBytes(4).toString("hex").toUpperCase()}-${randomBytes(3).toString("hex").toUpperCase()}`;
+    issued = key;
+    data.users = data.users.map((u) =>
+      u.id === userId ? { ...u, secretKeyHash: hashPassword(key) } : u
+    );
+    audit(
+      data,
+      actorId,
+      "issue_secret_key",
+      "user",
+      userId,
+      "Выдан новый секретный ключ"
+    );
+    return data;
+  });
+  return { key: issued };
 }
 
 export function setUserSections(

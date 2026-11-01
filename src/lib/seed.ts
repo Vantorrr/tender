@@ -1,4 +1,5 @@
 import type { AppData } from "./types";
+import { DEMO_SECRET_KEYS } from "./demo-accounts";
 import { DEFAULT_SECTIONS } from "./roles";
 import {
   CLIENT_BUNDLE,
@@ -29,6 +30,7 @@ export function createSeedData(): AppData {
         id: "u-super",
         email: "super@tenderkontur.ru",
         password: "Super123!",
+        secretKey: DEMO_SECRET_KEYS.super,
         name: "Ирина Суперадмин",
         role: "superadmin",
         orgId: "org-alfa",
@@ -84,6 +86,7 @@ export function createSeedData(): AppData {
         id: "u-admin",
         email: "admin@alfastroy.ru",
         password: "Admin123!",
+        secretKey: DEMO_SECRET_KEYS.admin,
         name: "Дмитрий Админов",
         role: "admin",
         orgId: "org-alfa",

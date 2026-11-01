@@ -6,12 +6,13 @@ import {
   clientSchoolPositions,
   mergeClientDirectoriesInto,
 } from "@/lib/client-dirs";
+import { DEMO_SECRET_KEYS } from "@/lib/demo-accounts";
 import { createSeedData } from "@/lib/seed";
 import type { AppData } from "@/lib/types";
 import { config, dbPath } from "@/server/config";
 import { hashPassword } from "@/server/passwords";
 
-const SCHEMA_VERSION = "5";
+const SCHEMA_VERSION = "6";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -85,13 +86,28 @@ function metaSet(db: DatabaseSync, key: string, value: string) {
 function hashSeedUsers(data: AppData): AppData {
   return {
     ...data,
-    users: data.users.map((u) => ({
-      ...u,
-      password:
+    users: data.users.map((u) => {
+      const password =
         u.password && u.password.includes(":")
           ? u.password
-          : hashPassword(u.password ?? "Demo123!"),
-    })),
+          : hashPassword(u.password ?? "Demo123!");
+      const next: AppData["users"][number] = { ...u, password };
+      delete next.secretKey;
+      delete next.hasSecretKey;
+      if (u.secretKey) {
+        next.secretKeyHash = hashPassword(u.secretKey);
+      } else if (!next.secretKeyHash) {
+        if (u.id === "u-super") {
+          next.secretKeyHash = hashPassword(DEMO_SECRET_KEYS.super);
+        } else if (u.id === "u-admin") {
+          next.secretKeyHash = hashPassword(DEMO_SECRET_KEYS.admin);
+        }
+      }
+      if (next.role !== "superadmin" && next.role !== "admin") {
+        delete next.secretKeyHash;
+      }
+      return next;
+    }),
   };
 }
 

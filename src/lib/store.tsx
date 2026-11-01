@@ -27,7 +27,9 @@ import type {
   User,
 } from "./types";
 
-type PublicUser = Omit<User, "password">;
+type PublicUser = Omit<User, "password" | "secretKey" | "secretKeyHash"> & {
+  hasSecretKey?: boolean;
+};
 
 interface BootstrapResponse {
   user: PublicUser;
@@ -43,6 +45,10 @@ interface StoreContextValue {
     email: string,
     password: string
   ) => Promise<{ ok: boolean; error?: string }>;
+  loginWithSecret: (
+    secretKey: string
+  ) => Promise<{ ok: boolean; error?: string }>;
+  issueSecretKey: (userId: string) => Promise<string>;
   logout: () => Promise<void>;
   requestRecovery: (email: string) => Promise<{ ok: boolean; message: string }>;
   resetData: () => Promise<void>;
@@ -161,6 +167,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         {
           method: "POST",
           body: JSON.stringify({ email, password }),
+        }
+      );
+      setClientToken(res.token);
+      const boot = await api<BootstrapResponse>("/api/bootstrap");
+      applyBootstrap(boot, setUser, setData);
+      return { ok: true };
+    } catch (e) {
+      setClientToken(null);
+      return {
+        ok: false,
+        error: e instanceof Error ? e.message : "Ошибка входа",
+      };
+    }
+  }, []);
+
+  const loginWithSecret = useCallback(async (secretKey: string) => {
+    try {
+      const res = await api<{ user: PublicUser; token: string }>(
+        "/api/auth/login",
+        {
+          method: "POST",
+          body: JSON.stringify({ secretKey }),
         }
       );
       setClientToken(res.token);
@@ -297,6 +325,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({ id: userId, sections }),
       });
       applyBoot(boot);
+    },
+    [applyBoot]
+  );
+
+  const issueSecretKey = useCallback(
+    async (userId: string) => {
+      const boot = await api<BootstrapResponse & { issuedSecretKey?: string }>(
+        "/api/users",
+        {
+          method: "PATCH",
+          body: JSON.stringify({ id: userId, action: "issueSecretKey" }),
+        }
+      );
+      applyBoot(boot);
+      if (!boot.issuedSecretKey) {
+        throw new Error("Ключ не выдан");
+      }
+      return boot.issuedSecretKey;
     },
     [applyBoot]
   );
@@ -554,6 +600,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     data,
     user,
     login,
+    loginWithSecret,
+    issueSecretKey,
     logout,
     requestRecovery,
     resetData,

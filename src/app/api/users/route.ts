@@ -1,6 +1,7 @@
 import {
   createUser,
   getBootstrap,
+  issueSecretKey,
   setUserRole,
   setUserSections,
   updateUser,
@@ -53,8 +54,13 @@ export async function PATCH(req: Request) {
       role?: Role;
       comment?: string;
       sections?: SectionKey[];
+      action?: "issueSecretKey";
     };
     if (!body.id) return json({ error: "Не указан id" }, 400);
+    if (body.action === "issueSecretKey") {
+      const issued = issueSecretKey(user.id, body.id);
+      return json({ ...getBootstrap(user), issuedSecretKey: issued.key });
+    }
     if (body.role) {
       setUserRole(
         user.id,

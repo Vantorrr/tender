@@ -67,7 +67,8 @@ export function handleRouteError(e: unknown, fallback = "Ошибка серве
     if (message === "Требуется вход") status = 401;
     else if (
       message.startsWith("Нет доступа") ||
-      message.includes("другой организации")
+      message.includes("другой организации") ||
+      message.includes("Недостаточно прав")
     )
       status = 403;
     else if (message.includes("не найден") || message.includes("не найдена"))

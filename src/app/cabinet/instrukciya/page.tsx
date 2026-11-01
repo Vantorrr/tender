@@ -85,13 +85,13 @@ const scenarios = [
 ];
 
 const accounts = [
-  { role: "superadmin" as const, email: "super@tenderkontur.ru", password: "Super123!" },
-  { role: "rukovoditel" as const, email: "ruk@alfastroy.ru", password: "Ruk123!" },
-  { role: "tender" as const, email: "tender@alfastroy.ru", password: "Tender123!" },
-  { role: "smetchik" as const, email: "smeta@alfastroy.ru", password: "Smeta123!" },
-  { role: "otvetstvennyy" as const, email: "object@alfastroy.ru", password: "Object123!" },
-  { role: "admin" as const, email: "admin@alfastroy.ru", password: "Admin123!" },
-  { role: "tender" as const, email: "tender@betain.ru", password: "Beta123!", note: "орг. Бета — изоляция" },
+  { role: "superadmin" as const, email: "super@tenderkontur.ru", password: "Super123!", key: "TK-SUPER-361-IRINA" },
+  { role: "rukovoditel" as const, email: "ruk@alfastroy.ru", password: "Ruk123!", key: "" },
+  { role: "tender" as const, email: "tender@alfastroy.ru", password: "Tender123!", key: "" },
+  { role: "smetchik" as const, email: "smeta@alfastroy.ru", password: "Smeta123!", key: "" },
+  { role: "otvetstvennyy" as const, email: "object@alfastroy.ru", password: "Object123!", key: "" },
+  { role: "admin" as const, email: "admin@alfastroy.ru", password: "Admin123!", key: "TK-ADMIN-361-ALFA" },
+  { role: "tender" as const, email: "tender@betain.ru", password: "Beta123!", key: "", note: "орг. Бета — изоляция" },
 ];
 
 export default function InstrukciyaPage() {
@@ -112,6 +112,7 @@ export default function InstrukciyaPage() {
               <th className="px-4 py-2 font-medium">Роль</th>
               <th className="px-4 py-2 font-medium">Логин</th>
               <th className="px-4 py-2 font-medium">Пароль</th>
+              <th className="px-4 py-2 font-medium">Секретный ключ</th>
             </tr>
           </thead>
           <tbody>
@@ -127,6 +128,7 @@ export default function InstrukciyaPage() {
                 </td>
                 <td className="px-4 py-2 font-mono text-xs">{a.email}</td>
                 <td className="px-4 py-2 font-mono text-xs">{a.password}</td>
+                <td className="px-4 py-2 font-mono text-xs">{a.key || "—"}</td>
               </tr>
             ))}
           </tbody>

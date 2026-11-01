@@ -97,7 +97,7 @@ export default function AdminPage() {
     <div>
       <PageHeader
         title="Администрирование"
-        description="Организации, роли, журнал аудита и демонстрация изоляции данных."
+        description="Организации, журнал аудита, импорт справочников. Секретные ключи — в разделе «Пользователи»."
         actions={
           <div className="flex flex-wrap gap-2">
             <Button

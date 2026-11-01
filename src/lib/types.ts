@@ -45,6 +45,12 @@ export interface User {
   id: string;
   email: string;
   password?: string;
+  /** scrypt salt:hash. Никогда не отдаётся клиенту. */
+  secretKeyHash?: string;
+  /** Только в сиде до хеширования. В базе не хранится. */
+  secretKey?: string;
+  /** Признак для клиента: ключ выдан. Сам ключ не хранится. */
+  hasSecretKey?: boolean;
   name: string;
   role: Role;
   orgId: string;

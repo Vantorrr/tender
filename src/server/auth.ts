@@ -86,9 +86,17 @@ export async function getSessionUser(req?: Request): Promise<User | null> {
 }
 
 export function publicUser(user: User) {
-  const { password: _p, ...rest } = user;
+  const {
+    password: _p,
+    secretKey: _s,
+    secretKeyHash,
+    hasSecretKey: _h,
+    ...rest
+  } = user;
   void _p;
-  return rest;
+  void _s;
+  void _h;
+  return { ...rest, hasSecretKey: Boolean(secretKeyHash) };
 }
 
 export function recoveryToken(email: string): string {

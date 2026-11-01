@@ -48,9 +48,12 @@ export default function PolzovateliPage() {
     updateUser,
     setUserRole,
     setUserSections,
+    issueSecretKey,
   } = useStore();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+  const [issuedKey, setIssuedKey] = useState<string | null>(null);
+  const [issuing, setIssuing] = useState(false);
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -66,6 +69,18 @@ export default function PolzovateliPage() {
     user.role === "superadmin" ? true : u.orgId === user.orgId
   );
   const selected = orgUsers.find((u) => u.id === selectedId) ?? null;
+  const roleChoices = (Object.keys(ROLE_LABELS) as Role[]).filter((r) =>
+    user.role === "superadmin" ? true : r !== "superadmin"
+  );
+  const canEditSelected =
+    !!selected &&
+    (user.role === "superadmin" ||
+      (selected.role !== "superadmin" && selected.orgId === user.orgId));
+  const canIssueKey =
+    !!selected &&
+    canEditSelected &&
+    (selected.role === "superadmin" || selected.role === "admin") &&
+    (user.role === "superadmin" || selected.role === "admin");
 
   if (!canManage) {
     return (
@@ -82,7 +97,7 @@ export default function PolzovateliPage() {
     <div>
       <PageHeader
         title="Пользователи и настройки"
-        description="Создание, редактирование, блокировка, права на разделы и история ролей."
+        description="Создание, роли, права на разделы, блокировка и секретный ключ суперадмина и администратора."
         actions={
           user.role === "superadmin" || user.role === "admin" ? (
             <Dialog open={open} onOpenChange={setOpen}>
@@ -133,7 +148,7 @@ export default function PolzovateliPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {(Object.keys(ROLE_LABELS) as Role[]).map((r) => (
+                        {roleChoices.map((r) => (
                           <SelectItem key={r} value={r}>
                             {ROLE_LABELS[r]}
                           </SelectItem>
@@ -183,7 +198,7 @@ export default function PolzovateliPage() {
               <TableRow>
                 <TableHead>Пользователь</TableHead>
                 <TableHead>Роль</TableHead>
-                <TableHead>Орг.</TableHead>
+                <TableHead>Ключ</TableHead>
                 <TableHead>Статус</TableHead>
               </TableRow>
             </TableHeader>
@@ -203,7 +218,11 @@ export default function PolzovateliPage() {
                   </TableCell>
                   <TableCell>{ROLE_LABELS[u.role]}</TableCell>
                   <TableCell>
-                    {data.organizations.find((o) => o.id === u.orgId)?.name}
+                    {u.role === "superadmin" || u.role === "admin"
+                      ? u.hasSecretKey
+                        ? "Выдан"
+                        : "Нет"
+                      : "—"}
                   </TableCell>
                   <TableCell>
                     {u.blocked ? (
@@ -230,14 +249,14 @@ export default function PolzovateliPage() {
                 </p>
               </div>
 
-              {user.role === "superadmin" ? (
+              {canEditSelected ? (
                 <>
                   <div className="space-y-1">
                     <Label>Роль</Label>
                     <Select
                       value={selected.role}
                       onValueChange={(v) => {
-                        if (!v) return;
+                        if (!v || !selected) return;
                         setUserRole(selected.id, v as Role, "Изменение роли");
                         toast.success("Роль обновлена");
                       }}
@@ -246,7 +265,7 @@ export default function PolzovateliPage() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {(Object.keys(ROLE_LABELS) as Role[]).map((r) => (
+                        {roleChoices.map((r) => (
                           <SelectItem key={r} value={r}>
                             {ROLE_LABELS[r]}
                           </SelectItem>
@@ -266,6 +285,7 @@ export default function PolzovateliPage() {
                           <Checkbox
                             checked={selected.sections.includes(section)}
                             onCheckedChange={(checked) => {
+                              if (!selected) return;
                               const next = checked
                                 ? [...selected.sections, section]
                                 : selected.sections.filter((s) => s !== section);
@@ -280,9 +300,46 @@ export default function PolzovateliPage() {
                       ))}
                     </div>
                   </div>
-                </>
-              ) : null}
 
+                  {canIssueKey ? (
+                    <div className="rounded-lg border border-[var(--tk-line)] px-3 py-3">
+                      <p className="text-sm font-medium">Секретный ключ</p>
+                      <p className="mt-1 text-xs text-[var(--tk-muted)]">
+                        {selected.hasSecretKey
+                          ? "Ключ уже выдан. Новый ключ сразу отзывает предыдущий и показывается один раз."
+                          : "Ключа ещё нет. После выдачи его можно использовать вместо пароля."}
+                      </p>
+                      <Button
+                        className="mt-3"
+                        variant="outline"
+                        disabled={issuing}
+                        onClick={async () => {
+                          if (!selected) return;
+                          setIssuing(true);
+                          try {
+                            const key = await issueSecretKey(selected.id);
+                            setIssuedKey(key);
+                          } catch (e) {
+                            toast.error(
+                              e instanceof Error ? e.message : "Не удалось выдать ключ"
+                            );
+                          } finally {
+                            setIssuing(false);
+                          }
+                        }}
+                      >
+                        {issuing ? "Выдача…" : "Новый секретный ключ"}
+                      </Button>
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                <p className="text-sm text-[var(--tk-muted)]">
+                  Учётной записью суперадмина управляет только суперадмин.
+                </p>
+              )}
+
+              {canEditSelected ? (
               <Button
                 variant={selected.blocked ? "default" : "destructive"}
                 onClick={() => {
@@ -296,6 +353,7 @@ export default function PolzovateliPage() {
               >
                 {selected.blocked ? "Разблокировать" : "Заблокировать"}
               </Button>
+              ) : null}
 
               <div>
                 <h3 className="mb-2 text-sm font-medium">История ролей</h3>
@@ -327,6 +385,33 @@ export default function PolzovateliPage() {
           )}
         </div>
       </div>
+
+      <Dialog open={issuedKey !== null} onOpenChange={(open) => !open && setIssuedKey(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Секретный ключ</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-[var(--tk-muted)]">
+            Скопируйте ключ сейчас. Повторно он не показывается, предыдущий ключ уже не действует.
+          </p>
+          <p className="rounded-lg border border-[var(--tk-line)] bg-[#f3f4f6] px-3 py-2 font-mono text-sm">
+            {issuedKey}
+          </p>
+          <Button
+            onClick={async () => {
+              if (!issuedKey) return;
+              try {
+                await navigator.clipboard.writeText(issuedKey);
+                toast.success("Ключ скопирован");
+              } catch {
+                toast.error("Не удалось скопировать");
+              }
+            }}
+          >
+            Скопировать
+          </Button>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

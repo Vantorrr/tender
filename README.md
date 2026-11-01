@@ -30,15 +30,17 @@ docker compose up --build
 
 ## Демо-учётки
 
-| Роль | Email | Пароль |
-|------|-------|--------|
-| Суперадмин | `super@tenderkontur.ru` | `Super123!` |
-| Руководитель | `ruk@alfastroy.ru` | `Ruk123!` |
-| Тендерный специалист | `tender@alfastroy.ru` | `Tender123!` |
-| Сметчик | `smeta@alfastroy.ru` | `Smeta123!` |
-| Ответственный | `object@alfastroy.ru` | `Object123!` |
-| Администратор | `admin@alfastroy.ru` | `Admin123!` |
-| Тендер (Бета) | `tender@betain.ru` | `Beta123!` |
+| Роль | Email | Пароль | Секретный ключ |
+|------|-------|--------|----------------|
+| Суперадмин | `super@tenderkontur.ru` | `Super123!` | `TK-SUPER-361-IRINA` |
+| Руководитель | `ruk@alfastroy.ru` | `Ruk123!` | — |
+| Тендерный специалист | `tender@alfastroy.ru` | `Tender123!` | — |
+| Сметчик | `smeta@alfastroy.ru` | `Smeta123!` | — |
+| Ответственный | `object@alfastroy.ru` | `Object123!` | — |
+| Администратор | `admin@alfastroy.ru` | `Admin123!` | `TK-ADMIN-361-ALFA` |
+| Тендер (Бета) | `tender@betain.ru` | `Beta123!` | — |
+
+Суперадмин и администратор входят и по паролю, и по секретному ключу (`POST /api/auth/login` с полем `secretKey`). Ключ хранится как scrypt-хеш. Новый ключ выдаётся в «Пользователи» и показывается один раз; смена роли с административной ключ снимает.
 
 ## Что внутри
 
