@@ -56,10 +56,10 @@ function NavList({
             onClick={onNavigate}
             title={item.label}
             className={cn(
-              "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors duration-200",
+              "flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13.5px] font-medium tracking-tight transition-colors duration-200",
               active
-                ? "bg-[var(--tk-steel)] text-white shadow-sm"
-                : "text-[var(--tk-ink-soft)] hover:bg-[var(--tk-steel-50)] hover:text-[var(--tk-ink)]",
+                ? "bg-white/12 text-white"
+                : "text-white/60 hover:bg-white/6 hover:text-white",
               collapsed && "justify-center px-2"
             )}
           >
@@ -105,17 +105,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen bg-[var(--tk-canvas)]">
       <aside
         className={cn(
-          "sticky top-0 hidden h-screen shrink-0 flex-col border-r border-[var(--tk-line)] bg-[var(--tk-panel)]/95 backdrop-blur-md transition-[width] duration-300 lg:flex",
-          collapsed ? "w-[72px]" : "w-[260px]"
+          "sticky top-0 hidden h-screen shrink-0 flex-col border-r border-white/8 bg-[var(--tk-sidebar)] text-white transition-[width] duration-300 lg:flex",
+          collapsed ? "w-[76px]" : "w-[248px]"
         )}
       >
-        <div className="flex h-16 items-center justify-between gap-2 border-b border-[var(--tk-line)] px-3">
-          <Link href="/cabinet" className="flex min-w-0 items-center gap-2">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--tk-steel)] font-[family-name:var(--font-display)] text-sm font-bold text-white">
+        <div className="flex h-[68px] items-center justify-between gap-2 px-3">
+          <Link href="/cabinet" className="flex min-w-0 items-center gap-2.5">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--tk-accent)] font-[family-name:var(--font-display)] text-sm font-semibold text-[#1a120c]">
               ТК
             </span>
             {!collapsed ? (
-              <span className="truncate font-[family-name:var(--font-display)] text-base tracking-tight text-[var(--tk-ink)]">
+              <span className="truncate font-[family-name:var(--font-display)] text-[15px] font-semibold tracking-tight text-white">
                 ТендерКонтур
               </span>
             ) : null}
@@ -123,6 +123,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <Button
             variant="ghost"
             size="icon-sm"
+            className="text-white/50 hover:bg-white/8 hover:text-white"
             onClick={() => setCollapsed((v) => !v)}
             aria-label="Свернуть меню"
           >
@@ -133,18 +134,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             )}
           </Button>
         </div>
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto px-1">
           <NavList collapsed={collapsed} />
         </div>
         {!collapsed ? (
-          <div className="border-t border-[var(--tk-line)] p-3 text-xs text-[var(--tk-muted)]">
+          <div className="px-4 py-4 text-[11px] tracking-wide text-white/35">
             Договор № TMA361
           </div>
         ) : null}
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-16 items-center justify-between gap-3 border-b border-[var(--tk-line)] bg-[var(--tk-panel)]/90 px-4 backdrop-blur-md sm:px-6">
+        <header className="sticky top-0 z-30 flex h-[68px] items-center justify-between gap-3 border-b border-[var(--tk-line)] bg-white/90 px-4 backdrop-blur-md sm:px-6">
           <div className="flex items-center gap-2">
             <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
               <SheetTrigger
@@ -170,7 +171,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </div>
               </SheetContent>
             </Sheet>
-            <div className="hidden text-sm text-[var(--tk-muted)] sm:block">
+            <div className="hidden rounded-full border border-[var(--tk-line)] bg-white px-3 py-1 text-[13px] text-[var(--tk-ink-soft)] sm:block">
               {data.organizations.find((o) => o.id === user.orgId)?.name}
             </div>
           </div>
@@ -269,9 +270,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="relative flex-1 px-4 py-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:px-6 sm:py-7 lg:px-8">
-          <div className="tk-noise absolute inset-0" aria-hidden />
-          <div key={pathname} className="tk-page relative">
+        <main className="relative flex-1 px-4 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-7 sm:py-8 lg:px-10">
+          <div key={pathname} className="tk-page relative mx-auto w-full max-w-[1180px]">
             {children}
           </div>
         </main>

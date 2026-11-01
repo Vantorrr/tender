@@ -49,43 +49,46 @@
 }
 
 :root {
-  /* Industrial-elegant construction palette */
-  --tk-ink: #14232e;
-  --tk-ink-soft: #2a3f4d;
-  --tk-muted: #5d7382;
-  --tk-steel: #1b3a4b;
-  --tk-steel-50: #e8eef2;
-  --tk-copper: #b86b2b;
-  --tk-copper-deep: #8f4f1a;
-  --tk-canvas: #eef2f5;
-  --tk-panel: #f7f9fb;
-  --tk-line: #d5dee5;
-  --tk-sand: #d9c4a8;
+  --tk-ink: #12151c;
+  --tk-ink-soft: #3a4150;
+  --tk-muted: #6b7280;
+  --tk-steel: #111318;
+  --tk-steel-50: #f3f4f6;
+  --tk-copper: #c46a2a;
+  --tk-copper-deep: #9a4e18;
+  --tk-canvas: #f3f4f6;
+  --tk-panel: #ffffff;
+  --tk-line: #e6e8ee;
+  --tk-sand: #f0d3b4;
+  --tk-sidebar: #111318;
+  --tk-sidebar-line: rgba(255, 255, 255, 0.08);
+  --tk-sidebar-muted: rgba(255, 255, 255, 0.55);
+  --tk-accent: #e8a15a;
 
-  --background: #eef2f5;
-  --foreground: #14232e;
+  --background: #f3f4f6;
+  --foreground: #12151c;
   --card: #ffffff;
-  --card-foreground: #14232e;
+  --card-foreground: #12151c;
   --popover: #ffffff;
-  --popover-foreground: #14232e;
-  --primary: #1b3a4b;
-  --primary-foreground: #f7f9fb;
-  --secondary: #e8eef2;
-  --secondary-foreground: #1b3a4b;
-  --muted: #e8eef2;
-  --muted-foreground: #5d7382;
-  --accent: #f3ebe2;
-  --accent-foreground: #8f4f1a;
+  --popover-foreground: #12151c;
+  --primary: #111318;
+  --primary-foreground: #fafafa;
+  --secondary: #f3f4f6;
+  --secondary-foreground: #111318;
+  --muted: #f3f4f6;
+  --muted-foreground: #6b7280;
+  --accent: #f7efe6;
+  --accent-foreground: #9a4e18;
   --destructive: #b42318;
-  --border: #d5dee5;
-  --input: #d5dee5;
-  --ring: #b86b2b;
+  --border: #e6e8ee;
+  --input: #e6e8ee;
+  --ring: #c46a2a;
   --chart-1: #1b3a4b;
   --chart-2: #b86b2b;
   --chart-3: #3d6b7a;
   --chart-4: #8f4f1a;
   --chart-5: #5d7382;
-  --radius: 0.7rem;
+  --radius: 0.85rem;
   --sidebar: #f7f9fb;
   --sidebar-foreground: #14232e;
   --sidebar-primary: #1b3a4b;
@@ -102,11 +105,7 @@
   }
   body {
     @apply bg-background text-foreground;
-    background-image:
-      radial-gradient(ellipse 80% 50% at 10% -10%, rgba(184, 107, 43, 0.12), transparent 55%),
-      radial-gradient(ellipse 60% 40% at 100% 0%, rgba(27, 58, 75, 0.1), transparent 50%),
-      linear-gradient(180deg, #f4f7f9 0%, #eef2f5 40%, #e8edf1 100%);
-    background-attachment: fixed;
+    background: #f3f4f6;
   }
   html {
     @apply font-sans;
@@ -131,9 +130,16 @@
 
   .tk-hero-wash {
     background:
-      radial-gradient(ellipse 90% 70% at 70% 40%, rgba(184, 107, 43, 0.18), transparent 55%),
-      radial-gradient(ellipse 70% 60% at 15% 70%, rgba(27, 58, 75, 0.22), transparent 50%),
-      linear-gradient(145deg, #0f2430 0%, #1b3a4b 45%, #2a4f5f 100%);
+      radial-gradient(ellipse 70% 50% at 80% 20%, rgba(232, 161, 90, 0.22), transparent 55%),
+      radial-gradient(ellipse 50% 40% at 10% 80%, rgba(255, 255, 255, 0.06), transparent 50%),
+      linear-gradient(165deg, #0c0e12 0%, #171a21 55%, #1e222b 100%);
+  }
+
+  .tk-card {
+    border: 1px solid var(--tk-line);
+    background: #fff;
+    border-radius: 1rem;
+    box-shadow: 0 1px 2px rgba(18, 21, 28, 0.04);
   }
 
   .tk-noise {

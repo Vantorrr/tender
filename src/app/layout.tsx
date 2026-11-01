@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
-import { Manrope, Unbounded } from "next/font/google";
+import { Manrope, Onest } from "next/font/google";
 import { Providers } from "@/components/providers";
 import "./globals.css";
 
-const display = Unbounded({
+const display = Onest({
   variable: "--font-display",
   subsets: ["latin", "cyrillic"],
-  weight: ["400", "500", "600", "700"],
+  weight: ["500", "600", "700"],
 });
 
 const body = Manrope({

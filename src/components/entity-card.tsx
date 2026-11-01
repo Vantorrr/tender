@@ -44,7 +44,7 @@ export function EntityCard({
   );
 
   const classes = cn(
-    "group block rounded-xl border border-[var(--tk-line)] bg-white/85 p-4 sm:p-5 shadow-[0_1px_0_rgba(27,58,75,0.04)] transition-all duration-300 ease-out hover:-translate-y-1 hover:border-[var(--tk-copper)]/35 hover:shadow-[0_18px_40px_-22px_rgba(27,58,75,0.4)] active:translate-y-0",
+    "group block rounded-2xl border border-[var(--tk-line)] bg-white p-4 shadow-[0_1px_2px_rgba(18,21,28,0.04)] transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-[#d8dbe3] hover:shadow-[0_12px_30px_-18px_rgba(18,21,28,0.35)] sm:p-5",
     className
   );
 

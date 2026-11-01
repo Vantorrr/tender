@@ -54,11 +54,11 @@ export default function LoginPage() {
       <div className="tk-hero-wash absolute inset-0 opacity-90" />
       <div className="tk-grid-bg absolute inset-0 opacity-30" />
 
-      <div className="relative z-10 grid w-full max-w-5xl overflow-hidden rounded-2xl border border-white/15 bg-white/95 shadow-[0_30px_80px_-40px_rgba(15,36,48,0.7)] lg:grid-cols-[1.1fr_0.9fr]">
-        <div className="hidden flex-col justify-between bg-[linear-gradient(160deg,#14232e,#1b3a4b_55%,#2a4f5f)] p-10 text-white lg:flex">
+      <div className="relative z-10 grid w-full max-w-5xl overflow-hidden rounded-[28px] border border-white/10 bg-white shadow-[0_30px_80px_-36px_rgba(12,14,18,0.65)] lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="hidden flex-col justify-between bg-[#111318] p-10 text-white lg:flex">
           <div>
             <div className="mb-8 flex items-center gap-3">
-              <span className="flex h-12 w-12 items-center justify-center rounded-xl bg-white/10 font-[family-name:var(--font-display)] font-bold ring-1 ring-white/20">
+              <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--tk-accent)] font-[family-name:var(--font-display)] font-semibold text-[#1a120c]">
                 ТК
               </span>
               <span className="font-[family-name:var(--font-display)] text-2xl tracking-tight">
