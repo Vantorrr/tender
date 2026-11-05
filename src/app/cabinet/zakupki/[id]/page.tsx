@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { downloadUrl } from "@/lib/api";
 import { formatDate, formatDateTime, formatMoney } from "@/lib/format";
+import { REVIEW_LABELS } from "@/lib/roles";
 import type { ReviewStatus } from "@/lib/types";
 import { useStore } from "@/lib/store";
 
@@ -185,7 +186,11 @@ export default function ZakupkaDetailPage() {
               }}
             >
               <SelectTrigger className="mt-3 w-full">
-                <SelectValue />
+                <SelectValue>
+                  {(value) =>
+                    REVIEW_LABELS[value as ReviewStatus] ?? "Рассмотрение"
+                  }
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="novaya">Новая</SelectItem>

@@ -114,7 +114,13 @@ export default function ZakupkiPage() {
         />
         <Select value={status} onValueChange={(v) => setStatus(v ?? "all")}>
           <SelectTrigger className="w-full">
-            <SelectValue placeholder="Статус карточки" />
+            <SelectValue placeholder="Статус карточки">
+              {(value) =>
+                value === "all"
+                  ? "Все статусы"
+                  : STATUS_LABELS[value as CardStatus] ?? "Статус карточки"
+              }
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Все статусы</SelectItem>
@@ -135,7 +141,13 @@ export default function ZakupkiPage() {
         </Select>
         <Select value={review} onValueChange={(v) => setReview(v ?? "all")}>
           <SelectTrigger className="w-full">
-            <SelectValue placeholder="Рассмотрение" />
+            <SelectValue placeholder="Рассмотрение">
+              {(value) =>
+                value === "all"
+                  ? "Все рассмотрения"
+                  : REVIEW_LABELS[value as ReviewStatus] ?? "Рассмотрение"
+              }
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Все рассмотрения</SelectItem>
@@ -156,7 +168,9 @@ export default function ZakupkiPage() {
         </Select>
         <Select value={region} onValueChange={(v) => setRegion(v ?? "all")}>
           <SelectTrigger className="w-full">
-            <SelectValue placeholder="Регион" />
+            <SelectValue placeholder="Регион">
+              {(value) => (value === "all" ? "Все регионы" : String(value ?? "Регион"))}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Все регионы</SelectItem>
