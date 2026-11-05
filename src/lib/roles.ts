@@ -103,3 +103,104 @@ export const REVIEW_LABELS = {
   otklonena: "Отклонена",
   dublirovana: "Дубликат",
 } as const;
+
+export const REMARK_STATUS_LABELS = {
+  otkryto: "Открыто",
+  v_rabote: "В работе",
+  zakryto: "Закрыто",
+  prinyato: "Принято",
+} as const;
+
+export const SEVERITY_LABELS = {
+  low: "Низкая",
+  medium: "Средняя",
+  high: "Высокая",
+  info: "Информация",
+  warning: "Внимание",
+  critical: "Критично",
+} as const;
+
+export const SYNC_STATUS_LABELS = {
+  aktualno: "Актуально",
+  ustarelo: "Данные устарели",
+  oshibka_sinhronizacii: "Ошибка синхронизации",
+} as const;
+
+export const SCENARIO_LABELS = {
+  bazovyy: "Базовый",
+  optimisticheskiy: "Оптимистичный",
+  pessimisticheskiy: "Пессимистичный",
+} as const;
+
+export const PERIOD_LABELS = {
+  all: "Весь период",
+  week: "По неделям",
+  month: "По месяцам",
+} as const;
+
+export const JOB_STATUS_LABELS: Record<string, string> = {
+  running: "Выполняется",
+  done: "Готово",
+  error: "Ошибка",
+  failed: "Ошибка",
+  pending: "В очереди",
+};
+
+export const JOB_TYPE_LABELS: Record<string, string> = {
+  procurement_sync: "Синхронизация закупок",
+  document_reanalyze: "Повторный разбор документа",
+};
+
+export const ACTION_LABELS: Record<string, string> = {
+  create: "Создание",
+  update: "Изменение",
+  role_change: "Смена роли",
+  review: "Рассмотрение",
+  reanalyze: "Повторный разбор",
+  upload: "Загрузка",
+  directory: "Справочник",
+  import: "Импорт",
+  confirm: "Подтверждение",
+  parse: "Разбор",
+  reset: "Сброс",
+  activate: "Включение",
+  deactivate: "Отключение",
+  issue_secret_key: "Выдача ключа",
+};
+
+export const ENTITY_LABELS: Record<string, string> = {
+  user: "Пользователь",
+  organization: "Организация",
+  procurement: "Закупка",
+  calculation: "Расчёт",
+  document: "Документ",
+  gpr: "ГПР",
+  money: "Деньги",
+  risk: "Риски",
+  planfact: "План/факт",
+  directory: "Справочник",
+  smeta: "Обмен",
+  system: "Система",
+};
+
+const CODE_LABELS: Record<string, string> = {
+  ...STATUS_LABELS,
+  ...REVIEW_LABELS,
+  ...REMARK_STATUS_LABELS,
+  ...SEVERITY_LABELS,
+  ...SYNC_STATUS_LABELS,
+  ...SCENARIO_LABELS,
+  ...ACTION_LABELS,
+  ...ENTITY_LABELS,
+  ...JOB_STATUS_LABELS,
+  ...JOB_TYPE_LABELS,
+};
+
+export function labelOf(code: string | null | undefined, fallback = ""): string {
+  if (!code) return fallback;
+  return CODE_LABELS[code] ?? fallback;
+}
+
+export function humanizeCodes(text: string): string {
+  return text.replace(/\b[a-z][a-z0-9_]*\b/g, (token) => CODE_LABELS[token] ?? token);
+}

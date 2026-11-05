@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/table";
 import { downloadUrl } from "@/lib/api";
 import { formatDate, formatMoney } from "@/lib/format";
+import { PERIOD_LABELS } from "@/lib/roles";
 import { useStore } from "@/lib/store";
 
 const typeLabel = {
@@ -107,7 +108,11 @@ export default function DengiPage() {
           <div className="mb-4 flex flex-wrap gap-3">
             <Select value={activeId} onValueChange={(v) => setPlanId(v ?? "")}>
               <SelectTrigger className="w-[280px]">
-                <SelectValue placeholder="План" />
+                <SelectValue placeholder="План">
+                  {(value) =>
+                    plans.find((p) => p.id === value)?.title ?? "План"
+                  }
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {plans.map((p) => (
@@ -124,7 +129,12 @@ export default function DengiPage() {
               }
             >
               <SelectTrigger className="w-[180px]">
-                <SelectValue />
+                <SelectValue>
+                  {(value) =>
+                    PERIOD_LABELS[value as keyof typeof PERIOD_LABELS] ??
+                    "Период"
+                  }
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">Весь период</SelectItem>

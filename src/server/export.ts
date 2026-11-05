@@ -35,7 +35,16 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
   }
   ws.addRow({});
   ws.addRow({ code: "Итого", sum: total });
-  ws.addRow({ code: "Сценарий", name: calc.scenario, rate: calc.scenarioFactor });
+  ws.addRow({
+    code: "Сценарий",
+    name:
+      calc.scenario === "optimisticheskiy"
+        ? "Оптимистичный"
+        : calc.scenario === "pessimisticheskiy"
+          ? "Пессимистичный"
+          : "Базовый",
+    rate: calc.scenarioFactor,
+  });
 
   const buf = await wb.xlsx.writeBuffer();
   return Buffer.from(buf);
@@ -116,7 +125,24 @@ export async function buildRisksXlsx(riskId: string): Promise<Buffer> {
   ws.addRow(["Замечание", "Фрагмент", "Статус", "Критичность", "Решение"]);
   ws.getRow(1).font = { bold: true };
   for (const rem of r.remarks) {
-    ws.addRow([rem.text, rem.sourceExcerpt, rem.status, rem.severity, rem.decision ?? ""]);
+    const statusRu = {
+      otkryto: "Открыто",
+      v_rabote: "В работе",
+      zakryto: "Закрыто",
+      prinyato: "Принято",
+    }[rem.status];
+    const severityRu = {
+      low: "Низкая",
+      medium: "Средняя",
+      high: "Высокая",
+    }[rem.severity];
+    ws.addRow([
+      rem.text,
+      rem.sourceExcerpt,
+      statusRu,
+      severityRu,
+      rem.decision ?? "",
+    ]);
   }
   return Buffer.from(await wb.xlsx.writeBuffer());
 }

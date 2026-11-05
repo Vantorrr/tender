@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/select";
 import { downloadUrl } from "@/lib/api";
 import { formatDate, formatDateTime, formatMoney } from "@/lib/format";
-import { REVIEW_LABELS } from "@/lib/roles";
+import { REVIEW_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
 import type { ReviewStatus } from "@/lib/types";
 import { useStore } from "@/lib/store";
 
@@ -89,7 +89,8 @@ export default function ZakupkaDetailPage() {
             <div>
               <dt className="text-[var(--tk-muted)]">Синхронизация</dt>
               <dd className="font-semibold">
-                {procurement.syncStatus} · {formatDateTime(procurement.syncAt)}
+                {SYNC_STATUS_LABELS[procurement.syncStatus]} ·{" "}
+                {formatDateTime(procurement.syncAt)}
               </dd>
             </div>
             <div>
@@ -105,7 +106,8 @@ export default function ZakupkaDetailPage() {
                 className="underline"
                 href={`/cabinet/zakupki/${procurement.duplicateOf}`}
               >
-                {procurement.duplicateOf}
+                {data.procurements.find((p) => p.id === procurement.duplicateOf)
+                  ?.number ?? "карточка"}
               </Link>
             </p>
           ) : null}

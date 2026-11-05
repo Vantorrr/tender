@@ -1,4 +1,4 @@
-import { DEFAULT_SECTIONS } from "@/lib/roles";
+import { DEFAULT_SECTIONS, REVIEW_LABELS } from "@/lib/roles";
 import type {
   AppData,
   Calculation,
@@ -312,7 +312,7 @@ export function setProcurementReview(
           }
         : p
     );
-    audit(data, actorId, "review", "procurement", id, `Статус: ${status}`);
+    audit(data, actorId, "review", "procurement", id, `Статус: ${REVIEW_LABELS[status]}`);
     return data;
   });
 }

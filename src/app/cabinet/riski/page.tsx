@@ -16,15 +16,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { downloadUrl } from "@/lib/api";
+import { REMARK_STATUS_LABELS, SEVERITY_LABELS } from "@/lib/roles";
 import type { RiskRemark } from "@/lib/types";
 import { useStore } from "@/lib/store";
-
-const statusLabel: Record<RiskRemark["status"], string> = {
-  otkryto: "Открыто",
-  v_rabote: "В работе",
-  zakryto: "Закрыто",
-  prinyato: "Принято",
-};
 
 export default function RiskiPage() {
   const { data, user, updateRisk, parseRiskContract } = useStore();
@@ -93,7 +87,11 @@ export default function RiskiPage() {
           <div className="mb-4 flex flex-wrap items-center gap-3">
             <Select value={activeId} onValueChange={(v) => setRiskId(v ?? "")}>
               <SelectTrigger className="w-[300px]">
-                <SelectValue />
+                <SelectValue>
+                  {(value) =>
+                    risks.find((r) => r.id === value)?.title ?? "Реестр"
+                  }
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {risks.map((r) => (
@@ -130,7 +128,9 @@ export default function RiskiPage() {
                       </p>
                     </div>
                     <div className="flex gap-2">
-                      <Badge variant="outline">{remark.severity}</Badge>
+                      <Badge variant="outline">
+                        {SEVERITY_LABELS[remark.severity]}
+                      </Badge>
                       <Select
                         value={remark.status}
                         onValueChange={(v) => {
@@ -148,7 +148,13 @@ export default function RiskiPage() {
                         }}
                       >
                         <SelectTrigger className="w-[150px]">
-                          <SelectValue />
+                          <SelectValue>
+                            {(value) =>
+                              REMARK_STATUS_LABELS[
+                                value as RiskRemark["status"]
+                              ] ?? "Статус"
+                            }
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="otkryto">Открыто</SelectItem>

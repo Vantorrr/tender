@@ -145,7 +145,9 @@ export default function PolzovateliPage() {
                       }
                     >
                       <SelectTrigger className="w-full">
-                        <SelectValue />
+                        <SelectValue>
+                          {(value) => ROLE_LABELS[value as Role] ?? "Роль"}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {roleChoices.map((r) => (
@@ -262,7 +264,9 @@ export default function PolzovateliPage() {
                       }}
                     >
                       <SelectTrigger className="w-full">
-                        <SelectValue />
+                        <SelectValue>
+                          {(value) => ROLE_LABELS[value as Role] ?? "Роль"}
+                        </SelectValue>
                       </SelectTrigger>
                       <SelectContent>
                         {roleChoices.map((r) => (

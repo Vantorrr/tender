@@ -39,7 +39,10 @@ export default function GprDetailPage() {
     <div>
       <PageHeader
         title={schedule.title}
-        description={`Расчёт ${schedule.calculationId} · версия ${schedule.version}`}
+        description={`Расчёт «${
+          data.calculations.find((c) => c.id === schedule.calculationId)?.title ??
+          "—"
+        }» · версия ${schedule.version}`}
         actions={
           <>
             <StatusBadge status={schedule.status} />
@@ -147,7 +150,12 @@ export default function GprDetailPage() {
               />
               <div className="flex items-center text-sm text-[var(--tk-muted)]">
                 Порядок {stage.sequence}
-                {stage.dependsOn ? ` · после ${stage.dependsOn}` : ""}
+                {stage.dependsOn
+                  ? ` · после ${
+                      schedule.stages.find((s) => s.id === stage.dependsOn)?.name ??
+                      "предыдущего этапа"
+                    }`
+                  : ""}
               </div>
             </div>
           ))}

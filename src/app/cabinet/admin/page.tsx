@@ -15,7 +15,14 @@ import {
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
-import { ROLE_LABELS } from "@/lib/roles";
+import {
+  ACTION_LABELS,
+  ENTITY_LABELS,
+  humanizeCodes,
+  JOB_STATUS_LABELS,
+  JOB_TYPE_LABELS,
+  ROLE_LABELS,
+} from "@/lib/roles";
 import { useStore } from "@/lib/store";
 
 type JobRow = {
@@ -54,9 +61,9 @@ function AdminJobs({ reloadKey }: { reloadKey: number }) {
         >
           <span>
             <Badge variant="outline" className="mr-2">
-              {j.status}
+              {JOB_STATUS_LABELS[j.status] ?? j.status}
             </Badge>
-            {j.type}
+            {JOB_TYPE_LABELS[j.type] ?? j.type}
           </span>
           <span className="text-xs text-[var(--tk-muted)]">
             {formatDateTime(j.createdAt)}
@@ -255,12 +262,10 @@ export default function AdminPage() {
                   {data.users.find((u) => u.id === a.actorId)?.name ??
                     a.actorId}
                 </TableCell>
-                <TableCell>{a.action}</TableCell>
-                <TableCell>
-                  {a.entity}:{a.entityId}
-                </TableCell>
+                <TableCell>{ACTION_LABELS[a.action] ?? humanizeCodes(a.action)}</TableCell>
+                <TableCell>{ENTITY_LABELS[a.entity] ?? a.entity}</TableCell>
                 <TableCell className="max-w-[280px] truncate text-sm">
-                  {a.detail}
+                  {humanizeCodes(a.detail)}
                 </TableCell>
               </TableRow>
             ))}

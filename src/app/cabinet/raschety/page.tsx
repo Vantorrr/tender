@@ -4,6 +4,7 @@ import { EmptyState } from "@/components/empty-state";
 import { EntityCard } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
 import { formatMoney } from "@/lib/format";
+import { SCENARIO_LABELS } from "@/lib/roles";
 import { useStore } from "@/lib/store";
 
 export default function RaschetyPage() {
@@ -33,7 +34,7 @@ export default function RaschetyPage() {
                 key={c.id}
                 href={`/cabinet/raschety/${c.id}`}
                 title={c.title}
-                subtitle={`Версия ${c.version} · сценарий ${c.scenario}`}
+                subtitle={`Версия ${c.version} · сценарий ${SCENARIO_LABELS[c.scenario]}`}
                 status={c.status}
                 meta={
                   <div className="space-y-1">
