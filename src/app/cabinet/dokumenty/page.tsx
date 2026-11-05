@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { EntityCard } from "@/components/entity-card";
@@ -21,16 +21,9 @@ export default function DokumentyPage() {
   const { orgDocuments, user, createDocumentUpload, orgProcurements } =
     useStore();
   const [q, setQ] = useState("");
-  const [procurementId, setProcurementId] = useState<string | undefined>(
-    undefined
-  );
+  const [pickedId, setPickedId] = useState("");
+  const procurementId = pickedId || orgProcurements[0]?.id || "";
   const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    if (!procurementId && orgProcurements[0]?.id) {
-      setProcurementId(orgProcurements[0].id);
-    }
-  }, [orgProcurements, procurementId]);
 
   const filtered = orgDocuments.filter((d) => {
     if (!q) return true;
@@ -63,10 +56,17 @@ export default function DokumentyPage() {
           <>
             <Select
               value={procurementId}
-              onValueChange={(v) => setProcurementId(v ?? undefined)}
+              onValueChange={(v) => {
+                if (v) setPickedId(v);
+              }}
             >
               <SelectTrigger className="w-[220px]">
-                <SelectValue placeholder="Закупка" />
+                <SelectValue placeholder="Закупка">
+                  {(value) =>
+                    orgProcurements.find((p) => p.id === value)?.number ??
+                    "Закупка"
+                  }
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {orgProcurements.map((p) => (

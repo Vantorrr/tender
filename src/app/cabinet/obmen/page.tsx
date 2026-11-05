@@ -34,9 +34,9 @@ export default function ObmenPage() {
         : [],
     [data.calculations, user]
   );
-  const [calcId, setCalcId] = useState<string | undefined>(undefined);
+  const [pickedId, setPickedId] = useState("");
   if (!user) return null;
-  const activeCalc = calcId ?? calcs[0]?.id;
+  const activeCalc = pickedId || calcs[0]?.id || "";
 
   return (
     <div>
@@ -47,10 +47,16 @@ export default function ObmenPage() {
           <>
             <Select
               value={activeCalc}
-              onValueChange={(v) => setCalcId(v ?? undefined)}
+              onValueChange={(v) => {
+                if (v) setPickedId(v);
+              }}
             >
               <SelectTrigger className="w-[240px]">
-                <SelectValue placeholder="Расчёт" />
+                <SelectValue placeholder="Расчёт">
+                  {(value) =>
+                    calcs.find((c) => c.id === value)?.title ?? "Расчёт"
+                  }
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {calcs.map((c) => (
