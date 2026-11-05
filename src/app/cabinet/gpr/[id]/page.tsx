@@ -73,7 +73,7 @@ export default function GprDetailPage() {
         <h2 className="mb-4 font-[family-name:var(--font-display)] text-base">
           Календарь этапов
         </h2>
-        <div className="min-w-[640px] space-y-3">
+        <div className="space-y-3">
           {schedule.stages
             .slice()
             .sort((a, b) => a.sequence - b.sequence)
@@ -81,7 +81,7 @@ export default function GprDetailPage() {
               const offset = daysBetween(minStart, stage.start) - 1;
               const width = daysBetween(stage.start, stage.end);
               return (
-                <div key={stage.id} className="grid grid-cols-[180px_1fr] gap-3 items-center">
+                <div key={stage.id} className="grid items-center gap-2 sm:grid-cols-[180px_1fr] sm:gap-3">
                   <div className="text-sm">
                     <div className="font-medium">{stage.name}</div>
                     <div className="text-xs text-[var(--tk-muted)]">

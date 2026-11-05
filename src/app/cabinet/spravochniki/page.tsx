@@ -129,9 +129,9 @@ export default function SpravochnikiPage() {
           setQuery("");
         }}
       >
-        <TabsList>
+        <TabsList className="!h-auto w-full max-w-full flex-wrap justify-start gap-1 py-1">
           {TAB_ORDER.map((t) => (
-            <TabsTrigger key={t} value={t}>
+            <TabsTrigger key={t} value={t} className="!h-auto flex-none px-2.5 py-1">
               {typeLabel[t]}
             </TabsTrigger>
           ))}

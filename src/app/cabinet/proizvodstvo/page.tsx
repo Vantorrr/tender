@@ -100,9 +100,9 @@ export default function ProizvodstvoPage() {
         />
       ) : (
         <>
-          <div className="mb-4 flex flex-wrap items-center gap-3">
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
             <Select value={activeId} onValueChange={(v) => setPfId(v ?? "")}>
-              <SelectTrigger className="w-[300px]">
+              <SelectTrigger className="w-full sm:w-[300px]">
                 <SelectValue>
                   {(value) =>
                     plans.find((p) => p.id === value)?.title ?? "План/факт"

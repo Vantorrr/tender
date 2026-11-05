@@ -130,7 +130,7 @@ export default function RaschetDetailPage() {
         }
       />
 
-      <div className="mb-4 flex flex-wrap items-end gap-3">
+      <div className="mb-4 flex flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-end">
         <div>
           <p className="mb-1 text-xs text-[var(--tk-muted)]">Сценарий</p>
           <Select
@@ -141,7 +141,7 @@ export default function RaschetDetailPage() {
               toast.success("Пересчёт выполнен");
             }}
           >
-            <SelectTrigger className="w-[220px]">
+            <SelectTrigger className="w-full sm:w-[220px]">
               <SelectValue>
                 {{
                   bazovyy: "Базовый",
@@ -174,7 +174,7 @@ export default function RaschetDetailPage() {
               toast.success("Решение сохранено");
             }}
           >
-            <SelectTrigger className="w-[220px]">
+            <SelectTrigger className="w-full sm:w-[220px]">
               <SelectValue>
                 {{
                   none: "Не принято",
@@ -241,7 +241,7 @@ export default function RaschetDetailPage() {
           Текущая версия: {currentDir?.name ?? "—"} · строк{" "}
           {currentDir?.rows.length ?? 0}
         </p>
-        <div className="mt-3 flex flex-wrap items-end gap-3">
+        <div className="mt-3 flex flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-end">
           <div>
             <p className="mb-1 text-xs text-[var(--tk-muted)]">Тип</p>
             <Select
@@ -253,7 +253,7 @@ export default function RaschetDetailPage() {
                 setFilter("");
               }}
             >
-              <SelectTrigger className="w-[200px]">
+              <SelectTrigger className="w-full sm:w-[200px]">
                 <SelectValue>
                   {{
                     rascenki: "Нормо-час",
@@ -273,7 +273,7 @@ export default function RaschetDetailPage() {
             <div>
               <p className="mb-1 text-xs text-[var(--tk-muted)]">Колонка ставки</p>
               <Select value={rateKey} onValueChange={(v) => v && setRateKey(v)}>
-                <SelectTrigger className="w-[200px]">
+                <SelectTrigger className="w-full sm:w-[200px]">
                   <SelectValue>
                     {{
                       price: "1 смена КПИ 0,85",
@@ -295,12 +295,12 @@ export default function RaschetDetailPage() {
           <div>
             <p className="mb-1 text-xs text-[var(--tk-muted)]">Кол-во</p>
             <Input
-              className="w-[100px]"
+              className="w-full sm:w-[100px]"
               value={qty}
               onChange={(e) => setQty(e.target.value)}
             />
           </div>
-          <div className="min-w-[220px] flex-1">
+          <div className="w-full min-w-0 sm:min-w-[220px] sm:flex-1">
             <p className="mb-1 text-xs text-[var(--tk-muted)]">Поиск</p>
             <Input
               value={filter}

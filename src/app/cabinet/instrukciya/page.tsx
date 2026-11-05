@@ -106,7 +106,7 @@ export default function InstrukciyaPage() {
         <div className="border-b border-[var(--tk-line)] px-4 py-3 font-[family-name:var(--font-display)]">
           Демо-учётки
         </div>
-        <table className="w-full text-sm">
+        <table className="tk-mobile-rows w-full text-sm">
           <thead>
             <tr className="border-b border-[var(--tk-line)] text-left text-[var(--tk-muted)]">
               <th className="px-4 py-2 font-medium">Роль</th>
@@ -118,7 +118,7 @@ export default function InstrukciyaPage() {
           <tbody>
             {accounts.map((a) => (
               <tr key={a.email} className="border-b border-[var(--tk-line)] last:border-0">
-                <td className="px-4 py-2">
+                <td className="px-4 py-2" data-label="Роль">
                   {ROLE_LABELS[a.role]}
                   {"note" in a && a.note ? (
                     <span className="block text-xs text-[var(--tk-muted)]">
@@ -126,9 +126,9 @@ export default function InstrukciyaPage() {
                     </span>
                   ) : null}
                 </td>
-                <td className="px-4 py-2 font-mono text-xs">{a.email}</td>
-                <td className="px-4 py-2 font-mono text-xs">{a.password}</td>
-                <td className="px-4 py-2 font-mono text-xs">{a.key || "—"}</td>
+                <td className="px-4 py-2 font-mono text-xs break-all" data-label="Логин">{a.email}</td>
+                <td className="px-4 py-2 font-mono text-xs" data-label="Пароль">{a.password}</td>
+                <td className="px-4 py-2 font-mono text-xs break-all" data-label="Секретный ключ">{a.key || "—"}</td>
               </tr>
             ))}
           </tbody>

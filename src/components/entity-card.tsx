@@ -23,13 +23,13 @@ export function EntityCard({
 }) {
   const inner = (
     <>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="truncate font-semibold text-[var(--tk-ink)] group-hover:text-[var(--tk-copper-deep)]">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0 flex-1 basis-48">
+          <h3 className="line-clamp-3 break-words font-semibold text-[var(--tk-ink)] group-hover:text-[var(--tk-copper-deep)]">
             {title}
           </h3>
           {subtitle ? (
-            <p className="mt-1 truncate text-sm text-[var(--tk-muted)]">
+            <p className="mt-1 line-clamp-2 break-all text-sm text-[var(--tk-muted)]">
               {subtitle}
             </p>
           ) : null}
@@ -44,7 +44,7 @@ export function EntityCard({
   );
 
   const classes = cn(
-    "tk-glass group block rounded-3xl p-4 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:shadow-[0_18px_40px_-18px_rgba(46,58,90,0.35)] sm:p-5",
+    "tk-glass group block w-full min-w-0 max-w-full rounded-3xl p-4 transition-all duration-200 ease-out hover:-translate-y-0.5 hover:shadow-[0_18px_40px_-18px_rgba(46,58,90,0.35)] sm:p-5",
     className
   );
 

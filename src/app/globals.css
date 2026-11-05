@@ -241,6 +241,40 @@
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
 }
 
+@media (width <= 767px) {
+  .tk-mobile-rows,
+  .tk-mobile-rows tbody,
+  .tk-mobile-rows tr,
+  .tk-mobile-rows td {
+    display: block;
+    width: 100%;
+  }
+
+  .tk-mobile-rows thead {
+    display: none;
+  }
+
+  .tk-mobile-rows tr {
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid var(--tk-line);
+  }
+
+  .tk-mobile-rows td {
+    padding: 0.28rem 0;
+    text-align: left;
+    white-space: normal;
+  }
+
+  .tk-mobile-rows td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 0.15rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--tk-muted);
+  }
+}
+
 @keyframes liquid {
   0%,
   100% {
@@ -281,6 +315,14 @@
 
   .tk-page {
     animation: page-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+    max-width: 100%;
+    overflow-x: clip;
+  }
+
+  .tk-page .grid,
+  .tk-page .grid > * {
+    min-width: 0;
+    max-width: 100%;
   }
 
   .tk-stagger > * {

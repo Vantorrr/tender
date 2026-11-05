@@ -105,9 +105,9 @@ export default function DengiPage() {
         />
       ) : (
         <>
-          <div className="mb-4 flex flex-wrap gap-3">
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
             <Select value={activeId} onValueChange={(v) => setPlanId(v ?? "")}>
-              <SelectTrigger className="w-[280px]">
+              <SelectTrigger className="w-full sm:w-[280px]">
                 <SelectValue placeholder="План">
                   {(value) =>
                     plans.find((p) => p.id === value)?.title ?? "План"
@@ -128,7 +128,7 @@ export default function DengiPage() {
                 setPeriod((v as "all" | "week" | "month") ?? "all")
               }
             >
-              <SelectTrigger className="w-[180px]">
+              <SelectTrigger className="w-full sm:w-[180px]">
                 <SelectValue>
                   {(value) =>
                     PERIOD_LABELS[value as keyof typeof PERIOD_LABELS] ??

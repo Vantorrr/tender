@@ -4,14 +4,35 @@ import * as React from "react"
 import { cn } from "@/lib/utils"
 
 function Table({ className, ...props }: React.ComponentProps<"table">) {
+  const ref = React.useRef<HTMLTableElement>(null);
+
+  React.useEffect(() => {
+    const table = ref.current;
+    if (!table) return;
+    const heads = [...table.querySelectorAll("thead th")].map(
+      (th) => th.textContent?.trim() ?? ""
+    );
+    table.querySelectorAll("tbody tr").forEach((row) => {
+      [...row.children].forEach((cell, index) => {
+        if (!(cell instanceof HTMLTableCellElement)) return;
+        if (cell.colSpan > 1 || !heads[index]) {
+          cell.removeAttribute("data-label");
+          return;
+        }
+        cell.dataset.label = heads[index];
+      });
+    });
+  });
+
   return (
     <div
       data-slot="table-container"
-      className="relative w-full overflow-x-auto"
+      className="relative w-full max-w-full min-w-0 overflow-x-auto"
     >
       <table
+        ref={ref}
         data-slot="table"
-        className={cn("w-full caption-bottom text-sm", className)}
+        className={cn("tk-mobile-rows w-full caption-bottom text-sm", className)}
         {...props}
       />
     </div>

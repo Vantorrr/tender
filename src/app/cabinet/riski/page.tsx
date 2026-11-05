@@ -84,9 +84,9 @@ export default function RiskiPage() {
         />
       ) : (
         <>
-          <div className="mb-4 flex flex-wrap items-center gap-3">
+          <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
             <Select value={activeId} onValueChange={(v) => setRiskId(v ?? "")}>
-              <SelectTrigger className="w-[300px]">
+              <SelectTrigger className="w-full sm:w-[300px]">
                 <SelectValue>
                   {(value) =>
                     risks.find((r) => r.id === value)?.title ?? "Реестр"
@@ -127,7 +127,7 @@ export default function RiskiPage() {
                         «{remark.sourceExcerpt}»
                       </p>
                     </div>
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <Badge variant="outline">
                         {SEVERITY_LABELS[remark.severity]}
                       </Badge>
@@ -147,7 +147,7 @@ export default function RiskiPage() {
                           });
                         }}
                       >
-                        <SelectTrigger className="w-[150px]">
+                        <SelectTrigger className="w-full sm:w-[150px]">
                           <SelectValue>
                             {(value) =>
                               REMARK_STATUS_LABELS[

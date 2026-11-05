@@ -121,9 +121,9 @@ export default function ZakupkaDetailPage() {
                 procurement.attachments.map((a) => (
                   <li
                     key={a.id}
-                    className="flex items-center justify-between rounded-lg border border-[var(--tk-line)] px-3 py-2 text-sm"
+                    className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--tk-line)] px-3 py-2 text-sm"
                   >
-                    <span>
+                    <span className="min-w-0 break-words">
                       {a.name}{" "}
                       <span className="text-[var(--tk-muted)]">
                         ({a.type.toUpperCase()}, {a.size})

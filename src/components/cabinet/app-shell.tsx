@@ -164,7 +164,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </SheetTrigger>
               <SheetContent
                 side="left"
-                className="tk-glass-dark flex w-[280px] flex-col overflow-hidden p-0 text-white [&_[data-slot=sheet-close]]:text-white [&_[data-slot=sheet-close]]:hover:bg-white/10"
+                className="tk-glass-dark flex w-[min(88vw,280px)] flex-col overflow-hidden p-0 text-white [&_[data-slot=sheet-close]]:text-white [&_[data-slot=sheet-close]]:hover:bg-white/10"
               >
                 <div className="flex h-16 shrink-0 items-center border-b border-white/10 px-4 pr-12">
                   <Logo titleClassName="text-base" />
@@ -277,12 +277,56 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="relative flex-1 px-4 py-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:px-7 sm:py-8 lg:px-10">
+        <main className="relative min-w-0 flex-1 overflow-x-clip px-4 py-6 pb-[max(6.75rem,calc(5.75rem+env(safe-area-inset-bottom)))] sm:px-7 sm:py-8 lg:px-10 lg:pb-8">
           <div key={pathname} className="tk-page relative mx-auto w-full max-w-[1180px]">
             {children}
           </div>
         </main>
+        <MobileTabBar onMore={() => setMobileOpen(true)} />
       </div>
     </div>
+  );
+}
+
+function MobileTabBar({ onMore }: { onMore: () => void }) {
+  const pathname = usePathname();
+  const { user } = useStore();
+  if (!user) return null;
+  const items = NAV_ITEMS.filter((item) => user.sections.includes(item.section));
+  const primary = items.slice(0, 4);
+
+  return (
+    <nav className="tk-glass-bar fixed inset-x-0 bottom-0 z-40 border-t lg:hidden">
+      <div className="flex items-stretch justify-around px-1 pt-1 pb-[max(0.35rem,env(safe-area-inset-bottom))]">
+        {primary.map((item) => {
+          const active =
+            pathname === item.href || pathname.startsWith(item.href + "/");
+          const Icon = item.icon;
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={cn(
+                "flex min-w-0 flex-1 flex-col items-center gap-0.5 rounded-2xl px-1 py-1.5 text-[10px] font-medium leading-tight",
+                active
+                  ? "bg-white/80 text-[var(--tk-ink)]"
+                  : "text-[var(--tk-muted)]"
+              )}
+            >
+              <Icon className="h-4 w-4 shrink-0" />
+              <span className="max-w-full text-center leading-none">{item.label}</span>
+            </Link>
+          );
+        })}
+        <button
+          type="button"
+          onClick={onMore}
+          className="flex min-w-0 flex-1 flex-col items-center gap-0.5 rounded-2xl px-1 py-1.5 text-[10px] font-medium text-[var(--tk-muted)]"
+        >
+          <Menu className="h-4 w-4" />
+          <span>Ещё</span>
+        </button>
+      </div>
+    </nav>
   );
 }

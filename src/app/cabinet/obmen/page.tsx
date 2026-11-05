@@ -51,7 +51,7 @@ export default function ObmenPage() {
                 if (v) setPickedId(v);
               }}
             >
-              <SelectTrigger className="w-[240px]">
+              <SelectTrigger className="w-full sm:w-[240px]">
                 <SelectValue placeholder="Расчёт">
                   {(value) =>
                     calcs.find((c) => c.id === value)?.title ?? "Расчёт"

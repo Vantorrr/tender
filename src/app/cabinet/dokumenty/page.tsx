@@ -60,7 +60,7 @@ export default function DokumentyPage() {
                 if (v) setPickedId(v);
               }}
             >
-              <SelectTrigger className="w-[220px]">
+              <SelectTrigger className="w-full sm:w-[220px]">
                 <SelectValue placeholder="Закупка">
                   {(value) =>
                     orgProcurements.find((p) => p.id === value)?.number ??
