@@ -525,9 +525,11 @@ export function reanalyzeDocument(
         version: nextVersion,
         authorId: actorId,
         at: new Date().toISOString(),
-        note: prepared
-          ? "Повторный разбор по параметрам ГРАНД-Смета 2022.3"
-          : "Файл на сервере не найден, разбор не выполнен",
+        note: !prepared
+          ? "Файл на сервере не найден, разбор не выполнен"
+          : prepared.noteByModel
+            ? `Записка модели ${prepared.analysis.narrator} по цифрам сметы`
+            : "Повторный разбор по параметрам ГРАНД-Смета 2022.3",
       };
       if (!prepared) {
         return { ...d, versions: [...d.versions, version] };
@@ -587,9 +589,11 @@ export function createDocument(
           version: 1,
           authorId: actorId,
           at: new Date().toISOString(),
-          note: input.prepared
-            ? "Загрузка и разбор по параметрам ГРАНД-Смета 2022.3"
-            : "Загрузка на сервер",
+          note: input.prepared?.noteByModel
+            ? `Загрузка. Записка модели ${input.prepared.analysis.narrator} по цифрам сметы`
+            : input.prepared
+              ? "Загрузка и разбор по параметрам ГРАНД-Смета 2022.3"
+              : "Загрузка на сервер",
         },
       ],
       analyticalNote:

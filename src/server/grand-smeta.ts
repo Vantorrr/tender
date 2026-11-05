@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import { GRAND_PROFILE } from "@/lib/grand-profile";
+import { refineNote } from "@/server/model-note";
 import type {
   CardStatus,
   Citation,
@@ -49,6 +50,7 @@ export type UploadAnalysis = {
   status: CardStatus;
   analysis: DocumentAnalysis;
   positions: GrandPosition[];
+  noteByModel?: boolean;
 };
 
 function cellText(value: ExcelJS.CellValue): string {
@@ -460,6 +462,16 @@ export function analysisFromDrawing(fileName: string, pages = 24): UploadAnalysi
   };
 }
 
+function workToken(name: string) {
+  const lower = name.toLowerCase();
+  if (lower.includes("снег")) return "снег";
+  if (lower.includes("демонтаж")) return "демонтаж";
+  if (lower.includes("сва")) return "сва";
+  if (lower.includes("знак")) return "знак";
+  if (lower.includes("бурен")) return "бурен";
+  return name.slice(0, 24) || null;
+}
+
 export async function analyzeUpload(
   fileName: string,
   fileType: string,
@@ -468,7 +480,60 @@ export async function analyzeUpload(
   if (fileType === "xlsx" || fileName.toLowerCase().endsWith(".xlsx")) {
     try {
       const parsed = await parseGrandBuffer(buf);
-      if (parsed) return analysisFromGrand(parsed, fileName);
+      if (parsed) {
+        const analysis = analysisFromGrand(parsed, fileName);
+        const largest = [...parsed.positions]
+          .map((position) => ({
+            code: position.code,
+            name: position.name,
+            unit: position.unit,
+            quantity: position.quantity,
+            rate: position.rate,
+            amount: Math.round(position.quantity * position.rate * 100) / 100,
+          }))
+          .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))
+          .slice(0, 5);
+        return refineNote(
+          analysis,
+          {
+            kind: "local-estimate",
+            profile: GRAND_PROFILE,
+            product: parsed.product,
+            normatives: parsed.normatives,
+            orders: parsed.orders,
+            indexes: parsed.indexes,
+            wages: parsed.wages,
+            region: parsed.region,
+            zone: parsed.zone,
+            construction: parsed.construction,
+            objectName: parsed.objectName,
+            estimateNumber: parsed.estimateNumber,
+            workName: parsed.workName,
+            basis: parsed.basis,
+            method: parsed.method,
+            priceYear: parsed.priceYear,
+            costThousand: parsed.costCurrentThousand,
+            costBaseThousand: parsed.costBaseThousand,
+            totalCurrentRub: parsed.totalCurrent,
+            positionCount: parsed.positions.length,
+            sections: parsed.sections.slice(0, 8),
+            negativePositions: parsed.negativePositions,
+            coefficientNotes: parsed.coefficientNotes.slice(0, 3),
+            largest,
+            profileMatch: analysis.analysis.profileMatch,
+          },
+          [
+            "зона 5",
+            parsed.costCurrentThousand == null
+              ? null
+              : Math.abs(parsed.costCurrentThousand) >= 1
+                ? String(Math.trunc(parsed.costCurrentThousand))
+                : "0,12",
+            String(parsed.positions.length),
+            workToken(parsed.workName),
+          ]
+        );
+      }
     } catch {
       return unrecognized(fileName, "Файл Excel повреждён или это не книга .xlsx.");
     }
@@ -478,7 +543,21 @@ export async function analyzeUpload(
     );
   }
   if (fileType === "pdf" || fileName.toLowerCase().endsWith(".pdf")) {
-    if (/ТП-КП-М-Д|101-3103|КМ/i.test(fileName)) return analysisFromDrawing(fileName);
+    if (/ТП-КП-М-Д|101-3103|КМ/i.test(fileName)) {
+      const analysis = analysisFromDrawing(fileName);
+      return refineNote(
+        analysis,
+        {
+          kind: "drawing",
+          fileName,
+          profile: GRAND_PROFILE,
+          pages: 24,
+          textLayer: false,
+          profileMatch: analysis.analysis.profileMatch,
+        },
+        [GRAND_PROFILE.drawing, "текст"]
+      );
+    }
     return unrecognized(
       fileName,
       `PDF не совпал с чертежом ${GRAND_PROFILE.drawing} и не является таблицей сметы. Текстовый слой не разобран.`

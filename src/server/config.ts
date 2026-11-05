@@ -18,6 +18,8 @@ export const config = {
   sessionDays: Number(process.env.SESSION_DAYS ?? 7),
   appName: "ТендерКонтур",
   contract: "TMA361",
+  openRouterKey: process.env.OPENROUTER_API_KEY ?? "",
+  openRouterModel: process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini",
 };
 
 export function dbPath() {

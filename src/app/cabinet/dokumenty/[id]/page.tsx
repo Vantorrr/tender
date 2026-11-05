@@ -111,6 +111,7 @@ export default function DocumentDetailPage() {
             ["Работы", doc.analysis.workName || "—"],
             ["Основание", doc.analysis.basis || "—"],
             ["Уровень цен", doc.analysis.priceLevel || "—"],
+            ["Текст записки", doc.analysis.narrator || "по ячейкам сметы"],
           ].map(([label, value]) => (
             <div key={label}>
               <div className="text-xs text-[var(--tk-muted)]">{label}</div>

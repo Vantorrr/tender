@@ -139,6 +139,8 @@ export interface DocumentAnalysis {
   costThousand: number | null;
   positionCount: number;
   profileMatch: boolean;
+  /** Идентификатор модели, если записку сформулировала она. Цифры при этом из файла. */
+  narrator?: string;
 }
 
 export interface DocumentItem {
