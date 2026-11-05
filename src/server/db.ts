@@ -10,9 +10,10 @@ import { DEMO_SECRET_KEYS } from "@/lib/demo-accounts";
 import { createSeedData } from "@/lib/seed";
 import type { AppData } from "@/lib/types";
 import { config, dbPath } from "@/server/config";
+import { installGrandReference } from "@/server/grand-package";
 import { hashPassword } from "@/server/passwords";
 
-const SCHEMA_VERSION = "6";
+const SCHEMA_VERSION = "7";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -28,7 +29,11 @@ function ensureDir() {
 }
 
 export function getDb(): DatabaseSync {
-  if (globalThis.__tkDb) return globalThis.__tkDb;
+  if (globalThis.__tkDb) {
+    const version = metaGet(globalThis.__tkDb, "schema_version") ?? "1";
+    if (version !== SCHEMA_VERSION) migrate(globalThis.__tkDb);
+    return globalThis.__tkDb;
+  }
   ensureDir();
   const db = new DatabaseSync(dbPath());
   db.exec(`
@@ -117,7 +122,7 @@ function migrate(db: DatabaseSync) {
     | undefined;
 
   if (!row) {
-    const seed = hashSeedUsers(createSeedData());
+    const seed = installGrandReference(hashSeedUsers(createSeedData()));
     const now = new Date().toISOString();
     db.prepare(
       "INSERT INTO app_blob (id, payload, updated_at) VALUES (1, ?, ?)"
@@ -191,6 +196,7 @@ function migrate(db: DatabaseSync) {
         : c
     );
     metaSet(db, "client_xlsx_imported", "1");
+    installGrandReference(data);
     db.prepare(
       "UPDATE app_blob SET payload = ?, updated_at = ? WHERE id = 1"
     ).run(JSON.stringify(data), new Date().toISOString());

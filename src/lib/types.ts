@@ -128,6 +128,19 @@ export interface Highlight {
   page: number;
 }
 
+export interface DocumentAnalysis {
+  vendor: string;
+  region: string;
+  zone: string;
+  estimateNumber: string;
+  workName: string;
+  basis: string;
+  priceLevel: string;
+  costThousand: number | null;
+  positionCount: number;
+  profileMatch: boolean;
+}
+
 export interface DocumentItem {
   id: string;
   orgId: string;
@@ -144,6 +157,7 @@ export interface DocumentItem {
   uploadedAt: string;
   storedPath?: string;
   fileSize?: number;
+  analysis?: DocumentAnalysis;
 }
 
 export interface CalcPosition {

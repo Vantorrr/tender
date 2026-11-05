@@ -14,6 +14,7 @@ import type {
   User,
 } from "@/lib/types";
 import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
+import type { UploadAnalysis } from "@/server/grand-smeta";
 import { mutateAppData, readAppData, resetAppData } from "@/server/db";
 import { hashPassword } from "@/server/passwords";
 import { createSession, publicUser } from "@/server/auth";
@@ -506,7 +507,11 @@ export function updateDocument(
   });
 }
 
-export function reanalyzeDocument(actorId: string, id: string) {
+export function reanalyzeDocument(
+  actorId: string,
+  id: string,
+  prepared: UploadAnalysis | null
+) {
   return mutateAppData((data) => {
     const actor = actorUser(data, actorId);
     const item = data.documents.find((d) => d.id === id);
@@ -515,35 +520,30 @@ export function reanalyzeDocument(actorId: string, id: string) {
     data.documents = data.documents.map((d) => {
       if (d.id !== id) return d;
       const nextVersion = d.versions.length + 1;
+      const version = {
+        id: `dv-${Date.now()}`,
+        version: nextVersion,
+        authorId: actorId,
+        at: new Date().toISOString(),
+        note: prepared
+          ? "Повторный разбор по параметрам ГРАНД-Смета 2022.3"
+          : "Файл на сервере не найден, разбор не выполнен",
+      };
+      if (!prepared) {
+        return { ...d, versions: [...d.versions, version] };
+      }
       return {
         ...d,
-        status: "gotovo" as CardStatus,
-        versions: [
-          ...d.versions,
-          {
-            id: `dv-${Date.now()}`,
-            version: nextVersion,
-            authorId: actorId,
-            at: new Date().toISOString(),
-            note: "Повторный разбор (серверный pipeline)",
-          },
-        ],
-        analyticalNote:
-          d.analyticalNote +
-          "\n\n[Повторный разбор] Уточнены цитаты и подсветки. Pipeline выполнен на сервере.",
-        highlights: [
-          ...d.highlights,
-          {
-            id: `h-re-${Date.now()}`,
-            text: "Автоматическая проверка после re-analyze",
-            reason: "Требует подтверждения специалистом",
-            severity: "info" as const,
-            page: 1,
-          },
-        ],
+        title: d.title.startsWith("Разбор поставлен") ? prepared.title : d.title,
+        status: prepared.status,
+        versions: [...d.versions, version],
+        analyticalNote: prepared.analyticalNote,
+        citations: prepared.citations,
+        highlights: prepared.highlights,
+        analysis: prepared.analysis,
       };
     });
-    audit(data, actorId, "reanalyze", "document", id, "Серверный разбор документа");
+    audit(data, actorId, "reanalyze", "document", id, "Разбор по параметрам ГРАНД-Смета");
     return data;
   });
 }
@@ -558,6 +558,7 @@ export function createDocument(
     fileType: "pdf" | "docx" | "xlsx";
     storedPath?: string;
     fileSize?: number;
+    prepared?: UploadAnalysis;
   }
 ): { documentId: string } {
   let documentId = "";
@@ -579,20 +580,24 @@ export function createDocument(
       title: input.title,
       fileName: input.fileName,
       fileType: input.fileType,
-      status: "v_rabote",
+      status: input.prepared?.status ?? "v_rabote",
       versions: [
         {
           id: `dv-${Date.now()}`,
           version: 1,
           authorId: actorId,
           at: new Date().toISOString(),
-          note: "Загрузка на сервер",
+          note: input.prepared
+            ? "Загрузка и разбор по параметрам ГРАНД-Смета 2022.3"
+            : "Загрузка на сервер",
         },
       ],
       analyticalNote:
-        "Разбор поставлен в очередь. Предварительная записка сформируется после pipeline.",
-      citations: [],
-      highlights: [],
+        input.prepared?.analyticalNote ??
+        "Файл сохранён. Разбор по форме ГРАНД-Смета не дал результата.",
+      citations: input.prepared?.citations ?? [],
+      highlights: input.prepared?.highlights ?? [],
+      analysis: input.prepared?.analysis,
       uploadedBy: actorId,
       uploadedAt: new Date().toISOString(),
       storedPath: input.storedPath,

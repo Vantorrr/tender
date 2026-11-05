@@ -126,6 +126,12 @@ export default function DokumentyPage() {
                   <div>Версий: {d.versions.length}</div>
                   <div>Цитат: {d.citations.length}</div>
                   <div>Подсветок для проверки: {d.highlights.length}</div>
+                  {d.analysis?.region ? (
+                    <div>
+                      {d.analysis.region}
+                      {d.analysis.zone ? `, зона ${d.analysis.zone}` : ""}
+                    </div>
+                  ) : null}
                   {d.fileSize ? (
                     <div>
                       Размер: {(d.fileSize / 1024).toFixed(1)} КБ

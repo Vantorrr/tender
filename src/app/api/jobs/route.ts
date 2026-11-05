@@ -25,7 +25,7 @@ export async function POST(req: Request) {
       });
     }
     if (body.type === "document_reanalyze" && body.documentId) {
-      const result = runReanalyzePipeline(user.id, body.documentId);
+      const result = await runReanalyzePipeline(user.id, body.documentId);
       return json({
         ...getBootstrap(user),
         jobs: result.jobs,

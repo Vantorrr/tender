@@ -1,5 +1,7 @@
-import { insertJob, listJobs, mutateAppData, updateJob } from "@/server/db";
+import { insertJob, listJobs, mutateAppData, readAppData, updateJob } from "@/server/db";
+import { analyzeUpload } from "@/server/grand-smeta";
 import { reanalyzeDocument } from "@/server/repo";
+import { readUpload } from "@/server/uploads";
 
 /** Normalized notice number for dedup (strip -DUP/-AUTO suffixes). */
 export function normalizeProcurementNumber(number: string): string {
@@ -158,7 +160,7 @@ export function runProcurementSync(actorId: string) {
   return { jobId: id, jobs: listJobs(), data: result };
 }
 
-export function runReanalyzePipeline(actorId: string, documentId: string) {
+export async function runReanalyzePipeline(actorId: string, documentId: string) {
   const id = `job-reanalyze-${Date.now()}`;
   insertJob({
     id,
@@ -167,7 +169,12 @@ export function runReanalyzePipeline(actorId: string, documentId: string) {
     detail: `Разбор документа ${documentId}`,
     createdAt: new Date().toISOString(),
   });
-  const data = reanalyzeDocument(actorId, documentId);
+  const existing = readAppData().documents.find((item) => item.id === documentId);
+  const buf = existing?.storedPath ? readUpload(existing.storedPath) : null;
+  const prepared = buf
+    ? await analyzeUpload(existing?.fileName ?? "file", existing?.fileType ?? "xlsx", buf)
+    : null;
+  const data = reanalyzeDocument(actorId, documentId, prepared);
   updateJob(id, {
     status: "done",
     detail: `Документ ${documentId} разобран`,

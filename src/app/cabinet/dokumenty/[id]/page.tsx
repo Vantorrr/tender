@@ -38,7 +38,10 @@ export default function DocumentDetailPage() {
     <div>
       <PageHeader
         title={doc.title}
-        description={`${doc.fileName} · закупка ${doc.procurementId}`}
+        description={`${doc.fileName} · ${
+          data.procurements.find((item) => item.id === doc.procurementId)?.title ??
+          "закупка"
+        }`}
         actions={
           <>
             <StatusBadge status={doc.status} />
@@ -61,10 +64,10 @@ export default function DocumentDetailPage() {
               variant="outline"
               onClick={async () => {
                 await reanalyzeDocument(doc.id);
-                toast.success("Мок-ИИ pipeline: записка и версия обновлены");
+                toast.success("Записка обновлена по параметрам ГРАНД-Сметы");
               }}
             >
-              Переразобрать (мок-ИИ)
+              Переразобрать
             </Button>
             <Button
               onClick={() => {
@@ -91,6 +94,31 @@ export default function DocumentDetailPage() {
           </>
         }
       />
+
+      {doc.analysis ? (
+        <section className="mb-4 grid gap-3 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5 sm:grid-cols-2 lg:grid-cols-4">
+          {[
+            ["Продукт", doc.analysis.vendor || "—"],
+            ["Регион", doc.analysis.region || "—"],
+            ["Зона", doc.analysis.zone || "—"],
+            [
+              "Стоимость",
+              doc.analysis.costThousand != null
+                ? `${doc.analysis.costThousand.toLocaleString("ru-RU")} тыс. руб.`
+                : "—",
+            ],
+            ["Смета", doc.analysis.estimateNumber || "—"],
+            ["Работы", doc.analysis.workName || "—"],
+            ["Основание", doc.analysis.basis || "—"],
+            ["Уровень цен", doc.analysis.priceLevel || "—"],
+          ].map(([label, value]) => (
+            <div key={label}>
+              <div className="text-xs text-[var(--tk-muted)]">{label}</div>
+              <div className="mt-1 text-sm leading-snug">{value}</div>
+            </div>
+          ))}
+        </section>
+      ) : null}
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">

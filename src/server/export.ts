@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import { readAppData } from "@/server/db";
+import { estimateKey, parseGrandBuffer } from "@/server/grand-smeta";
 
 export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
   const data = readAppData();
@@ -237,8 +238,20 @@ export async function parseDirectoryXlsx(
 }
 
 export async function parseSmetaXlsx(buf: Buffer): Promise<{ code: string; quantity: number; name?: string }[]> {
+  try {
+    const parsed = await parseGrandBuffer(buf);
+    if (parsed) {
+      const key = estimateKey(parsed.estimateNumber);
+      return parsed.positions.map((position) => ({
+        code: `${key} · ${position.code}`,
+        quantity: position.quantity,
+        name: position.name,
+      }));
+    }
+  } catch {
+    // не форма ГРАНД-Сметы — ниже простой разбор колонок
+  }
   const wb = new ExcelJS.Workbook();
-  // exceljs load accepts Uint8Array
   await wb.xlsx.load(buf as unknown as ExcelJS.Buffer);
   const ws = wb.worksheets[0];
   if (!ws) return [];

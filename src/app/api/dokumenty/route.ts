@@ -3,6 +3,7 @@ import {
   getBootstrap,
   updateDocument,
 } from "@/server/repo";
+import { analyzeUpload } from "@/server/grand-smeta";
 import { saveUpload } from "@/server/uploads";
 import { withUser, json } from "@/server/http";
 import type { DocumentItem } from "@/lib/types";
@@ -30,10 +31,10 @@ export async function POST(req: Request) {
       const ext = file.name.split(".").pop()?.toLowerCase();
       const fileType =
         ext === "docx" || ext === "xlsx" || ext === "pdf" ? ext : "pdf";
-      const title =
-        String(form.get("title") ?? "").trim() ||
-        file.name.replace(/\.[^.]+$/, "");
       const buf = Buffer.from(await file.arrayBuffer());
+      const prepared = await analyzeUpload(file.name, fileType, buf);
+      const title =
+        String(form.get("title") ?? "").trim() || prepared.title;
       const tempId = `d-${Date.now()}`;
       const stored = await saveUpload(tempId, file.name, buf);
       createDocument(user.id, {
@@ -44,6 +45,7 @@ export async function POST(req: Request) {
         fileType,
         storedPath: stored.storedPath,
         fileSize: stored.fileSize,
+        prepared,
       });
       return json(getBootstrap(user));
     }
