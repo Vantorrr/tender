@@ -13,7 +13,7 @@ export function EmptyState({
   onAction?: () => void;
 }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-[var(--tk-line)] bg-white/50 px-6 py-16 text-center animate-in fade-in duration-500">
+    <div className="tk-glass flex flex-col items-center justify-center rounded-3xl border-dashed px-6 py-16 text-center animate-in fade-in duration-500">
       <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-[var(--tk-steel-50)] text-[var(--tk-steel)]">
         <Inbox className="h-6 w-6" />
       </div>

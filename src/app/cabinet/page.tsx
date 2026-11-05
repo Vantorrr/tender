@@ -74,7 +74,7 @@ export default function CabinetHomePage() {
           <Link
             key={s.label}
             href={s.href}
-            className="rounded-2xl border border-[var(--tk-line)] bg-white p-4 shadow-[0_1px_2px_rgba(18,21,28,0.04)] transition hover:-translate-y-0.5 hover:shadow-[0_12px_28px_-18px_rgba(18,21,28,0.35)]"
+            className="tk-glass rounded-3xl p-4 transition hover:-translate-y-0.5 hover:shadow-[0_18px_40px_-18px_rgba(46,58,90,0.35)]"
             style={{ animationDelay: `${i * 60}ms` }}
           >
             <div className="flex items-center justify-between">

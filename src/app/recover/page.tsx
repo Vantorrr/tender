@@ -20,8 +20,7 @@ export default function RecoverPage() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center px-4 py-10">
-      <div className="tk-hero-wash absolute inset-0 opacity-85" />
-      <div className="relative z-10 w-full max-w-md rounded-2xl border border-white/15 bg-white p-8 shadow-xl">
+      <div className="tk-glass relative z-10 w-full max-w-md rounded-[28px] p-8">
         <Link
           href="/"
           className="font-[family-name:var(--font-display)] text-xl text-[var(--tk-ink)]"

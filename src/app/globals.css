@@ -105,7 +105,7 @@
   }
   body {
     @apply bg-background text-foreground;
-    background: #f3f4f6;
+    background: #e7edf6;
   }
   html {
     @apply font-sans;
@@ -117,6 +117,137 @@
     transition-property: color, background-color, border-color, box-shadow, transform, opacity;
     transition-duration: 200ms;
     transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+}
+
+.tk-liquid {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(900px 520px at 8% -10%, rgba(255, 214, 176, 0.95), transparent 60%),
+    radial-gradient(760px 520px at 100% 0%, rgba(164, 196, 255, 0.75), transparent 58%),
+    radial-gradient(680px 480px at 78% 110%, rgba(214, 176, 255, 0.45), transparent 55%),
+    #e7edf6;
+}
+
+.tk-blob {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(8px);
+}
+
+.tk-blob-a {
+  top: -12vh;
+  left: -8vw;
+  width: 46vw;
+  height: 46vw;
+  background: radial-gradient(circle, rgba(232, 161, 90, 0.85), rgba(232, 161, 90, 0) 68%);
+  animation: liquid 22s ease-in-out infinite;
+}
+
+.tk-blob-b {
+  top: 8vh;
+  right: -12vw;
+  width: 42vw;
+  height: 42vw;
+  background: radial-gradient(circle, rgba(126, 168, 255, 0.72), rgba(126, 168, 255, 0) 70%);
+  animation: liquid 26s ease-in-out infinite reverse;
+}
+
+.tk-blob-c {
+  bottom: -18vh;
+  left: 24vw;
+  width: 48vw;
+  height: 40vw;
+  background: radial-gradient(circle, rgba(196, 160, 255, 0.5), rgba(196, 160, 255, 0) 70%);
+  animation: liquid 30s ease-in-out infinite;
+}
+
+.tk-blob-d {
+  bottom: 10vh;
+  right: 8vw;
+  width: 28vw;
+  height: 28vw;
+  background: radial-gradient(circle, rgba(255, 236, 214, 0.9), rgba(255, 236, 214, 0) 70%);
+  animation: liquid 18s ease-in-out infinite reverse;
+}
+
+.tk-glass,
+[class*="bg-white/80"],
+[data-slot="card"] {
+  background-color: rgba(255, 255, 255, 0.48) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(1.85);
+  backdrop-filter: blur(28px) saturate(1.85);
+  border-color: rgba(255, 255, 255, 0.72) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 18px 44px rgba(46, 58, 90, 0.09);
+}
+
+[class*="bg-white/80"][class*="rounded-xl"],
+[class*="bg-white/80"][class*="rounded-2xl"] {
+  border-radius: 1.35rem;
+}
+
+.tk-glass-bar {
+  background-color: rgba(255, 255, 255, 0.66) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.7);
+  backdrop-filter: blur(24px) saturate(1.7);
+  border-color: rgba(255, 255, 255, 0.72) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.tk-glass-dark {
+  background: rgba(16, 18, 24, 0.5);
+  -webkit-backdrop-filter: blur(28px) saturate(1.55);
+  backdrop-filter: blur(28px) saturate(1.55);
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    inset 1px 0 0 rgba(255, 255, 255, 0.08);
+}
+
+.tk-glass-chip {
+  background: rgba(255, 255, 255, 0.58);
+  -webkit-backdrop-filter: blur(16px) saturate(1.6);
+  backdrop-filter: blur(16px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.92);
+}
+
+[data-slot="dropdown-menu-content"],
+[data-slot="select-content"],
+[data-slot="popover-content"],
+[data-slot="dialog-content"] {
+  background: rgba(255, 255, 255, 0.72) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(1.7);
+  backdrop-filter: blur(24px) saturate(1.7);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 22px 50px rgba(32, 42, 70, 0.16);
+}
+
+[data-slot="input"],
+[data-slot="select-trigger"],
+[data-slot="textarea"] {
+  background: rgba(255, 255, 255, 0.62);
+  -webkit-backdrop-filter: blur(12px) saturate(1.4);
+  backdrop-filter: blur(12px) saturate(1.4);
+  border-color: rgba(255, 255, 255, 0.75);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+}
+
+@keyframes liquid {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(4vw, 3vh, 0) scale(1.08);
   }
 }
 
@@ -233,7 +364,8 @@
   .animate-drift,
   .animate-fade-slide,
   .tk-page,
-  .tk-stagger > * {
+  .tk-stagger > *,
+  .tk-blob {
     animation: none;
   }
   html {

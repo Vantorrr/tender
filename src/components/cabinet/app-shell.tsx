@@ -62,10 +62,10 @@ function NavList({
             className={cn(
               "flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13.5px] font-medium tracking-tight transition-colors duration-200",
               active
-                ? "bg-white/14 text-white"
+                ? "bg-white/16 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.32)]"
                 : prominent
                   ? "text-white hover:bg-white/10"
-                  : "text-white/60 hover:bg-white/6 hover:text-white",
+                  : "text-white/80 hover:bg-white/8 hover:text-white",
               collapsed && "justify-center px-2"
             )}
           >
@@ -108,10 +108,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     .slice(0, 2);
 
   return (
-    <div className="flex min-h-screen bg-[var(--tk-canvas)]">
+    <div className="flex min-h-screen bg-transparent">
       <aside
         className={cn(
-          "relative sticky top-0 hidden h-screen shrink-0 flex-col border-r border-white/8 bg-[var(--tk-sidebar)] text-white transition-[width] duration-300 lg:flex",
+          "tk-glass-dark relative sticky top-0 hidden h-screen shrink-0 flex-col border-r text-white transition-[width] duration-300 lg:flex",
           collapsed ? "w-[76px]" : "w-[248px]"
         )}
       >
@@ -130,7 +130,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             className={cn(
               "text-white/50 hover:bg-white/8 hover:text-white",
               collapsed &&
-                "absolute top-5 -right-3 z-20 size-6 border border-white/15 bg-[var(--tk-sidebar)] shadow-sm"
+                "tk-glass-dark absolute top-5 -right-3 z-20 size-6 border shadow-sm"
             )}
             onClick={() => setCollapsed((v) => !v)}
             aria-label={collapsed ? "Развернуть меню" : "Свернуть меню"}
@@ -153,18 +153,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-[68px] items-center justify-between gap-3 border-b border-[var(--tk-line)] bg-white/90 px-4 backdrop-blur-md sm:px-6">
+        <header className="tk-glass-bar sticky top-0 z-30 flex h-[68px] items-center justify-between gap-3 border-b px-4 sm:px-6">
           <div className="flex items-center gap-2">
             <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
               <SheetTrigger
-                className="inline-flex size-8 items-center justify-center rounded-lg border border-[var(--tk-line)] bg-white lg:hidden"
+                className="tk-glass-chip inline-flex size-8 items-center justify-center rounded-full lg:hidden"
                 aria-label="Меню"
               >
                 <Menu className="h-4 w-4" />
               </SheetTrigger>
               <SheetContent
                 side="left"
-                className="flex w-[280px] flex-col overflow-hidden border-white/10 bg-[var(--tk-sidebar)] p-0 text-white [&_[data-slot=sheet-close]]:text-white [&_[data-slot=sheet-close]]:hover:bg-white/10"
+                className="tk-glass-dark flex w-[280px] flex-col overflow-hidden p-0 text-white [&_[data-slot=sheet-close]]:text-white [&_[data-slot=sheet-close]]:hover:bg-white/10"
               >
                 <div className="flex h-16 shrink-0 items-center border-b border-white/10 px-4 pr-12">
                   <Logo titleClassName="text-base" />
@@ -174,14 +174,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </div>
               </SheetContent>
             </Sheet>
-            <div className="hidden rounded-full border border-[var(--tk-line)] bg-white px-3 py-1 text-[13px] text-[var(--tk-ink-soft)] sm:block">
+            <div className="tk-glass-chip hidden rounded-full px-3 py-1 text-[13px] text-[var(--tk-ink-soft)] sm:block">
               {data.organizations.find((o) => o.id === user.orgId)?.name}
             </div>
           </div>
 
           <div className="flex items-center gap-2">
             <DropdownMenu>
-              <DropdownMenuTrigger className="relative inline-flex size-8 items-center justify-center rounded-lg border border-[var(--tk-line)] bg-white">
+              <DropdownMenuTrigger aria-label="Уведомления" className="tk-glass-chip relative inline-flex size-8 items-center justify-center rounded-full">
                 <Bell className="h-4 w-4" />
                 {unreadCount > 0 ? (
                   <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-md bg-[var(--tk-copper)] px-1 text-[10px] font-semibold text-white">

@@ -19,11 +19,13 @@ function LogoMark({ className }: { className?: string }) {
 
 export function Logo({
   wordmark = true,
+  tone = "light",
   className,
   markClassName = "h-9 w-9",
   titleClassName = "text-[15px]",
 }: {
   wordmark?: boolean;
+  tone?: "light" | "ink";
   className?: string;
   markClassName?: string;
   titleClassName?: string;
@@ -35,7 +37,9 @@ export function Logo({
         <span className="min-w-0 leading-tight">
           <span
             className={cn(
-              "block truncate font-[family-name:var(--font-display)] font-semibold tracking-tight text-white",
+              tone === "ink"
+                ? "block truncate font-[family-name:var(--font-display)] font-semibold tracking-tight text-[var(--tk-ink)]"
+                : "block truncate font-[family-name:var(--font-display)] font-semibold tracking-tight text-white",
               titleClassName
             )}
           >

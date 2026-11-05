@@ -32,7 +32,15 @@ export default function RootLayout({
       className={`${display.variable} ${body.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col font-[family-name:var(--font-body)]">
-        <Providers>{children}</Providers>
+        <div className="tk-liquid" aria-hidden>
+          <span className="tk-blob tk-blob-a" />
+          <span className="tk-blob tk-blob-b" />
+          <span className="tk-blob tk-blob-c" />
+          <span className="tk-blob tk-blob-d" />
+        </div>
+        <div className="relative z-10 flex min-h-full flex-1 flex-col">
+          <Providers>{children}</Providers>
+        </div>
       </body>
     </html>
   );

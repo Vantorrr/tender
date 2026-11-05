@@ -6,31 +6,25 @@ import { Logo } from "@/components/logo";
 export default function HomePage() {
   return (
     <div className="relative min-h-screen overflow-hidden">
-      <div className="tk-hero-wash absolute inset-0" />
-      <div className="tk-grid-bg absolute inset-0 opacity-40" />
-      <div className="animate-drift absolute -right-24 top-10 h-80 w-80 rounded-full bg-[radial-gradient(circle,rgba(184,107,43,0.35),transparent_70%)] blur-2xl" />
-      <div className="animate-drift absolute -left-16 bottom-10 h-72 w-72 rounded-full bg-[radial-gradient(circle,rgba(120,180,200,0.25),transparent_70%)] blur-2xl" />
-
       <div className="relative z-10 mx-auto flex min-h-screen max-w-6xl flex-col px-5 py-6 sm:px-8">
         <header className="animate-rise flex items-center justify-between gap-4">
-          <Logo markClassName="h-11 w-11" titleClassName="text-lg sm:text-xl" />
+          <Logo tone="ink" markClassName="h-11 w-11" titleClassName="text-lg sm:text-xl" />
           <Button
             render={<Link href="/login" />}
-            variant="secondary"
-            className="bg-white/95 text-[var(--tk-steel)] hover:bg-white"
+            className="rounded-full bg-[var(--tk-ink)] px-4 text-white hover:bg-[var(--tk-ink)]/90"
           >
             Войти в кабинет
           </Button>
         </header>
 
         <section className="flex flex-1 flex-col justify-center py-16 sm:py-20">
-          <p className="animate-rise mb-4 text-sm font-medium uppercase tracking-[0.18em] text-[var(--tk-sand)]">
+          <p className="animate-rise mb-4 text-sm font-medium uppercase tracking-[0.18em] text-[var(--tk-copper-deep)]">
             Договор № TMA361 · 26.10.2026
           </p>
-          <h1 className="animate-rise-delay max-w-3xl font-[family-name:var(--font-display)] text-4xl leading-[1.05] tracking-tight text-white sm:text-5xl lg:text-6xl">
+          <h1 className="animate-rise-delay max-w-3xl font-[family-name:var(--font-display)] text-4xl leading-[1.05] tracking-tight text-[var(--tk-ink)] sm:text-5xl lg:text-6xl">
             ТендерКонтур
           </h1>
-          <p className="animate-rise-delay mt-5 max-w-xl text-base leading-relaxed text-white/80 sm:text-lg">
+          <p className="animate-rise-delay mt-5 max-w-xl text-base leading-relaxed text-[var(--tk-ink-soft)] sm:text-lg">
             Платформа отбора строительных тендеров: от ленты закупок до
             чернового расчёта, ГПР, денег и план/факта — в одном личном кабинете.
           </p>
@@ -47,14 +41,14 @@ export default function HomePage() {
               render={<Link href="/cabinet/instrukciya" />}
               size="lg"
               variant="outline"
-              className="border-white/30 bg-white/5 text-white hover:bg-white/10 hover:text-white"
+              className="tk-glass rounded-full border-white/70 text-[var(--tk-ink)] hover:bg-white/70 hover:text-[var(--tk-ink)]"
             >
               Инструкция по сценариям
             </Button>
           </div>
         </section>
 
-        <section className="animate-rise-delay-2 grid gap-4 border-t border-white/15 py-8 sm:grid-cols-3">
+        <section className="animate-rise-delay-2 grid gap-4 py-8 sm:grid-cols-3">
           {[
             {
               icon: FileSearch,
@@ -74,13 +68,13 @@ export default function HomePage() {
           ].map((item) => (
             <div
               key={item.title}
-              className="rounded-xl border border-white/10 bg-white/5 p-4 backdrop-blur-sm"
+              className="tk-glass rounded-3xl p-5"
             >
-              <item.icon className="mb-3 h-5 w-5 text-[var(--tk-sand)]" />
-              <h2 className="font-[family-name:var(--font-display)] text-base text-white">
+              <item.icon className="mb-3 h-5 w-5 text-[var(--tk-copper-deep)]" />
+              <h2 className="font-[family-name:var(--font-display)] text-base text-[var(--tk-ink)]">
                 {item.title}
               </h2>
-              <p className="mt-1.5 text-sm leading-relaxed text-white/70">
+              <p className="mt-1.5 text-sm leading-relaxed text-[var(--tk-muted)]">
                 {item.text}
               </p>
             </div>

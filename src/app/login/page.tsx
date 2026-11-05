@@ -71,11 +71,8 @@ export default function LoginPage() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center px-4 py-10">
-      <div className="tk-hero-wash absolute inset-0 opacity-90" />
-      <div className="tk-grid-bg absolute inset-0 opacity-30" />
-
-      <div className="relative z-10 grid w-full max-w-5xl overflow-hidden rounded-[28px] border border-white/10 bg-white shadow-[0_30px_80px_-36px_rgba(12,14,18,0.65)] lg:grid-cols-[1.05fr_0.95fr]">
-        <div className="hidden flex-col justify-between bg-[#111318] p-10 text-white lg:flex">
+      <div className="relative z-10 grid w-full max-w-5xl overflow-hidden rounded-[32px] border border-white/70 shadow-[0_24px_70px_rgba(46,58,90,0.16)] lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="tk-glass-dark hidden flex-col justify-between p-10 text-white lg:flex">
           <div>
             <div className="mb-8">
               <Logo markClassName="h-12 w-12" titleClassName="text-2xl" />
@@ -91,7 +88,7 @@ export default function LoginPage() {
           <p className="text-xs text-white/50">Договор № TMA361 · 26.10.2026</p>
         </div>
 
-        <div className="p-6 sm:p-10">
+        <div className="tk-glass p-6 sm:p-10">
           <div className="mb-8 lg:hidden">
             <Link
               href="/"
@@ -102,10 +99,10 @@ export default function LoginPage() {
           </div>
 
           <form onSubmit={onSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-1 rounded-xl bg-[#f3f4f6] p-1">
+            <div className="tk-glass-chip grid grid-cols-2 gap-1 rounded-full p-1">
               <button
                 type="button"
-                className={`rounded-lg px-3 py-2 text-sm font-medium ${
+                className={`rounded-full px-3 py-2 text-sm font-medium ${
                   mode === "password"
                     ? "bg-white text-[var(--tk-ink)] shadow-sm"
                     : "text-[var(--tk-muted)]"
@@ -119,7 +116,7 @@ export default function LoginPage() {
               </button>
               <button
                 type="button"
-                className={`rounded-lg px-3 py-2 text-sm font-medium ${
+                className={`rounded-full px-3 py-2 text-sm font-medium ${
                   mode === "key"
                     ? "bg-white text-[var(--tk-ink)] shadow-sm"
                     : "text-[var(--tk-muted)]"
@@ -209,7 +206,7 @@ export default function LoginPage() {
                       key={d.email}
                       type="button"
                       disabled={loading}
-                      className="rounded-lg border border-[var(--tk-line)] px-3 py-2 text-left text-sm transition hover:border-[var(--tk-copper)]/50 hover:bg-[var(--tk-steel-50)] disabled:opacity-50"
+                      className="tk-glass-chip rounded-2xl px-3 py-2 text-left text-sm transition hover:bg-white/80 disabled:opacity-50"
                       onClick={() => {
                         setEmail(d.email);
                         setPassword(d.password);
@@ -229,7 +226,7 @@ export default function LoginPage() {
                       key={d.key}
                       type="button"
                       disabled={loading}
-                      className="rounded-lg border border-[var(--tk-line)] px-3 py-2 text-left text-sm transition hover:border-[var(--tk-copper)]/50 hover:bg-[var(--tk-steel-50)] disabled:opacity-50"
+                      className="tk-glass-chip rounded-2xl px-3 py-2 text-left text-sm transition hover:bg-white/80 disabled:opacity-50"
                       onClick={() => {
                         setSecretKey(d.key);
                         void doKeyLogin(d.key);
