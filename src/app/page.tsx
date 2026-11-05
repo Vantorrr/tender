@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, FileSearch, ShieldCheck, Workflow } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Logo } from "@/components/logo";
 
 export default function HomePage() {
   return (
@@ -12,14 +13,7 @@ export default function HomePage() {
 
       <div className="relative z-10 mx-auto flex min-h-screen max-w-6xl flex-col px-5 py-6 sm:px-8">
         <header className="animate-rise flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/10 font-[family-name:var(--font-display)] text-sm font-bold text-white ring-1 ring-white/20">
-              ТК
-            </span>
-            <span className="font-[family-name:var(--font-display)] text-lg tracking-tight text-white sm:text-xl">
-              ТендерКонтур
-            </span>
-          </div>
+          <Logo markClassName="h-11 w-11" titleClassName="text-lg sm:text-xl" />
           <Button
             render={<Link href="/login" />}
             variant="secondary"

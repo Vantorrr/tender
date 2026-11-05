@@ -11,6 +11,7 @@ import {
   PanelLeftOpen,
 } from "lucide-react";
 import { NAV_ITEMS } from "@/components/cabinet/nav";
+import { Logo } from "@/components/logo";
 import { LoadingState } from "@/components/empty-state";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -110,30 +111,32 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen bg-[var(--tk-canvas)]">
       <aside
         className={cn(
-          "sticky top-0 hidden h-screen shrink-0 flex-col border-r border-white/8 bg-[var(--tk-sidebar)] text-white transition-[width] duration-300 lg:flex",
+          "relative sticky top-0 hidden h-screen shrink-0 flex-col border-r border-white/8 bg-[var(--tk-sidebar)] text-white transition-[width] duration-300 lg:flex",
           collapsed ? "w-[76px]" : "w-[248px]"
         )}
       >
-        <div className="flex h-[68px] items-center justify-between gap-2 px-3">
-          <Link href="/cabinet" className="flex min-w-0 items-center gap-2.5">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--tk-accent)] font-[family-name:var(--font-display)] text-sm font-semibold text-[#1a120c]">
-              ТК
-            </span>
-            {!collapsed ? (
-              <span className="truncate font-[family-name:var(--font-display)] text-[15px] font-semibold tracking-tight text-white">
-                ТендерКонтур
-              </span>
-            ) : null}
+        <div
+          className={cn(
+            "flex h-[68px] items-center px-3",
+            collapsed ? "justify-center" : "justify-between gap-2"
+          )}
+        >
+          <Link href="/cabinet" className="flex min-w-0 items-center" aria-label="ТендерКонтур">
+            <Logo wordmark={!collapsed} />
           </Link>
           <Button
             variant="ghost"
             size="icon-sm"
-            className="text-white/50 hover:bg-white/8 hover:text-white"
+            className={cn(
+              "text-white/50 hover:bg-white/8 hover:text-white",
+              collapsed &&
+                "absolute top-5 -right-3 z-20 size-6 border border-white/15 bg-[var(--tk-sidebar)] shadow-sm"
+            )}
             onClick={() => setCollapsed((v) => !v)}
-            aria-label="Свернуть меню"
+            aria-label={collapsed ? "Развернуть меню" : "Свернуть меню"}
           >
             {collapsed ? (
-              <PanelLeftOpen className="h-4 w-4" />
+              <PanelLeftOpen className="h-3.5 w-3.5" />
             ) : (
               <PanelLeftClose className="h-4 w-4" />
             )}
@@ -163,13 +166,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 side="left"
                 className="flex w-[280px] flex-col overflow-hidden border-white/10 bg-[var(--tk-sidebar)] p-0 text-white [&_[data-slot=sheet-close]]:text-white [&_[data-slot=sheet-close]]:hover:bg-white/10"
               >
-                <div className="flex h-16 shrink-0 items-center gap-2 border-b border-white/10 px-4 pr-12">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--tk-accent)] font-[family-name:var(--font-display)] text-sm font-semibold text-[#1a120c]">
-                    ТК
-                  </span>
-                  <span className="font-[family-name:var(--font-display)] text-base text-white">
-                    ТендерКонтур
-                  </span>
+                <div className="flex h-16 shrink-0 items-center border-b border-white/10 px-4 pr-12">
+                  <Logo titleClassName="text-base" />
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto">
                   <NavList prominent onNavigate={() => setMobileOpen(false)} />

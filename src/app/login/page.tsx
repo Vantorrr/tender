@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LoadingState } from "@/components/empty-state";
+import { Logo } from "@/components/logo";
 import { ROLE_LABELS } from "@/lib/roles";
 import { DEMO_SECRET_KEYS } from "@/lib/demo-accounts";
 import { useStore } from "@/lib/store";
@@ -76,13 +77,8 @@ export default function LoginPage() {
       <div className="relative z-10 grid w-full max-w-5xl overflow-hidden rounded-[28px] border border-white/10 bg-white shadow-[0_30px_80px_-36px_rgba(12,14,18,0.65)] lg:grid-cols-[1.05fr_0.95fr]">
         <div className="hidden flex-col justify-between bg-[#111318] p-10 text-white lg:flex">
           <div>
-            <div className="mb-8 flex items-center gap-3">
-              <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[var(--tk-accent)] font-[family-name:var(--font-display)] font-semibold text-[#1a120c]">
-                ТК
-              </span>
-              <span className="font-[family-name:var(--font-display)] text-2xl tracking-tight">
-                ТендерКонтур
-              </span>
+            <div className="mb-8">
+              <Logo markClassName="h-12 w-12" titleClassName="text-2xl" />
             </div>
             <h1 className="font-[family-name:var(--font-display)] text-3xl leading-tight tracking-tight">
               Вход в личный кабинет
