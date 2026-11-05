@@ -32,9 +32,11 @@ import { cn } from "@/lib/utils";
 function NavList({
   onNavigate,
   collapsed,
+  prominent = false,
 }: {
   onNavigate?: () => void;
   collapsed?: boolean;
+  prominent?: boolean;
 }) {
   const pathname = usePathname();
   const { user } = useStore();
@@ -59,8 +61,10 @@ function NavList({
             className={cn(
               "flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13.5px] font-medium tracking-tight transition-colors duration-200",
               active
-                ? "bg-white/12 text-white"
-                : "text-white/60 hover:bg-white/6 hover:text-white",
+                ? "bg-white/14 text-white"
+                : prominent
+                  ? "text-white hover:bg-white/10"
+                  : "text-white/60 hover:bg-white/6 hover:text-white",
               collapsed && "justify-center px-2"
             )}
           >
@@ -157,18 +161,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </SheetTrigger>
               <SheetContent
                 side="left"
-                className="flex w-[280px] flex-col overflow-hidden p-0"
+                className="flex w-[280px] flex-col overflow-hidden border-white/10 bg-[var(--tk-sidebar)] p-0 text-white [&_[data-slot=sheet-close]]:text-white [&_[data-slot=sheet-close]]:hover:bg-white/10"
               >
-                <div className="flex h-16 shrink-0 items-center gap-2 border-b border-[var(--tk-line)] px-4">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--tk-steel)] font-[family-name:var(--font-display)] text-sm font-bold text-white">
+                <div className="flex h-16 shrink-0 items-center gap-2 border-b border-white/10 px-4 pr-12">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[var(--tk-accent)] font-[family-name:var(--font-display)] text-sm font-semibold text-[#1a120c]">
                     ТК
                   </span>
-                  <span className="font-[family-name:var(--font-display)] text-base">
+                  <span className="font-[family-name:var(--font-display)] text-base text-white">
                     ТендерКонтур
                   </span>
                 </div>
                 <div className="min-h-0 flex-1 overflow-y-auto">
-                  <NavList onNavigate={() => setMobileOpen(false)} />
+                  <NavList prominent onNavigate={() => setMobileOpen(false)} />
                 </div>
               </SheetContent>
             </Sheet>
