@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
@@ -190,21 +191,23 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 align="end"
                 className="w-80 max-w-[calc(100vw-2rem)]"
               >
-                <DropdownMenuLabel className="flex items-center justify-between gap-2">
-                  <span>Уведомления</span>
-                  {unreadCount > 0 ? (
-                    <button
-                      type="button"
-                      className="text-xs font-normal text-[var(--tk-copper-deep)] hover:underline"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        void markAllNotificationsRead();
-                      }}
-                    >
-                      Прочитать все
-                    </button>
-                  ) : null}
-                </DropdownMenuLabel>
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel className="flex items-center justify-between gap-2">
+                    <span>Уведомления</span>
+                    {unreadCount > 0 ? (
+                      <button
+                        type="button"
+                        className="text-xs font-normal text-[var(--tk-copper-deep)] hover:underline"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          void markAllNotificationsRead();
+                        }}
+                      >
+                        Прочитать все
+                      </button>
+                    ) : null}
+                  </DropdownMenuLabel>
+                </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 {notes.length === 0 ? (
                   <div className="px-2 py-6 text-center text-sm text-[var(--tk-muted)]">
@@ -249,12 +252,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </span>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-64">
-                <DropdownMenuLabel>
-                  <div className="font-medium">{user.name}</div>
-                  <div className="text-xs font-normal text-[var(--tk-muted)]">
-                    {ROLE_LABELS[user.role]}
-                  </div>
-                </DropdownMenuLabel>
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel>
+                    <div className="font-medium">{user.name}</div>
+                    <div className="text-xs font-normal text-[var(--tk-muted)]">
+                      {ROLE_LABELS[user.role]}
+                    </div>
+                  </DropdownMenuLabel>
+                </DropdownMenuGroup>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={async () => {
