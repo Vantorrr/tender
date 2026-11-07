@@ -18,7 +18,6 @@ ENV DATA_DIR=/app/data
 ENV SYNC_INTERVAL_MS=300000
 
 RUN mkdir -p /app/data /app/data/uploads
-VOLUME ["/app/data"]
 
 EXPOSE 43141
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=5 \
