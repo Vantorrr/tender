@@ -116,8 +116,19 @@ export interface DocVersion {
 export interface Citation {
   id: string;
   text: string;
+  /** PDF page (1-based). For XLSX may be 1. */
   page: number;
   sourceFile: string;
+  /** XLSX worksheet name when applicable. */
+  sheet?: string;
+  /** A1-style cell or range, e.g. G10 or G10:G11. */
+  cell?: string;
+  /** DOCX paragraph index (1-based) when applicable. */
+  paragraph?: number;
+  /** Source document / directory version id when known. */
+  sourceVersion?: string;
+  /** Honest confidence: confirmed from parse vs needs human check. */
+  confidence?: "confirmed" | "ocr" | "heuristic" | "unconfirmed";
 }
 
 export interface Highlight {

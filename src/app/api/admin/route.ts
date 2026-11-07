@@ -5,9 +5,13 @@ import {
   setOrganizationActive,
 } from "@/server/repo";
 import { getJobs } from "@/server/jobs";
-import { readAppData } from "@/server/db";
+import {
+  clearClientImportFlag,
+  integrationSnapshot,
+  markClientImportDone,
+  readAppData,
+} from "@/server/db";
 import { importClientDirectories } from "@/server/client-import";
-import { clearClientImportFlag, markClientImportDone } from "@/server/db";
 import { SESSION_COOKIE, sessionCookieOptions } from "@/server/auth";
 import { withSection, json } from "@/server/http";
 
@@ -21,6 +25,8 @@ export async function GET(req: Request) {
       organizations: boot.data.organizations,
       auditLog: boot.data.auditLog,
       jobs: getJobs(),
+      // Non-secret integration inventory — admin only (not public /api/health).
+      integrations: integrationSnapshot(),
     });
   });
 }

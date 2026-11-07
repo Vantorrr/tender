@@ -9,6 +9,7 @@ import {
   updateCalculation,
   updateDocument,
 } from "@/server/repo";
+import { runReanalyzePipeline } from "@/server/jobs";
 import { saveUpload } from "@/server/uploads";
 import type { User } from "@/lib/types";
 
@@ -87,5 +88,14 @@ describe("negative tenant / id / file / export ACL", () => {
     expect(() =>
       updateDocument(beta.id, alfaDoc!.id, { title: "nope" })
     ).toThrow(/другой организации/);
+  });
+
+  it("beta reanalyze of alfa doc fails ACL before analyze/useLlm", async () => {
+    const beta = byEmail("tender@betain.ru");
+    const alfaDoc = readAppData().documents.find((d) => d.orgId === "org-alfa");
+    expect(alfaDoc).toBeTruthy();
+    await expect(
+      runReanalyzePipeline(beta.id, alfaDoc!.id, { useLlm: true })
+    ).rejects.toThrow(/другой организации/);
   });
 });

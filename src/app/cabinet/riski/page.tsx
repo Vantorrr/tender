@@ -47,7 +47,7 @@ export default function RiskiPage() {
     <div>
       <PageHeader
         title="Риски"
-        description="Разбор договора, реестр замечаний с привязкой к тексту, статусы и решения."
+        description="Эвристический помощник по тексту договора (не юридическая экспертиза). Замечания с выдержками из источника; пустой текст → «нет данных»."
         actions={
           risk ? (
             <>
@@ -56,7 +56,9 @@ export default function RiskiPage() {
                 onClick={async () => {
                   try {
                     await parseRiskContract(risk.id);
-                    toast.success("Договор разобран — добавлены замечания");
+                    toast.success(
+                      "Разбор выполнен (помощник, не юрэкспертиза)"
+                    );
                   } catch (e) {
                     toast.error(
                       e instanceof Error ? e.message : "Ошибка разбора"
@@ -125,10 +127,14 @@ export default function RiskiPage() {
 
           {risk ? (
             <div className="space-y-3">
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                Авторазбор — эвристический помощник, не юридическая экспертиза.
+                Проверяйте цитаты вручную перед решением.
+              </p>
               {risk.remarks.length === 0 ? (
                 <EmptyState
-                  title="Замечаний пока нет"
-                  description="Нажмите «Разобрать договор», чтобы добавить замечания по тексту контракта."
+                  title="Нет данных"
+                  description="В тексте договора не найдено типовых рисковых формулировок, либо текст ещё не загружен. Ничего не выдумано."
                 />
               ) : null}
               {risk.remarks.map((remark) => (

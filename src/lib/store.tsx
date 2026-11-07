@@ -79,7 +79,7 @@ interface StoreContextValue {
     }
   ) => Promise<void>;
   updateDocument: (id: string, patch: Partial<DocumentItem>) => Promise<void>;
-  reanalyzeDocument: (id: string) => Promise<void>;
+  reanalyzeDocument: (id: string, opts?: { useLlm?: boolean }) => Promise<void>;
   createDocumentUpload: (input: {
     procurementId: string;
     title?: string;
@@ -427,12 +427,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   );
 
   const reanalyzeDocument = useCallback(
-    async (id: string) => {
+    async (id: string, opts?: { useLlm?: boolean }) => {
       const boot = await api<BootstrapResponse>("/api/jobs", {
         method: "POST",
         body: JSON.stringify({
           type: "document_reanalyze",
           documentId: id,
+          useLlm: Boolean(opts?.useLlm),
         }),
       });
       applyBoot(boot);

@@ -1,6 +1,7 @@
 import { config } from "@/server/config";
 import { ensureReady } from "@/server/db";
 import { runProcurementSync } from "@/server/jobs";
+import { procurementSourceStatus } from "@/server/procurement-source";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -12,6 +13,16 @@ const SYSTEM_ACTOR = "u-super";
 export function startBackgroundJobs() {
   if (globalThis.__tkSchedulerStarted) return;
   if (config.syncIntervalMs <= 0) return;
+
+  const source = procurementSourceStatus();
+  // Never timer-poll an unconfigured stub — that used to invent p-auto-* noise.
+  if (source.status === "not_configured") {
+    console.log(
+      `[истройка] автосинхронизация отключена: источник закупок not_configured (${source.id})`
+    );
+    return;
+  }
+
   globalThis.__tkSchedulerStarted = true;
 
   try {
@@ -22,7 +33,7 @@ export function startBackgroundJobs() {
   }
 
   console.log(
-    `[истройка] автосинхронизация каждые ${Math.round(config.syncIntervalMs / 1000)}с`
+    `[истройка] автосинхронизация каждые ${Math.round(config.syncIntervalMs / 1000)}с (${source.status}/${source.id})`
   );
 
   setInterval(() => {

@@ -11,7 +11,15 @@ import { createSeedData } from "@/lib/seed";
 import type { AppData } from "@/lib/types";
 import { config, dbPath } from "@/server/config";
 import { installGrandReference } from "@/server/grand-package";
+import { mailStatus } from "@/server/mail";
+import {
+  detectLocalOcrTools,
+  getOcrProvider,
+  ocrConfigured,
+} from "@/server/ocr";
+import { modelConfigured } from "@/server/openrouter";
 import { hashPassword } from "@/server/passwords";
+import { procurementSourceStatus } from "@/server/procurement-source";
 
 const SCHEMA_VERSION = "7";
 
@@ -327,6 +335,10 @@ export function healthSnapshot() {
     .prepare("SELECT count(*) as c FROM jobs")
     .get() as { c: number };
   const data = readAppData();
+  // Public /api/health must stay non-recon: no secret presence, missing SMTP_*
+  // names, model id, or transport inventory. Coarse readiness only.
+  const procurement = procurementSourceStatus();
+  const mail = mailStatus();
   return {
     ok: true,
     app: config.appName,
@@ -341,6 +353,48 @@ export function healthSnapshot() {
     users: data.users.length,
     procurements: data.procurements.length,
     syncIntervalMs: config.syncIntervalMs,
+    procurement: {
+      status: procurement.status,
+      stub: procurement.stub,
+    },
+    mail: {
+      live: mail.live,
+    },
+    ocr: {
+      configured: ocrConfigured(),
+    },
+    llm: {
+      onUpload: config.openRouterOnUpload,
+    },
+  };
+}
+
+/** Authenticated admin diagnostics — may include non-secret config inventory. */
+export function integrationSnapshot() {
+  const tools = detectLocalOcrTools();
+  const procurement = procurementSourceStatus();
+  const mail = mailStatus();
+  return {
+    procurement,
+    mail: {
+      transport: mail.transport,
+      live: mail.live,
+      smtpConfigured: mail.smtpConfigured,
+      missing: mail.missing,
+      detail: mail.detail,
+    },
+    ocr: {
+      configured: ocrConfigured(),
+      provider: getOcrProvider().id,
+      tesseract: Boolean(tools.tesseract),
+      pdftoppm: Boolean(tools.pdftoppm),
+      pdftotext: Boolean(tools.pdftotext),
+    },
+    llm: {
+      configured: modelConfigured(),
+      onUpload: config.openRouterOnUpload,
+      model: config.openRouterModel,
+    },
   };
 }
 

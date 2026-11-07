@@ -8,6 +8,12 @@ import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/logo";
 import { api } from "@/lib/api";
 
+type RecoverResponse = {
+  message: string;
+  mailLive?: boolean;
+  reset?: boolean;
+};
+
 export default function RecoverPage() {
   const [step, setStep] = useState<"request" | "reset">("request");
   const [email, setEmail] = useState("");
@@ -15,16 +21,20 @@ export default function RecoverPage() {
   const [newPassword, setNewPassword] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [mailLive, setMailLive] = useState<boolean | null>(null);
 
   async function onRequest(e: React.FormEvent) {
     e.preventDefault();
     setError("");
     try {
-      const res = await api<{ message: string }>("/api/auth/recover", {
+      const res = await api<RecoverResponse>("/api/auth/recover", {
         method: "POST",
         body: JSON.stringify({ email, action: "request" }),
       });
       setMessage(res.message);
+      setMailLive(res.mailLive ?? null);
+      // Always offer code entry — UI never reveals whether the email exists.
+      // Codes never appear in the response (only mail/sink for operators).
       setStep("reset");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка запроса");
@@ -35,7 +45,7 @@ export default function RecoverPage() {
     e.preventDefault();
     setError("");
     try {
-      const res = await api<{ message: string }>("/api/auth/recover", {
+      const res = await api<RecoverResponse>("/api/auth/recover", {
         method: "POST",
         body: JSON.stringify({
           email,
@@ -61,7 +71,7 @@ export default function RecoverPage() {
         </h1>
         <p className="mt-2 text-sm text-[var(--tk-muted)]">
           {step === "request"
-            ? "Укажите email — отправим одноразовый код на локальный почтовый sink / почту."
+            ? "Укажите email. При боевом SMTP код придёт письмом; коды в интерфейсе не показываются."
             : "Введите код из письма и новый пароль."}
         </p>
         {step === "request" ? (
@@ -119,6 +129,15 @@ export default function RecoverPage() {
           <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
             {message}
           </p>
+        ) : null}
+        {mailLive === false ? (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+            <p>
+              Боевая почта на этом стенде не активна. Коды в интерфейс не
+              выводятся. Администратор настраивает SMTP в переменных сервера
+              (через secure form / Railway Variables), не через этот экран.
+            </p>
+          </div>
         ) : null}
         {error ? (
           <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
