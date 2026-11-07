@@ -1,0 +1,188 @@
+"use client";
+
+import Link from "next/link";
+import { PageHeader } from "@/components/page-header";
+import { ROLE_LABELS } from "@/lib/roles";
+
+const scenarios = [
+  {
+    n: 1,
+    title: "Авторизация и роли",
+    route: "/login",
+    steps:
+      "Войдите под своей учётной записью. Суперадмин управляет пользователями, правами разделов и историей ролей в «Пользователи».",
+  },
+  {
+    n: 2,
+    title: "Навигация по разделам",
+    route: "/cabinet",
+    steps:
+      "В боковом меню доступны: Закупки, Документы, Расчёты, ГПР, Деньги, Риски, Производство, Справочники, Пользователи, Админ — в зависимости от роли.",
+  },
+  {
+    n: 3,
+    title: "Карточки и уведомления",
+    route: "/cabinet",
+    steps:
+      "Карточки закупок, документов, расчётов и объектов показывают статусы. Колокольчик в шапке открывает уведомления.",
+  },
+  {
+    n: 4,
+    title: "Справочники",
+    route: "/cabinet/spravochniki",
+    steps:
+      "Нормы, расценки, цены, профиль закупок. Скачайте шаблон, выполните импорт Excel, переключите текущую версию — расчёты ссылаются на неё.",
+  },
+  {
+    n: 5,
+    title: "Закупки",
+    route: "/cabinet/zakupki",
+    steps:
+      "Лента, фильтры, карточка со вложениями, дедупликация, статусы рассмотрения, баннер синхронизации источника.",
+  },
+  {
+    n: 6,
+    title: "Документы",
+    route: "/cabinet/dokumenty/d-1",
+    steps:
+      "Загрузка PDF/DOCX/XLSX, аналитическая записка с цитатами, подсветки для ручной проверки, версии, повторный разбор, экспорт записки.",
+  },
+  {
+    n: 7,
+    title: "Расчёт",
+    route: "/cabinet/raschety/c-1",
+    steps:
+      "Позиции из справочников, итоги, допущения, сценарии и пересчёт, решение об участии, экспорт Excel/PDF.",
+  },
+  {
+    n: 8,
+    title: "ГПР",
+    route: "/cabinet/gpr/g-1",
+    steps:
+      "Этапы, даты, последовательность, календарное представление, редактирование, версия, экспорт.",
+  },
+  {
+    n: 9,
+    title: "Деньги",
+    route: "/cabinet/dengi",
+    steps:
+      "Авансы, поступления, ключевые платежи; сводка; фильтр неделя/месяц; правки названий; Excel-экспорт.",
+  },
+  {
+    n: 10,
+    title: "Риски",
+    route: "/cabinet/riski",
+    steps:
+      "Разбор договора, реестр замечаний с привязкой к тексту, статусы, решение, экспорт.",
+  },
+  {
+    n: 11,
+    title: "План/факт",
+    route: "/cabinet/proizvodstvo",
+    steps:
+      "Проекты/объекты, план, ввод факта, отклонения, сводки, экспорт.",
+  },
+];
+
+const accounts = [
+  { role: "superadmin" as const, email: "super@tenderkontur.ru", password: "Super123!", key: "TK-SUPER-361-IRINA" },
+  { role: "rukovoditel" as const, email: "ruk@alfastroy.ru", password: "Ruk123!", key: "" },
+  { role: "tender" as const, email: "tender@alfastroy.ru", password: "Tender123!", key: "" },
+  { role: "smetchik" as const, email: "smeta@alfastroy.ru", password: "Smeta123!", key: "" },
+  { role: "otvetstvennyy" as const, email: "object@alfastroy.ru", password: "Object123!", key: "" },
+  { role: "admin" as const, email: "admin@alfastroy.ru", password: "Admin123!", key: "TK-ADMIN-361-ALFA" },
+  { role: "tender" as const, email: "tender@betain.ru", password: "Beta123!", key: "", note: "орг. Бета — изоляция" },
+];
+
+export default function InstrukciyaPage() {
+  return (
+    <div>
+      <PageHeader
+        title="Инструкция по основным сценариям"
+        description="Пошаговый проход ключевых разделов кабинета и учётные записи для проверки."
+      />
+
+      <section className="mb-8 overflow-x-auto rounded-xl border border-[var(--tk-line)] bg-white/80">
+        <div className="border-b border-[var(--tk-line)] px-4 py-3 font-[family-name:var(--font-display)]">
+          Учётные записи
+        </div>
+        <table className="tk-mobile-rows w-full text-sm">
+          <thead>
+            <tr className="border-b border-[var(--tk-line)] text-left text-[var(--tk-muted)]">
+              <th className="px-4 py-2 font-medium">Роль</th>
+              <th className="px-4 py-2 font-medium">Логин</th>
+              <th className="px-4 py-2 font-medium">Пароль</th>
+              <th className="px-4 py-2 font-medium">Секретный ключ</th>
+            </tr>
+          </thead>
+          <tbody>
+            {accounts.map((a) => (
+              <tr key={a.email} className="border-b border-[var(--tk-line)] last:border-0">
+                <td className="px-4 py-2" data-label="Роль">
+                  {ROLE_LABELS[a.role]}
+                  {"note" in a && a.note ? (
+                    <span className="block text-xs text-[var(--tk-muted)]">
+                      {a.note}
+                    </span>
+                  ) : null}
+                </td>
+                <td className="px-4 py-2 font-mono text-xs break-all" data-label="Логин">{a.email}</td>
+                <td className="px-4 py-2 font-mono text-xs" data-label="Пароль">{a.password}</td>
+                <td className="px-4 py-2 font-mono text-xs break-all" data-label="Секретный ключ">{a.key || "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+
+      <ol className="space-y-3">
+        {scenarios.map((s) => (
+          <li
+            key={s.n}
+            className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4"
+          >
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 className="font-[family-name:var(--font-display)] text-base">
+                {s.n}. {s.title}
+              </h2>
+              <Link
+                href={s.route}
+                className="text-sm text-[var(--tk-copper-deep)] underline"
+              >
+                {s.route}
+              </Link>
+            </div>
+            <p className="mt-2 text-sm leading-relaxed text-[var(--tk-ink-soft)]">
+              {s.steps}
+            </p>
+          </li>
+        ))}
+      </ol>
+
+      <section className="mt-8 rounded-xl border border-[var(--tk-line)] bg-[linear-gradient(120deg,rgba(27,58,75,0.06),rgba(184,107,43,0.08))] p-5 text-sm">
+        <h2 className="font-[family-name:var(--font-display)] text-base">
+          Дополнительно
+        </h2>
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-[var(--tk-ink-soft)]">
+          <li>
+            Администрирование и цепочка артефактов:{" "}
+            <Link className="underline" href="/cabinet/admin">
+              /cabinet/admin
+            </Link>
+          </li>
+          <li>
+            Обмен со сметным ПО:{" "}
+            <Link className="underline" href="/cabinet/obmen">
+              /cabinet/obmen
+            </Link>
+          </li>
+          <li>
+            Разбор документов настроен на ГРАНД-Смета 2022.3: локальная смета
+            (приказ № 421), регион Красноярский край, зона 5, шифр ТП-КП-М-Д.
+            Цифры снимаются из ячеек сметы; записка строится только по ним.
+          </li>
+        </ul>
+      </section>
+    </div>
+  );
+}
