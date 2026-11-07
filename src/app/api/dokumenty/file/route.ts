@@ -16,7 +16,7 @@ export async function GET(req: Request) {
     if (!doc.storedPath) {
       // seed docs without blob — отдаём текстовый stub
       const stub = Buffer.from(
-        `ТендерКонтур stub\nДокумент: ${doc.title}\nФайл: ${doc.fileName}\n(оригинал не хранился в демо-seed)\n`,
+        `истройка stub\nДокумент: ${doc.title}\nФайл: ${doc.fileName}\n(оригинал не хранился в демо-seed)\n`,
         "utf8"
       );
       return new NextResponse(stub, {

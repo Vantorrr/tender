@@ -146,7 +146,7 @@ export default function ZakupkaDetailPage() {
                           } else {
                             const blob = new Blob(
                               [
-                                `ТендерКонтур\nВложение: ${a.name}\nЗакупка: ${procurement.number}\n`,
+                                `истройка\nВложение: ${a.name}\nЗакупка: ${procurement.number}\n`,
                               ],
                               { type: "text/plain;charset=utf-8" }
                             );

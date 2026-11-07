@@ -17,22 +17,22 @@ export function startBackgroundJobs() {
   try {
     ensureReady();
   } catch (e) {
-    console.error("[ТендерКонтур] DB init failed", e);
+    console.error("[истройка] DB init failed", e);
     return;
   }
 
   console.log(
-    `[ТендерКонтур] автосинхронизация каждые ${Math.round(config.syncIntervalMs / 1000)}с`
+    `[истройка] автосинхронизация каждые ${Math.round(config.syncIntervalMs / 1000)}с`
   );
 
   setInterval(() => {
     try {
       const result = runProcurementSync(SYSTEM_ACTOR);
       console.log(
-        `[ТендерКонтур] sync job ${result.jobId} ok, закупок: ${result.data.procurements.length}`
+        `[истройка] sync job ${result.jobId} ok, закупок: ${result.data.procurements.length}`
       );
     } catch (e) {
-      console.error("[ТендерКонтур] sync failed", e);
+      console.error("[истройка] sync failed", e);
     }
   }, config.syncIntervalMs);
 }

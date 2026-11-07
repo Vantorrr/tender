@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Logo } from "@/components/logo";
 import { useStore } from "@/lib/store";
 
 export default function RecoverPage() {
@@ -21,11 +22,8 @@ export default function RecoverPage() {
   return (
     <div className="relative flex min-h-screen items-center justify-center px-4 py-10">
       <div className="tk-glass relative z-10 w-full max-w-md rounded-[28px] p-8">
-        <Link
-          href="/"
-          className="font-[family-name:var(--font-display)] text-xl text-[var(--tk-ink)]"
-        >
-          ТендерКонтур
+        <Link href="/">
+          <Logo tone="ink" titleClassName="text-xl" />
         </Link>
         <h1 className="mt-6 font-[family-name:var(--font-display)] text-2xl tracking-tight">
           Восстановление пароля

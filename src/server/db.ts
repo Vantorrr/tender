@@ -135,7 +135,7 @@ function migrate(db: DatabaseSync) {
       "job-seed-sync",
       "procurement_sync",
       "done",
-      "Первичная инициализация БД ТендерКонтур",
+      "Первичная инициализация БД истройка",
       now,
       now
     );

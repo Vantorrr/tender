@@ -21,8 +21,8 @@ export default function HomePage() {
           <p className="animate-rise mb-4 text-sm font-medium uppercase tracking-[0.18em] text-[var(--tk-copper-deep)]">
             Договор № TMA361 · 26.10.2026
           </p>
-          <h1 className="animate-rise-delay max-w-3xl font-[family-name:var(--font-display)] text-4xl leading-[1.05] tracking-tight text-[var(--tk-ink)] sm:text-5xl lg:text-6xl">
-            ТендерКонтур
+          <h1 className="animate-rise-delay max-w-3xl">
+            <Logo tone="ink" titleClassName="text-4xl leading-[1.05] sm:text-5xl lg:text-6xl" />
           </h1>
           <p className="animate-rise-delay mt-5 max-w-xl text-base leading-relaxed text-[var(--tk-ink-soft)] sm:text-lg">
             Платформа отбора строительных тендеров: от ленты закупок до

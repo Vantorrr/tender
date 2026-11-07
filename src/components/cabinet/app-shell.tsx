@@ -121,7 +121,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             collapsed ? "justify-center" : "justify-between gap-2"
           )}
         >
-          <Link href="/cabinet" className="flex min-w-0 items-center" aria-label="ТендерКонтур">
+          <Link href="/cabinet" className="flex min-w-0 items-center" aria-label="истройка">
             <Logo wordmark={!collapsed} />
           </Link>
           <Button

@@ -16,7 +16,7 @@ export const config = {
   /** Автосинхронизация закупок, мс. 0 = выкл. По умолчанию 5 мин. */
   syncIntervalMs: Number(process.env.SYNC_INTERVAL_MS ?? 5 * 60 * 1000),
   sessionDays: Number(process.env.SESSION_DAYS ?? 7),
-  appName: "ТендерКонтур",
+  appName: "истройка",
   contract: "TMA361",
   openRouterKey: process.env.OPENROUTER_API_KEY ?? "",
   openRouterModel: process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini",

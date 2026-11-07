@@ -9,7 +9,7 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
   if (!calc) throw new Error("Расчёт не найден");
 
   const wb = new ExcelJS.Workbook();
-  wb.creator = "ТендерКонтур";
+  wb.creator = "истройка";
   const ws = wb.addWorksheet("Расчёт");
   ws.columns = [
     { header: "Код", key: "code", width: 22 },

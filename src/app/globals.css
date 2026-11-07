@@ -54,8 +54,11 @@
   --tk-muted: #6b7280;
   --tk-steel: #111318;
   --tk-steel-50: #f3f4f6;
-  --tk-copper: #c46a2a;
-  --tk-copper-deep: #9a4e18;
+  --tk-brand: #1e5241;
+  --tk-brand-deep: #14382d;
+  --tk-brand-ink: #2b2020;
+  --tk-copper: var(--tk-brand);
+  --tk-copper-deep: var(--tk-brand-deep);
   --tk-canvas: #f3f4f6;
   --tk-panel: #ffffff;
   --tk-line: #e6e8ee;
@@ -77,12 +80,12 @@
   --secondary-foreground: #111318;
   --muted: #f3f4f6;
   --muted-foreground: #6b7280;
-  --accent: #f7efe6;
-  --accent-foreground: #9a4e18;
+  --accent: #e7f3ee;
+  --accent-foreground: #14382d;
   --destructive: #b42318;
   --border: #e6e8ee;
   --input: #e6e8ee;
-  --ring: #c46a2a;
+  --ring: #1e5241;
   --chart-1: #1b3a4b;
   --chart-2: #b86b2b;
   --chart-3: #3d6b7a;
@@ -127,7 +130,7 @@
   overflow: hidden;
   pointer-events: none;
   background:
-    radial-gradient(900px 520px at 8% -10%, rgba(255, 214, 176, 0.95), transparent 60%),
+    radial-gradient(900px 520px at 8% -10%, rgba(190, 222, 208, 0.95), transparent 60%),
     radial-gradient(760px 520px at 100% 0%, rgba(164, 196, 255, 0.75), transparent 58%),
     radial-gradient(680px 480px at 78% 110%, rgba(214, 176, 255, 0.45), transparent 55%),
     #e7edf6;
@@ -144,7 +147,7 @@
   left: -8vw;
   width: 46vw;
   height: 46vw;
-  background: radial-gradient(circle, rgba(232, 161, 90, 0.85), rgba(232, 161, 90, 0) 68%);
+  background: radial-gradient(circle, rgba(30, 82, 65, 0.42), rgba(30, 82, 65, 0) 68%);
   animation: liquid 22s ease-in-out infinite;
 }
 

@@ -51,7 +51,7 @@ if (init.status === 0) {
 }
 
 console.log(`
-ТендерКонтур setup OK
+истройка setup OK
 
   npm run dev       → http://127.0.0.1:43141
   npm run doctor    → проверка /api/health

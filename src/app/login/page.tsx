@@ -47,7 +47,7 @@ export default function LoginPage() {
       setError(result.error ?? "Ошибка входа");
       return;
     }
-    toast.success("Добро пожаловать в ТендерКонтур");
+    toast.success("Добро пожаловать в истройку");
     router.push("/cabinet");
   }
 
@@ -90,11 +90,8 @@ export default function LoginPage() {
 
         <div className="tk-glass p-6 sm:p-10">
           <div className="mb-8 lg:hidden">
-            <Link
-              href="/"
-              className="font-[family-name:var(--font-display)] text-xl text-[var(--tk-ink)]"
-            >
-              ТендерКонтур
+            <Link href="/">
+              <Logo tone="ink" titleClassName="text-xl" />
             </Link>
           </div>
 
