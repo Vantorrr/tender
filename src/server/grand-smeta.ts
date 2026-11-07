@@ -17,6 +17,14 @@ export type GrandPosition = {
   rate: number;
 };
 
+export type FieldLocator = {
+  sheet: string;
+  /** A1 cell, e.g. G10 */
+  cell: string;
+  row: number;
+  col: number;
+};
+
 export type GrandParse = {
   product: string;
   normatives: string;
@@ -41,7 +49,25 @@ export type GrandParse = {
   negativePositions: number;
   coefficientNotes: string[];
   totalLocked: boolean;
+  sheetName: string;
+  locators: Partial<Record<string, FieldLocator>>;
+  sourceVersion: string;
 };
+
+function colLetter(col: number): string {
+  let n = col;
+  let s = "";
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s || "A";
+}
+
+function a1(row: number, col: number): string {
+  return `${colLetter(col)}${row}`;
+}
 
 export type UploadAnalysis = {
   title: string;
@@ -120,6 +146,7 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
   const ws = wb.worksheets[0];
   if (!ws) return null;
 
+  const sheetName = ws.name || "Sheet1";
   const parsed: GrandParse = {
     product: "",
     normatives: "",
@@ -144,6 +171,17 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
     negativePositions: 0,
     coefficientNotes: [],
     totalLocked: false,
+    sheetName,
+    locators: {},
+    sourceVersion: `${GRAND_PROFILE.vendor} ${GRAND_PROFILE.version}`,
+  };
+  const mark = (key: string, row: number, col: number) => {
+    parsed.locators[key] = {
+      sheet: sheetName,
+      cell: a1(row, col),
+      row,
+      col,
+    };
   };
 
   let lastPosition: GrandPosition | null = null;
@@ -158,46 +196,70 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
     if (rowNumber <= 40) {
       if (label.startsWith("Наименование программного продукта")) {
         parsed.product = firstOther(cells, label);
+        const hit = cells.find((c) => c.col > 1 && c.text === parsed.product);
+        mark("product", rowNumber, hit?.col ?? 7);
       } else if (label.startsWith("Наименование редакции сметных нормативов")) {
         parsed.normatives = firstOther(cells, label);
+        mark("normatives", rowNumber, cells.find((c) => c.col > 1)?.col ?? 7);
       } else if (label.startsWith("Реквизиты приказа Минстроя")) {
         parsed.orders = firstOther(cells, label);
+        mark("orders", rowNumber, cells.find((c) => c.col > 1)?.col ?? 7);
       } else if (label.startsWith("Реквизиты письма Минстроя")) {
         parsed.indexes = firstOther(cells, label);
+        if (parsed.indexes) mark("indexes", rowNumber, cells.find((c) => c.col > 1)?.col ?? 7);
       } else if (label.startsWith("Реквизиты нормативного правового акта")) {
         parsed.wages = firstOther(cells, label);
+        if (parsed.wages) mark("wages", rowNumber, cells.find((c) => c.col > 1)?.col ?? 7);
       } else if (label.startsWith("Наименование субъекта")) {
         parsed.region = firstOther(cells, label);
+        mark("region", rowNumber, cells.find((c) => c.col > 1 && c.text === parsed.region)?.col ?? 7);
       } else if (label.startsWith("Наименование зоны")) {
         parsed.zone = firstOther(cells, label);
+        mark("zone", rowNumber, cells.find((c) => c.col > 1 && c.text === parsed.zone)?.col ?? 7);
       } else if (label.includes("шифр") || label.startsWith("«")) {
         parsed.construction = label;
+        mark("construction", rowNumber, 1);
       } else if (
         label.startsWith("Участок") ||
         label.startsWith("Объект") ||
         (label.length > 40 && !parsed.objectName && !label.startsWith("ЛОКАЛЬНЫЙ") && !label.startsWith("("))
       ) {
-        if (!parsed.objectName && rowNumber > 13 && rowNumber < 18) parsed.objectName = label;
+        if (!parsed.objectName && rowNumber > 13 && rowNumber < 18) {
+          parsed.objectName = label;
+          mark("objectName", rowNumber, 1);
+        }
       } else if (label.startsWith("ЛОКАЛЬНЫЙ СМЕТНЫЙ")) {
         parsed.estimateNumber = label.replace(/\s+/g, " ");
         seenEstimate = true;
+        mark("estimateNumber", rowNumber, 1);
       } else if (seenEstimate && !parsed.workName && !label.startsWith("(") && !label.startsWith("Составлен")) {
         parsed.workName = label;
         seenEstimate = false;
+        mark("workName", rowNumber, 1);
       } else if (label === "Основание") {
-        parsed.basis = cells.find((cell) => cell.col > 1)?.text ?? "";
+        const basisCell = cells.find((cell) => cell.col > 1);
+        parsed.basis = basisCell?.text ?? "";
+        if (basisCell) mark("basis", rowNumber, basisCell.col);
       } else if (label.startsWith("Составлен") && label.length < 40) {
         parsed.method = cells.map((cell) => cell.text).join(" ");
+        mark("method", rowNumber, 1);
       } else if (label.includes("уровне цен")) {
-        parsed.priceYear = cells.find((cell) => /\d{4}/.test(cell.text))?.text ?? "";
+        const yearCell = cells.find((cell) => /\d{4}/.test(cell.text));
+        parsed.priceYear = yearCell?.text ?? "";
+        if (yearCell) mark("priceYear", rowNumber, yearCell.col);
       } else if (label === "Сметная стоимость") {
         const nums = cells
           .filter((cell) => cell.col > 1)
-          .map((cell) => asNumber(cell.value))
-          .filter((n): n is number => n != null);
-        parsed.costCurrentThousand = nums[0] ?? null;
+          .map((cell) => ({ cell, n: asNumber(cell.value) }))
+          .filter((x): x is { cell: (typeof cells)[0]; n: number } => x.n != null);
+        parsed.costCurrentThousand = nums[0]?.n ?? null;
+        if (nums[0]) mark("costCurrentThousand", rowNumber, nums[0].cell.col);
         const paren = cells.map((cell) => cell.text).find((text) => text.startsWith("("));
-        parsed.costBaseThousand = paren ? asNumber(paren) : (nums[1] ?? null);
+        parsed.costBaseThousand = paren ? asNumber(paren) : (nums[1]?.n ?? null);
+        if (parsed.costBaseThousand != null) {
+          const parenCell = cells.find((c) => c.text.startsWith("("));
+          mark("costBaseThousand", rowNumber, parenCell?.col ?? nums[0]?.cell.col ?? 3);
+        }
       }
     }
 
@@ -224,9 +286,13 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
       parsed.totalBase = asNumber(row.getCell(12).value);
       parsed.totalCurrent = asNumber(row.getCell(14).value);
       parsed.totalLocked = true;
+      mark("totalCurrent", rowNumber, 14);
+      mark("totalBase", rowNumber, 12);
     } else if (name === "Итого" && !parsed.totalLocked) {
       parsed.totalBase = asNumber(row.getCell(12).value);
       parsed.totalCurrent = asNumber(row.getCell(14).value);
+      mark("totalCurrent", rowNumber, 14);
+      mark("totalBase", rowNumber, 12);
     }
 
     const code = cells.find((cell) => cell.col === 2)?.text ?? "";
@@ -244,6 +310,10 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
       quantity,
       rate: asNumber(row.getCell(10).value) ?? 0,
     };
+    if (!parsed.locators.firstPosition) {
+      mark("firstPosition", rowNumber, 2);
+      mark("firstPositionQty", rowNumber, quantity === asNumber(row.getCell(9).value) ? 9 : 7);
+    }
     parsed.positions.push(lastPosition);
   });
 
@@ -341,40 +411,75 @@ export function analysisFromGrand(parsed: GrandParse, fileName: string): UploadA
   }
 
   const citations: Citation[] = [];
-  const quote = (id: string, text: string) => {
+  const quote = (
+    id: string,
+    text: string,
+    locatorKey?: string,
+    confidence: Citation["confidence"] = "confirmed"
+  ) => {
     if (!text) return;
-    citations.push({ id, text: text.slice(0, 400), page: 1, sourceFile: fileName });
+    const loc = locatorKey ? parsed.locators[locatorKey] : undefined;
+    citations.push({
+      id,
+      text: text.slice(0, 400),
+      page: 1,
+      sourceFile: fileName,
+      sheet: loc?.sheet ?? parsed.sheetName,
+      cell: loc?.cell,
+      sourceVersion: parsed.sourceVersion,
+      confidence,
+    });
   };
-  quote("c-obj", parsed.construction);
-  quote("c-est", parsed.estimateNumber);
-  quote("c-work", parsed.workName);
-  quote("c-basis", parsed.basis ? `Основание: ${parsed.basis}` : "");
-  quote("c-reg", [parsed.region, parsed.zone ? `зона ${parsed.zone}` : ""].filter(Boolean).join(", "));
+  quote("c-obj", parsed.construction || "нет данных", "construction", parsed.construction ? "confirmed" : "unconfirmed");
+  quote("c-est", parsed.estimateNumber || "нет данных", "estimateNumber", parsed.estimateNumber ? "confirmed" : "unconfirmed");
+  quote("c-work", parsed.workName || "нет данных", "workName", parsed.workName ? "confirmed" : "unconfirmed");
+  if (parsed.basis) quote("c-basis", `Основание: ${parsed.basis}`, "basis");
+  else quote("c-basis", "Основание: нет данных", undefined, "unconfirmed");
+  quote(
+    "c-reg",
+    [parsed.region || "нет данных", parsed.zone ? `зона ${parsed.zone}` : "зона: нет данных"].join(", "),
+    parsed.region ? "region" : "zone",
+    parsed.region && parsed.zone ? "confirmed" : "unconfirmed"
+  );
+  if (parsed.costCurrentThousand != null) {
+    quote(
+      "c-cost",
+      `Сметная стоимость: ${rub(parsed.costCurrentThousand)} тыс. руб.`,
+      "costCurrentThousand"
+    );
+  } else {
+    quote("c-cost", "Сметная стоимость: нет данных", undefined, "unconfirmed");
+  }
   if (parsed.positions[0]) {
     const p = parsed.positions[0];
-    quote("c-pos", `${p.code} ${p.name} — ${rub(p.quantity)} ${p.unit}`.trim());
+    quote(
+      "c-pos",
+      `${p.code} ${p.name} — ${rub(p.quantity)} ${p.unit}`.trim(),
+      "firstPosition"
+    );
   }
-  if (parsed.coefficientNotes[0]) quote("c-k", parsed.coefficientNotes[0]);
+  if (parsed.coefficientNotes[0]) quote("c-k", parsed.coefficientNotes[0], undefined, "heuristic");
 
   const costLine =
     parsed.costCurrentThousand != null
       ? `${rub(parsed.costCurrentThousand)} тыс. руб. в текущем уровне${
           parsed.costBaseThousand != null ? ` (${rub(parsed.costBaseThousand)} тыс. руб. в базисном)` : ""
         }`
-      : "в шапке не указана";
+      : "нет данных";
 
   const analyticalNote = [
     `Разбор локальной сметы по параметрам ${GRAND_PROFILE.vendor} ${GRAND_PROFILE.version}, ${GRAND_PROFILE.form}.`,
-    `Объект: ${parsed.construction || GRAND_PROFILE.construction}.`,
-    parsed.objectName ? `Площадка: ${parsed.objectName}.` : "",
-    `Смета: ${parsed.estimateNumber || "номер не прочитан"}. Работы: ${parsed.workName || "не названы"}.`,
-    `Регион: ${parsed.region || "не указан"}, зона ${parsed.zone || "не указана"}. ${
+    `Источник: лист «${parsed.sheetName}», версия ${parsed.sourceVersion}.`,
+    `Объект: ${parsed.construction || "нет данных"}.`,
+    parsed.objectName ? `Площадка: ${parsed.objectName}.` : "Площадка: нет данных.",
+    `Смета: ${parsed.estimateNumber || "нет данных"}. Работы: ${parsed.workName || "нет данных"}.`,
+    `Регион: ${parsed.region || "нет данных"}, зона ${parsed.zone || "нет данных"}. ${
       regionOk && zoneOk ? "Совпадает с эталоном " + GRAND_PROFILE.cipher + "." : "Отличается от эталона " + GRAND_PROFILE.cipher + "."
     }`,
-    `Нормативы: ${parsed.normatives || "не указаны"}.`,
+    `Нормативы: ${parsed.normatives || "нет данных"}.`,
     parsed.orders ? `Дополнения: ${parsed.orders}.` : "",
-    `Метод: ${parsed.method || "не указан"}. Уровень цен: ${parsed.priceYear || "не указан"}.`,
-    parsed.basis ? `Основание: ${parsed.basis}.` : "",
+    `Метод: ${parsed.method || "нет данных"}. Уровень цен: ${parsed.priceYear || "нет данных"}.`,
+    parsed.basis ? `Основание: ${parsed.basis}.` : "Основание: нет данных.",
     `Сметная стоимость: ${costLine}.`,
     `Расценок в таблице: ${parsed.positions.length}. Разделов: ${parsed.sections.length}.`,
     parsed.sections.length
@@ -411,8 +516,26 @@ export function analysisFromGrand(parsed: GrandParse, fileName: string): UploadA
   };
 }
 
+/**
+ * KM / эталонный чертёж — по шифру профиля, не по любой подстроке «КМ».
+ * `/КМ/i` слишком широко и ловил произвольные имена.
+ */
+export function isKmDrawingFileName(fileName: string): boolean {
+  return (
+    /ТП-КП-М-Д/i.test(fileName) ||
+    /101-3103/i.test(fileName) ||
+    /III-Д-101-3103-КМ/i.test(fileName) ||
+    new RegExp(GRAND_PROFILE.drawing.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(
+      fileName
+    ) ||
+    new RegExp(GRAND_PROFILE.cipher.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(
+      fileName
+    )
+  );
+}
+
 export function analysisFromDrawing(fileName: string, pages = 24): UploadAnalysis {
-  const matched = /ТП-КП-М-Д|101-3103|КМ/i.test(fileName);
+  const matched = isKmDrawingFileName(fileName);
   const highlights: Highlight[] = [
     {
       id: "h-draw",
@@ -443,6 +566,8 @@ export function analysisFromDrawing(fileName: string, pages = 24): UploadAnalysi
         text: `${GRAND_PROFILE.drawing} · шифр ${GRAND_PROFILE.cipher} · ${GRAND_PROFILE.drawingStage}`,
         page: 1,
         sourceFile: fileName,
+        sourceVersion: `${GRAND_PROFILE.vendor} ${GRAND_PROFILE.version}`,
+        confidence: matched ? "heuristic" : "unconfirmed",
       },
     ],
     highlights,
@@ -463,6 +588,95 @@ export function analysisFromDrawing(fileName: string, pages = 24): UploadAnalysi
   };
 }
 
+/** Ordinary scan / PDF: surface OCR text + citations regardless of filename. */
+export function analysisFromScan(
+  fileName: string,
+  ocr: {
+    status: string;
+    text: string | null;
+    pageCount: number | null;
+    provider?: string | null;
+    reason?: string;
+  }
+): UploadAnalysis {
+  const pages = ocr.pageCount ?? 1;
+  const text = (ocr.text ?? "").trim();
+  const hasText = text.length > 0;
+  const citations: Citation[] = hasText
+    ? [
+        {
+          id: "c-ocr",
+          text: text.slice(0, 240),
+          page: 1,
+          sourceFile: fileName,
+          confidence: "ocr",
+        },
+      ]
+    : [];
+  const highlights: Highlight[] = [
+    {
+      id: "h-scan",
+      text: hasText
+        ? "OCR-текст извлечён"
+        : ocr.status === "not_configured" || ocr.status === "unavailable"
+          ? "OCR недоступен"
+          : "Текст скана не извлечён",
+      reason: hasText
+        ? `Провайдер ${ocr.provider ?? "ocr"}; проверьте цитаты вручную.`
+        : ocr.reason ||
+          "Локальный OCR не вернул текст. Загрузка сохранена — разберите вручную.",
+      severity: hasText ? "info" : "warning",
+      page: 1,
+    },
+  ];
+  const analyticalNote = hasText
+    ? [
+        `PDF принят как скан/документ (${pages} стр.). Имя файла не обязано совпадать с шифром КМ.`,
+        `OCR (${ocr.provider ?? "local"}): ${text.slice(0, 800)}`,
+        "Цифры и марки из OCR требуют ручной проверки. Сметный разбор ГРАНД-Сметы к произвольному скану не применяется.",
+      ].join("\n")
+    : [
+        `PDF принят (${pages} стр.), но текстовый слой / OCR не дали содержимого.`,
+        ocr.reason || `Статус OCR: ${ocr.status}.`,
+        "Файл сохранён. Повторите разбор после настройки tesseract/poppler или проверьте вручную.",
+      ].join("\n");
+  return {
+    title: fileName.replace(/\.[^.]+$/, "") || fileName,
+    analyticalNote,
+    citations,
+    highlights,
+    status: "trebuet_proverki",
+    positions: [],
+    analysis: {
+      vendor: "",
+      region: "",
+      zone: "",
+      estimateNumber: "",
+      workName: "",
+      basis: hasText ? `OCR ${ocr.provider ?? "local"}` : `OCR ${ocr.status}`,
+      priceLevel: "",
+      costThousand: null,
+      positionCount: 0,
+      profileMatch: false,
+    },
+  };
+}
+
+export type AnalyzeUploadOptions = {
+  /** Paid OpenRouter refine — only when caller explicitly requests it. */
+  useLlm?: boolean;
+};
+
+async function maybeRefineNote<T extends UploadAnalysis>(
+  analysis: T,
+  facts: Record<string, unknown>,
+  checks: Array<string | null>,
+  useLlm: boolean
+): Promise<T> {
+  if (!useLlm) return analysis;
+  return refineNote(analysis, facts, checks);
+}
+
 function workToken(name: string) {
   const lower = name.toLowerCase();
   if (lower.includes("снег")) return "снег";
@@ -476,8 +690,10 @@ function workToken(name: string) {
 export async function analyzeUpload(
   fileName: string,
   fileType: string,
-  buf: Buffer
+  buf: Buffer,
+  options: AnalyzeUploadOptions = {}
 ): Promise<UploadAnalysis> {
+  const useLlm = Boolean(options.useLlm);
   if (fileType === "xlsx" || fileName.toLowerCase().endsWith(".xlsx")) {
     try {
       const parsed = await parseGrandBuffer(buf);
@@ -494,10 +710,11 @@ export async function analyzeUpload(
           }))
           .sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))
           .slice(0, 5);
-        return refineNote(
+        return maybeRefineNote(
           analysis,
           {
             kind: "local-estimate",
+            fileName,
             profile: GRAND_PROFILE,
             product: parsed.product,
             normatives: parsed.normatives,
@@ -532,7 +749,8 @@ export async function analyzeUpload(
                 : "0,12",
             String(parsed.positions.length),
             workToken(parsed.workName),
-          ]
+          ],
+          useLlm
         );
       }
     } catch {
@@ -549,8 +767,8 @@ export async function analyzeUpload(
       buffer: buf,
       mimeHint: "application/pdf",
     });
-    if (/ТП-КП-М-Д|101-3103|КМ/i.test(fileName)) {
-      const analysis = analysisFromDrawing(fileName);
+    if (isKmDrawingFileName(fileName)) {
+      const analysis = analysisFromDrawing(fileName, ocr.pageCount ?? 24);
       if (ocr.status === "not_configured" || !ocrConfigured()) {
         analysis.highlights = [
           ...analysis.highlights,
@@ -574,7 +792,7 @@ export async function analyzeUpload(
           },
         ];
       }
-      return refineNote(
+      return maybeRefineNote(
         analysis,
         {
           kind: "drawing",
@@ -585,19 +803,29 @@ export async function analyzeUpload(
           ocrStatus: ocr.status,
           profileMatch: analysis.analysis.profileMatch,
         },
-        [GRAND_PROFILE.drawing, "текст"]
+        [GRAND_PROFILE.drawing, "текст"],
+        useLlm
       );
     }
-    return unrecognized(
-      fileName,
-      ocr.status === "not_configured"
-        ? `PDF не совпал с чертежом ${GRAND_PROFILE.drawing}. ${ocr.reason}`
-        : `PDF не совпал с чертежом ${GRAND_PROFILE.drawing} и не является таблицей сметы. Текстовый слой не разобран.`
+    // Ordinary scans: keep OCR text/citations; never pretend KM profile match.
+    const scan = analysisFromScan(fileName, ocr);
+    return maybeRefineNote(
+      scan,
+      {
+        kind: "scan",
+        fileName,
+        pages: ocr.pageCount ?? 1,
+        textLayer: Boolean(ocr.text),
+        ocrStatus: ocr.status,
+        ocrSnippet: (ocr.text ?? "").slice(0, 400),
+      },
+      ocr.text ? [ocr.text.slice(0, 24)] : [],
+      useLlm
     );
   }
   return unrecognized(
     fileName,
-    `Формат не входит в обмен ${GRAND_PROFILE.vendor}. Эталон — локальная смета .xlsx и чертёж КМ .pdf по шифру ${GRAND_PROFILE.cipher}.`
+    `Формат не входит в обмен ${GRAND_PROFILE.vendor}. Эталон — локальная смета .xlsx и чертёж КМ .pdf по шифру ${GRAND_PROFILE.cipher}. Произвольные сканы PDF разбираются через локальный OCR.`
   );
 }
 

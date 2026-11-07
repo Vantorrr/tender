@@ -4,6 +4,7 @@ import {
   updateDocument,
 } from "@/server/repo";
 import { analyzeUpload } from "@/server/grand-smeta";
+import { config } from "@/server/config";
 import { saveUpload } from "@/server/uploads";
 import { withSection, json } from "@/server/http";
 import type { DocumentItem } from "@/lib/types";
@@ -22,17 +23,45 @@ export async function POST(req: Request) {
       const form = await req.formData();
       const file = form.get("file");
       const procurementId = String(form.get("procurementId") ?? "");
+      // Explicit opt-in only; OPENROUTER_ON_UPLOAD must also be on for paid path at upload.
+      const wantLlm =
+        String(form.get("useLlm") ?? "") === "1" ||
+        String(form.get("useLlm") ?? "").toLowerCase() === "true";
+      const useLlm = wantLlm && config.openRouterOnUpload;
       if (!procurementId) {
         return json({ error: "Укажите закупку" }, 400);
       }
       if (!(file instanceof File)) {
         return json({ error: "Файл не передан" }, 400);
       }
+      if (file.size > config.maxUploadBytes) {
+        return json(
+          {
+            error: `Файл слишком большой (лимит ${Math.round(config.maxUploadBytes / (1024 * 1024))} МБ)`,
+          },
+          413
+        );
+      }
       const ext = file.name.split(".").pop()?.toLowerCase();
       const fileType =
         ext === "docx" || ext === "xlsx" || ext === "pdf" ? ext : "pdf";
       const buf = Buffer.from(await file.arrayBuffer());
-      const prepared = await analyzeUpload(file.name, fileType, buf);
+      let prepared;
+      try {
+        prepared = await Promise.race([
+          analyzeUpload(file.name, fileType, buf, { useLlm }),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error("Таймаут разбора документа")),
+              config.analysisTimeoutMs
+            )
+          ),
+        ]);
+      } catch (e) {
+        const message =
+          e instanceof Error ? e.message.slice(0, 200) : "ошибка разбора";
+        return json({ error: message }, 504);
+      }
       const title =
         String(form.get("title") ?? "").trim() || prepared.title;
       const tempId = `d-${Date.now()}`;

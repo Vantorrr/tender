@@ -24,10 +24,12 @@ RUN npm run build
 ENV PORT=43141
 ENV HOST=0.0.0.0
 ENV DATA_DIR=/app/data
-ENV SYNC_INTERVAL_MS=300000
+# 0: без реального источника таймер не плодит фиктивные закупки
+ENV SYNC_INTERVAL_MS=0
 ENV OCR_PROVIDER=auto
 ENV OCR_LANGS=eng+rus
 ENV MAIL_TRANSPORT=file
+ENV OPENROUTER_ON_UPLOAD=0
 
 RUN mkdir -p /app/data /app/data/uploads /app/data/mail-sink
 

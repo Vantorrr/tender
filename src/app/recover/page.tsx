@@ -8,6 +8,14 @@ import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/logo";
 import { api } from "@/lib/api";
 
+type RecoverResponse = {
+  message: string;
+  transport?: string;
+  mailLive?: boolean;
+  missing?: string[];
+  reset?: boolean;
+};
+
 export default function RecoverPage() {
   const [step, setStep] = useState<"request" | "reset">("request");
   const [email, setEmail] = useState("");
@@ -15,17 +23,29 @@ export default function RecoverPage() {
   const [newPassword, setNewPassword] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [mailLive, setMailLive] = useState<boolean | null>(null);
+  const [missing, setMissing] = useState<string[]>([]);
 
   async function onRequest(e: React.FormEvent) {
     e.preventDefault();
     setError("");
+    setMissing([]);
     try {
-      const res = await api<{ message: string }>("/api/auth/recover", {
+      const res = await api<RecoverResponse>("/api/auth/recover", {
         method: "POST",
         body: JSON.stringify({ email, action: "request" }),
       });
       setMessage(res.message);
-      setStep("reset");
+      setMailLive(res.mailLive ?? null);
+      setMissing(res.missing ?? []);
+      // Only advance to code entry when mail path can deliver a code to the user
+      // or local sink is acknowledged — never show the code itself in UI.
+      if (res.mailLive !== false) {
+        setStep("reset");
+      } else if (res.transport && res.transport !== "smtp") {
+        // Local/dev sink: operator reads code from sink, not from this page.
+        setStep("reset");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ошибка запроса");
     }
@@ -35,7 +55,7 @@ export default function RecoverPage() {
     e.preventDefault();
     setError("");
     try {
-      const res = await api<{ message: string }>("/api/auth/recover", {
+      const res = await api<RecoverResponse>("/api/auth/recover", {
         method: "POST",
         body: JSON.stringify({
           email,
@@ -61,7 +81,7 @@ export default function RecoverPage() {
         </h1>
         <p className="mt-2 text-sm text-[var(--tk-muted)]">
           {step === "request"
-            ? "Укажите email — отправим одноразовый код на локальный почтовый sink / почту."
+            ? "Укажите email. При боевом SMTP код придёт письмом; коды в интерфейсе не показываются."
             : "Введите код из письма и новый пароль."}
         </p>
         {step === "request" ? (
@@ -119,6 +139,19 @@ export default function RecoverPage() {
           <p className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
             {message}
           </p>
+        ) : null}
+        {mailLive === false && missing.length > 0 ? (
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+            <p className="font-medium">Для боевой почты задайте на сервере:</p>
+            <ul className="mt-1 list-inside list-disc font-mono text-xs">
+              {missing.map((name) => (
+                <li key={name}>{name}</li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs">
+              Значения секретов сюда не вводятся и в ответе API не возвращаются.
+            </p>
+          </div>
         ) : null}
         {error ? (
           <p className="mt-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">

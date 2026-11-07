@@ -11,7 +11,15 @@ import { createSeedData } from "@/lib/seed";
 import type { AppData } from "@/lib/types";
 import { config, dbPath } from "@/server/config";
 import { installGrandReference } from "@/server/grand-package";
+import { mailStatus } from "@/server/mail";
+import {
+  detectLocalOcrTools,
+  getOcrProvider,
+  ocrConfigured,
+} from "@/server/ocr";
+import { modelConfigured } from "@/server/openrouter";
 import { hashPassword } from "@/server/passwords";
+import { procurementSourceStatus } from "@/server/procurement-source";
 
 const SCHEMA_VERSION = "7";
 
@@ -327,6 +335,7 @@ export function healthSnapshot() {
     .prepare("SELECT count(*) as c FROM jobs")
     .get() as { c: number };
   const data = readAppData();
+  const tools = detectLocalOcrTools();
   return {
     ok: true,
     app: config.appName,
@@ -341,6 +350,20 @@ export function healthSnapshot() {
     users: data.users.length,
     procurements: data.procurements.length,
     syncIntervalMs: config.syncIntervalMs,
+    procurement: procurementSourceStatus(),
+    mail: mailStatus(),
+    ocr: {
+      configured: ocrConfigured(),
+      provider: getOcrProvider().id,
+      tesseract: Boolean(tools.tesseract),
+      pdftoppm: Boolean(tools.pdftoppm),
+      pdftotext: Boolean(tools.pdftotext),
+    },
+    llm: {
+      configured: modelConfigured(),
+      onUpload: config.openRouterOnUpload,
+      model: config.openRouterModel,
+    },
   };
 }
 

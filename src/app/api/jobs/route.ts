@@ -24,6 +24,8 @@ export async function POST(req: Request) {
     const body = (await req.json()) as {
       type?: "procurement_sync" | "document_reanalyze";
       documentId?: string;
+      /** Explicit paid model refine — off unless client opts in. */
+      useLlm?: boolean;
     };
     if (body.type === "procurement_sync") {
       assertSection(user, "zakupki");
@@ -32,11 +34,21 @@ export async function POST(req: Request) {
         ...getBootstrap(user),
         jobs: result.jobs,
         jobId: result.jobId,
+        feed: result.feed
+          ? {
+              status: result.feed.status,
+              stub: result.feed.stub,
+              detail: result.feed.detail,
+              insertedHint: result.feed.notices.length,
+            }
+          : undefined,
       });
     }
     if (body.type === "document_reanalyze" && body.documentId) {
       assertSection(user, "dokumenty");
-      const result = await runReanalyzePipeline(user.id, body.documentId);
+      const result = await runReanalyzePipeline(user.id, body.documentId, {
+        useLlm: Boolean(body.useLlm),
+      });
       return json({
         ...getBootstrap(user),
         jobs: result.jobs,

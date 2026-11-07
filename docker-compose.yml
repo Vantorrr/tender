@@ -7,11 +7,12 @@ services:
       PORT: "43141"
       HOST: "0.0.0.0"
       DATA_DIR: /app/data
-      SYNC_INTERVAL_MS: "300000"
+      SYNC_INTERVAL_MS: "0"
       SESSION_DAYS: "7"
       OCR_PROVIDER: auto
       OCR_LANGS: eng+rus
       MAIL_TRANSPORT: file
+      OPENROUTER_ON_UPLOAD: "0"
 
     volumes:
       - tk_data:/app/data

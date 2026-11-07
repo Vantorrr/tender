@@ -231,3 +231,43 @@ export function clearMailSink(): void {
 export async function sendMail(message: Omit<MailMessage, "at" | "id">) {
   return getMailTransport().send(message);
 }
+
+/** Honest mail readiness for health / recover UI — never returns secret values. */
+export function mailStatus(): {
+  transport: string;
+  live: boolean;
+  smtpConfigured: boolean;
+  missing: string[];
+  detail: string;
+} {
+  const mode = (process.env.MAIL_TRANSPORT ?? "file").toLowerCase();
+  const transport = getMailTransport();
+  const smtp = readSmtpConfig();
+  const missing: string[] = [];
+  if (mode === "smtp" || mode === "smtp-sink") {
+    if (!process.env.SMTP_HOST?.trim()) missing.push("SMTP_HOST");
+    if (!process.env.SMTP_FROM?.trim() && !process.env.SMTP_USER?.trim()) {
+      missing.push("SMTP_FROM");
+    }
+    // USER/PASS optional for open relays / local sink; list when smtp mode and both empty.
+    if (mode === "smtp" && !process.env.SMTP_USER?.trim()) missing.push("SMTP_USER");
+    if (mode === "smtp" && !process.env.SMTP_PASS?.trim()) missing.push("SMTP_PASS");
+  } else {
+    // Live outbound mail requires switching transport + SMTP_* .
+    missing.push("MAIL_TRANSPORT=smtp", "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_FROM");
+  }
+  const live = transport.id === "smtp" && Boolean(smtp?.host);
+  return {
+    transport: transport.id,
+    live,
+    smtpConfigured: Boolean(smtp?.host),
+    missing: live ? [] : missing,
+    detail: live
+      ? "Боевой SMTP активен"
+      : transport.id === "file" || transport.id === "memory" || transport.id === "console"
+        ? `Почта не боевая (транспорт ${transport.id}) — письма людям не уходят`
+        : transport.id === "smtp-sink"
+          ? "Локальный SMTP-sink (тесты), без доставки людям"
+          : "SMTP не полностью настроен",
+  };
+}

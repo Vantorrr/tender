@@ -1,12 +1,15 @@
 /**
- * Heuristic contract risk parser (no external NLP).
+ * Heuristic contract risk helper (NOT legal expertise).
  * Scans plain text for typical tender/contract risk phrases and returns
- * remarks with source excerpts for the risk registry.
+ * remarks with source excerpts. Empty/short input → no invented risks.
  */
 
 import type { RiskRemark } from "@/lib/types";
 
 export type ParsedRiskRemark = Omit<RiskRemark, "id">;
+
+export const RISK_HELPER_DISCLAIMER =
+  "Авторазбор — эвристический помощник, не юридическая экспертиза. Проверяйте цитаты и формулировки вручную перед решением.";
 
 type Rule = {
   id: string;
@@ -67,11 +70,27 @@ function excerptAround(text: string, index: number, len: number, window = 90): s
   return text.slice(start, end).replace(/\s+/g, " ").trim();
 }
 
-/** Parse contract body; empty/short text falls back to baseline demo remarks. */
+export type RiskParseResult = {
+  remarks: ParsedRiskRemark[];
+  status: "ok" | "нет данных";
+  disclaimer: string;
+};
+
+/** Parse contract body; empty/short text → нет данных (no invented baseline risks). */
 export function parseContractRisks(contractText: string | null | undefined): ParsedRiskRemark[] {
+  return parseContractRisksDetailed(contractText).remarks;
+}
+
+export function parseContractRisksDetailed(
+  contractText: string | null | undefined
+): RiskParseResult {
   const text = (contractText ?? "").trim();
   if (text.length < 40) {
-    return baselineRemarks();
+    return {
+      remarks: [],
+      status: "нет данных",
+      disclaimer: RISK_HELPER_DISCLAIMER,
+    };
   }
 
   const found: ParsedRiskRemark[] = [];
@@ -89,28 +108,9 @@ export function parseContractRisks(contractText: string | null | undefined): Par
     });
   }
 
-  return found.length > 0 ? found : baselineRemarks();
-}
-
-function baselineRemarks(): ParsedRiskRemark[] {
-  return [
-    {
-      text: "Штраф за срыв сроков свыше 0,1% в сутки",
-      sourceExcerpt: "п. 8.3 договора подряда",
-      status: "otkryto",
-      severity: "high",
-    },
-    {
-      text: "Обеспечение исполнения контракта 10%",
-      sourceExcerpt: "п. 5.1",
-      status: "otkryto",
-      severity: "medium",
-    },
-    {
-      text: "Гарантийный срок 60 месяцев",
-      sourceExcerpt: "п. 12.2",
-      status: "otkryto",
-      severity: "low",
-    },
-  ];
+  return {
+    remarks: found,
+    status: found.length > 0 ? "ok" : "нет данных",
+    disclaimer: RISK_HELPER_DISCLAIMER,
+  };
 }

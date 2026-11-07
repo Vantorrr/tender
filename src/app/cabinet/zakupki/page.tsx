@@ -54,7 +54,7 @@ export default function ZakupkiPage() {
     <div>
       <PageHeader
         title="Закупки"
-        description="Лента из согласованного источника с фильтрами, дедупликацией и статусами рассмотрения."
+        description="Лента закупок с фильтрами, дедупликацией и статусами. Боевой API площадки подключается отдельно — без него синхронизация не выдумывает заявки."
         actions={
           <Button
             variant="outline"
@@ -63,7 +63,7 @@ export default function ZakupkiPage() {
               setSyncing(true);
               try {
                 await runSyncJob();
-                toast.success("Синхронизация завершена");
+                toast.success("Синхронизация выполнена");
               } catch (e) {
                 toast.error(
                   e instanceof Error ? e.message : "Ошибка синхронизации"
@@ -79,10 +79,20 @@ export default function ZakupkiPage() {
         }
       />
 
+      <Alert className="mb-4 border-sky-200 bg-sky-50 text-sky-950">
+        <RefreshCw className="h-4 w-4" />
+        <AlertTitle>Источник закупок</AlertTitle>
+        <AlertDescription>
+          Реальный вендорский API не подключён (kickoff). Автосинхронизация по
+          умолчанию выключена и не создаёт фиктивные карточки. Демо-синтетика —
+          только при явном <code className="text-xs">PROCUREMENT_DEMO=1</code>.
+        </AlertDescription>
+      </Alert>
+
       {syncIssues.length > 0 ? (
         <Alert className="mb-6 border-amber-200 bg-amber-50 text-amber-950">
           <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>Статус синхронизации источника</AlertTitle>
+          <AlertTitle>Статус синхронизации карточек</AlertTitle>
           <AlertDescription>
             {syncIssues.map((p) => (
               <span key={p.id} className="mr-3 inline-block text-sm">
@@ -95,16 +105,7 @@ export default function ZakupkiPage() {
             ))}
           </AlertDescription>
         </Alert>
-      ) : (
-        <Alert className="mb-6 border-emerald-200 bg-emerald-50 text-emerald-950">
-          <RefreshCw className="h-4 w-4" />
-          <AlertTitle>Источник актуален</AlertTitle>
-          <AlertDescription>
-            Согласованный источник синхронизирован. Последнее обновление —
-            сегодня.
-          </AlertDescription>
-        </Alert>
-      )}
+      ) : null}
 
       <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Input

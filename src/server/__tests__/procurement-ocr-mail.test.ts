@@ -35,13 +35,14 @@ afterEach(() => {
 });
 
 describe("procurement adapter", () => {
-  it("defaults to stub source (no vendor API)", async () => {
+  it("defaults to empty stub (no vendor API, no invented notices)", async () => {
     const source = getProcurementSource();
     expect(source).toBeInstanceOf(StubProcurementSource);
     const feed = await source.fetchNotices("org-alfa");
     expect(feed.stub).toBe(true);
-    expect(feed.notices.length).toBe(1);
-    expect(feed.notices[0].number).toMatch(/-AUTO$/);
+    expect(feed.status).toBe("not_configured");
+    expect(feed.notices).toEqual([]);
+    expect(feed.detail).toMatch(/не подключ/i);
   });
 
   it("accepts mock notices in tests only", async () => {
@@ -117,8 +118,8 @@ describe("contract risk helper", () => {
     expect(remarks.every((r) => r.sourceExcerpt.length > 0)).toBe(true);
   });
 
-  it("falls back to baseline remarks for empty text", () => {
-    expect(parseContractRisks("")).toHaveLength(3);
+  it("returns no invented remarks for empty text (нет данных)", () => {
+    expect(parseContractRisks("")).toHaveLength(0);
   });
 });
 

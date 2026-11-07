@@ -15,6 +15,7 @@ import type {
 } from "@/lib/types";
 import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
 import { assertOrgAccess } from "@/server/acl";
+import { overheadsFromWorks, scenarioFactor } from "@/server/calc-math";
 import { parseContractRisks } from "@/server/contract-risk";
 import type { UploadAnalysis } from "@/server/grand-smeta";
 import { mutateAppData, readAppData, resetAppData } from "@/server/db";
@@ -364,12 +365,8 @@ export function recalcCalculation(
   id: string,
   scenario: Calculation["scenario"]
 ) {
-  const factor =
-    scenario === "optimisticheskiy"
-      ? 0.95
-      : scenario === "pessimisticheskiy"
-        ? 1.08
-        : 1;
+  // Arithmetic lives in calc-math (code), not LLM text.
+  const factor = scenarioFactor(scenario);
   return mutateAppData((data) => {
     const actor = actorUser(data, actorId);
     const item = data.calculations.find((c) => c.id === id);
@@ -389,16 +386,18 @@ export function recalcCalculation(
     const works = positions
       .filter((p) => p.code !== "НР" && p.code !== "СП")
       .reduce((s, p) => s + p.quantity * p.rate, 0);
+    const { nr, sp } = overheadsFromWorks(works);
     const withExtras = positions.map((p) => {
       if (p.code === "НР") {
-        return { ...p, rate: Math.round(works * 0.15), unit: "руб" };
+        return { ...p, rate: nr, unit: "руб" };
       }
       if (p.code === "СП") {
-        return { ...p, rate: Math.round(works * 0.08), unit: "руб" };
+        return { ...p, rate: sp, unit: "руб" };
       }
       return p;
     });
     const rasc = data.directories.find((d) => d.type === "rascenki" && d.current);
+    const prevVersion = item.version ?? 1;
     data.calculations = data.calculations.map((c) =>
       c.id === id
         ? {
@@ -407,6 +406,7 @@ export function recalcCalculation(
             scenario,
             scenarioFactor: factor,
             directoryVersionId: rasc?.id ?? c.directoryVersionId,
+            version: prevVersion + 1,
             status: "trebuet_proverki" as CardStatus,
             updatedAt: new Date().toISOString(),
           }
@@ -418,7 +418,7 @@ export function recalcCalculation(
       "recalc",
       "calculation",
       id,
-      `Пересчёт сценария ${scenario} по текущим справочникам`
+      `Пересчёт сценария ${scenario} v${prevVersion + 1} по справочнику ${rasc?.id ?? item.directoryVersionId}`
     );
     return data;
   });
@@ -496,10 +496,36 @@ export function updateDocument(
     const { orgId: _o, id: _i, ...safe } = patch;
     void _o;
     void _i;
-    data.documents = data.documents.map((d) =>
-      d.id === id ? { ...d, ...safe } : d
+    const noteEdited =
+      typeof safe.analyticalNote === "string" &&
+      safe.analyticalNote !== item.analyticalNote;
+    data.documents = data.documents.map((d) => {
+      if (d.id !== id) return d;
+      if (!noteEdited) return { ...d, ...safe };
+      const nextVersion = d.versions.length + 1;
+      return {
+        ...d,
+        ...safe,
+        versions: [
+          ...d.versions,
+          {
+            id: `dv-${Date.now()}`,
+            version: nextVersion,
+            authorId: actorId,
+            at: new Date().toISOString(),
+            note: "Ручная правка аналитической записки",
+          },
+        ],
+      };
+    });
+    audit(
+      data,
+      actorId,
+      "update",
+      "document",
+      id,
+      noteEdited ? "Ручная правка записки (новая версия)" : "Обновление документа"
     );
-    audit(data, actorId, "update", "document", id, "Обновление документа");
     return data;
   });
 }
@@ -997,8 +1023,10 @@ export function injectRiskParse(
       "risk",
       riskId,
       contractText?.trim()
-        ? `Разбор договора (эвристика, ${remarks.length} замечаний)`
-        : "Разбор договора (базовый набор замечаний)"
+        ? `Разбор договора (эвристика-помощник, ${remarks.length} замечаний; не юрэкспертиза)`
+        : remarks.length === 0
+          ? "Разбор договора: нет данных (пусто/короткий текст, без выдуманных рисков)"
+          : `Разбор договора (эвристика-помощник, ${remarks.length} замечаний)`
     );
     return data;
   });

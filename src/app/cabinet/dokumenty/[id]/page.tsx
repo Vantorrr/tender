@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useParams } from "next/navigation";
 import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
@@ -16,6 +17,54 @@ const severityClass = {
   warning: "border-amber-200 bg-amber-50 text-amber-950",
   critical: "border-rose-200 bg-rose-50 text-rose-900",
 };
+
+function NoteEditor({
+  docId,
+  initialNote,
+}: {
+  docId: string;
+  initialNote: string;
+}) {
+  const { updateDocument } = useStore();
+  const [note, setNote] = useState(initialNote);
+  const [saving, setSaving] = useState(false);
+
+  return (
+    <section className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
+      <h2 className="font-[family-name:var(--font-display)] text-base">
+        Аналитическая записка
+      </h2>
+      <p className="mt-1 text-xs text-[var(--tk-muted)]">
+        Можно править вручную — сохранится новая версия документа. Неподтверждённое
+        оставляйте как «нет данных».
+      </p>
+      <textarea
+        className="mt-3 min-h-[160px] w-full rounded-lg border border-[var(--tk-line)] bg-white px-3 py-2 text-sm leading-relaxed text-[var(--tk-ink-soft)]"
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+      />
+      <div className="mt-3 flex gap-2">
+        <Button
+          variant="outline"
+          disabled={saving || note === initialNote}
+          onClick={async () => {
+            setSaving(true);
+            try {
+              await updateDocument(docId, { analyticalNote: note });
+              toast.success("Записка сохранена (новая версия)");
+            } catch (e) {
+              toast.error(e instanceof Error ? e.message : "Ошибка сохранения");
+            } finally {
+              setSaving(false);
+            }
+          }}
+        >
+          {saving ? "Сохранение…" : "Сохранить правку"}
+        </Button>
+      </div>
+    </section>
+  );
+}
 
 export default function DocumentDetailPage() {
   const params = useParams<{ id: string }>();
@@ -63,11 +112,30 @@ export default function DocumentDetailPage() {
             <Button
               variant="outline"
               onClick={async () => {
-                await reanalyzeDocument(doc.id);
-                toast.success("Записка обновлена по параметрам ГРАНД-Сметы");
+                await reanalyzeDocument(doc.id, { useLlm: false });
+                toast.success("Локальный разбор обновлён (без платной модели)");
               }}
             >
               Переразобрать
+            </Button>
+            <Button
+              variant="outline"
+              onClick={async () => {
+                const ok = window.confirm(
+                  "Сформировать записку через OpenRouter? Это платный вызов API."
+                );
+                if (!ok) return;
+                try {
+                  await reanalyzeDocument(doc.id, { useLlm: true });
+                  toast.success("Записка обновлена с участием модели");
+                } catch (e) {
+                  toast.error(
+                    e instanceof Error ? e.message : "Ошибка анализа моделью"
+                  );
+                }
+              }}
+            >
+              Записка моделью
             </Button>
             <Button
               onClick={() => {
@@ -77,9 +145,19 @@ export default function DocumentDetailPage() {
                   doc.analyticalNote,
                   "",
                   "Цитаты:",
-                  ...doc.citations.map(
-                    (c) => `- [${c.sourceFile}, с.${c.page}] ${c.text}`
-                  ),
+                  ...doc.citations.map((c) => {
+                    const loc = [
+                      c.sheet ? `лист ${c.sheet}` : null,
+                      c.cell ? `яч. ${c.cell}` : null,
+                      c.paragraph != null ? `абз. ${c.paragraph}` : null,
+                      !c.sheet && !c.cell ? `с.${c.page}` : null,
+                      c.sourceVersion ?? null,
+                      c.confidence ?? null,
+                    ]
+                      .filter(Boolean)
+                      .join(", ");
+                    return `- [${c.sourceFile}${loc ? `; ${loc}` : ""}] ${c.text}`;
+                  }),
                 ].join("\n");
                 downloadTextFile(
                   `zapiska-${doc.id}.txt`,
@@ -123,14 +201,11 @@ export default function DocumentDetailPage() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
-          <section className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
-            <h2 className="font-[family-name:var(--font-display)] text-base">
-              Аналитическая записка
-            </h2>
-            <p className="mt-3 whitespace-pre-wrap text-sm leading-relaxed text-[var(--tk-ink-soft)]">
-              {doc.analyticalNote}
-            </p>
-          </section>
+          <NoteEditor
+            key={`${doc.id}:${doc.versions.length}:${doc.analyticalNote.slice(0, 24)}`}
+            docId={doc.id}
+            initialNote={doc.analyticalNote}
+          />
 
           <section className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
             <h2 className="font-[family-name:var(--font-display)] text-base">
@@ -139,7 +214,8 @@ export default function DocumentDetailPage() {
             <ul className="mt-3 space-y-3">
               {doc.citations.length === 0 ? (
                 <li className="text-sm text-[var(--tk-muted)]">
-                  Цитаты появятся после завершения разбора.
+                  Цитаты появятся после завершения разбора. Без источника —
+                  «нет данных», без уверенных догадок.
                 </li>
               ) : (
                 doc.citations.map((c) => (
@@ -149,7 +225,13 @@ export default function DocumentDetailPage() {
                   >
                     <p>«{c.text}»</p>
                     <p className="mt-1 text-xs text-[var(--tk-muted)]">
-                      {c.sourceFile}, стр. {c.page}
+                      {c.sourceFile}
+                      {c.sheet ? ` · лист «${c.sheet}»` : ""}
+                      {c.cell ? ` · яч. ${c.cell}` : ""}
+                      {c.paragraph != null ? ` · абз. ${c.paragraph}` : ""}
+                      {!c.sheet && !c.cell ? ` · стр. ${c.page}` : ""}
+                      {c.sourceVersion ? ` · ${c.sourceVersion}` : ""}
+                      {c.confidence ? ` · ${c.confidence}` : ""}
                     </p>
                   </li>
                 ))

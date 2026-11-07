@@ -101,7 +101,7 @@ export async function runProcurementSync(actorId: string) {
     id,
     type: "procurement_sync",
     status: "running",
-    detail: "Синхронизация согласованного источника…",
+    detail: "Синхронизация источника закупок…",
     createdAt,
   });
 
@@ -117,10 +117,15 @@ export async function runProcurementSync(actorId: string) {
       const now = new Date().toISOString();
       let updated = 0;
       let inserted = 0;
+      const sourceReady = feed.status === "ok" || feed.status === "demo";
 
+      // Touch existing cards only when the feed is usable; never invent status for not_configured.
       data.procurements = data.procurements.map((p) => {
         if (actor && !isSuper && p.orgId !== actor.orgId) return p;
         updated += 1;
+        if (!sourceReady) {
+          return { ...p, syncAt: now };
+        }
         if (p.syncStatus === "oshibka_sinhronizacii") {
           return {
             ...p,
@@ -141,20 +146,25 @@ export async function runProcurementSync(actorId: string) {
 
       const duplicates = applyDedup(data);
 
-      if (inserted > 0 || duplicates > 0) {
-        data.notifications.unshift({
-          id: `n-sync-${Date.now()}`,
-          userId: actorId,
-          title: "Синхронизация завершена",
-          body:
-            duplicates > 0
-              ? `Источник «${source.id}»: добавлено ${inserted}, дублей ${duplicates}`
-              : `Источник «${source.id}»: добавлено ${inserted}. ${feed.detail}`,
-          read: false,
-          at: now,
-          href: "/cabinet/zakupki",
-        });
-      }
+      const notifyBody =
+        feed.status === "not_configured"
+          ? `Источник не подключён (${source.id}): новых заявок нет. ${feed.detail}`
+          : duplicates > 0
+            ? `Источник «${source.id}»: добавлено ${inserted}, дублей ${duplicates}`
+            : `Источник «${source.id}»: добавлено ${inserted}. ${feed.detail}`;
+
+      data.notifications.unshift({
+        id: `n-sync-${Date.now()}`,
+        userId: actorId,
+        title:
+          feed.status === "not_configured"
+            ? "Синхронизация: источник не настроен"
+            : "Синхронизация завершена",
+        body: notifyBody,
+        read: false,
+        at: now,
+        href: "/cabinet/zakupki",
+      });
 
       data.auditLog.unshift({
         id: `aud-sync-${Date.now()}`,
@@ -163,20 +173,23 @@ export async function runProcurementSync(actorId: string) {
         action: "sync",
         entity: "procurement",
         entityId: "feed",
-        detail: `Синхронизация (${source.id}): обновлено ${updated}, добавлено ${inserted}, дублей ${duplicates}; ${feed.detail}`,
+        detail: `Синхронизация (${source.id}/${feed.status}): обновлено ${updated}, добавлено ${inserted}, дублей ${duplicates}; ${feed.detail}`,
       });
       return data;
     });
 
     updateJob(id, {
-      status: "done",
-      detail: feed.stub
-        ? `Синхронизация stub-источника «${source.id}» завершена`
-        : `Синхронизация «${source.id}» завершена`,
+      status: feed.ok ? "done" : "error",
+      detail:
+        feed.status === "not_configured"
+          ? `Источник «${source.id}» не подключён — без выдуманных заявок`
+          : feed.status === "demo"
+            ? `Демо-синхронизация «${source.id}» завершена`
+            : `Синхронизация «${source.id}» завершена`,
       finishedAt: new Date().toISOString(),
     });
 
-    return { jobId: id, jobs: listJobs(), data: result };
+    return { jobId: id, jobs: listJobs(), data: result, feed };
   } catch (error) {
     const message =
       error instanceof Error ? error.message.slice(0, 200) : "ошибка sync";
@@ -189,25 +202,39 @@ export async function runProcurementSync(actorId: string) {
   }
 }
 
-export async function runReanalyzePipeline(actorId: string, documentId: string) {
+export async function runReanalyzePipeline(
+  actorId: string,
+  documentId: string,
+  options: { useLlm?: boolean } = {}
+) {
   const id = `job-reanalyze-${Date.now()}`;
+  const useLlm = Boolean(options.useLlm);
   insertJob({
     id,
     type: "document_reanalyze",
     status: "running",
-    detail: `Разбор документа ${documentId}`,
+    detail: useLlm
+      ? `Разбор документа ${documentId} (локально + модель)`
+      : `Разбор документа ${documentId} (локально)`,
     createdAt: new Date().toISOString(),
   });
   try {
     const existing = readAppData().documents.find((item) => item.id === documentId);
     const buf = existing?.storedPath ? readUpload(existing.storedPath) : null;
     const prepared = buf
-      ? await analyzeUpload(existing?.fileName ?? "file", existing?.fileType ?? "xlsx", buf)
+      ? await analyzeUpload(
+          existing?.fileName ?? "file",
+          existing?.fileType ?? "xlsx",
+          buf,
+          { useLlm }
+        )
       : null;
     const data = reanalyzeDocument(actorId, documentId, prepared);
     updateJob(id, {
       status: "done",
-      detail: `Документ ${documentId} разобран`,
+      detail: useLlm
+        ? `Документ ${documentId} разобран (модель по запросу)`
+        : `Документ ${documentId} разобран локально`,
       finishedAt: new Date().toISOString(),
     });
     return { jobId: id, data, jobs: listJobs() };
