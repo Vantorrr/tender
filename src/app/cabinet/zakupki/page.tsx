@@ -100,7 +100,7 @@ export default function ZakupkiPage() {
           <RefreshCw className="h-4 w-4" />
           <AlertTitle>Источник актуален</AlertTitle>
           <AlertDescription>
-            Согласованный источник (мок) синхронизирован. Последнее обновление —
+            Согласованный источник синхронизирован. Последнее обновление —
             сегодня.
           </AlertDescription>
         </Alert>

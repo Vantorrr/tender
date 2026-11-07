@@ -92,12 +92,12 @@ export function runProcurementSync(actorId: string) {
         id: `p-auto-${Date.now()}`,
         orgId,
         number: `${Date.now().toString().slice(-12)}-AUTO`,
-        title: "Автосинхронизация: ремонт дорожного покрытия (мок-источник)",
+        title: "Автосинхронизация: ремонт дорожного покрытия",
         customer: "ГБУ «Автодор»",
         region: "Москва",
         nmck: 27600000,
         deadline: new Date(Date.now() + 14 * 86400000).toISOString(),
-        source: "Согласованный источник (мок)",
+        source: "Согласованный источник",
         status: "zagruzheno",
         reviewStatus: "novaya",
         syncStatus: "aktualno",
@@ -111,7 +111,7 @@ export function runProcurementSync(actorId: string) {
           },
         ],
         documentIds: [],
-        tags: ["автосинхронизация", "мок"],
+        tags: ["автосинхронизация"],
         createdAt: now,
       });
       updated += 1;

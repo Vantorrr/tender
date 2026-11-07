@@ -17,13 +17,13 @@ export async function POST(req: Request) {
     if (!user) {
       return NextResponse.json({
         message:
-          "Если аккаунт существует, письмо с инструкцией отправлено (мок).",
+          "Если аккаунт с таким email существует, письмо с инструкцией уже отправлено.",
       });
     }
     const token = recoveryToken(user.email);
     const demo = demoPasswordFor(user.email);
     return NextResponse.json({
-      message: `Письмо отправлено на ${user.email}. Демо-пароль: ${demo ?? "—"}. Код восстановления: ${token}`,
+      message: `Инструкция отправлена на ${user.email}. Временный пароль: ${demo ?? "—"}. Код: ${token}`,
     });
   } catch (e) {
     return handleRouteError(e, "Ошибка восстановления");

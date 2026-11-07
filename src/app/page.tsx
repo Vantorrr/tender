@@ -47,7 +47,7 @@ export default function HomePage() {
           <Settle delay={300} y={24} blur={8}>
             <p className="mt-5 max-w-xl text-base leading-relaxed text-[var(--tk-ink-soft)] sm:text-lg">
               Платформа отбора строительных тендеров: от ленты закупок до
-              чернового расчёта, ГПР, денег и план/факта — в одном личном кабинете.
+              расчёта, ГПР, денег и план/факта — в одном личном кабинете.
             </p>
           </Settle>
           <Settle delay={440} y={20} blur={6}>

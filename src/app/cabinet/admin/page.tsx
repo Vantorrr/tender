@@ -134,12 +134,10 @@ export default function AdminPage() {
                 variant="outline"
                 onClick={async () => {
                   await resetData();
-                  toast.success(
-                    "Сброс выполнен: демо + клиентские справочники 2026"
-                  );
+                  toast.success("Данные сброшены, справочники восстановлены");
                 }}
               >
-                Сбросить демо-данные
+                Сбросить данные
               </Button>
             ) : null}
           </div>

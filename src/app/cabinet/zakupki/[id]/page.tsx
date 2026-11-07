@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { downloadUrl } from "@/lib/api";
+import { cleanLabel } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney } from "@/lib/format";
 import { REVIEW_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
 import type { ReviewStatus } from "@/lib/types";
@@ -84,7 +85,7 @@ export default function ZakupkaDetailPage() {
             </div>
             <div>
               <dt className="text-[var(--tk-muted)]">Источник</dt>
-              <dd className="font-semibold">{procurement.source}</dd>
+              <dd className="font-semibold">{cleanLabel(procurement.source)}</dd>
             </div>
             <div>
               <dt className="text-[var(--tk-muted)]">Синхронизация</dt>

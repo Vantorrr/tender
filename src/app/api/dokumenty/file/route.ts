@@ -14,9 +14,8 @@ export async function GET(req: Request) {
       return json({ error: "Нет доступа к данным другой организации" }, 403);
     }
     if (!doc.storedPath) {
-      // seed docs without blob — отдаём текстовый stub
       const stub = Buffer.from(
-        `истройка stub\nДокумент: ${doc.title}\nФайл: ${doc.fileName}\n(оригинал не хранился в демо-seed)\n`,
+        `истройка\nДокумент: ${doc.title}\nФайл: ${doc.fileName}\nОригинал файла будет доступен после загрузки новой версии.\n`,
         "utf8"
       );
       return new NextResponse(stub, {

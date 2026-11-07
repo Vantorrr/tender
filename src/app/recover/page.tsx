@@ -29,7 +29,8 @@ export default function RecoverPage() {
           Восстановление пароля
         </h1>
         <p className="mt-2 text-sm text-[var(--tk-muted)]">
-          Укажите email учётной записи. В демо-режиме пароль показывается сразу.
+          Укажите email учётной записи. Если аккаунт найден, отправим инструкцию
+          на почту.
         </p>
         <form onSubmit={onSubmit} className="mt-6 space-y-4">
           <div className="space-y-2">

@@ -12,6 +12,7 @@ import { EntityCard } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
+import { cleanLabel } from "@/lib/display";
 import { formatMoney } from "@/lib/format";
 import { ROLE_LABELS } from "@/lib/roles";
 import { useStore } from "@/lib/store";
@@ -106,7 +107,7 @@ export default function CabinetHomePage() {
             }
             footer={
               <div className="flex items-center justify-between text-xs text-[var(--tk-muted)]">
-                <span>Источник: {p.source}</span>
+                <span>Источник: {cleanLabel(p.source)}</span>
                 <StatusBadge status={p.status} className="hidden" />
               </div>
             }

@@ -1007,7 +1007,7 @@ export function injectRiskParse(actorId: string, riskId: string) {
             updatedAt: new Date().toISOString(),
           }
     );
-    audit(data, actorId, "parse", "risk", riskId, "Разбор договора (мок)");
+    audit(data, actorId, "parse", "risk", riskId, "Разбор договора");
     return data;
   });
 }
@@ -1061,7 +1061,7 @@ export function resetDemo(actorId: string): { token: string; actorId: string } {
       const superUser = d.users.find((u) => u.role === "superadmin");
       resolvedActorId = superUser?.id ?? resolvedActorId;
     }
-    audit(d, resolvedActorId, "reset", "system", "all", "Сброс демо-данных");
+    audit(d, resolvedActorId, "reset", "system", "all", "Сброс данных");
     return d;
   });
   // sessions were wiped — выдаём новый токен, чтобы UI не получил 401
