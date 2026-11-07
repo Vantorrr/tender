@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "node scripts/e2e-isolated.mjs",
+    "test:browser": "node scripts/browser-e2e.mjs",
     "verify:ocr-image": "bash scripts/verify-ocr-image.sh",
     "backup:db": "node scripts/backup-db.mjs",
     "restore:db": "node scripts/restore-db.mjs",
@@ -50,6 +51,7 @@
     "@types/smtp-server": "^3.5.13",
     "eslint": "^9",
     "eslint-config-next": "16.4.3",
+    "playwright": "^1.65.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^3.2.4"
