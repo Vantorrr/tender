@@ -18,26 +18,36 @@ import {
   analysisFromScan,
   isKmDrawingFileName,
   parseGrandBuffer,
+  stampCitationSourceVersion,
 } from "@/server/grand-smeta";
-import { refineNote, rejectsExternalActions } from "@/server/model-note";
+import {
+  refineNote,
+  rejectsExternalActions,
+  readNote,
+} from "@/server/model-note";
 import {
   calculationTotals,
   duplicateCodes,
+  netExcludingVat,
   parseDecimal,
+  positionLineSum,
   positionSum,
   scenarioFactor,
+  unitConflicts,
   worksSubtotal,
-} from "@/server/calc-math";
+} from "@/lib/calc-math";
 import {
   parseContractRisksDetailed,
   RISK_HELPER_DISCLAIMER,
 } from "@/server/contract-risk";
+import {
+  analysisFromDocx,
+  citationParagraphValid,
+  parseDocxBuffer,
+} from "@/server/docx-parse";
 import { mailStatus } from "@/server/mail";
 import { modelConfigured } from "@/server/openrouter";
-import type { CalcPosition, Highlight } from "@/lib/types";
-
-// re-export helper for invalid JSON tests — readNote is module-private; use refine path.
-import * as modelNote from "@/server/model-note";
+import type { CalcPosition, Citation, Highlight } from "@/lib/types";
 
 afterEach(() => {
   resetProcurementSource();
@@ -251,9 +261,12 @@ describe("calc arithmetic in code", () => {
     expect(worksSubtotal(positions, 1)).toBe(1000);
     const totals = calculationTotals({ positions, scenarioFactor: 1.08 });
     expect(totals.works).toBe(1080);
-    expect(totals.nr).toBe(Math.round(1080 * 0.15));
-    expect(totals.sp).toBe(Math.round(1080 * 0.08));
-    expect(totals.total).toBe(totals.works + totals.nr + totals.sp);
+    expect(totals.nr).toBeCloseTo(1080 * 0.15, 2);
+    expect(totals.sp).toBeCloseTo(1080 * 0.08, 2);
+    expect(totals.total).toBeCloseTo(
+      totals.works + totals.nr + totals.sp,
+      2
+    );
   });
 
   it("parseDecimal handles RU commas/spaces; empty → null (нет данных)", () => {
@@ -297,8 +310,10 @@ describe("model note negatives", () => {
     expect(rejectsExternalActions("Обычная записка по смете")).toBeNull();
   });
 
-  it("invalid JSON from model yields null note (via private parse path)", async () => {
-    // Simulate refineNote fail-safe: without key stays local.
+  it("invalid JSON from model yields null note", async () => {
+    expect(readNote("{not-json")).toBeNull();
+    expect(readNote('{"note":123}')).toBeNull();
+    expect(readNote('{"note":"ok"}')).toBe("ok");
     expect(modelConfigured()).toBe(false);
     const refined = await refineNote(
       {
@@ -323,7 +338,6 @@ describe("model note negatives", () => {
     );
     expect(refined.analyticalNote).toBe("локальный");
     expect((refined as { noteByModel?: boolean }).noteByModel).toBeFalsy();
-    void modelNote;
   });
 
   it("prompt-injection-as-data must not unlock tools (no fetch without key/useLlm)", async () => {
@@ -349,7 +363,6 @@ describe("model note negatives", () => {
 
 describe("bad / missing citation honesty", () => {
   it("missing cost becomes «нет данных» citation, not a guess", async () => {
-    // Minimal fake workbook is heavy; assert analysisFromScan empty path.
     const a = analysisFromScan("missing.pdf", {
       status: "not_configured",
       text: null,
@@ -358,5 +371,149 @@ describe("bad / missing citation honesty", () => {
     });
     expect(a.citations).toHaveLength(0);
     expect(a.analyticalNote).toMatch(/OCR не сконфигурирован|нет/i);
+  });
+
+  it("rejects fake paragraph indexes outside the source", () => {
+    const fake: Citation = {
+      id: "c-fake",
+      text: "invented",
+      page: 1,
+      sourceFile: "x.docx",
+      paragraph: 99,
+      confidence: "confirmed",
+    };
+    expect(citationParagraphValid(fake, 8)).toBe(false);
+    expect(citationParagraphValid({ ...fake, paragraph: 3 }, 8)).toBe(true);
+  });
+
+  it("stampCitationSourceVersion fills missing chain labels", () => {
+    const stamped = stampCitationSourceVersion(
+      [{ id: "c1", text: "a", page: 1, sourceFile: "f.xlsx" }],
+      "doc-v2"
+    );
+    expect(stamped[0].sourceVersion).toBe("doc-v2");
+    const keep = stampCitationSourceVersion(
+      [
+        {
+          id: "c2",
+          text: "b",
+          page: 1,
+          sourceFile: "f.xlsx",
+          sourceVersion: "ГРАНД-Смета 2022.3",
+        },
+      ],
+      "doc-v2"
+    );
+    expect(keep[0].sourceVersion).toBe("ГРАНД-Смета 2022.3");
+  });
+});
+
+describe("golden DOCX contract-terms (hand-expected)", () => {
+  const fixture = path.join(
+    process.cwd(),
+    "fixtures/docx/contract-terms.docx"
+  );
+
+  it("extracts zone/volume/cost with paragraph locators", async () => {
+    expect(fs.existsSync(fixture)).toBe(true);
+    const buf = fs.readFileSync(fixture);
+    const parsed = await parseDocxBuffer(buf);
+    expect(parsed).toBeTruthy();
+    expect(parsed!.paragraphs.length).toBeGreaterThanOrEqual(6);
+    const analysis = analysisFromDocx(path.basename(fixture), parsed!);
+    expect(analysis.analysis.zone).toBe("5");
+    expect(analysis.analysis.workName).toMatch(/120/);
+    expect(analysis.analysis.costThousand).not.toBeNull();
+    const zoneCite = analysis.citations.find((c) => c.id === "c-docx-zone");
+    expect(zoneCite?.paragraph).toBeGreaterThanOrEqual(1);
+    expect(zoneCite?.sourceVersion).toBe("docx-body");
+    expect(zoneCite?.confidence).toBe("confirmed");
+    expect(
+      analysis.citations.every((c) =>
+        citationParagraphValid(c, parsed!.paragraphs.length)
+      )
+    ).toBe(true);
+    expect(analysis.analyticalNote).toMatch(/не юрэкспертиза|эвристик/i);
+    // Prompt-injection paragraph is data, not a tool unlock.
+    expect(parsed!.plainText).toMatch(/Ignore previous instructions/);
+  });
+
+  it("analyzeUpload(docx) returns paragraph cites without LLM", async () => {
+    const buf = fs.readFileSync(fixture);
+    const analysis = await analyzeUpload(
+      "contract-terms.docx",
+      "docx",
+      buf,
+      { useLlm: false }
+    );
+    expect(analysis.noteByModel).toBeFalsy();
+    expect(analysis.citations.some((c) => c.paragraph != null)).toBe(true);
+    expect(analysis.analysis.zone).toBe("5");
+  });
+
+  it("empty DOCX → нет данных, no invented volumes", async () => {
+    const empty = path.join(process.cwd(), "fixtures/docx/empty-terms.docx");
+    const buf = fs.readFileSync(empty);
+    const parsed = await parseDocxBuffer(buf);
+    const analysis = analysisFromDocx("empty-terms.docx", parsed!);
+    expect(analysis.analysis.zone).toBe("");
+    expect(analysis.analysis.costThousand).toBeNull();
+    expect(analysis.analyticalNote).toMatch(/нет данных/);
+    expect(analysis.status).toBe("trebuet_proverki");
+  });
+});
+
+describe("calc arithmetic extras", () => {
+  it("VAT net only when percent known; else null", () => {
+    expect(netExcludingVat(120, 20)).toBeCloseTo(100, 2);
+    expect(netExcludingVat(120, null)).toBeNull();
+    expect(netExcludingVat(null, 20)).toBeNull();
+  });
+
+  it("unitConflicts detects same code with different units", () => {
+    expect(
+      unitConflicts([
+        { id: "1", code: "A", name: "", unit: "м", quantity: 1, rate: 1 },
+        { id: "2", code: "A", name: "", unit: "м2", quantity: 1, rate: 1 },
+      ])
+    ).toEqual([{ code: "A", units: expect.arrayContaining(["м", "м2"]) }]);
+  });
+
+  it("positionLineSum does not double-apply factor on НР/СП", () => {
+    expect(
+      positionLineSum(
+        { code: "НР", quantity: 1, rate: 162 },
+        1.08
+      )
+    ).toBe(162);
+    expect(
+      positionLineSum(
+        { code: "ФЕРм01", quantity: 10, rate: 100 },
+        1.08
+      )
+    ).toBe(1080);
+    const totals = calculationTotals({
+      positions: [
+        {
+          id: "1",
+          code: "ФЕРм01",
+          name: "a",
+          unit: "м",
+          quantity: 10,
+          rate: 100,
+        },
+        {
+          id: "2",
+          code: "НР",
+          name: "НР",
+          unit: "руб",
+          quantity: 1,
+          rate: 0,
+        },
+      ],
+      scenarioFactor: 1.08,
+    });
+    expect(totals.works).toBe(1080);
+    expect(totals.nr).toBeCloseTo(162, 2);
   });
 });

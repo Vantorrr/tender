@@ -609,6 +609,7 @@ export function analysisFromScan(
           text: text.slice(0, 240),
           page: 1,
           sourceFile: fileName,
+          sourceVersion: "ocr-extract",
           confidence: "ocr",
         },
       ]
@@ -761,6 +762,38 @@ export async function analyzeUpload(
       `Книга не распознана как локальный сметный расчёт ${GRAND_PROFILE.vendor} ${GRAND_PROFILE.version} (${GRAND_PROFILE.form}).`
     );
   }
+  if (fileType === "docx" || fileName.toLowerCase().endsWith(".docx")) {
+    const { analysisFromDocx, parseDocxBuffer } = await import(
+      "@/server/docx-parse"
+    );
+    const docx = await parseDocxBuffer(buf);
+    if (!docx) {
+      return unrecognized(
+        fileName,
+        "DOCX повреждён или не содержит word/document.xml."
+      );
+    }
+    const analysis = analysisFromDocx(fileName, docx);
+    return maybeRefineNote(
+      analysis,
+      {
+        kind: "docx",
+        fileName,
+        paragraphCount: docx.paragraphs.length,
+        zone: analysis.analysis.zone,
+        costThousand: analysis.analysis.costThousand,
+        sourceVersion: docx.sourceVersion,
+      },
+      [
+        analysis.analysis.zone || null,
+        analysis.analysis.workName || null,
+        analysis.analysis.costThousand != null
+          ? String(Math.trunc(analysis.analysis.costThousand))
+          : null,
+      ],
+      useLlm
+    );
+  }
   if (fileType === "pdf" || fileName.toLowerCase().endsWith(".pdf")) {
     const ocr = await extractDocumentText({
       fileName,
@@ -825,8 +858,19 @@ export async function analyzeUpload(
   }
   return unrecognized(
     fileName,
-    `Формат не входит в обмен ${GRAND_PROFILE.vendor}. Эталон — локальная смета .xlsx и чертёж КМ .pdf по шифру ${GRAND_PROFILE.cipher}. Произвольные сканы PDF разбираются через локальный OCR.`
+    `Формат не входит в обмен ${GRAND_PROFILE.vendor}. Эталон — локальная смета .xlsx, договор/ТЗ .docx (цитаты по абзацам) и чертёж КМ .pdf по шифру ${GRAND_PROFILE.cipher}. Произвольные сканы PDF разбираются через локальный OCR.`
   );
+}
+
+/** Stamp every citation with a document/source version label (chain coverage). */
+export function stampCitationSourceVersion(
+  citations: Citation[],
+  sourceVersion: string
+): Citation[] {
+  return citations.map((c) => ({
+    ...c,
+    sourceVersion: c.sourceVersion ?? sourceVersion,
+  }));
 }
 
 function unrecognized(fileName: string, reason: string): UploadAnalysis {

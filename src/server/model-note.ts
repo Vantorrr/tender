@@ -49,7 +49,8 @@ function standalone(note: string, value: string) {
   return new RegExp(`(?:^|\\D)${value}(?:\\D|$)`).test(note);
 }
 
-function readNote(raw: string): string | null {
+/** Parse model JSON note; invalid/missing → null (caller keeps local note). */
+export function readNote(raw: string): string | null {
   const trimmed = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   try {
     const parsed = JSON.parse(trimmed) as { note?: unknown };

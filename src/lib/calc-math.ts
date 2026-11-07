@@ -38,15 +38,44 @@ export function worksSubtotal(
   );
 }
 
-/** НР 15% / СП 8% of works — same rules as recalcCalculation. */
+/** НР 15% / СП 8% of works — same rules as recalcCalculation (kopeck-rounded). */
 export function overheadsFromWorks(works: number): {
   nr: number;
   sp: number;
   total: number;
 } {
-  const nr = Math.round(works * 0.15);
-  const sp = Math.round(works * 0.08);
-  return { nr, sp, total: works + nr + sp };
+  const nr = roundMoney(works * 0.15);
+  const sp = roundMoney(works * 0.08);
+  return { nr, sp, total: roundMoney(works + nr + sp) };
+}
+
+/**
+ * If source text flags VAT-inclusive amount, derive net (не inventing rates).
+ * Returns null when VAT not stated or amount missing → caller writes «нет данных».
+ */
+export function netExcludingVat(
+  amount: number | null | undefined,
+  vatPercent: number | null | undefined
+): number | null {
+  if (amount == null || vatPercent == null) return null;
+  if (!(vatPercent > 0) || !(amount >= 0)) return null;
+  return roundMoney(amount / (1 + vatPercent / 100));
+}
+
+/** Detect unit mismatches among non-НР/СП positions (same code, different unit). */
+export function unitConflicts(
+  positions: CalcPosition[]
+): Array<{ code: string; units: string[] }> {
+  const byCode = new Map<string, Set<string>>();
+  for (const p of positions) {
+    if (p.code === "НР" || p.code === "СП") continue;
+    const set = byCode.get(p.code) ?? new Set<string>();
+    if (p.unit) set.add(p.unit);
+    byCode.set(p.code, set);
+  }
+  return [...byCode.entries()]
+    .filter(([, units]) => units.size > 1)
+    .map(([code, units]) => ({ code, units: [...units] }));
 }
 
 export function calculationTotals(
@@ -62,6 +91,20 @@ export function calculationTotals(
   const works = worksSubtotal(calc.positions, factor);
   const { nr, sp, total } = overheadsFromWorks(works);
   return { works, nr, sp, total, factor };
+}
+
+/**
+ * Line amount for UI/export. Work rows take scenario factor;
+ * НР/СП are stored already computed from factored works (see recalcCalculation).
+ */
+export function positionLineSum(
+  position: Pick<CalcPosition, "code" | "quantity" | "rate">,
+  factor = 1
+): number {
+  if (position.code === "НР" || position.code === "СП") {
+    return roundMoney(position.quantity * position.rate);
+  }
+  return positionSum(position, factor);
 }
 
 /** Detect duplicate position codes (excluding НР/СП). */

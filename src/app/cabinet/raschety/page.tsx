@@ -3,6 +3,7 @@
 import { EmptyState } from "@/components/empty-state";
 import { EntityCard } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
+import { calculationTotals } from "@/lib/calc-math";
 import { formatMoney } from "@/lib/format";
 import { SCENARIO_LABELS } from "@/lib/roles";
 import { useStore } from "@/lib/store";
@@ -26,9 +27,7 @@ export default function RaschetyPage() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {items.map((c) => {
-            const total =
-              c.positions.reduce((s, p) => s + p.quantity * p.rate, 0) *
-              c.scenarioFactor;
+            const total = calculationTotals(c).total;
             return (
               <EntityCard
                 key={c.id}
