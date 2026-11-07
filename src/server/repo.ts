@@ -14,18 +14,15 @@ import type {
   User,
 } from "@/lib/types";
 import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
+import { assertOrgAccess } from "@/server/acl";
+import { parseContractRisks } from "@/server/contract-risk";
 import type { UploadAnalysis } from "@/server/grand-smeta";
 import { mutateAppData, readAppData, resetAppData } from "@/server/db";
 import { hashPassword } from "@/server/passwords";
 import { createSession, publicUser } from "@/server/auth";
 import { randomBytes } from "node:crypto";
 
-function assertOrgAccess(user: User, orgId: string, label = "записи") {
-  if (user.role === "superadmin") return;
-  if (orgId !== user.orgId) {
-    throw new Error(`Нет доступа к данным другой организации (${label})`);
-  }
-}
+export { assertOrgAccess };
 
 function actorUser(data: AppData, actorId: string): User {
   const u = data.users.find((x) => x.id === actorId);
@@ -966,13 +963,22 @@ export function importSmetaExchange(
   });
 }
 
-export function injectRiskParse(actorId: string, riskId: string) {
+export function injectRiskParse(
+  actorId: string,
+  riskId: string,
+  contractText?: string | null
+) {
   return mutateAppData((data) => {
     const actor = actorUser(data, actorId);
     const item = data.risks.find((r) => r.id === riskId);
     if (!item) throw new Error("Реестр рисков не найден");
     assertOrgAccess(actor, item.orgId, "реестра рисков");
     const now = Date.now();
+    const parsed = parseContractRisks(contractText);
+    const remarks = parsed.map((remark, index) => ({
+      ...remark,
+      id: `rm-${now + index}`,
+    }));
     data.risks = data.risks.map((r) =>
       r.id !== riskId
         ? r
@@ -980,34 +986,20 @@ export function injectRiskParse(actorId: string, riskId: string) {
             ...r,
             contractParsed: true,
             status: "trebuet_proverki" as const,
-            remarks: [
-              ...r.remarks,
-              {
-                id: `rm-${now}`,
-                text: "Штраф за срыв сроков свыше 0,1% в сутки",
-                sourceExcerpt: "п. 8.3 договора подряда",
-                status: "otkryto" as const,
-                severity: "high" as const,
-              },
-              {
-                id: `rm-${now + 1}`,
-                text: "Обеспечение исполнения контракта 10%",
-                sourceExcerpt: "п. 5.1",
-                status: "otkryto" as const,
-                severity: "medium" as const,
-              },
-              {
-                id: `rm-${now + 2}`,
-                text: "Гарантийный срок 60 месяцев",
-                sourceExcerpt: "п. 12.2",
-                status: "otkryto" as const,
-                severity: "low" as const,
-              },
-            ],
+            remarks: [...r.remarks, ...remarks],
             updatedAt: new Date().toISOString(),
           }
     );
-    audit(data, actorId, "parse", "risk", riskId, "Разбор договора");
+    audit(
+      data,
+      actorId,
+      "parse",
+      "risk",
+      riskId,
+      contractText?.trim()
+        ? `Разбор договора (эвристика, ${remarks.length} замечаний)`
+        : "Разбор договора (базовый набор замечаний)"
+    );
     return data;
   });
 }

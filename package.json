@@ -10,6 +10,11 @@
     "start": "node scripts/start.mjs",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "node scripts/e2e-isolated.mjs",
+    "backup:db": "node scripts/backup-db.mjs",
+    "restore:db": "node scripts/restore-db.mjs",
     "build:client-dirs": "node scripts/build-client-dirs.mjs",
     "import:client": "node scripts/import-client-xlsx.mjs",
     "turnkey": "npm run setup && npm run build && npm run start"
@@ -41,6 +46,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.4.3",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }

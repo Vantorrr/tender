@@ -1,15 +1,15 @@
 import { getBootstrap, updatePlanFact } from "@/server/repo";
-import { withUser, json } from "@/server/http";
+import { withSection, json } from "@/server/http";
 import type { PlanFact } from "@/lib/types";
 
 export async function GET(req: Request) {
-  return withUser(req, (user) =>
+  return withSection(req, "proizvodstvo", (user) =>
     json({ items: getBootstrap(user).data.planFacts })
   );
 }
 
 export async function PATCH(req: Request) {
-  return withUser(req, async (user) => {
+  return withSection(req, "proizvodstvo", async (user) => {
     const body = (await req.json()) as {
       id?: string;
       patch?: Partial<PlanFact>;

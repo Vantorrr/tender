@@ -5,17 +5,17 @@ import {
 } from "@/server/repo";
 import { analyzeUpload } from "@/server/grand-smeta";
 import { saveUpload } from "@/server/uploads";
-import { withUser, json } from "@/server/http";
+import { withSection, json } from "@/server/http";
 import type { DocumentItem } from "@/lib/types";
 
 export async function GET(req: Request) {
-  return withUser(req, (user) =>
+  return withSection(req, "dokumenty", (user) =>
     json({ items: getBootstrap(user).data.documents })
   );
 }
 
 export async function POST(req: Request) {
-  return withUser(req, async (user) => {
+  return withSection(req, "dokumenty", async (user) => {
     const contentType = req.headers.get("content-type") ?? "";
 
     if (contentType.includes("multipart/form-data")) {
@@ -72,7 +72,7 @@ export async function POST(req: Request) {
 }
 
 export async function PATCH(req: Request) {
-  return withUser(req, async (user) => {
+  return withSection(req, "dokumenty", async (user) => {
     const body = (await req.json()) as {
       id?: string;
       patch?: Partial<DocumentItem>;

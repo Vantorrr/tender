@@ -9,10 +9,10 @@ import { readAppData } from "@/server/db";
 import { importClientDirectories } from "@/server/client-import";
 import { clearClientImportFlag, markClientImportDone } from "@/server/db";
 import { SESSION_COOKIE, sessionCookieOptions } from "@/server/auth";
-import { withUser, json } from "@/server/http";
+import { withSection, json } from "@/server/http";
 
 export async function GET(req: Request) {
-  return withUser(req, (user) => {
+  return withSection(req, "admin", (user) => {
     if (user.role !== "superadmin" && user.role !== "admin") {
       return json({ error: "Недостаточно прав" }, 403);
     }
@@ -26,7 +26,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  return withUser(req, async (user) => {
+  return withSection(req, "admin", async (user) => {
     if (user.role !== "superadmin" && user.role !== "admin") {
       return json({ error: "Недостаточно прав" }, 403);
     }

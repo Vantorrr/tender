@@ -1,15 +1,15 @@
 import { getBootstrap, updateSchedule } from "@/server/repo";
-import { withUser, json } from "@/server/http";
+import { withSection, json } from "@/server/http";
 import type { GprSchedule } from "@/lib/types";
 
 export async function GET(req: Request) {
-  return withUser(req, (user) =>
+  return withSection(req, "gpr", (user) =>
     json({ items: getBootstrap(user).data.schedules })
   );
 }
 
 export async function PATCH(req: Request) {
-  return withUser(req, async (user) => {
+  return withSection(req, "gpr", async (user) => {
     const body = (await req.json()) as {
       id?: string;
       patch?: Partial<GprSchedule>;

@@ -394,3 +394,15 @@ export function ensureReady() {
   ensureClientDirectoriesPresent(db);
   return healthSnapshot();
 }
+
+/** Close singleton DB — for isolated tests that switch DATA_DIR/DB_FILE. */
+export function closeDb(): void {
+  if (!globalThis.__tkDb) return;
+  try {
+    globalThis.__tkDb.close();
+  } catch {
+    /* already closed */
+  }
+  globalThis.__tkDb = undefined;
+  globalThis.__tkWriteLock = false;
+}

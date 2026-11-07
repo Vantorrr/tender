@@ -26,13 +26,14 @@ export function startBackgroundJobs() {
   );
 
   setInterval(() => {
-    try {
-      const result = runProcurementSync(SYSTEM_ACTOR);
-      console.log(
-        `[истройка] sync job ${result.jobId} ok, закупок: ${result.data.procurements.length}`
-      );
-    } catch (e) {
-      console.error("[истройка] sync failed", e);
-    }
+    void runProcurementSync(SYSTEM_ACTOR)
+      .then((result) => {
+        console.log(
+          `[истройка] sync job ${result.jobId} ok, закупок: ${result.data.procurements.length}`
+        );
+      })
+      .catch((e) => {
+        console.error("[истройка] sync failed", e);
+      });
   }, config.syncIntervalMs);
 }

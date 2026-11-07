@@ -8,9 +8,10 @@ import {
   buildRisksXlsx,
   buildSmetaExportXlsx,
 } from "@/server/export";
+import { assertSection } from "@/server/acl";
 import { readAppData } from "@/server/db";
 import { fileResponse, withUser, json } from "@/server/http";
-import type { User } from "@/lib/types";
+import type { SectionKey, User } from "@/lib/types";
 
 function assertExportOrg(user: User, orgId: string | undefined) {
   if (!orgId) return;
@@ -20,12 +21,28 @@ function assertExportOrg(user: User, orgId: string | undefined) {
   }
 }
 
+function assertExportSection(user: User, kind: string | null) {
+  const map: Record<string, SectionKey> = {
+    "calc-xlsx": "raschety",
+    "calc-pdf": "raschety",
+    "money-xlsx": "dengi",
+    "gpr-xlsx": "gpr",
+    "risks-xlsx": "riski",
+    "planfact-xlsx": "proizvodstvo",
+    "smeta-xlsx": "obmen",
+    "dir-template": "spravochniki",
+  };
+  const section = kind ? map[kind] : undefined;
+  if (section) assertSection(user, section);
+}
+
 export async function GET(req: Request) {
   return withUser(req, async (user) => {
     const { searchParams } = new URL(req.url);
     const kind = searchParams.get("kind");
     const id = searchParams.get("id") ?? "";
     const data = readAppData();
+    assertExportSection(user, kind);
 
     if (kind === "calc-xlsx" || kind === "calc-pdf") {
       const calc = data.calculations.find((c) => c.id === id);
