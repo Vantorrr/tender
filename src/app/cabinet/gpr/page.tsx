@@ -20,7 +20,7 @@ export default function GprPage() {
       {items.length === 0 ? (
         <EmptyState
           title="Графиков нет"
-          description="Сформируйте черновик ГПР из расчёта по закупке."
+          description="Сформируйте ГПР из расчёта по закупке."
         />
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
