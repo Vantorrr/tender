@@ -26,6 +26,14 @@ Docker:
 docker compose up --build
 ```
 
+Railway берёт этот же `Dockerfile`. Сервис слушает порт из переменной `PORT`. В настройках сервиса примонтируйте том на `/app/data`, иначе SQLite сотрётся при следующем деплое. Ключ `OPENROUTER_API_KEY` задаётся в переменных сервиса, без него кабинет открывается.
+
+```bash
+npx @railway/cli login
+npx @railway/cli init
+npx @railway/cli up
+```
+
 Данные живут в `data/tenderkontur.sqlite` (volume `tk_data` в Docker). Пароли в БД — scrypt-хеши. Автосинхронизация закупок — каждые 5 мин (`SYNC_INTERVAL_MS`).
 
 ## Демо-учётки

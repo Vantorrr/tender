@@ -1,0 +1,14 @@
+node_modules
+.next
+out
+data
+.git
+docs
+.env
+.env.local
+.env.*.local
+*.md
+!README.md
+public/TMA361-otchet-2026-11-05.zip
+coverage
+*.tsbuildinfo

@@ -22,5 +22,5 @@ VOLUME ["/app/data"]
 
 EXPOSE 43141
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=5 \
-  CMD curl -fsS http://127.0.0.1:43141/api/health || exit 1
+  CMD curl -fsS "http://127.0.0.1:${PORT}/api/health" || exit 1
 CMD ["npm", "run", "start"]
