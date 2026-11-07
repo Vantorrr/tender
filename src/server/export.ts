@@ -1,5 +1,9 @@
 import ExcelJS from "exceljs";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
+import {
+  calculationTotals,
+  positionLineSum,
+} from "@/lib/calc-math";
 import { readAppData } from "@/server/db";
 import { estimateKey, parseGrandBuffer } from "@/server/grand-smeta";
 
@@ -21,10 +25,9 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
   ];
   ws.getRow(1).font = { bold: true };
 
-  let total = 0;
+  const factor = calc.scenarioFactor || 1;
   for (const p of calc.positions) {
-    const sum = p.quantity * p.rate * calc.scenarioFactor;
-    total += sum;
+    const sum = positionLineSum(p, factor);
     ws.addRow({
       code: p.code,
       name: p.name,
@@ -34,8 +37,10 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
       sum,
     });
   }
+  const totals = calculationTotals(calc);
+  const dir = data.directories.find((d) => d.id === calc.directoryVersionId);
   ws.addRow({});
-  ws.addRow({ code: "Итого", sum: total });
+  ws.addRow({ code: "Итого", sum: totals.total });
   ws.addRow({
     code: "Сценарий",
     name:
@@ -46,6 +51,11 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
           : "Базовый",
     rate: calc.scenarioFactor,
   });
+  ws.addRow({
+    code: "Справочник",
+    name: dir ? `${dir.name} v${dir.version}` : calc.directoryVersionId,
+  });
+  ws.addRow({ code: "Версия расчёта", name: String(calc.version ?? 1) });
 
   const buf = await wb.xlsx.writeBuffer();
   return Buffer.from(buf);
@@ -75,16 +85,17 @@ export async function buildCalculationPdf(calcId: string): Promise<Buffer> {
   draw(`TenderKontur / Raschet ${calc.id}`, 14, true);
   draw(calc.title.replace(/[^\x00-\x7F]/g, "?"), 12, true);
   draw(`Scenario: ${calc.scenario} x${calc.scenarioFactor}`);
+  draw(`Dir: ${(calc.directoryVersionId || "-").slice(0, 40)} v${calc.version ?? 1}`);
   y -= 6;
-  let total = 0;
+  const factor = calc.scenarioFactor || 1;
   for (const p of calc.positions) {
-    const sum = p.quantity * p.rate * calc.scenarioFactor;
-    total += sum;
+    const sum = positionLineSum(p, factor);
     const line = `${p.code} | ${p.quantity} x ${p.rate} = ${Math.round(sum)}`;
     draw(line.replace(/[^\x00-\x7F]/g, "?"), 9);
     if (y < 60) break;
   }
-  draw(`TOTAL: ${Math.round(total)} RUB`, 12, true);
+  const totals = calculationTotals(calc);
+  draw(`TOTAL: ${Math.round(totals.total)} RUB`, 12, true);
   const bytes = await pdf.save();
   return Buffer.from(bytes);
 }

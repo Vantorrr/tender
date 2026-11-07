@@ -15,7 +15,12 @@ import type {
 } from "@/lib/types";
 import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
 import { assertOrgAccess } from "@/server/acl";
-import { overheadsFromWorks, scenarioFactor } from "@/server/calc-math";
+import {
+  overheadsFromWorks,
+  scenarioFactor,
+  worksSubtotal,
+} from "@/lib/calc-math";
+import { stampCitationSourceVersion } from "@/server/grand-smeta";
 import { parseContractRisks } from "@/server/contract-risk";
 import type { UploadAnalysis } from "@/server/grand-smeta";
 import { mutateAppData, readAppData, resetAppData } from "@/server/db";
@@ -383,9 +388,8 @@ export function recalcCalculation(
         unit: hit.unit && !hit.unit.startsWith("руб") ? hit.unit : p.unit,
       };
     });
-    const works = positions
-      .filter((p) => p.code !== "НР" && p.code !== "СП")
-      .reduce((s, p) => s + p.quantity * p.rate, 0);
+    // НР/СП from scenario-factored works — same identity as calculationTotals.
+    const works = worksSubtotal(positions, factor);
     const { nr, sp } = overheadsFromWorks(works);
     const withExtras = positions.map((p) => {
       if (p.code === "НР") {
@@ -557,13 +561,14 @@ export function reanalyzeDocument(
       if (!prepared) {
         return { ...d, versions: [...d.versions, version] };
       }
+      const versionLabel = `doc-v${nextVersion}`;
       return {
         ...d,
         title: d.title.startsWith("Разбор поставлен") ? prepared.title : d.title,
         status: prepared.status,
         versions: [...d.versions, version],
         analyticalNote: prepared.analyticalNote,
-        citations: prepared.citations,
+        citations: stampCitationSourceVersion(prepared.citations, versionLabel),
         highlights: prepared.highlights,
         analysis: prepared.analysis,
       };
@@ -622,7 +627,10 @@ export function createDocument(
       analyticalNote:
         input.prepared?.analyticalNote ??
         "Файл сохранён. Разбор по форме ГРАНД-Смета не дал результата.",
-      citations: input.prepared?.citations ?? [],
+      citations: stampCitationSourceVersion(
+        input.prepared?.citations ?? [],
+        "doc-v1"
+      ),
       highlights: input.prepared?.highlights ?? [],
       analysis: input.prepared?.analysis,
       uploadedBy: actorId,

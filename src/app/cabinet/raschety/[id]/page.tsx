@@ -27,6 +27,10 @@ import { downloadUrl } from "@/lib/api";
 import { formatMoney, formatNumber } from "@/lib/format";
 import type { Calculation } from "@/lib/types";
 import { useStore } from "@/lib/store";
+import {
+  calculationTotals,
+  positionLineSum,
+} from "@/lib/calc-math";
 
 export default function RaschetDetailPage() {
   const params = useParams<{ id: string }>();
@@ -74,8 +78,8 @@ export default function RaschetDetailPage() {
     return <ErrorState title="Расчёт не найден" />;
   }
 
-  const base = calc.positions.reduce((s, p) => s + p.quantity * p.rate, 0);
-  const total = base * calc.scenarioFactor;
+  const totals = calculationTotals(calc);
+  const total = totals.total;
 
   function exportExcelLike() {
     downloadUrl(`/api/export?kind=calc-xlsx&id=${calc!.id}`);
@@ -231,7 +235,9 @@ export default function RaschetDetailPage() {
                   {formatMoney(p.rate)}
                 </TableCell>
                 <TableCell className="text-right font-medium">
-                  {formatMoney(p.quantity * p.rate * calc.scenarioFactor)}
+                  {formatMoney(
+                    positionLineSum(p, calc.scenarioFactor || 1)
+                  )}
                 </TableCell>
               </TableRow>
             ))}
