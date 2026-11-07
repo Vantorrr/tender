@@ -4,17 +4,17 @@ import {
   setDirectoryCurrent,
 } from "@/server/repo";
 import { parseDirectoryXlsx } from "@/server/export";
-import { withUser, json } from "@/server/http";
+import { withSection, json } from "@/server/http";
 import type { AppData } from "@/lib/types";
 
 export async function GET(req: Request) {
-  return withUser(req, (user) =>
+  return withSection(req, "spravochniki", (user) =>
     json({ items: getBootstrap(user).data.directories })
   );
 }
 
 export async function POST(req: Request) {
-  return withUser(req, async (user) => {
+  return withSection(req, "spravochniki", async (user) => {
     const contentType = req.headers.get("content-type") ?? "";
     if (contentType.includes("multipart/form-data")) {
       const form = await req.formData();

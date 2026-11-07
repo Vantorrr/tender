@@ -1,4 +1,4 @@
-import type { DocumentAnalysis, Highlight } from "@/lib/types";
+import type { Citation, DocumentAnalysis, Highlight } from "@/lib/types";
 import { config } from "@/server/config";
 import { completeJson, modelConfigured } from "@/server/openrouter";
 
@@ -6,8 +6,24 @@ type Noted = {
   analyticalNote: string;
   highlights: Highlight[];
   analysis: DocumentAnalysis;
+  citations?: Citation[];
   noteByModel?: boolean;
 };
+
+/** Citations always come from parsed source file — never invented by the LLM. */
+export function sourceCitationsFromAnalysis(input: {
+  citations?: Citation[];
+  highlights: Highlight[];
+  fileName?: string;
+}): Citation[] {
+  if (input.citations?.length) return input.citations;
+  return input.highlights.map((h, i) => ({
+    id: h.id || `cite-${i}`,
+    text: h.text,
+    page: h.page,
+    sourceFile: input.fileName ?? "source",
+  }));
+}
 
 export const ANALYSIS_SYSTEM_PROMPT = `Ты аналитик кабинета истройка. Пишешь аналитическую записку по локальной смете или чертежу для тендерного специалиста.
 
@@ -101,11 +117,28 @@ export async function refineNote<T extends Noted>(
   facts: Record<string, unknown>,
   checks: Array<string | null>
 ): Promise<T> {
+  // Preserve / normalize citations from the source parse before any model call.
+  const citations = sourceCitationsFromAnalysis({
+    citations: analysis.citations,
+    highlights: analysis.highlights,
+    fileName:
+      typeof facts.fileName === "string"
+        ? facts.fileName
+        : typeof facts.estimateNumber === "string"
+          ? String(facts.estimateNumber)
+          : undefined,
+  });
+  const withCitations = { ...analysis, citations } as T;
+
+  if (!modelConfigured()) {
+    return withCitations;
+  }
+
   try {
     const note = await writeNote(facts, checks, analysis.highlights);
-    if (!note) return analysis;
+    if (!note) return withCitations;
     return {
-      ...analysis,
+      ...withCitations,
       analyticalNote: note,
       noteByModel: true,
       analysis: { ...analysis.analysis, narrator: config.openRouterModel },
@@ -115,6 +148,6 @@ export async function refineNote<T extends Noted>(
       "model note skipped:",
       error instanceof Error ? error.message.slice(0, 200) : "error"
     );
-    return analysis;
+    return withCitations;
   }
 }

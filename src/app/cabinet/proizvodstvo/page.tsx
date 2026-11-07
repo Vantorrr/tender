@@ -63,6 +63,7 @@ export default function ProizvodstvoPage() {
         actions={
           plan ? (
             <Button
+              data-testid="planfact-export"
               onClick={() => {
                 downloadUrl(`/api/export?kind=planfact-xlsx&id=${plan.id}`);
                 toast.success("Скачивание XLSX…");

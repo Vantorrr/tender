@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import { GRAND_PROFILE } from "@/lib/grand-profile";
 import { refineNote } from "@/server/model-note";
+import { extractDocumentText, ocrConfigured } from "@/server/ocr";
 import type {
   CardStatus,
   Citation,
@@ -543,16 +544,45 @@ export async function analyzeUpload(
     );
   }
   if (fileType === "pdf" || fileName.toLowerCase().endsWith(".pdf")) {
+    const ocr = await extractDocumentText({
+      fileName,
+      buffer: buf,
+      mimeHint: "application/pdf",
+    });
     if (/ТП-КП-М-Д|101-3103|КМ/i.test(fileName)) {
       const analysis = analysisFromDrawing(fileName);
+      if (ocr.status === "not_configured" || !ocrConfigured()) {
+        analysis.highlights = [
+          ...analysis.highlights,
+          {
+            id: "h-ocr",
+            text: "OCR не сконфигурирован",
+            reason: ocr.reason,
+            severity: "info",
+            page: 1,
+          },
+        ];
+      } else if (ocr.text) {
+        analysis.analyticalNote = `${analysis.analyticalNote}\nOCR (${ocr.provider}): ${ocr.text.slice(0, 400)}`;
+        analysis.citations = [
+          ...analysis.citations,
+          {
+            id: "c-ocr",
+            text: ocr.text.slice(0, 160),
+            page: 1,
+            sourceFile: fileName,
+          },
+        ];
+      }
       return refineNote(
         analysis,
         {
           kind: "drawing",
           fileName,
           profile: GRAND_PROFILE,
-          pages: 24,
-          textLayer: false,
+          pages: ocr.pageCount ?? 24,
+          textLayer: Boolean(ocr.text),
+          ocrStatus: ocr.status,
           profileMatch: analysis.analysis.profileMatch,
         },
         [GRAND_PROFILE.drawing, "текст"]
@@ -560,7 +590,9 @@ export async function analyzeUpload(
     }
     return unrecognized(
       fileName,
-      `PDF не совпал с чертежом ${GRAND_PROFILE.drawing} и не является таблицей сметы. Текстовый слой не разобран.`
+      ocr.status === "not_configured"
+        ? `PDF не совпал с чертежом ${GRAND_PROFILE.drawing}. ${ocr.reason}`
+        : `PDF не совпал с чертежом ${GRAND_PROFILE.drawing} и не является таблицей сметы. Текстовый слой не разобран.`
     );
   }
   return unrecognized(

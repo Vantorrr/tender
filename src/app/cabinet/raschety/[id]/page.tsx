@@ -120,10 +120,18 @@ export default function RaschetDetailPage() {
             >
               Обновить из справочников
             </Button>
-            <Button variant="outline" onClick={exportExcelLike}>
+            <Button
+              variant="outline"
+              data-testid="calc-export-xlsx"
+              onClick={exportExcelLike}
+            >
               Excel
             </Button>
-            <Button variant="outline" onClick={exportPdfLike}>
+            <Button
+              variant="outline"
+              data-testid="calc-export-pdf"
+              onClick={exportPdfLike}
+            >
               PDF
             </Button>
           </>
@@ -132,32 +140,30 @@ export default function RaschetDetailPage() {
 
       <div className="mb-4 flex flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-end">
         <div>
-          <p className="mb-1 text-xs text-[var(--tk-muted)]">Сценарий</p>
-          <Select
+          <label
+            htmlFor="calc-scenario"
+            className="mb-1 block text-xs text-[var(--tk-muted)]"
+          >
+            Сценарий
+          </label>
+          {/* Native select: reliable for a11y + browser E2E (Base UI Select was flaky under automation). */}
+          <select
+            id="calc-scenario"
+            data-testid="calc-scenario"
+            aria-label="Сценарий расчёта"
+            className="flex h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm sm:w-[220px]"
             value={calc.scenario}
-            onValueChange={(v) => {
+            onChange={(e) => {
+              const v = e.target.value as Calculation["scenario"];
               if (!v) return;
-              recalcCalculation(calc.id, v as Calculation["scenario"]);
+              void recalcCalculation(calc.id, v);
               toast.success("Пересчёт выполнен");
             }}
           >
-            <SelectTrigger className="w-full sm:w-[220px]">
-              <SelectValue>
-                {{
-                  bazovyy: "Базовый",
-                  optimisticheskiy: "Оптимистичный ×0,95",
-                  pessimisticheskiy: "Пессимистичный ×1,08",
-                }[calc.scenario] ?? calc.scenario}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="bazovyy">Базовый</SelectItem>
-              <SelectItem value="optimisticheskiy">Оптимистичный ×0,95</SelectItem>
-              <SelectItem value="pessimisticheskiy">
-                Пессимистичный ×1,08
-              </SelectItem>
-            </SelectContent>
-          </Select>
+            <option value="bazovyy">Базовый</option>
+            <option value="optimisticheskiy">Оптимистичный ×0,95</option>
+            <option value="pessimisticheskiy">Пессимистичный ×1,08</option>
+          </select>
         </div>
         <div>
           <p className="mb-1 text-xs text-[var(--tk-muted)]">Участие</p>

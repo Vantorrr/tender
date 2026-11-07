@@ -6,18 +6,18 @@ import {
   setUserSections,
   updateUser,
 } from "@/server/repo";
-import { withUser, json } from "@/server/http";
+import { withSection, json } from "@/server/http";
 import type { Role, SectionKey, User } from "@/lib/types";
 import { DEFAULT_SECTIONS } from "@/lib/roles";
 
 export async function GET(req: Request) {
-  return withUser(req, (user) =>
+  return withSection(req, "polzovateli", (user) =>
     json({ items: getBootstrap(user).data.users })
   );
 }
 
 export async function POST(req: Request) {
-  return withUser(req, async (user) => {
+  return withSection(req, "polzovateli", async (user) => {
     if (user.role !== "superadmin" && user.role !== "admin") {
       return json({ error: "Недостаточно прав" }, 403);
     }
@@ -44,7 +44,7 @@ export async function POST(req: Request) {
 }
 
 export async function PATCH(req: Request) {
-  return withUser(req, async (user) => {
+  return withSection(req, "polzovateli", async (user) => {
     if (user.role !== "superadmin" && user.role !== "admin") {
       return json({ error: "Недостаточно прав" }, 403);
     }

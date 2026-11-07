@@ -87,6 +87,7 @@ export default function DengiPage() {
         actions={
           plan ? (
             <Button
+              data-testid="money-export"
               onClick={() => {
                 downloadUrl(`/api/export?kind=money-xlsx&id=${plan.id}`);
                 toast.success("Скачивание XLSX…");

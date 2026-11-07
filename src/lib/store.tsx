@@ -51,6 +51,11 @@ interface StoreContextValue {
   issueSecretKey: (userId: string) => Promise<string>;
   logout: () => Promise<void>;
   requestRecovery: (email: string) => Promise<{ ok: boolean; message: string }>;
+  resetPasswordWithCode: (
+    email: string,
+    code: string,
+    newPassword: string
+  ) => Promise<{ ok: boolean; message: string }>;
   resetData: () => Promise<void>;
   refresh: () => Promise<void>;
   markNotificationRead: (id: string) => Promise<void>;
@@ -218,10 +223,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const requestRecovery = useCallback(async (email: string) => {
     const res = await api<{ message: string }>("/api/auth/recover", {
       method: "POST",
-      body: JSON.stringify({ email }),
+      body: JSON.stringify({ email, action: "request" }),
     });
     return { ok: true, message: res.message };
   }, []);
+
+  const resetPasswordWithCode = useCallback(
+    async (email: string, code: string, newPassword: string) => {
+      const res = await api<{ message: string }>("/api/auth/recover", {
+        method: "POST",
+        body: JSON.stringify({ email, code, newPassword, action: "reset" }),
+      });
+      return { ok: true, message: res.message };
+    },
+    []
+  );
 
   const resetData = useCallback(async () => {
     const boot = await api<BootstrapResponse>("/api/admin", {
@@ -604,6 +620,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     issueSecretKey,
     logout,
     requestRecovery,
+    resetPasswordWithCode,
     resetData,
     refresh,
     markNotificationRead,

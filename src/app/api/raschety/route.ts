@@ -4,17 +4,17 @@ import {
   recalcCalculation,
   updateCalculation,
 } from "@/server/repo";
-import { withUser, json } from "@/server/http";
+import { withSection, json } from "@/server/http";
 import type { Calculation } from "@/lib/types";
 
 export async function GET(req: Request) {
-  return withUser(req, (user) =>
+  return withSection(req, "raschety", (user) =>
     json({ items: getBootstrap(user).data.calculations })
   );
 }
 
 export async function PATCH(req: Request) {
-  return withUser(req, async (user) => {
+  return withSection(req, "raschety", async (user) => {
     const body = (await req.json()) as {
       id?: string;
       patch?: Partial<Calculation>;

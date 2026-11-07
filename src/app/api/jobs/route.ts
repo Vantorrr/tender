@@ -3,11 +3,20 @@ import {
   runProcurementSync,
   runReanalyzePipeline,
 } from "@/server/jobs";
+import { assertSection } from "@/server/acl";
 import { getBootstrap } from "@/server/repo";
 import { withUser, json } from "@/server/http";
 
 export async function GET(req: Request) {
-  return withUser(req, () => json({ jobs: getJobs() }));
+  return withUser(req, (user) => {
+    // Jobs list is visible to admin section; others get empty for least privilege.
+    try {
+      assertSection(user, "admin");
+    } catch {
+      return json({ jobs: [] });
+    }
+    return json({ jobs: getJobs() });
+  });
 }
 
 export async function POST(req: Request) {
@@ -17,7 +26,8 @@ export async function POST(req: Request) {
       documentId?: string;
     };
     if (body.type === "procurement_sync") {
-      const result = runProcurementSync(user.id);
+      assertSection(user, "zakupki");
+      const result = await runProcurementSync(user.id);
       return json({
         ...getBootstrap(user),
         jobs: result.jobs,
@@ -25,6 +35,7 @@ export async function POST(req: Request) {
       });
     }
     if (body.type === "document_reanalyze" && body.documentId) {
+      assertSection(user, "dokumenty");
       const result = await runReanalyzePipeline(user.id, body.documentId);
       return json({
         ...getBootstrap(user),

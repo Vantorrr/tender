@@ -4,17 +4,17 @@ import {
   setProcurementReview,
   updateProcurement,
 } from "@/server/repo";
-import { withUser, json } from "@/server/http";
+import { withSection, json } from "@/server/http";
 import type { ReviewStatus } from "@/lib/types";
 
 export async function GET(req: Request) {
-  return withUser(req, (user) =>
+  return withSection(req, "zakupki", (user) =>
     json({ items: getBootstrap(user).data.procurements })
   );
 }
 
 export async function PATCH(req: Request) {
-  return withUser(req, async (user) => {
+  return withSection(req, "zakupki", async (user) => {
     const body = (await req.json()) as {
       id?: string;
       reviewStatus?: ReviewStatus;
@@ -39,7 +39,7 @@ export async function PATCH(req: Request) {
 }
 
 export async function POST(req: Request) {
-  return withUser(req, async (user) => {
+  return withSection(req, "zakupki", async (user) => {
     const body = (await req.json()) as {
       action?: "ensureChain";
       id?: string;

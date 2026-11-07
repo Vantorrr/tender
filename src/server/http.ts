@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
+import { assertSection } from "@/server/acl";
 import { getSessionUser } from "@/server/auth";
 import { ensureReady } from "@/server/db";
-import type { User } from "@/lib/types";
+import type { SectionKey, User } from "@/lib/types";
 
 export async function requireUser(
   req?: Request
@@ -38,6 +39,18 @@ export async function withUser(
   } catch (e) {
     return handleRouteError(e);
   }
+}
+
+/** Auth + section ACL (server-side role matrix). Superadmin always passes. */
+export async function withSection(
+  req: Request,
+  section: SectionKey,
+  handler: (user: User) => Promise<NextResponse> | NextResponse
+): Promise<NextResponse> {
+  return withUser(req, async (user) => {
+    assertSection(user, section);
+    return handler(user);
+  });
 }
 
 export function json(data: unknown, status = 200) {

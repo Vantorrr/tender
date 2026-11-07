@@ -1,10 +1,10 @@
 import { readAppData } from "@/server/db";
 import { readUpload } from "@/server/uploads";
-import { withUser, json } from "@/server/http";
+import { withSection, json } from "@/server/http";
 import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
-  return withUser(req, async (user) => {
+  return withSection(req, "dokumenty", async (user) => {
     const id = new URL(req.url).searchParams.get("id");
     if (!id) return json({ error: "Не указан id" }, 400);
     const data = readAppData();

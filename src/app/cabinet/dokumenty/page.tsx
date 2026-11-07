@@ -7,13 +7,6 @@ import { EntityCard } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { formatDateTime } from "@/lib/format";
 import { useStore } from "@/lib/store";
 
@@ -54,33 +47,30 @@ export default function DokumentyPage() {
         description="Загрузка PDF/DOCX/XLSX на сервер, аналитическая записка, версии и повторный разбор."
         actions={
           <>
-            <Select
+            <select
+              data-testid="doc-procurement"
+              aria-label="Закупка для загрузки"
+              className="flex h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm sm:w-[220px]"
               value={procurementId}
-              onValueChange={(v) => {
-                if (v) setPickedId(v);
-              }}
+              onChange={(e) => setPickedId(e.target.value)}
             >
-              <SelectTrigger className="w-full sm:w-[220px]">
-                <SelectValue placeholder="Закупка">
-                  {(value) =>
-                    orgProcurements.find((p) => p.id === value)?.number ??
-                    "Закупка"
-                  }
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {orgProcurements.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.number}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+              {orgProcurements.length === 0 ? (
+                <option value="">Нет закупок</option>
+              ) : null}
+              {orgProcurements.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.number}
+                </option>
+              ))}
+            </select>
+            {/* sr-only (not display:none) so a11y/E2E can target the input; button still opens picker. */}
             <input
               ref={inputRef}
+              id="doc-file-input"
+              data-testid="doc-file-input"
               type="file"
-              accept=".pdf,.docx,.xlsx"
-              className="hidden"
+              accept=".pdf,.docx,.xlsx,.txt"
+              className="sr-only"
               onChange={async (e) => {
                 const file = e.target.files?.[0];
                 if (!file) return;
@@ -89,11 +79,24 @@ export default function DokumentyPage() {
               }}
             />
             <Button
-              onClick={() => inputRef.current?.click()}
+              data-testid="doc-upload"
+              type="button"
               disabled={!procurementId}
+              onClick={() => inputRef.current?.click()}
             >
               Загрузить документ
             </Button>
+            <label
+              htmlFor="doc-file-input"
+              data-testid="doc-upload-label"
+              className={
+                procurementId
+                  ? "sr-only"
+                  : "pointer-events-none sr-only opacity-50"
+              }
+            >
+              Выбрать файл документа
+            </label>
           </>
         }
       />

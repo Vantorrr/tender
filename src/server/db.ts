@@ -54,6 +54,13 @@ export function getDb(): DatabaseSync {
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_exp ON sessions(expires_at);
 
+    CREATE TABLE IF NOT EXISTS recovery_tokens (
+      email TEXT PRIMARY KEY,
+      token_hash TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
       type TEXT NOT NULL,
@@ -384,6 +391,17 @@ export function clearClientImportFlag() {
   metaSet(getDb(), "client_xlsx_imported", "0");
 }
 
+function ensureRecoveryTable(db: DatabaseSync) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS recovery_tokens (
+      email TEXT PRIMARY KEY,
+      token_hash TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+}
+
 export function ensureReady() {
   const db = getDb();
   // allow hot-reload to pick up SCHEMA_VERSION bumps without process restart
@@ -391,6 +409,19 @@ export function ensureReady() {
   if (version !== SCHEMA_VERSION) {
     migrate(db);
   }
+  ensureRecoveryTable(db);
   ensureClientDirectoriesPresent(db);
   return healthSnapshot();
+}
+
+/** Close singleton DB — for isolated tests that switch DATA_DIR/DB_FILE. */
+export function closeDb(): void {
+  if (!globalThis.__tkDb) return;
+  try {
+    globalThis.__tkDb.close();
+  } catch {
+    /* already closed */
+  }
+  globalThis.__tkDb = undefined;
+  globalThis.__tkWriteLock = false;
 }
