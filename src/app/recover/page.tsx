@@ -21,7 +21,7 @@ export default function RecoverPage() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center px-4 py-10">
-      <div className="tk-glass relative z-10 w-full max-w-md rounded-[28px] p-8">
+      <div className="tk-window tk-glass relative z-10 w-full max-w-md rounded-[28px] p-8">
         <Link href="/">
           <Logo tone="ink" titleClassName="text-xl" />
         </Link>

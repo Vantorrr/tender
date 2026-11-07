@@ -317,9 +317,38 @@
   }
 
   .tk-page {
-    animation: page-in 0.42s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: page-in 0.64s cubic-bezier(0.16, 1, 0.3, 1) both;
     max-width: 100%;
     overflow-x: clip;
+  }
+
+  .tk-stage {
+    animation: tk-veil-in 0.45s ease both;
+  }
+
+  .tk-window {
+    animation: tk-window-in 0.78s cubic-bezier(0.16, 1, 0.3, 1) both;
+    transform-origin: center center;
+  }
+
+  .tk-window-pane {
+    animation: tk-pane-in 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .tk-window-pane:nth-child(2) {
+    animation-delay: 0.08s;
+  }
+
+  .tk-field-stagger > * {
+    animation: fade-slide 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  .tk-field-stagger > *:nth-child(1) { animation-delay: 0.16s; }
+  .tk-field-stagger > *:nth-child(2) { animation-delay: 0.24s; }
+  .tk-field-stagger > *:nth-child(3) { animation-delay: 0.32s; }
+
+  .tk-swap {
+    animation: fade-slide 0.38s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
   .tk-page .grid,
@@ -331,12 +360,14 @@
   .tk-stagger > * {
     animation: fade-slide 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
-  .tk-stagger > *:nth-child(1) { animation-delay: 0.02s; }
-  .tk-stagger > *:nth-child(2) { animation-delay: 0.06s; }
-  .tk-stagger > *:nth-child(3) { animation-delay: 0.1s; }
-  .tk-stagger > *:nth-child(4) { animation-delay: 0.14s; }
-  .tk-stagger > *:nth-child(5) { animation-delay: 0.18s; }
-  .tk-stagger > *:nth-child(6) { animation-delay: 0.22s; }
+  .tk-stagger > *:nth-child(1) { animation-delay: 0.05s; }
+  .tk-stagger > *:nth-child(2) { animation-delay: 0.11s; }
+  .tk-stagger > *:nth-child(3) { animation-delay: 0.17s; }
+  .tk-stagger > *:nth-child(4) { animation-delay: 0.23s; }
+  .tk-stagger > *:nth-child(5) { animation-delay: 0.29s; }
+  .tk-stagger > *:nth-child(6) { animation-delay: 0.35s; }
+  .tk-stagger > *:nth-child(7) { animation-delay: 0.41s; }
+  .tk-stagger > *:nth-child(8) { animation-delay: 0.47s; }
 
   .animate-rise {
     animation: rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -394,12 +425,57 @@
 @keyframes page-in {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(22px);
   }
   to {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+@keyframes tk-window-in {
+  from {
+    opacity: 0;
+    transform: translateY(36px) scale(0.94);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes tk-pane-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes tk-veil-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+[data-slot="dialog-content"],
+[data-slot="dialog-overlay"],
+[data-slot="dropdown-menu-content"],
+[data-slot="popover-content"],
+[data-slot="select-content"],
+[data-slot="tooltip-content"] {
+  animation-duration: 340ms;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-slot="sheet-overlay"],
+[data-slot="sheet-content"] {
+  transition-duration: 520ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -409,6 +485,11 @@
   .animate-drift,
   .animate-fade-slide,
   .tk-page,
+  .tk-stage,
+  .tk-window,
+  .tk-window-pane,
+  .tk-field-stagger > *,
+  .tk-swap,
   .tk-stagger > *,
   .tk-blob {
     animation: none;

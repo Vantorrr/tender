@@ -55,7 +55,7 @@ export default function CabinetHomePage() {
   ];
 
   return (
-    <div className="animate-in fade-in duration-500">
+    <div>
       <PageHeader
         title={`Здравствуйте, ${user.name.split(" ")[0]}`}
         description={`${ROLE_LABELS[user.role]} · ${
@@ -69,13 +69,12 @@ export default function CabinetHomePage() {
         }
       />
 
-      <div className="mb-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {stats.map((s, i) => (
+      <div className="tk-stagger mb-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {stats.map((s) => (
           <Link
             key={s.label}
             href={s.href}
             className="tk-glass rounded-3xl p-4 transition hover:-translate-y-0.5 hover:shadow-[0_18px_40px_-18px_rgba(46,58,90,0.35)]"
-            style={{ animationDelay: `${i * 60}ms` }}
           >
             <div className="flex items-center justify-between">
               <span className="text-sm text-[var(--tk-muted)]">{s.label}</span>
@@ -91,7 +90,7 @@ export default function CabinetHomePage() {
       <h2 className="mb-4 font-[family-name:var(--font-display)] text-lg tracking-tight">
         Активные закупки
       </h2>
-      <div className="grid gap-4 md:grid-cols-2">
+      <div className="tk-stagger grid gap-4 md:grid-cols-2">
         {recent.map((p) => (
           <EntityCard
             key={p.id}

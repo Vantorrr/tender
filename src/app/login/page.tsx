@@ -9,28 +9,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LoadingState } from "@/components/empty-state";
 import { Logo } from "@/components/logo";
-import { ROLE_LABELS } from "@/lib/roles";
-import { DEMO_SECRET_KEYS } from "@/lib/demo-accounts";
 import { useStore } from "@/lib/store";
-
-const DEMO_HINTS = [
-  { email: "super@tenderkontur.ru", password: "Super123!", role: "superadmin" as const },
-  { email: "admin@alfastroy.ru", password: "Admin123!", role: "admin" as const },
-  { email: "tender@alfastroy.ru", password: "Tender123!", role: "tender" as const },
-  { email: "smeta@alfastroy.ru", password: "Smeta123!", role: "smetchik" as const },
-];
-
-const DEMO_KEYS = [
-  { label: "Суперадмин", key: DEMO_SECRET_KEYS.super },
-  { label: "Администратор", key: DEMO_SECRET_KEYS.admin },
-];
 
 export default function LoginPage() {
   const { ready, user, login, loginWithSecret } = useStore();
   const router = useRouter();
   const [mode, setMode] = useState<"password" | "key">("password");
-  const [email, setEmail] = useState("tender@alfastroy.ru");
-  const [password, setPassword] = useState("Tender123!");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [secretKey, setSecretKey] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -70,9 +56,9 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center px-4 py-10">
-      <div className="relative z-10 grid w-full max-w-5xl overflow-hidden rounded-[32px] border border-white/70 shadow-[0_24px_70px_rgba(46,58,90,0.16)] lg:grid-cols-[1.05fr_0.95fr]">
-        <div className="tk-glass-dark hidden flex-col justify-between p-10 text-white lg:flex">
+    <div className="tk-stage relative flex min-h-screen items-center justify-center px-4 py-10">
+      <div className="tk-window relative z-10 grid w-full max-w-5xl overflow-hidden rounded-[32px] border border-white/70 shadow-[0_24px_70px_rgba(46,58,90,0.16)] lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="tk-window-pane tk-glass-dark hidden flex-col justify-between p-10 text-white lg:flex">
           <div>
             <div className="mb-8">
               <Logo markClassName="h-12 w-12" titleClassName="text-2xl" />
@@ -88,7 +74,7 @@ export default function LoginPage() {
           <p className="text-xs text-white/50">Договор № TMA361 · 26.10.2026</p>
         </div>
 
-        <div className="tk-glass p-6 sm:p-10">
+        <div className="tk-window-pane tk-glass p-6 sm:p-10">
           <div className="mb-8 lg:hidden">
             <Link href="/">
               <Logo tone="ink" titleClassName="text-xl" />
@@ -128,13 +114,14 @@ export default function LoginPage() {
             </div>
 
             {mode === "password" ? (
-              <>
+              <div key="password" className="tk-swap space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="email">Email</Label>
                   <Input
                     id="email"
                     type="email"
                     autoComplete="username"
+                    placeholder="name@company.ru"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
@@ -151,9 +138,9 @@ export default function LoginPage() {
                     required
                   />
                 </div>
-              </>
+              </div>
             ) : (
-              <div className="space-y-2">
+              <div key="key" className="tk-swap space-y-2">
                 <Label htmlFor="secretKey">Секретный ключ</Label>
                 <Input
                   id="secretKey"
@@ -192,53 +179,6 @@ export default function LoginPage() {
             </Link>
           </div>
 
-          <div className="mt-8 border-t border-[var(--tk-line)] pt-6">
-            <p className="mb-3 text-xs font-medium uppercase tracking-wide text-[var(--tk-muted)]">
-              {mode === "password" ? "Быстрый вход (демо)" : "Демо-ключи"}
-            </p>
-            <div className="flex flex-col gap-2">
-              {mode === "password"
-                ? DEMO_HINTS.map((d) => (
-                    <button
-                      key={d.email}
-                      type="button"
-                      disabled={loading}
-                      className="tk-glass-chip rounded-2xl px-3 py-2 text-left text-sm transition hover:bg-white/80 disabled:opacity-50"
-                      onClick={() => {
-                        setEmail(d.email);
-                        setPassword(d.password);
-                        void doLogin(d.email, d.password);
-                      }}
-                    >
-                      <span className="font-medium text-[var(--tk-ink)]">
-                        {ROLE_LABELS[d.role]}
-                      </span>
-                      <span className="mt-0.5 block text-xs text-[var(--tk-muted)]">
-                        {d.email}
-                      </span>
-                    </button>
-                  ))
-                : DEMO_KEYS.map((d) => (
-                    <button
-                      key={d.key}
-                      type="button"
-                      disabled={loading}
-                      className="tk-glass-chip rounded-2xl px-3 py-2 text-left text-sm transition hover:bg-white/80 disabled:opacity-50"
-                      onClick={() => {
-                        setSecretKey(d.key);
-                        void doKeyLogin(d.key);
-                      }}
-                    >
-                      <span className="font-medium text-[var(--tk-ink)]">
-                        {d.label}
-                      </span>
-                      <span className="mt-0.5 block font-mono text-xs text-[var(--tk-muted)]">
-                        {d.key}
-                      </span>
-                    </button>
-                  ))}
-            </div>
-          </div>
         </div>
       </div>
     </div>

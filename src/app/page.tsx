@@ -34,7 +34,7 @@ export default function HomePage() {
               size="lg"
               className="bg-[var(--tk-copper)] text-white hover:bg-[var(--tk-copper-deep)]"
             >
-              Открыть демо
+              Войти
               <ArrowRight className="h-4 w-4" />
             </Button>
             <Button
