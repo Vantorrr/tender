@@ -145,11 +145,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <div className="flex-1 overflow-y-auto px-1">
           <NavList collapsed={collapsed} />
         </div>
-        {!collapsed ? (
-          <div className="px-4 py-4 text-[11px] tracking-wide text-white/35">
-            Договор № TMA361
-          </div>
-        ) : null}
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">

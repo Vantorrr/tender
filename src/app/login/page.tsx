@@ -71,7 +71,6 @@ export default function LoginPage() {
               секретным ключом.
             </p>
           </div>
-          <p className="text-xs text-white/50">Договор № TMA361 · 26.10.2026</p>
         </div>
 
         <div className="tk-window-pane tk-glass p-6 sm:p-10">

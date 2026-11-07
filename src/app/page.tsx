@@ -39,23 +39,18 @@ export default function HomePage() {
         </Settle>
 
         <section className="flex flex-1 flex-col justify-center py-16 sm:py-20">
-          <Settle delay={120} y={18} blur={8}>
-            <p className="mb-4 text-sm font-medium uppercase tracking-[0.18em] text-[var(--tk-copper-deep)]">
-              Договор № TMA361 · 26.10.2026
-            </p>
-          </Settle>
-          <Settle delay={220} y={36} blur={12}>
+          <Settle delay={160} y={36} blur={12}>
             <h1 className="max-w-3xl">
               <Logo tone="ink" titleClassName="text-4xl leading-[1.05] sm:text-5xl lg:text-6xl" />
             </h1>
           </Settle>
-          <Settle delay={360} y={24} blur={8}>
+          <Settle delay={300} y={24} blur={8}>
             <p className="mt-5 max-w-xl text-base leading-relaxed text-[var(--tk-ink-soft)] sm:text-lg">
               Платформа отбора строительных тендеров: от ленты закупок до
               чернового расчёта, ГПР, денег и план/факта — в одном личном кабинете.
             </p>
           </Settle>
-          <Settle delay={500} y={20} blur={6}>
+          <Settle delay={440} y={20} blur={6}>
             <div className="mt-8 flex flex-wrap gap-3">
               <Button
                 render={<Link href="/login" />}
@@ -79,7 +74,7 @@ export default function HomePage() {
 
         <section className="grid gap-4 py-8 sm:grid-cols-3">
           {POINTS.map((item, index) => (
-            <Settle key={item.title} delay={680 + index * 110} y={32} blur={8}>
+            <Settle key={item.title} delay={620 + index * 110} y={32} blur={8}>
               <div className="tk-glass rounded-3xl p-5">
                 <item.icon className="mb-3 h-5 w-5 text-[var(--tk-copper-deep)]" />
                 <h2 className="font-[family-name:var(--font-display)] text-base text-[var(--tk-ink)]">
