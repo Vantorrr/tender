@@ -159,6 +159,20 @@ describe("recovery / mail honesty", () => {
     );
     expect(status.detail).toMatch(/не боевая|не полностью/i);
   });
+
+  it("public healthSnapshot does not disclose secret presence or SMTP missing list", async () => {
+    const { ensureReady, closeDb } = await import("@/server/db");
+    const snap = ensureReady() as Record<string, unknown>;
+    expect(snap.ok).toBe(true);
+    const mail = snap.mail as Record<string, unknown>;
+    const llm = snap.llm as Record<string, unknown>;
+    expect(mail.live).toBeDefined();
+    expect(mail.missing).toBeUndefined();
+    expect(mail.transport).toBeUndefined();
+    expect(llm.configured).toBeUndefined();
+    expect(llm.model).toBeUndefined();
+    void closeDb;
+  });
 });
 
 describe("golden XLSX burenie (hand-expected)", () => {

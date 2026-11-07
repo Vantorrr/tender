@@ -46,59 +46,33 @@ export async function POST(req: Request) {
     const data = readAppData();
     const user = data.users.find((u) => u.email.toLowerCase() === email);
 
-    // Honest status when outbound mail is not live — never invent SMTP or leak codes.
-    if (!status.live) {
-      // Still issue+sink locally for file/memory so isolated tests work, but API stays safe.
-      if (user && !user.blocked) {
-        const code = issueRecoveryCode(user.email);
-        const transport = getMailTransport();
-        await sendMail({
-          to: user.email,
-          subject: "Восстановление доступа — истройка",
-          text: [
-            "Запрос на восстановление пароля.",
-            `Код восстановления: ${code}`,
-            "Код действует 30 минут. Если вы не запрашивали восстановление, проигнорируйте письмо.",
-          ].join("\n"),
-        });
-        // Never echo recovery codes. Local sinks only acknowledge transport id.
-        if (transport.id === "smtp") {
-          return NextResponse.json(GENERIC);
-        }
+    // Issue+send only for existing unblocked users — response shape is identical
+    // either way (no account enumeration / no mail-stack recon on this endpoint).
+    if (user && !user.blocked) {
+      const code = issueRecoveryCode(user.email);
+      await sendMail({
+        to: user.email,
+        subject: "Восстановление доступа — истройка",
+        text: [
+          "Запрос на восстановление пароля.",
+          `Код восстановления: ${code}`,
+          "Код действует 30 минут. Если вы не запрашивали восстановление, проигнорируйте письмо.",
+        ].join("\n"),
+      });
+      // Local debug only — never on prod.
+      if (process.env.RECOVER_EXPOSE_CODE === "1" && getMailTransport().id !== "smtp") {
         return NextResponse.json({
-          message: `Почта не боевая (транспорт: ${transport.id}). Письма людям не уходят.`,
-          transport: transport.id,
-          mailLive: false,
-          missing: status.missing,
-          // Code only when explicitly enabled for local debug — never on prod.
+          ...GENERIC,
+          mailLive: status.live,
           ...(process.env.RECOVER_EXPOSE_CODE === "1" ? { code } : {}),
         });
       }
-      return NextResponse.json({
-        ...GENERIC,
-        mailLive: false,
-        transport: status.transport,
-        missing: status.missing,
-      });
     }
 
-    if (!user || user.blocked) {
-      return NextResponse.json({ ...GENERIC, mailLive: true });
-    }
-
-    const code = issueRecoveryCode(user.email);
-    await sendMail({
-      to: user.email,
-      subject: "Восстановление доступа — истройка",
-      text: [
-        "Запрос на восстановление пароля.",
-        `Код восстановления: ${code}`,
-        "Код действует 30 минут. Если вы не запрашивали восстановление, проигнорируйте письмо.",
-      ].join("\n"),
+    return NextResponse.json({
+      ...GENERIC,
+      mailLive: status.live,
     });
-
-    // Live SMTP: never echo code/password.
-    return NextResponse.json({ ...GENERIC, mailLive: true, transport: "smtp" });
   } catch (e) {
     return handleRouteError(e, "Ошибка восстановления");
   }

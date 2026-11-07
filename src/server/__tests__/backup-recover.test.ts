@@ -47,10 +47,14 @@ describe("password recovery + mail sink", () => {
       code?: string;
       mailLive?: boolean;
       missing?: string[];
+      transport?: string;
     };
-    expect(body.message).toMatch(/почта не боевая|транспорт|отправлен/i);
+    // Generic message for known and unknown emails (no enumeration).
+    expect(body.message).toMatch(/если аккаунт|отправлен/i);
     expect(body.code).toBeUndefined(); // not exposed by default
-    expect(body.mailLive).toBe(false);
+    expect(body.missing).toBeUndefined();
+    expect(body.transport).toBeUndefined();
+    expect(typeof body.mailLive).toBe("boolean");
     const inbox = getMailInbox();
     expect(inbox.length).toBe(1);
     const match = inbox[0].text.match(/Код восстановления:\s*([a-f0-9]+)/i);

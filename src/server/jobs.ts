@@ -1,3 +1,4 @@
+import { assertOrgAccess } from "@/server/acl";
 import { insertJob, listJobs, mutateAppData, readAppData, updateJob } from "@/server/db";
 import { analyzeUpload } from "@/server/grand-smeta";
 import {
@@ -219,12 +220,18 @@ export async function runReanalyzePipeline(
     createdAt: new Date().toISOString(),
   });
   try {
-    const existing = readAppData().documents.find((item) => item.id === documentId);
-    const buf = existing?.storedPath ? readUpload(existing.storedPath) : null;
+    const snapshot = readAppData();
+    const actor = snapshot.users.find((u) => u.id === actorId);
+    if (!actor || actor.blocked) throw new Error("Пользователь не найден");
+    const existing = snapshot.documents.find((item) => item.id === documentId);
+    if (!existing) throw new Error("Документ не найден");
+    // Org ACL BEFORE readUpload / analyzeUpload / any paid model call.
+    assertOrgAccess(actor, existing.orgId, "документа");
+    const buf = existing.storedPath ? readUpload(existing.storedPath) : null;
     const prepared = buf
       ? await analyzeUpload(
-          existing?.fileName ?? "file",
-          existing?.fileType ?? "xlsx",
+          existing.fileName ?? "file",
+          existing.fileType ?? "xlsx",
           buf,
           { useLlm }
         )
