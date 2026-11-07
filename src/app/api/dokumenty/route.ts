@@ -48,19 +48,28 @@ export async function POST(req: Request) {
       const buf = Buffer.from(await file.arrayBuffer());
       let prepared;
       try {
-        prepared = await Promise.race([
-          analyzeUpload(file.name, fileType, buf, { useLlm }),
-          new Promise<never>((_, reject) =>
-            setTimeout(
-              () => reject(new Error("Таймаут разбора документа")),
-              config.analysisTimeoutMs
-            )
-          ),
-        ]);
+        // Cancellable timeout — clear on success so the timer cannot
+        // reject as an unhandledRejection after a finished upload.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timeout = new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("Таймаут разбора документа")),
+            config.analysisTimeoutMs
+          );
+        });
+        try {
+          prepared = await Promise.race([
+            analyzeUpload(file.name, fileType, buf, { useLlm }),
+            timeout,
+          ]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
       } catch (e) {
         const message =
           e instanceof Error ? e.message.slice(0, 200) : "ошибка разбора";
-        return json({ error: message }, 504);
+        const timedOut = /таймаут/i.test(message);
+        return json({ error: message }, timedOut ? 504 : 422);
       }
       const title =
         String(form.get("title") ?? "").trim() || prepared.title;
