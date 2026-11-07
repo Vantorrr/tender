@@ -388,6 +388,23 @@
   .animate-fade-slide {
     animation: fade-slide 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
+
+  .tk-settle {
+    opacity: 0;
+    transform: translate3d(0, var(--settle-y, 28px), 0);
+    filter: blur(var(--settle-blur, 10px));
+  }
+
+  .tk-settle.is-on {
+    animation: tk-settle-in 1.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  .tk-settle.is-done {
+    opacity: 1;
+    transform: none;
+    filter: none;
+    animation: none;
+  }
 }
 
 @keyframes rise {
@@ -462,6 +479,22 @@
   to { opacity: 1; }
 }
 
+@keyframes tk-settle-in {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, var(--settle-y, 28px), 0);
+    filter: blur(var(--settle-blur, 10px));
+  }
+  55% {
+    filter: blur(0);
+  }
+  100% {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+    filter: blur(0);
+  }
+}
+
 [data-slot="dialog-content"],
 [data-slot="dialog-overlay"],
 [data-slot="dropdown-menu-content"],
@@ -491,8 +524,16 @@
   .tk-field-stagger > *,
   .tk-swap,
   .tk-stagger > *,
+  .tk-settle,
+  .tk-settle.is-on,
   .tk-blob {
     animation: none;
+  }
+  .tk-settle,
+  .tk-settle.is-done {
+    opacity: 1;
+    transform: none;
+    filter: none;
   }
   html {
     scroll-behavior: auto;
