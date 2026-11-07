@@ -9,6 +9,10 @@ services:
       DATA_DIR: /app/data
       SYNC_INTERVAL_MS: "300000"
       SESSION_DAYS: "7"
+      OCR_PROVIDER: auto
+      OCR_LANGS: eng+rus
+      MAIL_TRANSPORT: file
+
     volumes:
       - tk_data:/app/data
     restart: unless-stopped

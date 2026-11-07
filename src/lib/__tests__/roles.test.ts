@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ALL_SECTIONS, DEFAULT_SECTIONS, ROLE_LABELS } from "@/lib/roles";
-import { roleMatrix, userHasSection } from "@/server/acl";
+import { roleMatrix, userHasSection } from "@/lib/acl";
 import type { User } from "@/lib/types";
 
 const roles = Object.keys(ROLE_LABELS) as Array<keyof typeof ROLE_LABELS>;

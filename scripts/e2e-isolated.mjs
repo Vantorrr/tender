@@ -18,13 +18,11 @@ if (/railway\.app/i.test(base)) {
 
 const results = [];
 const notCovered = [
-  "Real vendor procurement API / credentials",
-  "Paid OpenRouter LLM note generation",
-  "Cloud OCR vendors",
-  "Real SMTP delivery to human inboxes",
-  "SSO / IdP login",
-  "Railway volume / production DATA_DIR alignment",
-  "Browser UI click-path for every cabinet page (API-level E2E only)",
+  "Real vendor procurement API / credentials (customer agreement)",
+  "Paid OpenRouter LLM note generation (isolated: НЕ ПРОВЕРЕНО)",
+  "Cloud OCR vendors (local tesseract in Docker image is prepared)",
+  "SMTP delivery to real human inboxes (local smtp-sink covered in vitest)",
+  "Named smeta vendor beyond ГРАНД-Смета fixtures already in repo",
   "Create-organization admin flow (still optional)",
 ];
 

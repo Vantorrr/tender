@@ -1,14 +1,16 @@
 /**
  * Mail transport for password recovery.
  * - memory: in-process inbox (unit tests)
- * - file: local sink under DATA_DIR/mail-sink (safe, no real humans)
+ * - file: local sink under DATA_DIR/mail-sink
  * - console: log + memory
- * - smtp: requires SMTP_HOST; never used in isolated CI
+ * - smtp: real SMTP via nodemailer (SMTP_HOST required)
+ * - smtp-sink: connect to a local smtp-server sink (tests; no humans)
  * Never puts passwords in mail — only opaque recovery codes.
  */
 
 import fs from "node:fs";
 import path from "node:path";
+import nodemailer from "nodemailer";
 import { config } from "@/server/config";
 
 export type MailMessage = {
@@ -66,7 +68,7 @@ export class ConsoleMailTransport implements MailTransport {
   }
 }
 
-/** Writes JSON messages under data/mail-sink — local/test only, never SMTP. */
+/** Writes JSON messages under data/mail-sink — local/test only. */
 export class FileMailTransport implements MailTransport {
   readonly id = "file";
 
@@ -82,7 +84,6 @@ export class FileMailTransport implements MailTransport {
     pushInbox(full);
     const file = path.join(this.sinkDir(), `${id}.json`);
     fs.writeFileSync(file, JSON.stringify(full, null, 2), "utf8");
-    // Latest pointer for easy test reads (no secrets beyond recovery code).
     fs.writeFileSync(
       path.join(this.sinkDir(), "latest.json"),
       JSON.stringify(full, null, 2),
@@ -92,25 +93,73 @@ export class FileMailTransport implements MailTransport {
   }
 }
 
-/**
- * SMTP placeholder: requires SMTP_HOST. Without it, falls back to file sink.
- * Does not invent credentials or open paid relays in CI.
- */
+export type SmtpConfig = {
+  host: string;
+  port: number;
+  secure: boolean;
+  user?: string;
+  pass?: string;
+  from: string;
+};
+
+export function readSmtpConfig(): SmtpConfig | null {
+  const host = process.env.SMTP_HOST?.trim();
+  if (!host) return null;
+  return {
+    host,
+    port: Number(process.env.SMTP_PORT ?? 587),
+    secure: process.env.SMTP_SECURE === "1" || process.env.SMTP_SECURE === "true",
+    user: process.env.SMTP_USER?.trim() || undefined,
+    pass: process.env.SMTP_PASS?.trim() || undefined,
+    from:
+      process.env.SMTP_FROM?.trim() ||
+      process.env.SMTP_USER?.trim() ||
+      "noreply@localhost",
+  };
+}
+
+/** Real SMTP via nodemailer — used for prod config and local smtp-sink tests. */
 export class SmtpMailTransport implements MailTransport {
-  readonly id = "smtp";
+  readonly id: string;
+  private readonly cfg: SmtpConfig;
+
+  constructor(cfg: SmtpConfig, id = "smtp") {
+    this.cfg = cfg;
+    this.id = id;
+  }
 
   async send(message: Omit<MailMessage, "at" | "id">) {
-    const host = process.env.SMTP_HOST?.trim();
-    if (!host) {
-      throw new Error("SMTP не сконфигурирован (нет SMTP_HOST)");
-    }
+    const transporter = nodemailer.createTransport({
+      host: this.cfg.host,
+      port: this.cfg.port,
+      secure: this.cfg.secure,
+      auth:
+        this.cfg.user && this.cfg.pass
+          ? { user: this.cfg.user, pass: this.cfg.pass }
+          : undefined,
+      tls: { rejectUnauthorized: process.env.SMTP_TLS_REJECT !== "0" },
+    });
+    const info = await transporter.sendMail({
+      from: this.cfg.from,
+      to: message.to,
+      subject: message.subject,
+      text: message.text,
+    });
     const full: MailMessage = {
       ...message,
-      text: `[smtp-queued via ${host}] ${message.text}`,
       at: new Date().toISOString(),
-      id: `smtp-${Date.now()}`,
+      id: String(info.messageId || `smtp-${Date.now()}`),
     };
     pushInbox(full);
+    // Mirror to file sink for local observability (never replaces SMTP send).
+    if (process.env.SMTP_MIRROR_FILE === "1") {
+      const dir = path.join(config.dataDir, "mail-sink");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "latest.json"),
+        JSON.stringify({ ...full, via: this.id }, null, 2)
+      );
+    }
     return { ok: true, transport: this.id, id: full.id };
   }
 }
@@ -120,9 +169,20 @@ function createDefaultTransport(): MailTransport {
   if (mode === "memory") return new MemoryMailTransport();
   if (mode === "console") return new ConsoleMailTransport();
   if (mode === "file") return new FileMailTransport();
-  if (mode === "smtp") {
-    if (process.env.SMTP_HOST?.trim()) return new SmtpMailTransport();
-    return new FileMailTransport();
+  if (mode === "smtp" || mode === "smtp-sink") {
+    const cfg = readSmtpConfig();
+    if (!cfg) {
+      if (mode === "smtp-sink") {
+        throw new Error(
+          "MAIL_TRANSPORT=smtp-sink требует SMTP_HOST (локальный sink, напр. 127.0.0.1)"
+        );
+      }
+      return new FileMailTransport();
+    }
+    return new SmtpMailTransport(
+      cfg,
+      mode === "smtp-sink" ? "smtp-sink" : "smtp"
+    );
   }
   return new FileMailTransport();
 }

@@ -24,11 +24,21 @@ export default function RiskiPage() {
   const { data, user, updateRisk, parseRiskContract } = useStore();
   const [riskId, setRiskId] = useState("");
 
-  const risks = useMemo(
-    () => (user ? data.risks.filter((r) => r.orgId === user.orgId) : []),
-    [data.risks, user]
-  );
-  const activeId = riskId || risks[0]?.id || "";
+  const risks = useMemo(() => {
+    if (!user) return [];
+    return data.risks
+      .filter((r) => r.orgId === user.orgId)
+      .slice()
+      .sort((a, b) => {
+        const score = (r: (typeof data.risks)[0]) =>
+          (r.remarks.length > 0 ? 2 : 0) + (r.contractParsed ? 1 : 0);
+        return score(b) - score(a);
+      });
+  }, [data.risks, user]);
+  // Prefer a registry that already has remarks (seed / parsed) over empty
+  // auto-created chain stubs that were unshifted to the front.
+  const preferredId = risks[0]?.id || "";
+  const activeId = riskId || preferredId;
   const risk = risks.find((r) => r.id === activeId);
 
   if (!user) return null;
@@ -115,6 +125,12 @@ export default function RiskiPage() {
 
           {risk ? (
             <div className="space-y-3">
+              {risk.remarks.length === 0 ? (
+                <EmptyState
+                  title="Замечаний пока нет"
+                  description="Нажмите «Разобрать договор», чтобы добавить замечания по тексту контракта."
+                />
+              ) : null}
               {risk.remarks.map((remark) => (
                 <div
                   key={remark.id}

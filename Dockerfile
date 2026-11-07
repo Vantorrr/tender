@@ -2,9 +2,18 @@ FROM node:22-bookworm-slim
 
 WORKDIR /app
 
+# curl — healthcheck; tesseract+poppler — local OCR for scans without text layer
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends curl \
-  && rm -rf /var/lib/apt/lists/*
+  && apt-get install -y --no-install-recommends \
+    curl \
+    tesseract-ocr \
+    tesseract-ocr-rus \
+    tesseract-ocr-eng \
+    poppler-utils \
+    ca-certificates \
+  && rm -rf /var/lib/apt/lists/* \
+  && tesseract --version \
+  && pdftoppm -v
 
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -16,8 +25,11 @@ ENV PORT=43141
 ENV HOST=0.0.0.0
 ENV DATA_DIR=/app/data
 ENV SYNC_INTERVAL_MS=300000
+ENV OCR_PROVIDER=auto
+ENV OCR_LANGS=eng+rus
+ENV MAIL_TRANSPORT=file
 
-RUN mkdir -p /app/data /app/data/uploads
+RUN mkdir -p /app/data /app/data/uploads /app/data/mail-sink
 
 EXPOSE 43141
 HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=5 \
