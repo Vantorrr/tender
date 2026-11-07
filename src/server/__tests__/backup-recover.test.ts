@@ -2,14 +2,18 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { closeDb, ensureReady, resetAppData } from "@/server/db";
-import { config, dbPath } from "@/server/config";
 import {
   clearMailInbox,
+  clearMailSink,
+  FileMailTransport,
   getMailInbox,
+  readMailSinkLatest,
   resetMailTransport,
+  setMailTransport,
 } from "@/server/mail";
-import { recoveryToken } from "@/server/auth";
+import { closeDb, ensureReady, readAppData, resetAppData } from "@/server/db";
+import { config, dbPath } from "@/server/config";
+import { verifyPassword } from "@/server/passwords";
 import { POST as recoverPost } from "@/app/api/auth/recover/route";
 
 beforeAll(() => {
@@ -17,37 +21,106 @@ beforeAll(() => {
   resetAppData();
   resetMailTransport();
   clearMailInbox();
+  clearMailSink();
 });
 
 afterAll(() => {
   closeDb();
 });
 
-describe("password recovery + test mail", () => {
-  it("sends mail with recovery code and does not echo password in body", async () => {
+describe("password recovery + mail sink", () => {
+  it("memory transport: request → code in inbox → reset → login hash changes", async () => {
     clearMailInbox();
+    const req = await recoverPost(
+      new Request("http://127.0.0.1/api/auth/recover", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: "tender@alfastroy.ru",
+          action: "request",
+        }),
+      })
+    );
+    expect(req.status).toBe(200);
+    const body = (await req.json()) as { message: string; code?: string };
+    expect(body.message).toMatch(/отправлен/i);
+    expect(body.code).toBeUndefined(); // not exposed by default
+    const inbox = getMailInbox();
+    expect(inbox.length).toBe(1);
+    const match = inbox[0].text.match(/Код восстановления:\s*([a-f0-9]+)/i);
+    expect(match?.[1]).toBeTruthy();
+    const code = match![1];
+    expect(inbox[0].text.toLowerCase()).not.toMatch(/tender123|password\s*[:=]/);
+
+    const newPassword = "IsolatedRecover9!";
+    const reset = await recoverPost(
+      new Request("http://127.0.0.1/api/auth/recover", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: "tender@alfastroy.ru",
+          action: "reset",
+          code,
+          newPassword,
+        }),
+      })
+    );
+    expect(reset.status).toBe(200);
+    const user = readAppData().users.find(
+      (u) => u.email === "tender@alfastroy.ru"
+    )!;
+    expect(verifyPassword(newPassword, user.password ?? "")).toBe(true);
+    expect(verifyPassword("Tender123!", user.password ?? "")).toBe(false);
+
+    // restore demo password for other tests / e2e
+    const restoreCodeReq = await recoverPost(
+      new Request("http://127.0.0.1/api/auth/recover", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: "tender@alfastroy.ru",
+          action: "request",
+        }),
+      })
+    );
+    expect(restoreCodeReq.status).toBe(200);
+    const code2 = getMailInbox()[0].text.match(
+      /Код восстановления:\s*([a-f0-9]+)/i
+    )![1];
+    await recoverPost(
+      new Request("http://127.0.0.1/api/auth/recover", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          email: "tender@alfastroy.ru",
+          action: "reset",
+          code: code2,
+          newPassword: "Tender123!",
+        }),
+      })
+    );
+  });
+
+  it("file mail sink writes latest.json without sending to humans", async () => {
+    clearMailSink();
+    setMailTransport(new FileMailTransport());
     const res = await recoverPost(
       new Request("http://127.0.0.1/api/auth/recover", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email: "tender@alfastroy.ru" }),
+        body: JSON.stringify({
+          email: "smeta@alfastroy.ru",
+          action: "request",
+        }),
       })
     );
     expect(res.status).toBe(200);
-    const json = (await res.json()) as {
-      message: string;
-      code?: string;
-      demoPassword?: string;
-      password?: string;
-    };
-    expect(json.message).toMatch(/отправлен/i);
-    expect(json.demoPassword).toBeUndefined();
-    expect(json.password).toBeUndefined();
-    const inbox = getMailInbox();
-    expect(inbox.length).toBe(1);
-    const expected = recoveryToken("tender@alfastroy.ru");
-    expect(inbox[0].text).toContain(expected);
-    expect(inbox[0].text.toLowerCase()).not.toContain("super123");
+    const latest = readMailSinkLatest();
+    expect(latest?.to).toBe("smeta@alfastroy.ru");
+    expect(latest?.text).toMatch(/Код восстановления/);
+    const sinkDir = path.join(config.dataDir, "mail-sink");
+    expect(fs.existsSync(path.join(sinkDir, "latest.json"))).toBe(true);
+    resetMailTransport();
   });
 
   it("unknown email returns generic ok without mail", async () => {

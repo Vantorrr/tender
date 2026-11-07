@@ -9,7 +9,9 @@ process.env.DB_FILE = dbFile;
 process.env.SYNC_INTERVAL_MS = "0";
 process.env.MAIL_TRANSPORT = "memory";
 process.env.OPENROUTER_API_KEY = "";
-process.env.OCR_PROVIDER = "";
+// Prefer real local tesseract when installed; tests that need absence set OCR_PROVIDER=none.
+process.env.OCR_PROVIDER = process.env.OCR_PROVIDER || "auto";
+process.env.RECOVER_EXPOSE_CODE = "";
 
 fs.mkdirSync(dataDir, { recursive: true });
 for (const name of fs.readdirSync(dataDir)) {

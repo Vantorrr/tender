@@ -1,6 +1,6 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { cookies, headers } from "next/headers";
-import { getDb, readAppData } from "@/server/db";
+import { getDb, mutateAppData, readAppData } from "@/server/db";
 import { config } from "@/server/config";
 import { hashPassword, verifyPassword } from "@/server/passwords";
 import type { User } from "@/lib/types";
@@ -99,11 +99,87 @@ export function publicUser(user: User) {
   return { ...rest, hasSecretKey: Boolean(secretKeyHash) };
 }
 
+/** Deterministic legacy helper — prefer issueRecoveryCode for new resets. */
 export function recoveryToken(email: string): string {
   return createHash("sha256")
     .update(`recover:${email}:tma361`)
     .digest("hex")
     .slice(0, 12);
+}
+
+function hashRecoveryCode(code: string): string {
+  return createHash("sha256").update(`tma361-recover:${code}`).digest("hex");
+}
+
+/** Issue one-time recovery code (returned in plain only to mail transport). */
+export function issueRecoveryCode(email: string, ttlMinutes = 30): string {
+  const code = randomBytes(6).toString("hex");
+  const expires = new Date(Date.now() + ttlMinutes * 60_000).toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO recovery_tokens (email, token_hash, expires_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(email) DO UPDATE SET token_hash = excluded.token_hash, expires_at = excluded.expires_at, created_at = datetime('now')`
+    )
+    .run(email.toLowerCase(), hashRecoveryCode(code), expires);
+  return code;
+}
+
+export function consumeRecoveryCode(email: string, code: string): boolean {
+  const row = getDb()
+    .prepare(
+      "SELECT token_hash, expires_at FROM recovery_tokens WHERE email = ?"
+    )
+    .get(email.toLowerCase()) as
+    | { token_hash: string; expires_at: string }
+    | undefined;
+  if (!row) return false;
+  if (new Date(row.expires_at).getTime() < Date.now()) {
+    getDb().prepare("DELETE FROM recovery_tokens WHERE email = ?").run(email.toLowerCase());
+    return false;
+  }
+  const expected = Buffer.from(row.token_hash, "hex");
+  const actual = Buffer.from(hashRecoveryCode(code.trim()), "hex");
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
+    return false;
+  }
+  getDb().prepare("DELETE FROM recovery_tokens WHERE email = ?").run(email.toLowerCase());
+  return true;
+}
+
+export function resetPasswordWithCode(
+  email: string,
+  code: string,
+  newPassword: string
+): { ok: true } | { ok: false; error: string } {
+  if (!newPassword || newPassword.length < 8) {
+    return { ok: false, error: "Пароль не короче 8 символов" };
+  }
+  if (!consumeRecoveryCode(email, code)) {
+    return { ok: false, error: "Неверный или просроченный код" };
+  }
+  const data = readAppData();
+  const user = data.users.find((u) => u.email.toLowerCase() === email.toLowerCase());
+  if (!user) return { ok: false, error: "Пользователь не найден" };
+  if (user.blocked) return { ok: false, error: "Учётная запись заблокирована" };
+  mutateAppData((d) => {
+    d.users = d.users.map((u) =>
+      u.id === user.id ? { ...u, password: hashPassword(newPassword) } : u
+    );
+    d.auditLog.unshift({
+      id: `aud-recover-${Date.now()}`,
+      at: new Date().toISOString(),
+      actorId: user.id,
+      action: "update",
+      entity: "user",
+      entityId: user.id,
+      detail: "Пароль восстановлен по коду из письма",
+    });
+    return d;
+  });
+  // Invalidate sessions for this user
+  getDb().prepare("DELETE FROM sessions WHERE user_id = ?").run(user.id);
+  return { ok: true };
 }
 
 export function sessionCookieOptions(maxAgeSeconds: number) {

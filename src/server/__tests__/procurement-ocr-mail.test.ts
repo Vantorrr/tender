@@ -64,7 +64,8 @@ describe("procurement adapter", () => {
 });
 
 describe("OCR boundary", () => {
-  it("returns not_configured without a provider", async () => {
+  it("returns not_configured when provider forced to none", async () => {
+    setOcrProvider(new NotConfiguredOcrProvider());
     expect(ocrConfigured()).toBe(false);
     const result = await extractDocumentText({
       fileName: "drawing.pdf",

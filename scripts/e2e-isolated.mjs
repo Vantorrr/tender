@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 /**
- * Isolated HTTP smoke against a local Next server (never production Railway).
- * Expects server already running with DATA_DIR/DB_FILE pointing at test files,
- * or starts nothing — call after `npm run dev` on an isolated DB.
+ * Full isolated HTTP E2E against a local Next server (never production Railway).
+ * No paid API calls. Reports pass/fail counts and NOT covered areas.
  *
  * Usage:
  *   BASE_URL=http://127.0.0.1:43141 node scripts/e2e-isolated.mjs
  */
+import fs from "node:fs";
+import path from "node:path";
+
 const base = (process.env.BASE_URL ?? "http://127.0.0.1:43141").replace(/\/$/, "");
 
 if (/railway\.app/i.test(base)) {
@@ -14,8 +16,20 @@ if (/railway\.app/i.test(base)) {
   process.exit(2);
 }
 
-async function json(path, init = {}) {
-  const res = await fetch(`${base}${path}`, {
+const results = [];
+const notCovered = [
+  "Real vendor procurement API / credentials",
+  "Paid OpenRouter LLM note generation",
+  "Cloud OCR vendors",
+  "Real SMTP delivery to human inboxes",
+  "SSO / IdP login",
+  "Railway volume / production DATA_DIR alignment",
+  "Browser UI click-path for every cabinet page (API-level E2E only)",
+  "Create-organization admin flow (still optional)",
+];
+
+async function json(urlPath, init = {}) {
+  const res = await fetch(`${base}${urlPath}`, {
     ...init,
     headers: {
       "content-type": "application/json",
@@ -26,76 +40,294 @@ async function json(path, init = {}) {
   return { res, body };
 }
 
-const failures = [];
-
 function check(name, ok, detail = "") {
-  if (ok) console.log(`ok  ${name}`);
-  else {
-    console.error(`FAIL ${name} ${detail}`);
-    failures.push(name);
-  }
+  results.push({ name, ok: Boolean(ok), detail: String(detail || "") });
+  if (ok) console.log(`PASS ${name}`);
+  else console.error(`FAIL ${name}${detail ? ` — ${detail}` : ""}`);
+}
+
+async function login(email, password) {
+  return json("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
 }
 
 const health = await json("/api/health");
 check("health", health.res.ok && health.body.ok === true, JSON.stringify(health.body));
 
-const login = await json("/api/auth/login", {
-  method: "POST",
-  body: JSON.stringify({
-    email: "tender@alfastroy.ru",
-    password: process.env.E2E_PASSWORD ?? "Tender123!",
-  }),
-});
-check("login alfa tender", login.res.ok && Boolean(login.body.token), login.body.error);
-const token = login.body.token;
+const roles = [
+  ["super@tenderkontur.ru", process.env.E2E_SUPER_PASSWORD ?? "Super123!", "superadmin"],
+  ["ruk@alfastroy.ru", process.env.E2E_RUK_PASSWORD ?? "Ruk123!", "rukovoditel"],
+  ["tender@alfastroy.ru", process.env.E2E_PASSWORD ?? "Tender123!", "tender"],
+  ["smeta@alfastroy.ru", process.env.E2E_SMETA_PASSWORD ?? "Smeta123!", "smetchik"],
+  ["object@alfastroy.ru", process.env.E2E_OBJECT_PASSWORD ?? "Object123!", "otvetstvennyy"],
+  ["admin@alfastroy.ru", process.env.E2E_ADMIN_PASSWORD ?? "Admin123!", "admin"],
+];
 
-const boot = await json("/api/bootstrap", {
-  headers: { authorization: `Bearer ${token}` },
+const tokens = {};
+for (const [email, password, role] of roles) {
+  const res = await login(email, password);
+  tokens[role] = res.body.token;
+  check(`login ${role}`, res.res.ok && Boolean(res.body.token), res.body.error);
+}
+
+const betaLogin = await login(
+  "tender@betain.ru",
+  process.env.E2E_BETA_PASSWORD ?? "Beta123!"
+);
+const betaToken = betaLogin.body.token;
+check("login beta tenant", Boolean(betaToken), betaLogin.body.error);
+
+const bootAlfa = await json("/api/bootstrap", {
+  headers: { authorization: `Bearer ${tokens.tender}` },
 });
 check(
-  "bootstrap org-scoped",
-  boot.res.ok &&
-    Array.isArray(boot.body.data?.procurements) &&
-    boot.body.data.procurements.every((p) => p.orgId === "org-alfa"),
-  `count=${boot.body.data?.procurements?.length}`
+  "bootstrap alfa org-scoped procurements",
+  bootAlfa.res.ok &&
+    Array.isArray(bootAlfa.body.data?.procurements) &&
+    bootAlfa.body.data.procurements.every((p) => p.orgId === "org-alfa"),
+  `count=${bootAlfa.body.data?.procurements?.length}`
 );
 
-const betaLogin = await json("/api/auth/login", {
-  method: "POST",
-  body: JSON.stringify({
-    email: "tender@betain.ru",
-    password: process.env.E2E_BETA_PASSWORD ?? "Beta123!",
-  }),
-});
-const betaToken = betaLogin.body.token;
-check("login beta", Boolean(betaToken));
-
-const betaZakupki = await json("/api/zakupki", {
+const bootBeta = await json("/api/zakupki", {
   headers: { authorization: `Bearer ${betaToken}` },
 });
-const alfaIds = new Set((boot.body.data?.procurements ?? []).map((p) => p.id));
-const leak = (betaZakupki.body.items ?? []).some((p) => alfaIds.has(p.id));
-check("beta cannot see alfa zakupki ids", !leak);
+const alfaIds = new Set((bootAlfa.body.data?.procurements ?? []).map((p) => p.id));
+check(
+  "beta cannot see alfa zakupki ids",
+  !(bootBeta.body.items ?? []).some((p) => alfaIds.has(p.id))
+);
 
-const smetaLogin = await json("/api/auth/login", {
-  method: "POST",
-  body: JSON.stringify({
-    email: "smeta@alfastroy.ru",
-    password: process.env.E2E_SMETA_PASSWORD ?? "Smeta123!",
-  }),
-});
-const smetaToken = smetaLogin.body.token;
-const denied = await json("/api/zakupki", {
-  headers: { authorization: `Bearer ${smetaToken}` },
+const deniedZakupki = await json("/api/zakupki", {
+  headers: { authorization: `Bearer ${tokens.smetchik}` },
 });
 check(
   "smetchik denied zakupki section",
-  denied.res.status === 403,
-  `status=${denied.res.status}`
+  deniedZakupki.res.status === 403,
+  `status=${deniedZakupki.res.status}`
 );
 
-if (failures.length) {
-  console.error(`\n${failures.length} failure(s)`);
-  process.exit(1);
+const deniedDengi = await json("/api/dengi", {
+  headers: { authorization: `Bearer ${tokens.tender}` },
+});
+check(
+  "tender denied dengi section by default",
+  deniedDengi.res.status === 403,
+  `status=${deniedDengi.res.status}`
+);
+
+const otvRaschety = await json("/api/raschety", {
+  headers: { authorization: `Bearer ${tokens.otvetstvennyy}` },
+});
+check(
+  "otvetstvennyy denied raschety section",
+  otvRaschety.res.status === 403,
+  `status=${otvRaschety.res.status}`
+);
+
+// Combine sections for tender → dengi, then revoke
+const combine = await json("/api/users", {
+  method: "PATCH",
+  headers: { authorization: `Bearer ${tokens.admin}` },
+  body: JSON.stringify({
+    id: "u-tender",
+    sections: [
+      "zakupki",
+      "dokumenty",
+      "raschety",
+      "riski",
+      "spravochniki",
+      "instrukciya",
+      "dengi",
+    ],
+  }),
+});
+check("admin combine tender+dengi sections", combine.res.ok, combine.body.error);
+const dengiOk = await json("/api/dengi", {
+  headers: { authorization: `Bearer ${tokens.tender}` },
+});
+check("tender can read dengi after combine", dengiOk.res.ok, dengiOk.body.error);
+const revoke = await json("/api/users", {
+  method: "PATCH",
+  headers: { authorization: `Bearer ${tokens.admin}` },
+  body: JSON.stringify({
+    id: "u-tender",
+    sections: [
+      "zakupki",
+      "dokumenty",
+      "raschety",
+      "riski",
+      "spravochniki",
+      "instrukciya",
+    ],
+  }),
+});
+check("admin revoke dengi from tender", revoke.res.ok, revoke.body.error);
+const dengiDeniedAgain = await json("/api/dengi", {
+  headers: { authorization: `Bearer ${tokens.tender}` },
+});
+check(
+  "tender dengi denied after revoke",
+  dengiDeniedAgain.res.status === 403,
+  `status=${dengiDeniedAgain.res.status}`
+);
+
+// Block / unblock rukovoditel
+const block = await json("/api/users", {
+  method: "PATCH",
+  headers: { authorization: `Bearer ${tokens.admin}` },
+  body: JSON.stringify({ id: "u-ruk", patch: { blocked: true } }),
+});
+check("admin block rukovoditel", block.res.ok, block.body.error);
+const blockedLogin = await login("ruk@alfastroy.ru", "Ruk123!");
+check(
+  "blocked rukovoditel cannot login",
+  blockedLogin.res.status === 403,
+  `status=${blockedLogin.res.status}`
+);
+const unblock = await json("/api/users", {
+  method: "PATCH",
+  headers: { authorization: `Bearer ${tokens.admin}` },
+  body: JSON.stringify({ id: "u-ruk", patch: { blocked: false } }),
+});
+check("admin unblock rukovoditel", unblock.res.ok, unblock.body.error);
+
+// Chain ensure + recalc
+const proc =
+  (bootAlfa.body.data?.procurements ?? []).find((p) => p.id === "p-2") ||
+  (bootAlfa.body.data?.procurements ?? [])[0];
+const chain = await json("/api/zakupki", {
+  method: "POST",
+  headers: { authorization: `Bearer ${tokens.tender}` },
+  body: JSON.stringify({ action: "ensureChain", id: proc?.id }),
+});
+check("ensureChain from zakupka", chain.res.ok && Boolean(proc?.id), chain.body.error);
+const calcId =
+  chain.body.data?.procurements?.find((p) => p.id === proc.id)?.calculationId ||
+  bootAlfa.body.data?.calculations?.[0]?.id;
+const recalc = await json("/api/raschety", {
+  method: "PATCH",
+  headers: { authorization: `Bearer ${tokens.smetchik}` },
+  body: JSON.stringify({ id: calcId, recalcScenario: "optimisticheskiy" }),
+});
+check("smetchik recalculate scenario", recalc.res.ok, recalc.body.error || `calcId=${calcId}`);
+
+// Negative export / file
+const foreignCalc = (bootAlfa.body.data?.calculations ?? []).find(
+  (c) => c.orgId === "org-alfa"
+);
+const betaExport = await fetch(
+  `${base}/api/export?kind=calc-xlsx&id=${foreignCalc?.id ?? "c-1"}`,
+  { headers: { authorization: `Bearer ${betaToken}` } }
+);
+const betaExportBody = await betaExport.json().catch(() => ({}));
+check(
+  "beta denied alfa calc export",
+  betaExport.status === 403,
+  `status=${betaExport.status} err=${betaExportBody.error}`
+);
+
+const alfaDoc = (bootAlfa.body.data?.documents ?? []).find((d) => d.orgId === "org-alfa");
+const betaFile = await fetch(
+  `${base}/api/dokumenty/file?id=${alfaDoc?.id ?? "d-1"}`,
+  { headers: { authorization: `Bearer ${betaToken}` } }
+);
+const betaFileBody = await betaFile.json().catch(() => ({}));
+check(
+  "beta denied alfa document file",
+  betaFile.status === 403,
+  `status=${betaFile.status} err=${betaFileBody.error}`
+);
+
+// Recovery via local mail sink (server should use MAIL_TRANSPORT=file|memory)
+const recoverReq = await json("/api/auth/recover", {
+  method: "POST",
+  body: JSON.stringify({ email: "object@alfastroy.ru", action: "request" }),
+});
+check("recovery request accepted", recoverReq.res.ok, recoverReq.body.error);
+
+let recoveryCode = null;
+const sinkLatest = path.join(process.cwd(), "data", "mail-sink", "latest.json");
+if (fs.existsSync(sinkLatest)) {
+  try {
+    const mail = JSON.parse(fs.readFileSync(sinkLatest, "utf8"));
+    recoveryCode = mail.text?.match(/Код восстановления:\s*([a-f0-9]+)/i)?.[1];
+  } catch {
+    /* ignore */
+  }
 }
+if (!recoveryCode && process.env.RECOVER_EXPOSE_CODE === "1") {
+  recoveryCode = recoverReq.body.code;
+}
+check(
+  "recovery code available via local sink (or expose flag)",
+  Boolean(recoveryCode),
+  recoveryCode ? "ok" : "set MAIL_TRANSPORT=file for server or RECOVER_EXPOSE_CODE=1"
+);
+
+if (recoveryCode) {
+  const newPassword = "E2ERecoverTemp9!";
+  const reset = await json("/api/auth/recover", {
+    method: "POST",
+    body: JSON.stringify({
+      email: "object@alfastroy.ru",
+      action: "reset",
+      code: recoveryCode,
+      newPassword,
+    }),
+  });
+  check("recovery reset password", reset.res.ok, reset.body.error);
+  const loginNew = await login("object@alfastroy.ru", newPassword);
+  check("login with recovered password", loginNew.res.ok, loginNew.body.error);
+  // restore
+  const restoreReq = await json("/api/auth/recover", {
+    method: "POST",
+    body: JSON.stringify({ email: "object@alfastroy.ru", action: "request" }),
+  });
+  let restoreCode = null;
+  if (fs.existsSync(sinkLatest)) {
+    restoreCode = JSON.parse(fs.readFileSync(sinkLatest, "utf8")).text?.match(
+      /Код восстановления:\s*([a-f0-9]+)/i
+    )?.[1];
+  }
+  if (!restoreCode && restoreReq.body.code) restoreCode = restoreReq.body.code;
+  if (restoreCode) {
+    await json("/api/auth/recover", {
+      method: "POST",
+      body: JSON.stringify({
+        email: "object@alfastroy.ru",
+        action: "reset",
+        code: restoreCode,
+        newPassword: "Object123!",
+      }),
+    });
+  }
+} else {
+  check("recovery reset password", false, "skipped — no code");
+  check("login with recovered password", false, "skipped — no code");
+}
+
+const passed = results.filter((r) => r.ok).length;
+const failed = results.filter((r) => !r.ok).length;
+console.log("\n=== E2E summary ===");
+console.log(`passed: ${passed}`);
+console.log(`failed: ${failed}`);
+console.log(`total:  ${results.length}`);
+console.log("\nNOT covered:");
+for (const item of notCovered) console.log(`- ${item}`);
+
+const reportPath = path.join(
+  process.cwd(),
+  "data",
+  `e2e-report-${Date.now()}.json`
+);
+fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+fs.writeFileSync(
+  reportPath,
+  JSON.stringify({ base, passed, failed, total: results.length, results, notCovered }, null, 2)
+);
+console.log(`\nWrote ${reportPath}`);
+
+if (failed) process.exit(1);
 console.log("\nisolated e2e ok");
