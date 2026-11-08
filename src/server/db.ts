@@ -317,22 +317,23 @@ function applySchema10Extras(data: AppData): AppData {
     ...p,
     supplyRequestIds: p.supplyRequestIds ?? [],
   }));
-  // Enrich stages that only had a single generic labor stub
+  // Enrich stages that lack multi-kind resources (labor-only stub or empty)
   data.schedules = (data.schedules ?? []).map((s) => ({
     ...s,
     stages: (s.stages ?? []).map((st) => {
       const res = st.resources ?? [];
-      const onlyLaborStub =
-        res.length === 1 &&
-        res[0]?.kind === "labor" &&
-        /^Бригада$/i.test(res[0]?.name ?? "");
+      const kinds = new Set(res.map((r) => r.kind));
+      const incomplete =
+        res.length === 0 ||
+        (res.length === 1 && res[0]?.kind === "labor") ||
+        !kinds.has("material") ||
+        !kinds.has("equipment") ||
+        !kinds.has("bus");
       return {
         ...st,
-        resources: onlyLaborStub
+        resources: incomplete
           ? defaultStageResources(st.id, st.crewSize ?? 4)
-          : res.length
-            ? res
-            : defaultStageResources(st.id, st.crewSize ?? 4),
+          : res,
       };
     }),
   }));
