@@ -241,11 +241,13 @@ export function HierarchicalEstimatePanel({
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-[var(--tk-line)] bg-white/90">
-        <div className="grid grid-cols-[1fr_6rem_7rem_8rem] gap-2 border-b border-[var(--tk-line)] bg-stone-50 px-3 py-2 text-xs font-medium text-[var(--tk-muted)]">
+        <div className="grid grid-cols-[1fr_5rem_4.5rem_4.5rem_7rem_8rem] gap-2 border-b border-[var(--tk-line)] bg-stone-50 px-3 py-2 text-xs font-medium text-[var(--tk-muted)]">
           <div>Этап / ресурс</div>
-          <div className="text-right">Кол-во</div>
+          <div className="text-right">L кол-во</div>
+          <div className="text-right">Q часы</div>
+          <div className="text-right">N·O·P</div>
           <div className="text-right">Ставка</div>
-          <div className="text-right">Итого</div>
+          <div className="text-right">R итого</div>
         </div>
         {nodes.length === 0 ? (
           <p className="p-4 text-sm text-[var(--tk-muted)]">
@@ -256,7 +258,7 @@ export function HierarchicalEstimatePanel({
             <div key={node.id} className="border-b border-[var(--tk-line)]/70">
               <button
                 type="button"
-                className="grid w-full grid-cols-[1fr_6rem_7rem_8rem] gap-2 px-3 py-2.5 text-left text-sm hover:bg-stone-50"
+                className="grid w-full grid-cols-[1fr_5rem_4.5rem_4.5rem_7rem_8rem] gap-2 px-3 py-2.5 text-left text-sm hover:bg-stone-50"
                 data-testid={`estimate-stage-${node.id}`}
                 onClick={() =>
                   setOpen((o) => ({ ...o, [node.id]: !isOpen(node.id) }))
@@ -275,6 +277,8 @@ export function HierarchicalEstimatePanel({
                 </div>
                 <div />
                 <div />
+                <div />
+                <div />
                 <div className="text-right font-medium">
                   {node.subtotal == null ? "—" : formatMoney(node.subtotal)}
                 </div>
@@ -288,10 +292,17 @@ export function HierarchicalEstimatePanel({
                       {g.leaves.map((leaf) => (
                         <div
                           key={leaf.id}
-                          className="grid grid-cols-[1fr_6rem_7rem_8rem] items-center gap-2 px-3 py-1.5 pl-10 text-sm"
+                          className="grid grid-cols-[1fr_5rem_4.5rem_4.5rem_7rem_8rem] items-center gap-2 px-3 py-1.5 pl-10 text-sm"
                           data-testid={`estimate-leaf-${leaf.id}`}
                         >
-                          <div className="min-w-0 truncate">{leaf.name}</div>
+                          <div className="min-w-0 truncate">
+                            {leaf.name}
+                            {leaf.basis === "count_per_shift" ? (
+                              <span className="ml-1 text-[10px] text-[var(--tk-muted)]">
+                                L→Q
+                              </span>
+                            ) : null}
+                          </div>
                           <div className="text-right">
                             {locked ? (
                               formatNumber(leaf.quantity)
@@ -310,6 +321,25 @@ export function HierarchicalEstimatePanel({
                                 }}
                               />
                             )}
+                          </div>
+                          <div
+                            className="text-right text-xs"
+                            data-testid={`estimate-q-${leaf.id}`}
+                          >
+                            {leaf.basis === "material_qty"
+                              ? "—"
+                              : leaf.hoursQ == null
+                                ? "нет данных"
+                                : formatNumber(leaf.hoursQ)}
+                          </div>
+                          <div className="text-right text-[10px] text-[var(--tk-muted)]">
+                            {leaf.basis === "count_per_shift"
+                              ? `${leaf.hoursPerShift ?? "?"}×${leaf.shiftsPerDay ?? "?"}×${leaf.days ?? "?"}`
+                              : leaf.basis === "total_hours"
+                                ? "уже часы"
+                                : leaf.basis === "material_qty"
+                                  ? "мат."
+                                  : "?"}
                           </div>
                           <div className="text-right">
                             {locked ? (
@@ -341,7 +371,10 @@ export function HierarchicalEstimatePanel({
                               />
                             )}
                           </div>
-                          <div className="text-right">
+                          <div
+                            className="text-right"
+                            data-testid={`estimate-amount-${leaf.id}`}
+                          >
                             {leaf.amount == null
                               ? "нет данных"
                               : formatMoney(leaf.amount)}

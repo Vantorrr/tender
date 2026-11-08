@@ -4,8 +4,14 @@ import {
   calculationTotals,
   positionLineSum,
 } from "@/lib/calc-math";
+import { resolveResourceDimensions } from "@/lib/resource-dimensions";
+import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
 import { readAppData } from "@/server/db";
 import { estimateKey, parseGrandBuffer } from "@/server/grand-smeta";
+
+function partialTag(incomplete: boolean): string {
+  return incomplete ? " PARTIAL" : "";
+}
 
 function isResourceDraftExport(calc: {
   kind?: string;
@@ -238,84 +244,116 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
       res,
     ]);
   }
+  const calc = data.calculations.find((c) => c.id === g.calculationId);
+  const rsParams = calc?.resourceScheduleParams ?? EXCEL_RESOURCE_SCHEDULE_DEFAULTS;
+  const cs = calc?.costSummary;
+  const totalsPartial = Boolean(
+    cs?.totalsIncomplete || cs?.resourceSlices?.partial
+  );
+
   const resSheet = wb.addWorksheet("Ресурсы");
-  resSheet.addRow(["Этап", "Вид", "Название", "Кол-во", "Ед.", "Ставка", "Сумма"]);
+  resSheet.addRow([
+    "Этап",
+    "Вид",
+    "Название",
+    "L кол-во",
+    "Ед.",
+    "Basis",
+    "N ч/смена",
+    "O смен",
+    "P дни",
+    "Q часы",
+    "Ставка",
+    "R сумма",
+    "Статус",
+  ]);
   resSheet.getRow(1).font = { bold: true };
-  let rIdx = 2;
+  let knownSum = 0;
+  let anyIncomplete = false;
   for (const s of g.stages) {
     for (const r of s.resources ?? []) {
+      const dim = resolveResourceDimensions(r, s, rsParams);
+      if (dim.incomplete.length) anyIncomplete = true;
+      if (dim.amount != null) knownSum += dim.amount;
       resSheet.addRow([
         s.name,
         r.kind,
         r.name,
-        r.quantity,
+        dim.sourceQty,
         r.unit ?? "",
-        r.rate ?? null,
-        null,
+        dim.basis,
+        dim.hoursPerShift,
+        dim.shiftsPerDay,
+        dim.days,
+        dim.hours,
+        dim.rate,
+        dim.amount,
+        dim.incomplete.length ? "PARTIAL" : "ok",
       ]);
-      // Confirmed sum only when rate present; blank rate → blank sum (not 0)
-      resSheet.getCell(`G${rIdx}`).value = {
-        formula: `IF(OR(F${rIdx}="",F${rIdx}=0),"",D${rIdx}*F${rIdx})`,
-      };
-      rIdx += 1;
     }
   }
-  if (rIdx > 2) {
-    const last = rIdx - 1;
-    resSheet.addRow([
-      "Итого подтверждённых",
-      "",
-      "",
-      { formula: `SUM(D2:D${last})` },
-      "",
-      "",
-      { formula: `SUM(G2:G${last})` },
-    ]);
-  }
-  const calc = data.calculations.find((c) => c.id === g.calculationId);
+  const resPartial = totalsPartial || anyIncomplete;
+  resSheet.addRow([
+    `Итого подтверждённых${partialTag(resPartial)}`,
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    knownSum,
+    resPartial ? "PARTIAL" : "ok",
+  ]);
+
   const sumSheet = wb.addWorksheet("Сводка");
   sumSheet.addRow(["Показатель", "Значение", "Примечание"]);
   sumSheet.getRow(1).font = { bold: true };
-  const cs = calc?.costSummary;
   if (cs) {
-    sumSheet.addRow(["C0", cs.C0, cs.totalsIncomplete ? "НЕПОЛНО" : ""]);
-    sumSheet.addRow(["C", cs.C, ""]);
+    const ptag = partialTag(totalsPartial);
     sumSheet.addRow([
-      "Резерв",
+      `C0${ptag}`,
+      cs.C0,
+      totalsPartial ? "PARTIAL" : "",
+    ]);
+    sumSheet.addRow([`C${ptag}`, cs.C, totalsPartial ? "PARTIAL" : ""]);
+    sumSheet.addRow([
+      `Резерв${ptag}`,
       cs.reserve,
       "не путать с резервом отпуска; общий непредвиденный — только если подтверждён",
     ]);
     sumSheet.addRow([
-      "Прибыль",
+      `Прибыль${ptag}`,
       cs.profit,
-      "наценка на с/с с НР (не маржа выручки)",
+      totalsPartial
+        ? "PARTIAL · наценка на с/с с НР"
+        : "наценка на с/с с НР (не маржа выручки)",
     ]);
-    sumSheet.addRow(["Цена без НДС", cs.priceExVat, ""]);
     sumSheet.addRow([
-      "НДС",
+      `Цена без НДС${ptag}`,
+      cs.priceExVat,
+      totalsPartial ? "PARTIAL" : "",
+    ]);
+    sumSheet.addRow([
+      `НДС${ptag}`,
       cs.vatAmount == null ? "нет данных" : cs.vatAmount,
-      "",
+      totalsPartial ? "PARTIAL" : "",
     ]);
     sumSheet.addRow([
       "Неполнота",
       (cs.incomplete ?? []).join("; ") || "—",
-      cs.totalsIncomplete ? "итоги не подтверждены" : "",
+      totalsPartial ? "итоги не подтверждены · PARTIAL" : "",
     ]);
   } else {
     sumSheet.addRow(["Сводка", "нет данных", "пересчитайте cost-engine"]);
   }
-  const rs = calc?.resourceScheduleParams;
   const rsSheet = wb.addWorksheet("Ресурсный_параметры");
   rsSheet.addRow(["Параметр", "Значение", "Локатор/смысл"]);
   rsSheet.getRow(1).font = { bold: true };
-  const p = rs ?? {
-    personHourRate: 1400,
-    personnelShiftsPerDay: 2,
-    hoursPerShift: 11,
-    equipmentShiftsPerDay: 1,
-    overheadRate: 0.43,
-    profitMarkupOnCostWithOh: 0.4,
-  };
+  const p = rsParams;
   rsSheet.addRow(["Стоимость 1 чел.-часа", p.personHourRate, "B4"]);
   rsSheet.addRow(["Смен персонала/сутки", p.personnelShiftsPerDay, "B5"]);
   rsSheet.addRow(["Часов в смене", p.hoursPerShift, "B6"]);
@@ -333,39 +371,42 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
   ]);
   rsSheet.addRow(["Сумма ресурса", "R=Q*M", "ставка без двойного ГСМ/водителя"]);
   const slices = cs?.resourceSlices;
+  const ptag = partialTag(totalsPartial);
   rsSheet.addRow([
-    "Прямые V",
+    `Прямые V${ptag}`,
     slices ? slices.direct : "V=S+T+U",
-    "материалы+люди+техника",
+    totalsPartial ? "PARTIAL" : "материалы+люди+техника",
   ]);
   rsSheet.addRow([
-    "НР W",
+    `НР W${ptag}`,
     slices ? slices.overhead : "W=V*B8",
-    "",
+    totalsPartial ? "PARTIAL" : "",
   ]);
   rsSheet.addRow([
-    "С/с с НР X",
+    `С/с с НР X${ptag}`,
     slices ? slices.costWithOh : "X=V+W",
-    "",
+    totalsPartial ? "PARTIAL" : "",
   ]);
   rsSheet.addRow([
-    "Прибыль Y",
+    `Прибыль Y${ptag}`,
     slices ? slices.profit : "Y=X*B9",
-    "",
+    totalsPartial ? "PARTIAL" : "",
   ]);
   rsSheet.addRow([
-    "Итого Z",
+    `Итого Z${ptag}`,
     slices ? slices.total : "Z=X+Y",
-    slices?.skipped?.length
-      ? `пропуск дублей: ${slices.skipped.join(",")}`
-      : "",
+    totalsPartial
+      ? "PARTIAL"
+      : slices?.skipped?.length
+        ? `пропуск: ${slices.skipped.join(",")}`
+        : "",
   ]);
   if (slices) {
-    rsSheet.addRow(["S материалы", slices.materials, ""]);
-    rsSheet.addRow(["T люди", slices.labor, ""]);
-    rsSheet.addRow(["U техника", slices.equipment, ""]);
-    rsSheet.addRow(["Q часы", slices.hours, ""]);
-    rsSheet.addRow(["R известное", slices.knownAmount, ""]);
+    rsSheet.addRow([`S материалы${ptag}`, slices.materials, totalsPartial ? "PARTIAL" : ""]);
+    rsSheet.addRow([`T люди${ptag}`, slices.labor, totalsPartial ? "PARTIAL" : ""]);
+    rsSheet.addRow([`U техника${ptag}`, slices.equipment, totalsPartial ? "PARTIAL" : ""]);
+    rsSheet.addRow([`Q часы${ptag}`, slices.hours, totalsPartial ? "PARTIAL" : ""]);
+    rsSheet.addRow([`R известное${ptag}`, slices.knownAmount, totalsPartial ? "PARTIAL" : ""]);
   }
   return Buffer.from(await wb.xlsx.writeBuffer());
 }

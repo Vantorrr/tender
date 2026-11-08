@@ -1,17 +1,12 @@
 /**
  * Unified resource model (t25u): GPR stage resources → draft cost slices V/W/X/Y/Z.
- *
- * Dimensions: do NOT force N=O=P=1.
- * - count_per_shift → Q = qty × h × shifts × days
- * - total_hours → Q = qty (already hours)
- * - material_qty → R = qty × rate; never in Q-hours
- * - uncertain → incomplete, no invented dims / no silent zero total
- *
- * Buses across stages are summed (never leave-first). Full machine-hour tariff
- * embeds fuel/driver — do not discard buses to avoid double-count.
+ * Dimensions come from shared resolveResourceDimensions (tree / export / sync).
  */
 import { roundMoney } from "@/lib/calc-math";
-import { diffDays } from "@/lib/cost-engine";
+import {
+  inferQuantityBasis,
+  resolveResourceDimensions,
+} from "@/lib/resource-dimensions";
 import {
   EXCEL_RESOURCE_SCHEDULE_DEFAULTS,
   resourceAmount,
@@ -27,8 +22,9 @@ import type {
   CostSummarySnapshot,
   GprStage,
   GprStageResource,
-  ResourceQuantityBasis,
 } from "@/lib/types";
+
+export { inferQuantityBasis, resolveResourceDimensions } from "@/lib/resource-dimensions";
 
 export type UnifiedResourceBuild = {
   lines: ResourceScheduleLine[];
@@ -36,7 +32,6 @@ export type UnifiedResourceBuild = {
   skipped: string[];
   incomplete: string[];
   knownDirect: number;
-  /** Q-hours from non-material lines with known hour inputs only. */
   knownHours: number;
 };
 
@@ -52,19 +47,6 @@ export function isResourceLinkedDraft(calc: Calculation): boolean {
   );
 }
 
-export function inferQuantityBasis(
-  r: GprStageResource
-): ResourceQuantityBasis {
-  if (r.quantityBasis) return r.quantityBasis;
-  if (r.kind === "material") return "material_qty";
-  const u = (r.unit || "").toLowerCase();
-  if (/маш-?ч|н-?ч|чел-?ч|час/.test(u)) return "total_hours";
-  if (r.kind === "labor" || r.kind === "equipment" || r.kind === "bus") {
-    if (/чел|ед|маш|шт|авт/.test(u) || !u) return "count_per_shift";
-  }
-  return "uncertain";
-}
-
 function categoryOf(
   kind: GprStageResource["kind"]
 ): "people" | "equipment" | "material" | null {
@@ -74,51 +56,8 @@ function categoryOf(
   return null;
 }
 
-function stageCalendarDays(st: GprStage): number | null {
-  if (!st.start || !st.end) return null;
-  const d = diffDays(st.start, st.end);
-  if (!Number.isFinite(d) || d < 0) return null;
-  return d + 1;
-}
-
-function resolveCountDims(
-  r: GprStageResource,
-  st: GprStage,
-  params: ResourceScheduleParams
-): {
-  hoursPerShift: number | null;
-  shiftsPerDay: number | null;
-  days: number | null;
-  incomplete: string[];
-} {
-  const incomplete: string[] = [];
-  const hoursPerShift =
-    r.hoursPerShift ??
-    st.hoursPerShift ??
-    params.hoursPerShift ??
-    null;
-  const shiftsPerDay =
-    r.shiftsPerDay ??
-    st.shiftsPerDay ??
-    (r.kind === "labor"
-      ? params.personnelShiftsPerDay
-      : params.equipmentShiftsPerDay) ??
-    null;
-  const days = r.days ?? stageCalendarDays(st);
-  if (hoursPerShift == null || !Number.isFinite(hoursPerShift)) {
-    incomplete.push(`hours_per_shift_unknown:${r.id}`);
-  }
-  if (shiftsPerDay == null || !Number.isFinite(shiftsPerDay)) {
-    incomplete.push(`shifts_per_day_unknown:${r.id}`);
-  }
-  if (days == null || !Number.isFinite(days)) {
-    incomplete.push(`days_unknown:${r.id}`);
-  }
-  return { hoursPerShift, shiftsPerDay, days, incomplete };
-}
-
 /**
- * Map stage resources → Excel-style lines with real dimensions.
+ * Map stage resources → Excel-style lines via shared dimension resolver.
  * Materials never contribute to Q-hours. Distinct buses are all kept and summed.
  */
 export function stagesToResourceLines(
@@ -141,35 +80,22 @@ export function stagesToResourceLines(
         continue;
       }
 
-      const rate =
-        r.rate == null || !Number.isFinite(r.rate) || r.rate < 0
-          ? null
-          : r.rate;
-      if (rate == null) incomplete.push(`missing_tariff:${r.id}`);
+      const resolved = resolveResourceDimensions(r, st, params);
+      incomplete.push(...resolved.incomplete);
 
-      const basis = inferQuantityBasis(r);
-      let hoursPerShift = 1;
-      let shiftsPerDay = 1;
-      let days = 1;
-      let lineHours: number | null = null;
-
-      if (basis === "material_qty") {
-        // Materials: R = qty × rate; Q-hours not applicable.
-        if (rate != null) {
-          const amt = roundMoney(r.quantity * rate);
-          materialsTotal = roundMoney(materialsTotal + amt);
-          knownDirect = roundMoney(knownDirect + amt);
+      if (resolved.basis === "material_qty") {
+        if (resolved.amount != null) {
+          materialsTotal = roundMoney(materialsTotal + resolved.amount);
+          knownDirect = roundMoney(knownDirect + resolved.amount);
         }
-        // Represent as qty with identity dims so rollup line R matches qty×rate,
-        // but hours are excluded from knownHours below via category filter.
         lines.push({
           id: r.id,
           workId: st.id,
           kind: "resource",
           name: r.name,
           category: "material",
-          quantity: r.quantity,
-          rate,
+          quantity: resolved.sourceQty,
+          rate: resolved.rate,
           hoursPerShift: 1,
           shiftsPerDay: 1,
           days: 1,
@@ -178,17 +104,15 @@ export function stagesToResourceLines(
         continue;
       }
 
-      if (basis === "uncertain") {
-        incomplete.push(`unit_basis_uncertain:${r.id}`);
+      if (resolved.basis === "uncertain") {
         lines.push({
           id: r.id,
           workId: st.id,
           kind: "resource",
           name: r.name,
           category: cat,
-          quantity: r.quantity,
-          rate,
-          // Non-finite dims → resourceHours returns null → incomplete, not invented 1s
+          quantity: resolved.sourceQty,
+          rate: resolved.rate,
           hoursPerShift: Number.NaN,
           shiftsPerDay: Number.NaN,
           days: Number.NaN,
@@ -197,75 +121,53 @@ export function stagesToResourceLines(
         continue;
       }
 
-      if (basis === "total_hours") {
-        // L already hours — identity factors are definitional, not invented schedule.
-        hoursPerShift = 1;
-        shiftsPerDay = 1;
-        days = 1;
-        lineHours = resourceHours({
-          quantity: r.quantity,
-          hoursPerShift,
-          shiftsPerDay,
-          days,
-        });
-      } else {
-        // count_per_shift
-        const dims = resolveCountDims(r, st, params);
-        incomplete.push(...dims.incomplete);
-        if (
-          dims.hoursPerShift == null ||
-          dims.shiftsPerDay == null ||
-          dims.days == null
-        ) {
-          hoursPerShift = Number.NaN;
-          shiftsPerDay = Number.NaN;
-          days = Number.NaN;
-          lineHours = null;
-        } else {
-          hoursPerShift = dims.hoursPerShift;
-          shiftsPerDay = dims.shiftsPerDay;
-          days = dims.days;
-          lineHours = resourceHours({
-            quantity: r.quantity,
-            hoursPerShift,
-            shiftsPerDay,
-            days,
-          });
-        }
-      }
+      const hoursPerShift =
+        resolved.basis === "total_hours"
+          ? 1
+          : (resolved.hoursPerShift ?? Number.NaN);
+      const shiftsPerDay =
+        resolved.basis === "total_hours"
+          ? 1
+          : (resolved.shiftsPerDay ?? Number.NaN);
+      const days =
+        resolved.basis === "total_hours" ? 1 : (resolved.days ?? Number.NaN);
 
-      const { amount, incomplete: amtInc } = resourceAmount(lineHours, rate);
-      for (const a of amtInc) {
-        if (a === "hours_inputs") incomplete.push(`hours_inputs:${r.id}`);
-      }
-
+      // For total_hours: quantity on the line IS hours (L), N=O=P=1.
+      // For count_per_shift: quantity is L (count); N/O/P from resolved.
       lines.push({
         id: r.id,
         workId: st.id,
         kind: "resource",
         name: r.name,
         category: cat,
-        quantity: r.quantity,
-        rate,
+        quantity: resolved.sourceQty,
+        rate: resolved.rate,
         hoursPerShift,
         shiftsPerDay,
         days,
         tariffBasis:
           r.kind === "bus"
             ? "schedule_fixed"
-            : rate == null
+            : resolved.rate == null
               ? "unspecified"
               : "schedule_fixed",
       });
 
-      if (lineHours != null && rate != null && amtInc.length === 0) {
-        knownDirect = roundMoney(knownDirect + amount);
-        knownHours = roundMoney(knownHours + lineHours);
+      if (resolved.amount != null && resolved.hours != null) {
+        knownDirect = roundMoney(knownDirect + resolved.amount);
+        knownHours = roundMoney(knownHours + resolved.hours);
       }
     }
   }
 
-  return { lines, materialsTotal, skipped, incomplete, knownDirect, knownHours };
+  return {
+    lines,
+    materialsTotal,
+    skipped,
+    incomplete: [...new Set(incomplete)],
+    knownDirect,
+    knownHours,
+  };
 }
 
 function codeForResource(r: GprStageResource, index: number): string {
@@ -293,31 +195,20 @@ export function positionsFromStages(
     for (const r of st.resources ?? []) {
       if (!categoryOf(r.kind)) continue;
       i += 1;
-      const basis = inferQuantityBasis(r);
+      const resolved = resolveResourceDimensions(r, st, params);
       const prev = prevByName.get(r.name.toLowerCase());
-      const rateMissing =
-        r.rate == null || !Number.isFinite(r.rate) || r.rate < 0;
+      const rateMissing = resolved.rate == null;
 
-      let quantity = r.quantity;
+      let quantity = resolved.sourceQty;
       let unit = r.unit || (r.kind === "labor" ? "чел" : "ед.");
-      if (basis === "count_per_shift") {
-        const dims = resolveCountDims(r, st, params);
-        if (
-          dims.hoursPerShift != null &&
-          dims.shiftsPerDay != null &&
-          dims.days != null
-        ) {
-          const q = resourceHours({
-            quantity: r.quantity,
-            hoursPerShift: dims.hoursPerShift,
-            shiftsPerDay: dims.shiftsPerDay,
-            days: dims.days,
-          });
-          if (q != null) {
-            quantity = q;
-            unit = r.kind === "labor" ? "н-ч" : "маш-ч";
-          }
-        }
+      if (
+        resolved.basis === "count_per_shift" &&
+        resolved.hours != null
+      ) {
+        quantity = resolved.hours;
+        unit = r.kind === "labor" ? "н-ч" : "маш-ч";
+      } else if (resolved.basis === "total_hours") {
+        unit = r.unit || (r.kind === "labor" ? "чел.-ч" : "маш.-ч");
       }
 
       out.push({
@@ -326,7 +217,7 @@ export function positionsFromStages(
         name: r.name,
         unit,
         quantity,
-        rate: rateMissing ? 0 : (r.rate as number),
+        rate: rateMissing ? 0 : (resolved.rate as number),
         rateMissing,
         normId: prev?.normId,
         priceId: prev?.priceId,
@@ -380,10 +271,6 @@ export function applyRollupToCostSummary(
   };
 }
 
-/**
- * Recompute resource-linked draft from GPR stages.
- * Does NOT replace positions unless replacePositions=true (explicit linked draft).
- */
 export function syncDraftFromStages(
   calc: Calculation,
   stages: GprStage[],
@@ -410,7 +297,6 @@ export function syncDraftFromStages(
     ...build.skipped,
     ...rollup.incomplete.filter((x) => x !== "materials_external_or_missing"),
   ];
-  // Recompute knownHours excluding material lines
   const knownHours = roundMoney(
     build.lines
       .filter((l) => l.category !== "material")

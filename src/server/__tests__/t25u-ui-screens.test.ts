@@ -14,7 +14,7 @@ import { addDailyProductionFact } from "@/server/repo";
 import "./setup";
 
 describe("t25u hierarchical estimate (PDF UI / Excel arithmetic)", () => {
-  it("builds stage → Люди/Техника/Материалы tree with qty×rate", () => {
+  it("builds stage → Люди/Техника/Материалы tree with shared dimensions", () => {
     const stages: GprStage[] = [
       {
         id: "st1",
@@ -30,14 +30,20 @@ describe("t25u hierarchical estimate (PDF UI / Excel arithmetic)", () => {
             unit: "чел",
             quantity: 4,
             rate: 2500,
+            // Explicit dims so Q=L (identity) — not silent calendar invent
+            quantityBasis: "count_per_shift",
+            hoursPerShift: 1,
+            shiftsPerDay: 1,
+            days: 1,
           },
           {
             id: "r2",
             kind: "equipment",
             name: "Кран",
-            unit: "маш-ч",
+            unit: "маш.-ч",
             quantity: 8,
             rate: 5000,
+            // total_hours via dotted unit — must NOT re-multiply
           },
           {
             id: "r3",
@@ -60,6 +66,10 @@ describe("t25u hierarchical estimate (PDF UI / Excel arithmetic)", () => {
     ]);
     const labor = nodes[0].groups.find((g) => g.kind === "labor")!;
     expect(labor.leaves[0].amount).toBe(10000);
+    expect(labor.leaves[0].hoursQ).toBe(4);
+    const eq = nodes[0].groups.find((g) => g.kind === "equipment")!;
+    expect(eq.leaves[0].basis).toBe("total_hours");
+    expect(eq.leaves[0].amount).toBe(40000);
     const mat = nodes[0].groups.find((g) => g.kind === "material")!;
     expect(mat.incomplete).toBe(true);
     expect(mat.leaves[0].amount).toBeNull();

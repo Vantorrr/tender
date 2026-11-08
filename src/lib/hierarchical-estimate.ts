@@ -1,9 +1,19 @@
 /**
  * Hierarchical estimate tree for PDF-style UI (t25u).
- * Excel supplies qty×rate arithmetic; grouping is product UI, not Excel chrome.
+ * Amounts use shared resolveResourceDimensions (same Q/R as cost-engine / export).
  */
 import { roundMoney } from "@/lib/calc-math";
-import type { CalcPosition, GprStage, GprStageResource } from "@/lib/types";
+import {
+  resolveResourceDimensions,
+  type ResolvedResourceDims,
+} from "@/lib/resource-dimensions";
+import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
+import type {
+  CalcPosition,
+  GprStage,
+  GprStageResource,
+  ResourceQuantityBasis,
+} from "@/lib/types";
 
 export type EstimateKind = "labor" | "equipment" | "material" | "bus" | "other";
 
@@ -13,12 +23,19 @@ export type EstimateLeaf = {
   kind: EstimateKind;
   name: string;
   unit: string;
+  /** Editable source L (count / hours / material qty). */
   quantity: number;
   rate: number | null;
   amount: number | null;
   stageId?: string;
   positionId?: string;
   incomplete: string[];
+  basis?: ResourceQuantityBasis;
+  /** Q hours when applicable (count_per_shift / total_hours). */
+  hoursQ?: number | null;
+  hoursPerShift?: number | null;
+  shiftsPerDay?: number | null;
+  days?: number | null;
 };
 
 export type EstimateGroup = {
@@ -53,17 +70,32 @@ const KIND_ORDER: EstimateKind[] = [
   "other",
 ];
 
-function leafAmount(qty: number, rate: number | null): {
-  amount: number | null;
-  incomplete: string[];
-} {
-  if (rate == null || !Number.isFinite(rate) || rate < 0) {
-    return { amount: null, incomplete: ["rate"] };
-  }
-  if (!Number.isFinite(qty)) {
-    return { amount: null, incomplete: ["quantity"] };
-  }
-  return { amount: roundMoney(qty * rate), incomplete: [] };
+function leafFromResolved(
+  r: GprStageResource,
+  st: GprStage,
+  resolved: ResolvedResourceDims
+): EstimateLeaf {
+  return {
+    id: r.id,
+    source: "stage_resource",
+    kind: resourceKind(r),
+    name: r.name,
+    unit: r.unit || (r.kind === "labor" ? "чел" : "ед."),
+    quantity: resolved.sourceQty,
+    rate: resolved.rate,
+    amount: resolved.amount,
+    stageId: st.id,
+    incomplete: resolved.incomplete.length
+      ? resolved.incomplete
+      : resolved.amount == null
+        ? ["incomplete"]
+        : [],
+    basis: resolved.basis,
+    hoursQ: resolved.hours,
+    hoursPerShift: resolved.hoursPerShift,
+    shiftsPerDay: resolved.shiftsPerDay,
+    days: resolved.days,
+  };
 }
 
 function resourceKind(r: GprStageResource): EstimateKind {
@@ -89,7 +121,7 @@ function isLaborPosition(p: CalcPosition): boolean {
 function isEquipmentPosition(p: CalcPosition): boolean {
   if (p.code === "НР" || p.code === "СП") return false;
   const hay = `${p.code} ${p.name}`.toLowerCase();
-  return /техник|кран|экскаватор|каток|самосвал|машино|маш-ч/.test(hay);
+  return /техник|кран|экскаватор|каток|самосвал|машино|маш-ч|маш\.-ч/.test(hay);
 }
 
 function groupLeaves(leaves: EstimateLeaf[]): EstimateGroup[] {
@@ -134,7 +166,9 @@ export function buildHierarchicalEstimate(opts: {
   stages: GprStage[];
   positions?: CalcPosition[];
   search?: string;
+  params?: typeof EXCEL_RESOURCE_SCHEDULE_DEFAULTS;
 }): EstimateStageNode[] {
+  const params = opts.params ?? EXCEL_RESOURCE_SCHEDULE_DEFAULTS;
   const q = (opts.search ?? "").trim().toLowerCase();
   const match = (text: string) =>
     !q || text.toLowerCase().includes(q);
@@ -144,19 +178,8 @@ export function buildHierarchicalEstimate(opts: {
   for (const st of opts.stages.slice().sort((a, b) => a.sequence - b.sequence)) {
     const leaves: EstimateLeaf[] = [];
     for (const r of st.resources ?? []) {
-      const { amount, incomplete } = leafAmount(r.quantity, r.rate ?? null);
-      const leaf: EstimateLeaf = {
-        id: r.id,
-        source: "stage_resource",
-        kind: resourceKind(r),
-        name: r.name,
-        unit: r.unit || (r.kind === "labor" ? "чел" : "ед."),
-        quantity: r.quantity,
-        rate: r.rate ?? null,
-        amount,
-        stageId: st.id,
-        incomplete,
-      };
+      const resolved = resolveResourceDimensions(r, st, params);
+      const leaf = leafFromResolved(r, st, resolved);
       if (
         match(st.name) ||
         match(leaf.name) ||
@@ -177,7 +200,6 @@ export function buildHierarchicalEstimate(opts: {
     });
   }
 
-  // Calc positions not already present on a stage by name — optional unbound bucket
   const named = new Set(
     nodes.flatMap((n) => n.groups.flatMap((g) => g.leaves.map((l) => l.name.toLowerCase())))
   );
@@ -189,9 +211,13 @@ export function buildHierarchicalEstimate(opts: {
     if (isMaterialPosition(p)) kind = "material";
     else if (isLaborPosition(p)) kind = "labor";
     else if (isEquipmentPosition(p)) kind = "equipment";
-    else continue; // skip unclassified noise for tree clarity
-    const rate = Number.isFinite(p.rate) && p.rate > 0 ? p.rate : null;
-    const { amount, incomplete } = leafAmount(p.quantity, rate);
+    else continue;
+    const rate =
+      p.rateMissing || !(Number.isFinite(p.rate) && p.rate > 0)
+        ? null
+        : p.rate;
+    const amount =
+      rate == null ? null : roundMoney(p.quantity * rate);
     const leaf: EstimateLeaf = {
       id: p.id,
       source: "calc_position",
@@ -202,7 +228,9 @@ export function buildHierarchicalEstimate(opts: {
       rate,
       amount,
       positionId: p.id,
-      incomplete,
+      incomplete: rate == null ? ["rate"] : [],
+      basis: kind === "material" ? "material_qty" : "total_hours",
+      hoursQ: kind === "material" ? null : p.quantity,
     };
     if (match(leaf.name) || match(KIND_LABEL[kind])) unbound.push(leaf);
   }

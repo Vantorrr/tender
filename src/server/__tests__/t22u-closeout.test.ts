@@ -209,10 +209,13 @@ describe("t22u closeout remediable", () => {
     expect(wb.getWorksheet("Ресурсы")).toBeTruthy();
     expect(wb.getWorksheet("Ресурсный_параметры")).toBeTruthy();
     const res = wb.getWorksheet("Ресурсы")!;
-    // formula on G2 when resources exist
-    const g2 = res.getCell("G2").value as { formula?: string } | null;
+    // Shared dimension columns: L / Q / R (no silent D*F); header present
+    expect(String(res.getCell("D1").value)).toMatch(/L/i);
+    expect(String(res.getCell("J1").value)).toMatch(/Q/i);
+    expect(String(res.getCell("L1").value)).toMatch(/R/i);
     if (res.rowCount > 1) {
-      expect(g2 && typeof g2 === "object" && "formula" in g2).toBe(true);
+      // Row 2 is a resource or empty — status column exists
+      expect(String(res.getCell("M1").value)).toMatch(/Статус/i);
     }
 
     transferProcurementToProduction("u-ruk", "p-1");
