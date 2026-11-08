@@ -283,6 +283,7 @@ function testProcurement(orgId: string, objectId: string): Procurement {
     gprId: T25U_TEST.scheduleId,
     planFactId: T25U_TEST.planFactId,
     tags: ["TEST", "t25u"],
+    workType: "общестрой",
     createdAt: "2026-11-01T10:00:00Z",
   };
 }

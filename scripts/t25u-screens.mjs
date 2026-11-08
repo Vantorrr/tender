@@ -256,7 +256,13 @@ try {
   if (/18/.test(factText) && /Δ/.test(factText)) pass("s3-fact-delta");
   else fail("s3-fact-delta", factText.slice(0, 100));
 
-  await page.getByTestId("day-plan-fact-row").scrollIntoViewIfNeeded();
+  // Top composition: banner + plan/fact + resource tables (scroll main to top)
+  await page.evaluate(() => {
+    const main = document.querySelector('[data-testid="cabinet-main-scroll"]');
+    if (main) main.scrollTop = 0;
+    else window.scrollTo(0, 0);
+  });
+  await page.waitForTimeout(200);
   await shot(page, "t25u-03-day-details-top.png");
   await page.getByTestId("day-photo-report").scrollIntoViewIfNeeded();
   await shot(page, "t25u-03-day-details.png");
@@ -266,7 +272,11 @@ try {
   results.shots.push("t25u-03-day-photo-report.png");
 
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.getByTestId("day-plan-fact-row").scrollIntoViewIfNeeded();
+  await page.evaluate(() => {
+    const main = document.querySelector('[data-testid="cabinet-main-scroll"]');
+    if (main) main.scrollTop = 0;
+  });
+  await page.waitForTimeout(200);
   await shot(page, "t25u-03-day-details-1280.png");
   pass("s3-viewport-1280");
 } catch (e) {
