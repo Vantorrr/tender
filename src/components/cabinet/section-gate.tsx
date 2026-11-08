@@ -3,17 +3,9 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ErrorState } from "@/components/empty-state";
-import { NAV_ITEMS } from "@/components/cabinet/nav";
+import { sectionForPath } from "@/components/cabinet/nav";
 import { userHasSection } from "@/lib/acl";
-import type { SectionKey } from "@/lib/types";
 import { useStore } from "@/lib/store";
-
-function sectionForPath(pathname: string): SectionKey | null {
-  const hit = NAV_ITEMS.find(
-    (item) => pathname === item.href || pathname.startsWith(item.href + "/")
-  );
-  return hit?.section ?? null;
-}
 
 /** Blocks direct URL access when the role/sections matrix denies the section. */
 export function SectionGate({ children }: { children: React.ReactNode }) {
