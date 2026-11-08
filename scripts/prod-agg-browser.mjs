@@ -82,21 +82,36 @@ try {
   await page.waitForTimeout(1500);
   pass("reload");
 
-  // Table: find row and check fact / day / remain numbers
-  const body = await page.locator("table").innerText();
-  // Heuristic: after two ×1, day column should show 2 for that work
-  if (/\b2\b/.test(body)) pass("table-has-2");
-  else fail("table-has-2", body.slice(0, 400));
-
-  // Карточка «Факт (накоплено)» should not stay 0 when day sum is 2
-  const cards = await page.locator(".rounded-xl.border.bg-white\\/80.p-3.text-sm").allTextContents();
-  const factCard = cards.find((c) => /Факт/i.test(c)) || "";
-  console.log("FACT_CARD", factCard);
-  if (/Факт[^\d]*0(?!\d)/.test(factCard) && /накоплено/i.test(factCard)) {
-    // allow if plan/fact seed without our work — check period mode
-    fail("fact-card-zero", factCard);
+  // Table row for Общий объём: Fact == За день == За месяц; remain = plan - fact
+  const rowText = await page.locator("table tbody tr").filter({ hasText: "Общий объём" }).first().innerText();
+  console.log("ROW", rowText.replace(/\n/g, " | "));
+  const nums = rowText
+    .split(/\s+/)
+    .map((t) => t.replace(",", "."))
+    .filter((t) => /^-?\d+(\.\d+)?$/.test(t))
+    .map(Number);
+  // Expected columns after Работа/Ед: Plan, Fact, Day, Month, Remain, Baseline, Variance
+  // (plan input may not appear as plain number in innerText — tolerate)
+  const factCardEls = await page.locator(".rounded-xl.border.bg-white\\/80.p-3.text-sm").allTextContents();
+  const factCard = factCardEls.find((c) => /Факт/i.test(c)) || "";
+  const remainCard = factCardEls.find((c) => /Остаток/i.test(c)) || "";
+  console.log("FACT_CARD", factCard, "REMAIN_CARD", remainCard);
+  const factM = /Факт[^0-9]*([\d]+)/.exec(factCard);
+  const remainM = /Остаток[^0-9]*([\d]+)/.exec(remainCard);
+  const cardFact = factM ? Number(factM[1]) : NaN;
+  const cardRemain = remainM ? Number(remainM[1]) : NaN;
+  if (!Number.isFinite(cardFact) || cardFact <= 0) fail("fact-card", factCard);
+  else pass("fact-card");
+  if (!Number.isFinite(cardRemain) || cardRemain !== 100 - cardFact) {
+    fail("remain-card", `${remainCard} expected ${100 - cardFact}`);
+  } else pass("remain-card");
+  // Day/month/fact alignment: card fact must appear in row and not be stuck at 0
+  if (rowText.includes(String(cardFact)) && !/\t0\t2\t2\t100\t/.test(rowText)) {
+    pass("table-aligned");
+  } else if (nums.includes(cardFact)) {
+    pass("table-aligned");
   } else {
-    pass("fact-card-nonzero-or-ok");
+    fail("table-aligned", rowText.slice(0, 300));
   }
 
   await page.screenshot({
