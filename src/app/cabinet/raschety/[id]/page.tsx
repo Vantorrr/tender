@@ -297,7 +297,10 @@ export default function RaschetDetailPage() {
           Труд: {formatMoney(buckets.labor)}
         </div>
         <div className="rounded-xl border bg-white/80 p-3">
-          Материалы: {formatMoney(buckets.materials)}
+          Материалы:{" "}
+          {buckets.materialsUnpriced
+            ? "нет данных"
+            : formatMoney(buckets.materials)}
         </div>
         <div className="rounded-xl border bg-white/80 p-3">
           Техника: {formatMoney(buckets.equipment)}

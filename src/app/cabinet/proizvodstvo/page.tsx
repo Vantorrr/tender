@@ -24,12 +24,13 @@ import {
 } from "@/components/ui/table";
 import { DateInputRu } from "@/components/date-input-ru";
 import { api, downloadUrl } from "@/lib/api";
-import { formatDate, formatMoney, formatNumber } from "@/lib/format";
+import { formatDate, formatNumber } from "@/lib/format";
 import {
   entryDisplayFact,
   entryDisplayRemain,
   sumDailyQty,
 } from "@/lib/plan-fact-agg";
+import { allocatePlanForSlice } from "@/lib/plan-from-gpr";
 import { useStore } from "@/lib/store";
 
 type PeriodMode = "day" | "month" | "period" | "cum";
@@ -98,6 +99,16 @@ export default function ProizvodstvoPage() {
         : period === "period"
           ? sumDailyQty(daily)
           : totals.fact;
+
+  // Plan for selected slice from GPR calendar (uniform allocation), not «факт − 100%»
+  const gprStages = gpr?.stages ?? [];
+  const periodPlan = allocatePlanForSlice(
+    totals.plan,
+    gprStages,
+    period,
+    date
+  );
+  const sliceVariance = periodFact - periodPlan;
 
   async function submitDaily(withPhoto: boolean) {
     if (!plan) return;
@@ -283,41 +294,162 @@ export default function ProizvodstvoPage() {
 
           {plan ? (
             <>
-              <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  План (накоплено): {formatNumber(totals.plan)}
+                  План договора (всего): {formatNumber(totals.plan)}
+                </div>
+                <div
+                  className="rounded-xl border bg-white/80 p-3 text-sm"
+                  data-testid="period-plan-from-gpr"
+                >
+                  План (
+                  {
+                    {
+                      day: "день",
+                      month: "месяц",
+                      period: "период",
+                      cum: "накоплено",
+                    }[period]
+                  }{" "}
+                  из ГПР): {formatNumber(periodPlan)}
+                  {gprStages.length === 0 ? (
+                    <span className="mt-1 block text-[11px] text-amber-800">
+                      нет ГПР — срез плана ограничен
+                    </span>
+                  ) : null}
                 </div>
                 <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  Факт ({
-                    { day: "день", month: "месяц", period: "период", cum: "накоплено" }[
-                      period
-                    ]
+                  Факт (
+                  {
+                    {
+                      day: "день",
+                      month: "месяц",
+                      period: "период",
+                      cum: "накоплено",
+                    }[period]
                   }
                   ): {formatNumber(periodFact)}
+                </div>
+                <div className="rounded-xl border bg-white/80 p-3 text-sm">
+                  Отклонение среза (факт−план ГПР):{" "}
+                  <span
+                    className={
+                      sliceVariance < 0
+                        ? "text-rose-700"
+                        : sliceVariance > 0
+                          ? "text-emerald-700"
+                          : ""
+                    }
+                  >
+                    {formatNumber(sliceVariance)}
+                  </span>
                 </div>
                 <div className="rounded-xl border bg-white/80 p-3 text-sm">
                   Остаток договора: {formatNumber(totals.remain)}
                 </div>
                 <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  Норм. стоимость факта:{" "}
+                  Индекс физ. объёма (не ₽):{" "}
                   {formatNumber(plan.pnl?.earnedValue ?? 0)}
                 </div>
               </div>
 
-              <div className="mb-4 grid gap-3 sm:grid-cols-3">
+              <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  Поступления (касса):{" "}
-                  {formatMoney(plan.pnl?.cashIn ?? 0)}
+                  <p className="mb-1 text-xs text-[var(--tk-muted)]">
+                    Подтверждённые затраты (₽)
+                  </p>
+                  <Input
+                    data-testid="pnl-incurred"
+                    value={String(plan.pnl?.incurredCosts ?? 0)}
+                    onChange={(e) => {
+                      const v = Number(e.target.value) || 0;
+                      updatePlanFact(plan.id, {
+                        pnl: {
+                          earnedValue: plan.pnl?.earnedValue ?? 0,
+                          incurredCosts: v,
+                          cashIn: plan.pnl?.cashIn ?? 0,
+                          cashOut: plan.pnl?.cashOut ?? 0,
+                          recognizedRevenue:
+                            plan.pnl?.recognizedRevenue ?? null,
+                          notes: plan.pnl?.notes ?? [],
+                        },
+                      });
+                    }}
+                  />
                 </div>
                 <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  Списания (касса):{" "}
-                  {formatMoney(plan.pnl?.cashOut ?? 0)}
+                  <p className="mb-1 text-xs text-[var(--tk-muted)]">
+                    Поступления касса (₽)
+                  </p>
+                  <Input
+                    data-testid="pnl-cash-in"
+                    value={String(plan.pnl?.cashIn ?? 0)}
+                    onChange={(e) => {
+                      const v = Number(e.target.value) || 0;
+                      updatePlanFact(plan.id, {
+                        pnl: {
+                          earnedValue: plan.pnl?.earnedValue ?? 0,
+                          incurredCosts: plan.pnl?.incurredCosts ?? 0,
+                          cashIn: v,
+                          cashOut: plan.pnl?.cashOut ?? 0,
+                          recognizedRevenue:
+                            plan.pnl?.recognizedRevenue ?? null,
+                          notes: plan.pnl?.notes ?? [],
+                        },
+                      });
+                    }}
+                  />
                 </div>
                 <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  Признанная выручка:{" "}
-                  {plan.pnl?.recognizedRevenue == null
-                    ? "нет данных"
-                    : formatMoney(plan.pnl.recognizedRevenue)}
+                  <p className="mb-1 text-xs text-[var(--tk-muted)]">
+                    Списания касса (₽)
+                  </p>
+                  <Input
+                    data-testid="pnl-cash-out"
+                    value={String(plan.pnl?.cashOut ?? 0)}
+                    onChange={(e) => {
+                      const v = Number(e.target.value) || 0;
+                      updatePlanFact(plan.id, {
+                        pnl: {
+                          earnedValue: plan.pnl?.earnedValue ?? 0,
+                          incurredCosts: plan.pnl?.incurredCosts ?? 0,
+                          cashIn: plan.pnl?.cashIn ?? 0,
+                          cashOut: v,
+                          recognizedRevenue:
+                            plan.pnl?.recognizedRevenue ?? null,
+                          notes: plan.pnl?.notes ?? [],
+                        },
+                      });
+                    }}
+                  />
+                </div>
+                <div className="rounded-xl border bg-white/80 p-3 text-sm">
+                  <p className="mb-1 text-xs text-[var(--tk-muted)]">
+                    Признанная выручка (₽, пусто = нет данных)
+                  </p>
+                  <Input
+                    data-testid="pnl-revenue"
+                    placeholder="нет данных"
+                    value={
+                      plan.pnl?.recognizedRevenue == null
+                        ? ""
+                        : String(plan.pnl.recognizedRevenue)
+                    }
+                    onChange={(e) => {
+                      const raw = e.target.value.trim();
+                      updatePlanFact(plan.id, {
+                        pnl: {
+                          earnedValue: plan.pnl?.earnedValue ?? 0,
+                          incurredCosts: plan.pnl?.incurredCosts ?? 0,
+                          cashIn: plan.pnl?.cashIn ?? 0,
+                          cashOut: plan.pnl?.cashOut ?? 0,
+                          recognizedRevenue:
+                            raw === "" ? null : Number(raw) || 0,
+                          notes: plan.pnl?.notes ?? [],
+                        },
+                      });
+                    }}
+                  />
                 </div>
               </div>
 
@@ -435,6 +567,7 @@ export default function ProizvodstvoPage() {
                       const monthQ = qtyForWork(e.workName, monthFacts);
                       const fact = entryDisplayFact(e, daily);
                       const remain = entryDisplayRemain(e, daily);
+                      // Table variance vs baseline contract plan (not slice)
                       const variance = fact - (base?.plan ?? e.plan);
                       return (
                         <TableRow key={e.id}>
@@ -520,14 +653,19 @@ export default function ProizvodstvoPage() {
                           {(d.photos?.length ?? 0) > 0 ? (
                             <div className="mt-1 flex flex-wrap gap-2">
                               {d.photos.map((ph) => (
-                                <span
+                                <a
                                   key={ph.id}
-                                  className="inline-flex items-center rounded-md bg-stone-100 px-2 py-1 text-xs"
+                                  href={`/api/proizvodstvo/photo?id=${ph.id}&disposition=inline`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center rounded-md bg-stone-100 px-2 py-1 text-xs underline-offset-2 hover:underline"
                                   data-testid={`photo-${ph.id}`}
+                                  title={`${d.date} · ${d.workName}`}
                                 >
                                   📷 {ph.fileName}
                                   {ph.caption ? ` — ${ph.caption}` : ""}
-                                </span>
+                                  {ph.storedPath ? " · открыть" : ""}
+                                </a>
                               ))}
                             </div>
                           ) : null}

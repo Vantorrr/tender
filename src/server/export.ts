@@ -153,12 +153,38 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
     ]);
   }
   const resSheet = wb.addWorksheet("Ресурсы");
-  resSheet.addRow(["Этап", "Вид", "Название", "Кол-во", "Ед."]);
+  resSheet.addRow(["Этап", "Вид", "Название", "Кол-во", "Ед.", "Ставка", "Сумма"]);
   resSheet.getRow(1).font = { bold: true };
+  let rIdx = 2;
   for (const s of g.stages) {
     for (const r of s.resources ?? []) {
-      resSheet.addRow([s.name, r.kind, r.name, r.quantity, r.unit ?? ""]);
+      resSheet.addRow([
+        s.name,
+        r.kind,
+        r.name,
+        r.quantity,
+        r.unit ?? "",
+        r.rate ?? null,
+        null,
+      ]);
+      // Confirmed sum only when rate present; blank rate → blank sum (not 0)
+      resSheet.getCell(`G${rIdx}`).value = {
+        formula: `IF(OR(F${rIdx}="",F${rIdx}=0),"",D${rIdx}*F${rIdx})`,
+      };
+      rIdx += 1;
     }
+  }
+  if (rIdx > 2) {
+    const last = rIdx - 1;
+    resSheet.addRow([
+      "Итого подтверждённых",
+      "",
+      "",
+      { formula: `SUM(D2:D${last})` },
+      "",
+      "",
+      { formula: `SUM(G2:G${last})` },
+    ]);
   }
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
@@ -202,15 +228,33 @@ export async function buildPlanFactXlsx(id: string): Promise<Buffer> {
   const ws = wb.addWorksheet("ПланФакт");
   ws.addRow(["Работа", "Ед.", "План", "Факт", "Отклонение", "Остаток договора"]);
   ws.getRow(1).font = { bold: true };
+  let rowIdx = 2;
   for (const e of pf.entries) {
     ws.addRow([
       e.workName,
       e.unit,
       e.plan,
       e.fact,
-      e.fact - e.plan,
-      e.contractRemaining ?? "",
+      null,
+      e.contractRemaining ?? Math.max(0, e.plan - e.fact),
     ]);
+    // Excel formulas: deviation = fact - plan; remain = plan - fact
+    ws.getCell(`E${rowIdx}`).value = { formula: `D${rowIdx}-C${rowIdx}` };
+    ws.getCell(`F${rowIdx}`).value = { formula: `MAX(0,C${rowIdx}-D${rowIdx})` };
+    rowIdx += 1;
+  }
+  if (pf.entries.length) {
+    const last = rowIdx - 1;
+    const totalRow = last + 1;
+    ws.addRow(["Итого", "", null, null, null, null]);
+    ws.getCell(`C${totalRow}`).value = { formula: `SUM(C2:C${last})` };
+    ws.getCell(`D${totalRow}`).value = { formula: `SUM(D2:D${last})` };
+    ws.getCell(`E${totalRow}`).value = {
+      formula: `D${totalRow}-C${totalRow}`,
+    };
+    ws.getCell(`F${totalRow}`).value = {
+      formula: `MAX(0,C${totalRow}-D${totalRow})`,
+    };
   }
   if (pf.baselineEntries?.length) {
     const base = wb.addWorksheet("Baseline");

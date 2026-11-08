@@ -244,19 +244,26 @@ export function bucketsFromPositions(
   materials: number;
   equipment: number;
   other: number;
+  /** True when at least one material-classified position exists. */
+  hasMaterialPositions: boolean;
+  /** True when materials bucket is arithmetically 0 because there are no material lines (not a confirmed 0 ₽ price). */
+  materialsUnpriced: boolean;
 } {
   let labor = 0;
   let materials = 0;
   let equipment = 0;
   let other = 0;
+  let hasMaterialPositions = false;
   for (const p of positions) {
     if (p.code === "НР" || p.code === "СП") continue;
     const sum = p.quantity * p.rate * factor;
     const hay = `${p.code} ${p.name} ${p.unit}`.toLowerCase();
     if (/н-ч|чел|труд|зарп|свар|монтажн/.test(hay)) labor += sum;
-    else if (/матер|м²|м2|т\b|сэндвич|бетон|арматур/.test(hay))
+    else if (/матер|м²|м2|т\b|сэндвич|бетон|арматур/.test(hay)) {
+      hasMaterialPositions = true;
       materials += sum;
-    else if (/маш|техник|jcb|экскав|кран|атс|дсм/.test(hay)) equipment += sum;
+    } else if (/маш|техник|jcb|экскав|кран|атс|дсм/.test(hay))
+      equipment += sum;
     else other += sum;
   }
   return {
@@ -264,6 +271,8 @@ export function bucketsFromPositions(
     materials: roundMoney(materials),
     equipment: roundMoney(equipment),
     other: roundMoney(other),
+    hasMaterialPositions,
+    materialsUnpriced: !hasMaterialPositions,
   };
 }
 

@@ -41,6 +41,8 @@ import { mutateAppData, readAppData, resetAppData } from "@/server/db";
 import { hashPassword } from "@/server/passwords";
 import { createSession, publicUser } from "@/server/auth";
 import { randomBytes } from "node:crypto";
+import { ensureStageResources } from "@/lib/gpr-resources";
+import { totalStageCalendarDays } from "@/lib/plan-from-gpr";
 import { recomputeEntriesFromDaily } from "@/lib/plan-fact-agg";
 
 export { assertOrgAccess };
@@ -799,21 +801,24 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
         version: 1,
         authorId: actorId,
         stages: [
-          {
+          ensureStageResources({
             id: stage1,
             name: "Подготовка",
             start,
             end: new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10),
             sequence: 1,
-          },
-          {
+            crewSize: 4,
+          }),
+          ensureStageResources({
             id: stage2,
             name: "Основные работы",
             start: new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10),
             end: new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10),
             sequence: 2,
             dependsOn: stage1,
-          },
+            dependencyType: "FS",
+            crewSize: 6,
+          }),
         ],
         updatedAt: now,
       });
@@ -1394,21 +1399,24 @@ export function sendProcurementToCalculation(
         version: 1,
         authorId: actorId,
         stages: [
-          {
+          ensureStageResources({
             id: stage1,
             name: "Подготовка / мобилизация",
             start: now.slice(0, 10),
             end: new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10),
             sequence: 1,
-          },
-          {
+            crewSize: 4,
+          }),
+          ensureStageResources({
             id: `gs-${Date.now() + 1}`,
             name: "Основные работы",
             start: new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10),
             end: new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10),
             sequence: 2,
             dependsOn: stage1,
-          },
+            dependencyType: "FS",
+            crewSize: 6,
+          }),
         ],
         updatedAt: now,
       });
@@ -1593,13 +1601,72 @@ export function shiftGprStage(
     item.conflicts = result.conflicts;
     item.updatedAt = new Date().toISOString();
     item.version = (item.version ?? 1) + 1;
+    // Recalc dependent calendar costs on linked draft (bus days ← stage lengths)
+    const calc = data.calculations.find((c) => c.id === item.calculationId);
+    if (calc && calc.kind !== "customer_original") {
+      const days = totalStageCalendarDays(item.stages);
+      if (calc.busRoutes?.length) {
+        calc.busRoutes = calc.busRoutes.map((r) => ({ ...r, days }));
+      }
+      if (calc.costSummary || (calc.busRoutes?.length ?? 0) > 0) {
+        const buckets = bucketsFromPositions(
+          calc.positions,
+          calc.scenarioFactor || 1
+        );
+        let logistics = 0;
+        for (const r of calc.busRoutes ?? []) {
+          logistics =
+            Math.round((logistics + busCost(r).total) * 100) / 100;
+        }
+        const northern = calc.northern ?? {
+          applicable: false,
+          confirmedItems: [],
+          notes: ["Северные ставки не подтверждены"],
+        };
+        const site = overheadsFromWorks(
+          buckets.labor + buckets.equipment
+        ).nr;
+        const engine = runCostEngine({
+          directLabor: buckets.labor,
+          directMaterials: buckets.materials,
+          directEquipment: buckets.equipment,
+          directSubcontract: buckets.other,
+          logisticsIncludingBus: logistics,
+          siteOverhead: site,
+          officeOverhead: 0,
+          reserve: calc.costSummary?.reserve ?? 0,
+          profitMethod: "markup",
+          profitRate: 0.08,
+          includeReserveInPriceBase: true,
+          vatPercent: null,
+          northern,
+        });
+        calc.costSummary = {
+          C0: engine.C0,
+          C: engine.C,
+          reserve: engine.reserve,
+          profit: engine.profit,
+          priceExVat: engine.priceExVat,
+          vatAmount: engine.vatAmount,
+          priceIncVat: engine.priceIncVat,
+          method: `cost-engine:${engine.profitMethod}+gpr-shift`,
+          incomplete: engine.incomplete,
+          at: new Date().toISOString(),
+        };
+      }
+      calc.dataFlags = [
+        ...(calc.dataFlags ?? []).filter((f) => f !== "gpr_dates_shifted"),
+        "gpr_dates_shifted",
+      ];
+      calc.updatedAt = new Date().toISOString();
+    }
     audit(
       data,
       actorId,
       "shift",
       "gpr",
       scheduleId,
-      `Сдвиг ${stageId} на ${deltaDays} дн.; конфликтов ${result.conflicts.length}`
+      `Сдвиг ${stageId} на ${deltaDays} дн.; конфликтов ${result.conflicts.length}; связанные дни автобуса=${totalStageCalendarDays(item.stages)}`
     );
     return data;
   });

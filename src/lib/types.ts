@@ -351,6 +351,8 @@ export interface GprStageResource {
   name: string;
   quantity: number;
   unit: string;
+  /** Confirmed unit rate; null/undefined = нет данных (не считать как 0 ₽). */
+  rate?: number | null;
 }
 
 export interface GprStage {

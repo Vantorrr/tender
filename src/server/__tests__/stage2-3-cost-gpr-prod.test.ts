@@ -28,12 +28,56 @@ describe("stage2 cost engine + gantt", () => {
     ensureReady();
   });
 
-  it("schema is 11 with calendar and multi-kind resources on schedules", () => {
+  it("schema is 12 with calendar and stage-named multi-kind resources", () => {
     const data = readAppData();
     const g = data.schedules[0];
     expect(g.calendar?.hoursPerShift).toBeTruthy();
     expect(g.stages[0]?.resources?.length).toBeGreaterThan(1);
+    // Resources are stage-linked names, not identical anonymous kit
+    const names = new Set(
+      g.stages.flatMap((s) => (s.resources ?? []).map((r) => r.name))
+    );
+    expect([...names].some((n) => n.includes("·"))).toBe(true);
     expect(data.supplyRequests).toBeTruthy();
+  });
+
+  it("allocatePlanForSlice uses GPR calendar, not fact−100%", async () => {
+    const { allocatePlanForSlice } = await import("@/lib/plan-from-gpr");
+    const stages = [
+      {
+        id: "a",
+        name: "A",
+        start: "2026-11-01",
+        end: "2026-11-10",
+        sequence: 1,
+      },
+    ];
+    const plan = 100;
+    const day = allocatePlanForSlice(plan, stages, "day", "2026-11-05");
+    const month = allocatePlanForSlice(plan, stages, "month", "2026-11-05");
+    const cum = allocatePlanForSlice(plan, stages, "cum", "2026-11-05");
+    expect(day).toBeGreaterThan(0);
+    expect(day).toBeLessThan(plan);
+    expect(month).toBe(plan); // all days in November span
+    expect(cum).toBeGreaterThan(0);
+    expect(cum).toBeLessThanOrEqual(plan);
+  });
+
+  it("materialsUnpriced when calc has no material positions", async () => {
+    const { bucketsFromPositions } = await import("@/lib/cost-engine");
+    const b = bucketsFromPositions([
+      {
+        id: "1",
+        code: "ТР",
+        name: "Монтажные работы",
+        unit: "н-ч",
+        quantity: 10,
+        rate: 100,
+      },
+    ]);
+    expect(b.materials).toBe(0);
+    expect(b.materialsUnpriced).toBe(true);
+    expect(b.hasMaterialPositions).toBe(false);
   });
 
   it("RU date parse/format is DD.MM.YYYY (not US MM/DD)", () => {

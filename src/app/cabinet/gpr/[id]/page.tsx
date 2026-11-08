@@ -287,7 +287,12 @@ export default function GprDetailPage() {
         {cost && buckets ? (
           <dl className="grid gap-2 text-sm sm:grid-cols-3">
             <div>Прямые · труд: {formatMoney(buckets.labor)}</div>
-            <div>Прямые · материалы: {formatMoney(buckets.materials)}</div>
+            <div data-testid="gpr-materials-cost">
+              Прямые · материалы:{" "}
+              {buckets.materialsUnpriced
+                ? "нет данных"
+                : formatMoney(buckets.materials)}
+            </div>
             <div>Прямые · техника: {formatMoney(buckets.equipment)}</div>
             <div>C0 (без резерва): {formatMoney(cost.C0)}</div>
             <div>Резерв: {formatMoney(cost.reserve)}</div>
@@ -308,8 +313,9 @@ export default function GprDetailPage() {
           </p>
         )}
         <p className="mt-2 text-xs text-[var(--tk-muted)]">
-          Материалы/труд/техника — расшифровка прямых D, не прибавляются к D
-          повторно. НР и СП из позиций не дублируются в прямых.
+          Материалы/труд/техника — из позиций расчёта. Строка ресурсов этапа без
+          подтверждённой ставки не становится 0 ₽ в цене. НР/СП не дублируются в
+          прямых. После сдвига дат автобусные дни и сводка пересчитываются.
         </p>
       </div>
 
@@ -324,7 +330,8 @@ export default function GprDetailPage() {
               <th className="py-1 pr-2">Вид</th>
               <th className="py-1 pr-2">Название</th>
               <th className="py-1 pr-2">Кол-во</th>
-              <th className="py-1">Ед.</th>
+              <th className="py-1 pr-2">Ед.</th>
+              <th className="py-1">Ставка</th>
             </tr>
           </thead>
           <tbody>
@@ -339,8 +346,69 @@ export default function GprDetailPage() {
                     {KIND_RU[r.kind] ?? r.kind}
                   </td>
                   <td className="py-1 pr-2">{r.name}</td>
-                  <td className="py-1 pr-2">{r.quantity}</td>
-                  <td className="py-1">{r.unit ?? "—"}</td>
+                  <td className="py-1 pr-2">
+                    <Input
+                      className="h-8 w-20"
+                      type="number"
+                      min={0}
+                      step="any"
+                      value={r.quantity}
+                      data-testid={`res-qty-${r.id}`}
+                      onChange={(e) => {
+                        const q = Number(e.target.value) || 0;
+                        updateSchedule(schedule.id, {
+                          stages: schedule.stages.map((s) =>
+                            s.id === stage.id
+                              ? {
+                                  ...s,
+                                  resources: (s.resources ?? []).map((x) =>
+                                    x.id === r.id ? { ...x, quantity: q } : x
+                                  ),
+                                }
+                              : s
+                          ),
+                        });
+                      }}
+                    />
+                  </td>
+                  <td className="py-1 pr-2">{r.unit ?? "—"}</td>
+                  <td className="py-1">
+                    <Input
+                      className="h-8 w-28"
+                      type="number"
+                      min={0}
+                      step="any"
+                      placeholder="нет данных"
+                      value={r.rate == null ? "" : String(r.rate)}
+                      data-testid={`res-rate-${r.id}`}
+                      onChange={(e) => {
+                        const raw = e.target.value.trim();
+                        const rate =
+                          raw === "" ? null : Number(raw);
+                        updateSchedule(schedule.id, {
+                          stages: schedule.stages.map((s) =>
+                            s.id === stage.id
+                              ? {
+                                  ...s,
+                                  resources: (s.resources ?? []).map((x) =>
+                                    x.id === r.id
+                                      ? {
+                                          ...x,
+                                          rate:
+                                            rate == null ||
+                                            Number.isNaN(rate)
+                                              ? null
+                                              : rate,
+                                        }
+                                      : x
+                                  ),
+                                }
+                              : s
+                          ),
+                        });
+                      }}
+                    />
+                  </td>
                 </tr>
               ))
             )}
@@ -394,12 +462,27 @@ export default function GprDetailPage() {
                 value={stage.crewSize ?? 4}
                 title="Численность"
                 onChange={(e) => {
+                  const crew = Number(e.target.value) || 1;
                   updateSchedule(schedule.id, {
-                    stages: schedule.stages.map((s) =>
-                      s.id === stage.id
-                        ? { ...s, crewSize: Number(e.target.value) || 1 }
-                        : s
-                    ),
+                    stages: schedule.stages.map((s) => {
+                      if (s.id !== stage.id) return s;
+                      const next = { ...s, crewSize: crew };
+                      return {
+                        ...next,
+                        resources: (next.resources ?? []).map((r) => {
+                          if (r.kind === "labor" && /бригада/i.test(r.name)) {
+                            return { ...r, quantity: crew };
+                          }
+                          if (r.kind === "bus" && /автобус/i.test(r.name)) {
+                            return {
+                              ...r,
+                              quantity: Math.max(1, Math.ceil(crew / 20)),
+                            };
+                          }
+                          return r;
+                        }),
+                      };
+                    }),
                   });
                 }}
               />

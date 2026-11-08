@@ -7,6 +7,7 @@ import {
   mergeClientDirectoriesInto,
 } from "@/lib/client-dirs";
 import { DEMO_SECRET_KEYS } from "@/lib/demo-accounts";
+import { ensureStageResources } from "@/lib/gpr-resources";
 import { recomputeEntriesFromDaily } from "@/lib/plan-fact-agg";
 import { createSeedData } from "@/lib/seed";
 import type { AppData } from "@/lib/types";
@@ -22,8 +23,8 @@ import { modelConfigured } from "@/server/openrouter";
 import { hashPassword } from "@/server/passwords";
 import { procurementSourceStatus } from "@/server/procurement-source";
 
-/** 11: heal plan/fact entry.fact from dailyFacts when ledger exists. */
-const SCHEMA_VERSION = "11";
+/** 12: stage-named resources + enrich empty runtime GPRs; keep custom complete sets. */
+const SCHEMA_VERSION = "12";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -247,15 +248,17 @@ function applySchema9Extras(data: AppData): AppData {
       shiftsPerDay: 1,
       timezone: "Asia/Krasnoyarsk",
     },
-    stages: (s.stages ?? []).map((st) => ({
-      ...st,
-      dependencyType: st.dependencyType ?? (st.dependsOn ? "FS" : undefined),
-      lagDays: st.lagDays ?? 0,
-      crewSize: st.crewSize ?? 4,
-      hoursPerShift: st.hoursPerShift ?? s.calendar?.hoursPerShift ?? 8,
-      shiftsPerDay: st.shiftsPerDay ?? s.calendar?.shiftsPerDay ?? 1,
-      resources: st.resources ?? defaultStageResources(st.id, st.crewSize ?? 4),
-    })),
+    stages: (s.stages ?? []).map((st) => {
+      const base = {
+        ...st,
+        dependencyType: st.dependencyType ?? (st.dependsOn ? "FS" : undefined),
+        lagDays: st.lagDays ?? 0,
+        crewSize: st.crewSize ?? 4,
+        hoursPerShift: st.hoursPerShift ?? s.calendar?.hoursPerShift ?? 8,
+        shiftsPerDay: st.shiftsPerDay ?? s.calendar?.shiftsPerDay ?? 1,
+      };
+      return ensureStageResources(base);
+    }),
     conflicts: s.conflicts ?? [],
   }));
   data.planFacts = (data.planFacts ?? []).map((pf) => {
@@ -285,40 +288,7 @@ function applySchema9Extras(data: AppData): AppData {
   return data;
 }
 
-function defaultStageResources(stageId: string, crew: number) {
-  return [
-    {
-      id: `res-${stageId}-labor`,
-      kind: "labor" as const,
-      name: "Бригада основных работ",
-      quantity: crew,
-      unit: "чел",
-    },
-    {
-      id: `res-${stageId}-mat`,
-      kind: "material" as const,
-      name: "Основные материалы этапа",
-      quantity: 1,
-      unit: "компл",
-    },
-    {
-      id: `res-${stageId}-eq`,
-      kind: "equipment" as const,
-      name: "Вспомогательная техника",
-      quantity: 1,
-      unit: "маш",
-    },
-    {
-      id: `res-${stageId}-bus`,
-      kind: "bus" as const,
-      name: "Автобус доставки персонала",
-      quantity: Math.max(1, Math.ceil(crew / 20)),
-      unit: "ед",
-    },
-  ];
-}
-
-/** Additive schema-10: supply cycle hooks on procurements. */
+/** Additive schema-10+: supply cycle + stage-named multi-kind resources. */
 function applySchema10Extras(data: AppData): AppData {
   applySchema9Extras(data);
   data.supplyRequests = data.supplyRequests ?? [];
@@ -326,25 +296,10 @@ function applySchema10Extras(data: AppData): AppData {
     ...p,
     supplyRequestIds: p.supplyRequestIds ?? [],
   }));
-  // Enrich stages that lack multi-kind resources (labor-only stub or empty)
+  // Enrich incomplete stages; preserve complete custom resource sets
   data.schedules = (data.schedules ?? []).map((s) => ({
     ...s,
-    stages: (s.stages ?? []).map((st) => {
-      const res = st.resources ?? [];
-      const kinds = new Set(res.map((r) => r.kind));
-      const incomplete =
-        res.length === 0 ||
-        (res.length === 1 && res[0]?.kind === "labor") ||
-        !kinds.has("material") ||
-        !kinds.has("equipment") ||
-        !kinds.has("bus");
-      return {
-        ...st,
-        resources: incomplete
-          ? defaultStageResources(st.id, st.crewSize ?? 4)
-          : res,
-      };
-    }),
+    stages: (s.stages ?? []).map((st) => ensureStageResources(st)),
   }));
   return data;
 }
