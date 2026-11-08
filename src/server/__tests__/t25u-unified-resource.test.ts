@@ -599,56 +599,62 @@ describe("t25u export PARTIAL + numerics (P1 #3 + evidence)", () => {
     expect(totalStatus).toMatch(/PARTIAL/i);
   });
 
-  it("genuine qty/rate mutate → close/reopen → tree/xlsx/pdf/GPR share independent V–Z", async () => {
-    // Seed a COMPLETE minimal fixture so V/W/X/Y/Z are hand-computable
-    const stages = completeFixtureStages();
-    updateSchedule("u-smet", T25U_TEST.scheduleId, { stages });
-    recomputeCalculationCost("u-smet", T25U_TEST.calculationId, {
-      useResourceScheduleEconomics: true,
-      resourceScheduleParams: EXCEL_RESOURCE_SCHEDULE_DEFAULTS,
-    });
+  it("genuine bus qty+rate mutate → close/reopen → tree/xlsx/pdf/GPR full V–Z", async () => {
+    // Baseline golden bus on TEST fixture: 2×11×1×3×2650 = 174900
+    const before = readAppData();
+    const bus0 = before.schedules
+      .find((s) => s.id === T25U_TEST.scheduleId)!
+      .stages.flatMap((s) => s.resources ?? [])
+      .find((r) => r.id === "rst-2-bus")!;
+    expect(bus0.quantity).toBe(2);
+    expect(bus0.rate).toBe(2650);
 
-    // Genuine mutation: labor qty 2→3 (bus/mat unchanged)
+    // REAL repo/API path used by UI store (`action: patchResource`): BOTH qty + rate
     patchScheduleResourceAndSync("u-smet", T25U_TEST.scheduleId, {
-      resourceId: "cf-lab",
-      stageId: "cf-1",
+      resourceId: "rst-2-bus",
+      stageId: "gst-2",
       quantity: 3,
+      rate: 2700,
     });
 
-    // Independent hand constants (NOT read from costSummary under test):
-    // Labor Q=3×11×1×3=99 R=99×1400=138600
-    // Bus Q=66 R=174900; Mat S=5000
+    // Independent hand constants (NOT from costSummary under test):
+    // Bus Q=3×11×1×3=99 R=99×2700=267300
+    // Other known: labor/eq/mat/bus1 from fixture arithmetic → V=10171048
     const expectedQ = 99;
-    const expectedR = 138600;
-    const V = 138600 + 174900 + 5000; // 318500
-    const W = roundMoney(V * 0.43); // 136955
-    const X = roundMoney(V + W); // 455455
-    const Y = roundMoney(X * 0.4); // 182182
-    const Z = roundMoney(X + Y); // 637637
-    expect({ V, W, X, Y, Z }).toEqual({
-      V: 318500,
-      W: 136955,
-      X: 455455,
-      Y: 182182,
-      Z: 637637,
+    const expectedR = 267300;
+    const V = 10171048;
+    const W = roundMoney(V * 0.43); // 4373550.64
+    const X = roundMoney(V + W); // 14544598.64
+    const Y = roundMoney(X * 0.4); // 5817839.46
+    const Z = roundMoney(X + Y); // 20362438.1
+    expect({ expectedQ, expectedR, V, W, X, Y, Z }).toEqual({
+      expectedQ: 99,
+      expectedR: 267300,
+      V: 10171048,
+      W: 4373550.64,
+      X: 14544598.64,
+      Y: 5817839.46,
+      Z: 20362438.1,
     });
 
     const mid = readAppData();
-    const lab1 = mid.schedules
+    const bus1 = mid.schedules
       .find((s) => s.id === T25U_TEST.scheduleId)!
       .stages.flatMap((s) => s.resources ?? [])
-      .find((r) => r.id === "cf-lab")!;
-    expect(lab1.quantity).toBe(3);
+      .find((r) => r.id === "rst-2-bus")!;
+    expect(bus1.quantity).toBe(3);
+    expect(bus1.rate).toBe(2700);
 
     // Reopen DB WITHOUT writeAppData hand-save
     closeDb();
     ensureReady();
     const after = readAppData();
-    const lab2 = after.schedules
+    const bus2 = after.schedules
       .find((s) => s.id === T25U_TEST.scheduleId)!
       .stages.flatMap((s) => s.resources ?? [])
-      .find((r) => r.id === "cf-lab")!;
-    expect(lab2.quantity).toBe(3);
+      .find((r) => r.id === "rst-2-bus")!;
+    expect(bus2.quantity).toBe(3);
+    expect(bus2.rate).toBe(2700);
 
     const params =
       after.calculations.find((c) => c.id === T25U_TEST.calculationId)!
@@ -659,7 +665,7 @@ describe("t25u export PARTIAL + numerics (P1 #3 + evidence)", () => {
     });
     const leaf = tree
       .flatMap((n) => n.groups.flatMap((g) => g.leaves))
-      .find((l) => l.id === "cf-lab")!;
+      .find((l) => l.id === "rst-2-bus")!;
     expect(leaf.hoursQ).toBe(expectedQ);
     expect(leaf.amount).toBe(expectedR);
 
@@ -699,11 +705,29 @@ describe("t25u export PARTIAL + numerics (P1 #3 + evidence)", () => {
     const res = gpr.getWorksheet("Ресурсы")!;
     let gprR: number | null = null;
     res.eachRow((row) => {
-      if (String(row.getCell(3).value) === "Crew") {
+      if (String(row.getCell(3).value) === "Автобус доставки") {
         gprR = Number(row.getCell(12).value);
       }
     });
     expect(gprR).toBe(expectedR);
+
+    // Full V–Z on GPR summary / params sheets (not only resource R)
+    const rs = gpr.getWorksheet("Ресурсный_параметры")!;
+    const byLabel = new Map<string, number>();
+    rs.eachRow((row) => {
+      const label = String(row.getCell(1).value ?? "");
+      const val = Number(row.getCell(2).value);
+      if (Number.isFinite(val)) byLabel.set(label, val);
+    });
+    const findVal = (re: RegExp) => {
+      for (const [k, v] of byLabel) if (re.test(k)) return v;
+      return null;
+    };
+    expect(findVal(/Прямые V/)).toBe(V);
+    expect(findVal(/НР W/)).toBe(W);
+    expect(findVal(/С\/с с НР X|с НР X/)).toBe(X);
+    expect(findVal(/Прибыль Y/)).toBe(Y);
+    expect(findVal(/Итого Z/)).toBe(Z);
   });
 });
 
