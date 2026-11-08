@@ -10,6 +10,7 @@ import { DEMO_SECRET_KEYS } from "@/lib/demo-accounts";
 import { ensureStageResources } from "@/lib/gpr-resources";
 import { recomputeEntriesFromDaily } from "@/lib/plan-fact-agg";
 import { createSeedData } from "@/lib/seed";
+import { ensureT25uTestFixture } from "@/lib/t25u-test-fixture";
 import type { AppData } from "@/lib/types";
 import { config, dbPath } from "@/server/config";
 import { installGrandReference } from "@/server/grand-package";
@@ -23,8 +24,11 @@ import { modelConfigured } from "@/server/openrouter";
 import { hashPassword } from "@/server/passwords";
 import { procurementSourceStatus } from "@/server/procurement-source";
 
-/** 13: t25u school GPR — workName links, dated stages, catalog-priced resources. */
-const SCHEMA_VERSION = "13";
+/**
+ * 14: additive isolated [TEST] t25u fixture only.
+ * Does NOT rewrite school g-1 dates/rates/facts (heals from schema 13 removed).
+ */
+const SCHEMA_VERSION = "14";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -301,23 +305,8 @@ function applySchema10Extras(data: AppData): AppData {
     ...s,
     stages: (s.stages ?? []).map((st) => ensureStageResources(st)),
   }));
-  return data;
-}
-
-/** t25u: refresh g-1 stages from seed (workName + priced resources + Nov'26 window). */
-function applyT25uSchoolGprHeal(data: AppData): AppData {
-  const fresh = createSeedData().schedules.find((s) => s.id === "g-1");
-  if (!fresh) return data;
-  data.schedules = data.schedules.map((s) =>
-    s.id === "g-1"
-      ? {
-          ...s,
-          stages: fresh.stages.map((st) => ensureStageResources(st)),
-          version: Math.max(s.version, fresh.version),
-          updatedAt: new Date().toISOString(),
-        }
-      : s
-  );
+  // Additive TEST fixture (never patches school g-1)
+  ensureT25uTestFixture(data);
   return data;
 }
 
@@ -327,7 +316,7 @@ function migrate(db: DatabaseSync) {
     | undefined;
 
   if (!row) {
-    const seed = applyT25uSchoolGprHeal(
+    const seed = ensureT25uTestFixture(
       applySchema10Extras(
         applySchema8Extras(
           installGrandReference(hashSeedUsers(createSeedData()))
@@ -410,7 +399,8 @@ function migrate(db: DatabaseSync) {
     installGrandReference(data);
     applySchema8Extras(data);
     applySchema10Extras(data);
-    applyT25uSchoolGprHeal(data);
+    // Additive only: insert [TEST] fixture if missing. Never rewrite g-1/c-1/pf-1.
+    ensureT25uTestFixture(data);
 
     db.prepare(
       "UPDATE app_blob SET payload = ?, updated_at = ? WHERE id = 1"

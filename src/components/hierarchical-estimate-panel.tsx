@@ -16,7 +16,8 @@ type Props = {
   stages: GprStage[];
   positions: CalcPosition[];
   locked?: boolean;
-  costTotal?: number | null;
+  /** Full estimate (позиции × коэф. сценария) — separate basis from tree qty×rate. */
+  estimateTotal?: number | null;
   costIncomplete?: boolean;
   onPatchLeaf: (leaf: EstimateLeaf, patch: { quantity?: number; rate?: number | null }) => void;
   onExport?: () => void;
@@ -27,7 +28,7 @@ export function HierarchicalEstimatePanel({
   stages,
   positions,
   locked,
-  costTotal,
+  estimateTotal,
   costIncomplete,
   onPatchLeaf,
   onExport,
@@ -77,28 +78,42 @@ export function HierarchicalEstimatePanel({
         </div>
       </div>
 
-      <div className="mb-4 grid gap-3 sm:grid-cols-3">
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div
+          className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
+          data-testid="budget-card-estimate-total"
+        >
+          <p className="text-xs text-[var(--tk-muted)]">
+            Итого сметы (позиции × коэф.)
+          </p>
+          <p className="mt-1 font-[family-name:var(--font-display)] text-2xl">
+            {estimateTotal != null ? formatMoney(estimateTotal) : "нет данных"}
+          </p>
+          <p className="mt-1 text-[11px] text-[var(--tk-muted)]">
+            та же база, что сводка / cost-engine / экспорт
+          </p>
+        </div>
         <div
           className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
           data-testid="budget-card-total"
         >
-          <p className="text-xs text-[var(--tk-muted)]">Общая стоимость (известное)</p>
+          <p className="text-xs text-[var(--tk-muted)]">
+            Дерево ресурсов (qty×rate, известное)
+          </p>
           <p className="mt-1 font-[family-name:var(--font-display)] text-2xl">
-            {costTotal != null
-              ? formatMoney(costTotal)
-              : cards.totalKnown != null
-                ? formatMoney(cards.totalKnown)
-                : "нет данных"}
+            {cards.totalKnown != null
+              ? formatMoney(cards.totalKnown)
+              : "нет данных"}
           </p>
           {(costIncomplete || cards.incomplete) && (
-            <p className="mt-1 text-xs text-amber-800">итоги неполны</p>
+            <p className="mt-1 text-xs text-amber-800">дерево неполно</p>
           )}
         </div>
         <div
           className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
           data-testid="budget-card-labor"
         >
-          <p className="text-xs text-[var(--tk-muted)]">Бюджет · люди</p>
+          <p className="text-xs text-[var(--tk-muted)]">Дерево · люди</p>
           <p className="mt-1 text-xl font-semibold">
             {cards.labor == null ? "нет данных" : formatMoney(cards.labor)}
           </p>
@@ -107,7 +122,7 @@ export function HierarchicalEstimatePanel({
           className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
           data-testid="budget-card-equipment"
         >
-          <p className="text-xs text-[var(--tk-muted)]">Бюджет · техника</p>
+          <p className="text-xs text-[var(--tk-muted)]">Дерево · техника</p>
           <p className="mt-1 text-xl font-semibold">
             {cards.equipment == null ? "нет данных" : formatMoney(cards.equipment)}
           </p>

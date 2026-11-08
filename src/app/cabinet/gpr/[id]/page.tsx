@@ -15,6 +15,7 @@ import { collectCalendarWarnings } from "@/lib/calendar-availability";
 import { bucketsFromPositions, diffDays } from "@/lib/cost-engine";
 import { formatDate, formatMoney } from "@/lib/format";
 import { buildMaterialNeeds } from "@/lib/materials-need";
+import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { useStore } from "@/lib/store";
 
 const KIND_RU: Record<string, string> = {
@@ -118,6 +119,16 @@ export default function GprDetailPage() {
           </>
         }
       />
+
+      {isT25uTestId(schedule.id) || isT25uTestTitle(schedule.title) ? (
+        <div
+          className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-950"
+          data-testid="t25u-test-banner"
+        >
+          <span className="font-semibold">TEST</span> — изолированный ГПР
+          приёмки t25u (школа №12 не изменена).
+        </div>
+      ) : null}
 
       {(schedule.conflicts?.length ?? 0) > 0 ? (
         <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-950">

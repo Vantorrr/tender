@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/table";
 import { api, downloadUrl } from "@/lib/api";
 import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-panel";
+import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { bucketsFromPositions } from "@/lib/cost-engine";
 import { formatMoney, formatNumber } from "@/lib/format";
 import type { Calculation } from "@/lib/types";
@@ -188,6 +189,8 @@ export default function RaschetDetailPage() {
     }
   }
 
+  const isTest = isT25uTestId(calc.id) || isT25uTestTitle(calc.title);
+
   return (
     <div>
       <PageHeader
@@ -276,6 +279,16 @@ export default function RaschetDetailPage() {
         }
       />
 
+      {isTest ? (
+        <div
+          className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-950"
+          data-testid="t25u-test-banner"
+        >
+          <span className="font-semibold">TEST</span> — изолированный расчёт
+          приёмки t25u (не смета школы №12).
+        </div>
+      ) : null}
+
       {locked ? (
         <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
           Исходная смета заказчика неизменяема. Собственные ресурсы добавляйте
@@ -349,8 +362,10 @@ export default function RaschetDetailPage() {
             </SelectContent>
           </Select>
         </div>
-        <div className="tk-glass rounded-3xl px-4 py-2">
-          <div className="text-xs text-[var(--tk-muted)]">Итого с коэффициентом</div>
+        <div className="tk-glass rounded-3xl px-4 py-2" data-testid="calc-total-chip">
+          <div className="text-xs text-[var(--tk-muted)]">
+            Итого сметы (позиции × коэф.)
+          </div>
           <div className="font-[family-name:var(--font-display)] text-xl">
             {formatMoney(total)}
           </div>
@@ -362,7 +377,7 @@ export default function RaschetDetailPage() {
           stages={linkedSchedule?.stages ?? []}
           positions={calc.positions}
           locked={locked}
-          costTotal={calc.costSummary?.priceExVat ?? calc.costSummary?.C0 ?? null}
+          estimateTotal={total}
           costIncomplete={Boolean(calc.costSummary?.totalsIncomplete)}
           onPatchLeaf={patchEstimateLeaf}
           onExport={exportExcelLike}

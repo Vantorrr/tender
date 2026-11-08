@@ -201,13 +201,36 @@ describe("t25u day details resourceLines persistence", () => {
     expect(day?.resourceLines?.[0]?.factQty).toBe(9);
   });
 
-  it("healed g-1 links Демонтаж перегородок to gs-2 with Nov window", () => {
+  it("school g-1 keeps original Dec'26 window (no auto-mod for screens)", () => {
     const g1 = readAppData().schedules.find((s) => s.id === "g-1")!;
     const gs2 = g1.stages.find((s) => s.id === "gs-2")!;
-    expect(gs2.workName).toBe("Демонтаж перегородок");
-    expect(gs2.start <= "2026-11-08" && gs2.end >= "2026-11-08").toBe(true);
-    expect(gs2.resources?.some((r) => r.kind === "labor" && r.rate != null)).toBe(
+    expect(gs2.start).toBe("2026-12-21");
+    expect(gs2.end).toBe("2027-01-25");
+    expect(gs2.workName).toBeUndefined();
+  });
+
+  it("isolated [TEST] fixture exists without rewriting school", () => {
+    const data = readAppData();
+    const testG = data.schedules.find((s) => s.id === "g-t25u-test")!;
+    const school = data.schedules.find((s) => s.id === "g-1")!;
+    expect(testG.title).toMatch(/\[TEST\]/);
+    expect(testG.stages.some((s) => s.workName === "Демонтаж перегородок")).toBe(
       true
+    );
+    expect(school.title).not.toMatch(/\[TEST\]/);
+    expect(school.stages.find((s) => s.id === "gs-1")?.start).toBe("2026-12-01");
+  });
+
+  it("migration does not rewrite existing school stage dates", () => {
+    const before = structuredClone(
+      readAppData().schedules.find((s) => s.id === "g-1")!.stages
+    );
+    // Force another ensureReady / schema path
+    closeDb();
+    ensureReady();
+    const after = readAppData().schedules.find((s) => s.id === "g-1")!.stages;
+    expect(after.map((s) => ({ id: s.id, start: s.start, end: s.end }))).toEqual(
+      before.map((s) => ({ id: s.id, start: s.start, end: s.end }))
     );
   });
 });

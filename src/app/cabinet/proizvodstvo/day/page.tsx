@@ -20,6 +20,7 @@ import {
   entryDisplayFact,
   sumDailyQty,
 } from "@/lib/plan-fact-agg";
+import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import type { DailyResourceLine } from "@/lib/types";
 import { useStore } from "@/lib/store";
 
@@ -34,58 +35,69 @@ function ResourceRows({
   testPrefix: string;
   onChange: (next: DailyResourceLine[]) => void;
 }) {
-  if (lines.length === 0) {
-    return (
-      <li className="text-[var(--tk-muted)]" data-testid={`${testPrefix}-empty`}>
-        нет данных по плану для выбранной работы/даты
-      </li>
-    );
-  }
   return (
-    <>
-      {lines.map((l, i) => (
-        <li
-          key={`${testPrefix}-${l.kind}-${l.name}-${i}`}
-          className="grid grid-cols-[1fr_4rem_5rem_4rem] items-center gap-2"
+    <div className="space-y-2 text-sm" data-testid={`${testPrefix}-table`}>
+      <div
+        className="grid grid-cols-[1fr_4.5rem_5rem_5rem] gap-2 border-b border-[var(--tk-line)] pb-1 text-xs font-medium text-[var(--tk-muted)]"
+        data-testid={`${testPrefix}-headers`}
+      >
+        <div>Ресурс</div>
+        <div className="text-right">План</div>
+        <div className="text-right">Факт</div>
+        <div className="text-right">Отклонение</div>
+      </div>
+      {lines.length === 0 ? (
+        <p
+          className="text-[var(--tk-muted)]"
+          data-testid={`${testPrefix}-empty`}
         >
-          <span>
-            {l.name}{" "}
-            <span className="text-xs text-[var(--tk-muted)]">{l.unit}</span>
-          </span>
-          <span className="text-right text-[var(--tk-muted)]">
-            {formatNumber(l.planQty)}
-          </span>
-          <Input
-            className="h-8"
-            type="number"
-            min={0}
-            step="any"
-            placeholder="факт"
-            value={l.factQty == null ? "" : String(l.factQty)}
-            data-testid={`${testPrefix}-fact-${i}`}
-            onChange={(e) => {
-              const raw = e.target.value.trim();
-              const factQty = raw === "" ? null : Number(raw) || 0;
-              const target = lines[i];
-              onChange(
-                all.map((x) => (x === target ? { ...x, factQty } : x))
-              );
-            }}
-          />
-          <span
-            className={`text-right text-xs ${
-              l.factQty != null && l.factQty < l.planQty
-                ? "text-rose-700"
-                : "text-[var(--tk-muted)]"
-            }`}
+          нет данных по плану для выбранной работы/даты
+        </p>
+      ) : (
+        lines.map((l, i) => (
+          <div
+            key={`${testPrefix}-${l.kind}-${l.name}-${i}`}
+            className="grid grid-cols-[1fr_4.5rem_5rem_5rem] items-center gap-2"
           >
-            {l.factQty == null
-              ? "—"
-              : `Δ ${formatNumber(l.factQty - l.planQty)}`}
-          </span>
-        </li>
-      ))}
-    </>
+            <span>
+              {l.name}{" "}
+              <span className="text-xs text-[var(--tk-muted)]">{l.unit}</span>
+            </span>
+            <span className="text-right text-[var(--tk-muted)]">
+              {formatNumber(l.planQty)}
+            </span>
+            <Input
+              className="h-8"
+              type="number"
+              min={0}
+              step="any"
+              placeholder="—"
+              value={l.factQty == null ? "" : String(l.factQty)}
+              data-testid={`${testPrefix}-fact-${i}`}
+              onChange={(e) => {
+                const raw = e.target.value.trim();
+                const factQty = raw === "" ? null : Number(raw) || 0;
+                const target = lines[i];
+                onChange(
+                  all.map((x) => (x === target ? { ...x, factQty } : x))
+                );
+              }}
+            />
+            <span
+              className={`text-right text-xs tabular-nums ${
+                l.factQty != null && l.factQty < l.planQty
+                  ? "text-rose-700"
+                  : "text-[var(--tk-muted)]"
+              }`}
+            >
+              {l.factQty == null
+                ? "—"
+                : formatNumber(l.factQty - l.planQty)}
+            </span>
+          </div>
+        ))
+      )}
+    </div>
   );
 }
 
@@ -230,6 +242,10 @@ function DayDetailsInner() {
   const photos = dayFacts.flatMap((d) => d.photos ?? []);
   const factVal = Number(qty) || dayQty;
   const delta = factVal - dayPlan;
+  const isTest =
+    isT25uTestId(plan.id) ||
+    isT25uTestTitle(plan.title) ||
+    isT25uTestTitle(procurement?.title);
 
   return (
     <div data-testid="day-details" className="relative isolate">
@@ -246,6 +262,15 @@ function DayDetailsInner() {
           </Button>
         }
       />
+      {isTest ? (
+        <div
+          className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-950"
+          data-testid="t25u-test-banner"
+        >
+          <span className="font-semibold">TEST</span> — изолированный контур
+          приёмки t25u (не данные школы №12).
+        </div>
+      ) : null}
       <nav
         className="mb-4 text-sm text-[var(--tk-muted)]"
         data-testid="day-breadcrumbs"
@@ -352,43 +377,43 @@ function DayDetailsInner() {
       </div>
 
       <div className="mb-6 grid gap-4 lg:grid-cols-2">
-        <div className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4">
-          <h3 className="mb-2 font-medium">Люди</h3>
-          <ul className="space-y-2 text-sm" data-testid="day-people-list">
-            <ResourceRows
-              lines={people}
-              all={displayLines}
-              testPrefix="day-people"
-              onChange={setLines}
-            />
-          </ul>
+        <div
+          className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
+          data-testid="day-people-list"
+        >
+          <h3 className="mb-3 font-medium">Люди</h3>
+          <ResourceRows
+            lines={people}
+            all={displayLines}
+            testPrefix="day-people"
+            onChange={setLines}
+          />
         </div>
-        <div className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4">
-          <h3 className="mb-2 font-medium">Материалы</h3>
-          <ul className="space-y-2 text-sm" data-testid="day-materials-list">
-            <ResourceRows
-              lines={materials}
-              all={displayLines}
-              testPrefix="day-mat"
-              onChange={setLines}
-            />
-          </ul>
+        <div
+          className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
+          data-testid="day-materials-list"
+        >
+          <h3 className="mb-3 font-medium">Материалы</h3>
+          <ResourceRows
+            lines={materials}
+            all={displayLines}
+            testPrefix="day-mat"
+            onChange={setLines}
+          />
         </div>
       </div>
 
-      <div className="mb-6 rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4">
-        <h3 className="mb-2 font-medium">Техника / транспорт</h3>
-        <p className="mb-2 text-xs text-[var(--tk-muted)]">
-          Автобус и техника — не в блоке «Люди»
-        </p>
-        <ul className="space-y-2 text-sm" data-testid="day-transport-list">
-          <ResourceRows
-            lines={transport}
-            all={displayLines}
-            testPrefix="day-transport"
-            onChange={setLines}
-          />
-        </ul>
+      <div
+        className="mb-6 rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
+        data-testid="day-transport-list"
+      >
+        <h3 className="mb-3 font-medium">Техника / транспорт</h3>
+        <ResourceRows
+          lines={transport}
+          all={displayLines}
+          testPrefix="day-transport"
+          onChange={setLines}
+        />
       </div>
 
       <div className="mb-6 rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4">
