@@ -4,6 +4,7 @@ import {
   refreshProcurementAnalytics,
   sendProcurementToCalculation,
   setProcurementReview,
+  transferProcurementToProduction,
   updateProcurement,
 } from "@/server/repo";
 import { withSection, json } from "@/server/http";
@@ -46,7 +47,8 @@ export async function POST(req: Request) {
       action?:
         | "ensureChain"
         | "sendToCalculation"
-        | "refreshAnalytics";
+        | "refreshAnalytics"
+        | "transferToProduction";
       id?: string;
     };
     if (!body.id) return json({ error: "Не указан id" }, 400);
@@ -60,6 +62,10 @@ export async function POST(req: Request) {
     }
     if (body.action === "refreshAnalytics") {
       refreshProcurementAnalytics(user.id, body.id);
+      return json(getBootstrap(user));
+    }
+    if (body.action === "transferToProduction") {
+      transferProcurementToProduction(user.id, body.id);
       return json(getBootstrap(user));
     }
     return json({ error: "Некорректный запрос" }, 400);

@@ -105,6 +105,13 @@ export interface ProjectAnalytics {
   disclaimer: string;
 }
 
+export type ProjectLifecycle =
+  | "procurement"
+  | "calculation"
+  | "won"
+  | "production"
+  | "closed";
+
 export interface Procurement {
   id: string;
   orgId: string;
@@ -133,6 +140,8 @@ export interface Procurement {
   workType?: WorkTypeCode | string;
   analytics?: ProjectAnalytics;
   createdAt: string;
+  lifecycle?: ProjectLifecycle;
+  wonAt?: string;
 }
 
 export interface DocVersion {
@@ -273,6 +282,43 @@ export interface Calculation {
   pairedCalculationId?: string;
   changeLog?: CalcChangeEntry[];
   dataFlags?: string[];
+  /** Northern / economic inputs — confirmed parameters only. */
+  northern?: {
+    applicable: boolean;
+    confirmedItems: Array<{
+      id: string;
+      name: string;
+      status: "known" | "clarify" | "scenario";
+      amount: number | null;
+      basis: string;
+    }>;
+    notes: string[];
+  };
+  costSummary?: CostSummarySnapshot;
+  busRoutes?: Array<{
+    people: number;
+    seats: number;
+    distanceKmOneWay: number;
+    roundTrip: boolean;
+    idleKm: number;
+    fuelPer100Km: number;
+    fuelPricePerLiter: number;
+    driverShiftCost: number;
+    driverIncludedInTariff: boolean;
+    tariffPerShift: number | null;
+    ownershipMode: "rent" | "own" | "none";
+    days: number;
+  }>;
+}
+
+export type GprDependencyType = "FS" | "SS" | "FF" | "SF";
+
+export interface GprStageResource {
+  id: string;
+  kind: "labor" | "equipment" | "material" | "bus" | "other";
+  name: string;
+  quantity: number;
+  unit: string;
 }
 
 export interface GprStage {
@@ -282,6 +328,20 @@ export interface GprStage {
   end: string;
   sequence: number;
   dependsOn?: string;
+  dependencyType?: GprDependencyType;
+  lagDays?: number;
+  crewSize?: number;
+  hoursPerShift?: number;
+  shiftsPerDay?: number;
+  laborHours?: number;
+  resources?: GprStageResource[];
+}
+
+export interface WorkCalendar {
+  weekendDays: number[];
+  hoursPerShift: number;
+  shiftsPerDay: number;
+  timezone: string;
 }
 
 export interface GprSchedule {
@@ -295,6 +355,8 @@ export interface GprSchedule {
   version: number;
   authorId: string;
   updatedAt: string;
+  calendar?: WorkCalendar;
+  conflicts?: string[];
 }
 
 export interface MoneyPayment {
@@ -344,6 +406,45 @@ export interface PlanFactEntry {
   unit: string;
   plan: number;
   fact: number;
+  /** Contract remaining volume (physical), not cash. */
+  contractRemaining?: number;
+}
+
+export interface DailyFactPhoto {
+  id: string;
+  fileName: string;
+  storedPath?: string;
+  at: string;
+  caption?: string;
+}
+
+export interface DailyFact {
+  id: string;
+  date: string;
+  workName: string;
+  unit: string;
+  quantity: number;
+  people?: number;
+  equipment?: string;
+  materialsNote?: string;
+  comment?: string;
+  photos: DailyFactPhoto[];
+  authorId: string;
+  at: string;
+}
+
+export interface ContractPnl {
+  /** Normative/calc cost of physical work done — not payments. */
+  earnedValue: number;
+  /** Confirmed incurred costs. */
+  incurredCosts: number;
+  /** Cash in. */
+  cashIn: number;
+  /** Cash out. */
+  cashOut: number;
+  /** Recognized revenue if set; else null = нет данных. */
+  recognizedRevenue: number | null;
+  notes: string[];
 }
 
 export interface PlanFact {
@@ -355,6 +456,26 @@ export interface PlanFact {
   status: CardStatus;
   entries: PlanFactEntry[];
   updatedAt: string;
+  /** Frozen baseline snapshot of entries at win/transfer. */
+  baselineEntries?: PlanFactEntry[];
+  baselineAt?: string;
+  dailyFacts?: DailyFact[];
+  pnl?: ContractPnl;
+  periodPlan?: number;
+  monthPlan?: number;
+}
+
+export interface CostSummarySnapshot {
+  C0: number;
+  C: number;
+  reserve: number;
+  profit: number;
+  priceExVat: number;
+  vatAmount: number | null;
+  priceIncVat: number | null;
+  method: string;
+  incomplete: string[];
+  at: string;
 }
 
 export interface ProjectObject {

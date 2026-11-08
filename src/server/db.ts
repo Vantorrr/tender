@@ -21,7 +21,7 @@ import { modelConfigured } from "@/server/openrouter";
 import { hashPassword } from "@/server/passwords";
 import { procurementSourceStatus } from "@/server/procurement-source";
 
-const SCHEMA_VERSION = "8";
+const SCHEMA_VERSION = "9";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -224,14 +224,75 @@ function applySchema8Extras(data: AppData): AppData {
   return data;
 }
 
+/** Additive schema-9: gantt calendar, production baseline/daily/PnL hooks. */
+function applySchema9Extras(data: AppData): AppData {
+  data.procurements = (data.procurements ?? []).map((p) => ({
+    ...p,
+    // Never infer "production" from planFactId alone — won→production is explicit.
+    lifecycle:
+      p.lifecycle ??
+      (p.wonAt
+        ? "production"
+        : p.calculationId
+          ? "calculation"
+          : "procurement"),
+  }));
+  data.schedules = (data.schedules ?? []).map((s) => ({
+    ...s,
+    calendar: s.calendar ?? {
+      weekendDays: [0, 6],
+      hoursPerShift: 8,
+      shiftsPerDay: 1,
+      timezone: "Asia/Krasnoyarsk",
+    },
+    stages: (s.stages ?? []).map((st) => ({
+      ...st,
+      dependencyType: st.dependencyType ?? (st.dependsOn ? "FS" : undefined),
+      lagDays: st.lagDays ?? 0,
+      crewSize: st.crewSize ?? 4,
+      hoursPerShift: st.hoursPerShift ?? s.calendar?.hoursPerShift ?? 8,
+      shiftsPerDay: st.shiftsPerDay ?? s.calendar?.shiftsPerDay ?? 1,
+      resources: st.resources ?? [
+        {
+          id: `res-${st.id}-labor`,
+          kind: "labor" as const,
+          name: "Бригада",
+          quantity: st.crewSize ?? 4,
+          unit: "чел",
+        },
+      ],
+    })),
+    conflicts: s.conflicts ?? [],
+  }));
+  data.planFacts = (data.planFacts ?? []).map((pf) => ({
+    ...pf,
+    dailyFacts: pf.dailyFacts ?? [],
+    baselineEntries: pf.baselineEntries,
+    pnl: pf.pnl ?? {
+      earnedValue: 0,
+      incurredCosts: 0,
+      cashIn: 0,
+      cashOut: 0,
+      recognizedRevenue: null,
+      notes: [
+        "Физический факт ≠ платёж; earnedValue ≠ cashIn",
+        "recognizedRevenue = нет данных, пока не подтверждено",
+      ],
+    },
+  }));
+  return data;
+}
+
 function migrate(db: DatabaseSync) {
   const row = db.prepare("SELECT payload FROM app_blob WHERE id = 1").get() as
     | { payload: string }
     | undefined;
 
   if (!row) {
-    const seed = applySchema8Extras(
-      installGrandReference(hashSeedUsers(createSeedData()))
+    const seed = applySchema9Extras(
+      applySchema8Extras(
+        installGrandReference(hashSeedUsers(createSeedData()))
+      )
     );
     const now = new Date().toISOString();
     db.prepare(
@@ -308,6 +369,7 @@ function migrate(db: DatabaseSync) {
     metaSet(db, "client_xlsx_imported", "1");
     installGrandReference(data);
     applySchema8Extras(data);
+    applySchema9Extras(data);
 
     db.prepare(
       "UPDATE app_blob SET payload = ?, updated_at = ? WHERE id = 1"

@@ -3,10 +3,12 @@ import type {
   AppData,
   Calculation,
   CardStatus,
+  DailyFact,
   DocumentItem,
   GprSchedule,
   MoneyPlan,
   PlanFact,
+  PlanFactEntry,
   ReviewStatus,
   RiskRegistry,
   Role,
@@ -15,6 +17,14 @@ import type {
 } from "@/lib/types";
 import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
+import {
+  bucketsFromPositions,
+  busCost,
+  runCostEngine,
+  shiftStages,
+  type BusRouteInput,
+  type NorthernInputs,
+} from "@/lib/cost-engine";
 import { assertOrgAccess } from "@/server/acl";
 import {
   overheadsFromWorks,
@@ -1561,3 +1571,290 @@ export function joinOrganizationByCode(input: {
   token = createSession(userId);
   return { token, userId, orgId };
 }
+
+export function shiftGprStage(
+  actorId: string,
+  scheduleId: string,
+  stageId: string,
+  deltaDays: number,
+  opts?: { cascade?: boolean; resizeDays?: number | null }
+) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.schedules.find((s) => s.id === scheduleId);
+    if (!item) throw new Error("ГПР не найден");
+    assertOrgAccess(actor, item.orgId, "ГПР");
+    const result = shiftStages(item.stages, stageId, deltaDays, opts);
+    item.stages = result.stages;
+    item.conflicts = result.conflicts;
+    item.updatedAt = new Date().toISOString();
+    item.version = (item.version ?? 1) + 1;
+    audit(
+      data,
+      actorId,
+      "shift",
+      "gpr",
+      scheduleId,
+      `Сдвиг ${stageId} на ${deltaDays} дн.; конфликтов ${result.conflicts.length}`
+    );
+    return data;
+  });
+}
+
+export function recomputeCalculationCost(
+  actorId: string,
+  calcId: string,
+  patch?: {
+    northern?: NorthernInputs;
+    busRoutes?: BusRouteInput[];
+    siteOverhead?: number;
+    officeOverhead?: number;
+    reserve?: number;
+    profitMethod?: "markup" | "margin";
+    profitRate?: number;
+    vatPercent?: number | null;
+    includeReserveInPriceBase?: boolean;
+  }
+) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.calculations.find((c) => c.id === calcId);
+    if (!item) throw new Error("Расчёт не найден");
+    assertOrgAccess(actor, item.orgId, "расчёта");
+    assertEditableCalculation(item);
+    if (patch?.northern) item.northern = patch.northern;
+    if (patch?.busRoutes) item.busRoutes = patch.busRoutes;
+
+    const buckets = bucketsFromPositions(
+      item.positions,
+      item.scenarioFactor || 1
+    );
+    const routes = item.busRoutes ?? [];
+    let logistics = 0;
+    const busFlags: string[] = [];
+    for (const r of routes) {
+      const b = busCost(r);
+      logistics = Math.round((logistics + b.total) * 100) / 100;
+      busFlags.push(...b.flags);
+    }
+    const northern: NorthernInputs = item.northern ?? {
+      applicable: false,
+      confirmedItems: [],
+      notes: ["Северные ставки не подтверждены — не применяем универсальный коэффициент"],
+    };
+    const site =
+      patch?.siteOverhead ??
+      overheadsFromWorks(buckets.labor + buckets.equipment).nr;
+    const office = patch?.officeOverhead ?? 0;
+    const reserve = patch?.reserve ?? 0;
+    const engine = runCostEngine({
+      directLabor: buckets.labor,
+      directMaterials: buckets.materials,
+      directEquipment: buckets.equipment,
+      directSubcontract: buckets.other,
+      logisticsIncludingBus: logistics,
+      siteOverhead: site,
+      officeOverhead: office,
+      reserve,
+      profitMethod: patch?.profitMethod ?? "markup",
+      profitRate: patch?.profitRate ?? 0.08,
+      includeReserveInPriceBase: patch?.includeReserveInPriceBase ?? true,
+      vatPercent: patch?.vatPercent ?? null,
+      northern,
+    });
+    item.costSummary = {
+      C0: engine.C0,
+      C: engine.C,
+      reserve: engine.reserve,
+      profit: engine.profit,
+      priceExVat: engine.priceExVat,
+      vatAmount: engine.vatAmount,
+      priceIncVat: engine.priceIncVat,
+      method: `cost-engine:${engine.profitMethod}`,
+      incomplete: engine.incomplete,
+      at: new Date().toISOString(),
+    };
+    item.dataFlags = [
+      ...(item.dataFlags ?? []).filter((f) => !f.startsWith("cost_")),
+      "cost_engine_v1",
+      ...engine.flags,
+      ...busFlags,
+      ...(engine.incomplete.length ? ["requires_manual_check"] : []),
+    ];
+    item.changeLog = [
+      ...(item.changeLog ?? []),
+      {
+        id: `cl-${Date.now()}`,
+        at: new Date().toISOString(),
+        actorId,
+        detail: `Пересчёт cost-engine C0=${engine.C0} C=${engine.C}`,
+      },
+    ];
+    item.updatedAt = new Date().toISOString();
+    audit(data, actorId, "recalc_cost", "calculation", calcId, "cost-engine");
+    return data;
+  });
+}
+
+/**
+ * Won → production without duplicating the project card.
+ * Freezes plan-fact baseline; keeps same procurement id.
+ */
+export function transferProcurementToProduction(
+  actorId: string,
+  procurementId: string
+) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const p = data.procurements.find((x) => x.id === procurementId);
+    if (!p) throw new Error("Закупка не найдена");
+    assertOrgAccess(actor, p.orgId, "закупки");
+    if (p.lifecycle === "production") {
+      audit(
+        data,
+        actorId,
+        "transfer",
+        "procurement",
+        procurementId,
+        "Уже в производстве — без дубля"
+      );
+      return data;
+    }
+    const now = new Date().toISOString();
+    p.lifecycle = "won";
+    p.wonAt = now;
+    p.reviewStatus = "odobrena";
+
+    // ensure plan/fact on same procurement
+    if (!p.planFactId) {
+      const obj =
+        data.objects.find((o) => o.id === p.objectId) ??
+        data.objects.find((o) => o.orgId === p.orgId);
+      const id = `pf-${Date.now()}`;
+      data.planFacts.unshift({
+        id,
+        orgId: p.orgId,
+        objectId: obj?.id ?? "obj-1",
+        procurementId: p.id,
+        title: `План/факт — ${p.title.slice(0, 48)}`,
+        status: "v_rabote",
+        entries: [
+          {
+            id: `pfe-${Date.now()}`,
+            workName: "Общий объём",
+            unit: "%",
+            plan: 100,
+            fact: 0,
+            contractRemaining: 100,
+          },
+        ],
+        dailyFacts: [],
+        updatedAt: now,
+      });
+      p.planFactId = id;
+    }
+    const pf = data.planFacts.find((x) => x.id === p.planFactId)!;
+    if (!pf.baselineEntries) {
+      pf.baselineEntries = structuredClone(pf.entries) as PlanFactEntry[];
+      pf.baselineAt = now;
+    }
+    pf.dailyFacts = pf.dailyFacts ?? [];
+    pf.pnl = pf.pnl ?? {
+      earnedValue: 0,
+      incurredCosts: 0,
+      cashIn: 0,
+      cashOut: 0,
+      recognizedRevenue: null,
+      notes: [
+        "Физический факт ≠ платёж",
+        "earnedValue / incurredCosts отделены от cashIn / cashOut",
+      ],
+    };
+    p.lifecycle = "production";
+    if (!p.objectId) {
+      const obj = data.objects.find((o) => o.orgId === p.orgId);
+      p.objectId = obj?.id;
+    }
+    audit(
+      data,
+      actorId,
+      "transfer",
+      "procurement",
+      procurementId,
+      "Выигран → производство без дубля проекта; baseline зафиксирован"
+    );
+    return data;
+  });
+}
+
+export function addDailyProductionFact(
+  actorId: string,
+  planFactId: string,
+  fact: Omit<DailyFact, "id" | "authorId" | "at" | "photos"> & {
+    photos?: DailyFact["photos"];
+  }
+) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const pf = data.planFacts.find((p) => p.id === planFactId);
+    if (!pf) throw new Error("План/факт не найден");
+    assertOrgAccess(actor, pf.orgId, "план/факт");
+    const entry: DailyFact = {
+      id: `df-${Date.now()}`,
+      date: fact.date,
+      workName: fact.workName,
+      unit: fact.unit,
+      quantity: fact.quantity,
+      people: fact.people,
+      equipment: fact.equipment,
+      materialsNote: fact.materialsNote,
+      comment: fact.comment,
+      photos: fact.photos ?? [],
+      authorId: actorId,
+      at: new Date().toISOString(),
+    };
+    pf.dailyFacts = [...(pf.dailyFacts ?? []), entry];
+    // Update matching entry fact accumulatively (physical, not cash)
+    const row = pf.entries.find(
+      (e) => e.workName === fact.workName && e.unit === fact.unit
+    );
+    if (row) {
+      row.fact = Math.round((row.fact + fact.quantity) * 1000) / 1000;
+      if (row.contractRemaining != null) {
+        row.contractRemaining = Math.max(0, row.plan - row.fact);
+      }
+    }
+    // PnL: earnedValue from physical fact proxy — not cash
+    const rate = 1; // no invented prices; treat quantity as units toward earned index
+    pf.pnl = {
+      ...(pf.pnl ?? {
+        earnedValue: 0,
+        incurredCosts: 0,
+        cashIn: 0,
+        cashOut: 0,
+        recognizedRevenue: null,
+        notes: [],
+      }),
+      earnedValue:
+        Math.round(
+          ((pf.pnl?.earnedValue ?? 0) + fact.quantity * rate) * 100
+        ) / 100,
+      notes: [
+        "earnedValue обновлён по физическому факту (не платёж)",
+        "cashIn/cashOut не меняются автоматически из факта работ",
+        ...(pf.pnl?.notes ?? []).filter((n) => !n.startsWith("earnedValue")),
+      ],
+    };
+    pf.updatedAt = new Date().toISOString();
+    audit(
+      data,
+      actorId,
+      "daily_fact",
+      "planfact",
+      planFactId,
+      `${fact.date} ${fact.workName} +${fact.quantity}`
+    );
+    return data;
+  });
+}
+

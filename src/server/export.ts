@@ -120,10 +120,45 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
   if (!g) throw new Error("ГПР не найден");
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("ГПР");
-  ws.addRow(["Этап", "Начало", "Окончание", "Порядок", "Зависит от"]);
+  ws.addRow([
+    "Этап",
+    "Начало",
+    "Окончание",
+    "Порядок",
+    "Зависит от",
+    "Тип связи",
+    "Лаг дн.",
+    "Чел.",
+    "Ч/смена",
+    "Смен/сут",
+    "Ресурсы",
+  ]);
   ws.getRow(1).font = { bold: true };
   for (const s of g.stages) {
-    ws.addRow([s.name, s.start, s.end, s.sequence, s.dependsOn ?? ""]);
+    const res = (s.resources ?? [])
+      .map((r) => `${r.kind}:${r.name}×${r.quantity}${r.unit ? r.unit : ""}`)
+      .join("; ");
+    ws.addRow([
+      s.name,
+      s.start,
+      s.end,
+      s.sequence,
+      s.dependsOn ?? "",
+      s.dependencyType ?? "",
+      s.lagDays ?? 0,
+      s.crewSize ?? "",
+      s.hoursPerShift ?? g.calendar?.hoursPerShift ?? "",
+      s.shiftsPerDay ?? g.calendar?.shiftsPerDay ?? "",
+      res,
+    ]);
+  }
+  const resSheet = wb.addWorksheet("Ресурсы");
+  resSheet.addRow(["Этап", "Вид", "Название", "Кол-во", "Ед."]);
+  resSheet.getRow(1).font = { bold: true };
+  for (const s of g.stages) {
+    for (const r of s.resources ?? []) {
+      resSheet.addRow([s.name, r.kind, r.name, r.quantity, r.unit ?? ""]);
+    }
   }
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
@@ -165,10 +200,62 @@ export async function buildPlanFactXlsx(id: string): Promise<Buffer> {
   if (!pf) throw new Error("План/факт не найден");
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("ПланФакт");
-  ws.addRow(["Работа", "Ед.", "План", "Факт", "Отклонение"]);
+  ws.addRow(["Работа", "Ед.", "План", "Факт", "Отклонение", "Остаток договора"]);
   ws.getRow(1).font = { bold: true };
   for (const e of pf.entries) {
-    ws.addRow([e.workName, e.unit, e.plan, e.fact, e.fact - e.plan]);
+    ws.addRow([
+      e.workName,
+      e.unit,
+      e.plan,
+      e.fact,
+      e.fact - e.plan,
+      e.contractRemaining ?? "",
+    ]);
+  }
+  if (pf.baselineEntries?.length) {
+    const base = wb.addWorksheet("Baseline");
+    base.addRow(["Работа", "Ед.", "План", "Факт", "Зафиксировано"]);
+    base.getRow(1).font = { bold: true };
+    for (const e of pf.baselineEntries) {
+      base.addRow([e.workName, e.unit, e.plan, e.fact, pf.baselineAt ?? ""]);
+    }
+  }
+  const daily = wb.addWorksheet("ЕжедневныйФакт");
+  daily.addRow([
+    "Дата",
+    "Работа",
+    "Ед.",
+    "Кол-во",
+    "Фото",
+    "Автор",
+    "Комментарий",
+  ]);
+  daily.getRow(1).font = { bold: true };
+  for (const d of pf.dailyFacts ?? []) {
+    daily.addRow([
+      d.date,
+      d.workName,
+      d.unit,
+      d.quantity,
+      d.photos.map((p) => p.fileName).join("; "),
+      d.authorId,
+      d.comment ?? "",
+    ]);
+  }
+  const pnl = wb.addWorksheet("PnL");
+  pnl.addRow(["Показатель", "Значение", "Примечание"]);
+  pnl.getRow(1).font = { bold: true };
+  pnl.addRow(["earnedValue", pf.pnl?.earnedValue ?? 0, "физический факт ≠ платёж"]);
+  pnl.addRow(["incurredCosts", pf.pnl?.incurredCosts ?? 0, ""]);
+  pnl.addRow(["cashIn", pf.pnl?.cashIn ?? 0, "не из факта работ"]);
+  pnl.addRow(["cashOut", pf.pnl?.cashOut ?? 0, "не из факта работ"]);
+  pnl.addRow([
+    "recognizedRevenue",
+    pf.pnl?.recognizedRevenue ?? "нет данных",
+    "",
+  ]);
+  for (const n of pf.pnl?.notes ?? []) {
+    pnl.addRow(["note", n, ""]);
   }
   return Buffer.from(await wb.xlsx.writeBuffer());
 }

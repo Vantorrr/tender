@@ -149,38 +149,54 @@ describe("password recovery + mail sink", () => {
 
 describe("backup / restore scripts (isolated DB)", () => {
   it("round-trips the test sqlite file", () => {
-    const db = dbPath();
-    expect(fs.existsSync(db)).toBe(true);
-    const out = path.join(config.dataDir, `test-backup-${process.pid}`);
-    fs.rmSync(out, { recursive: true, force: true });
-
+    // Fully isolated stand: own DATA_DIR + DB_FILE so sibling suites / WAL
+    // from the shared test DB cannot race the byte-for-byte round-trip.
+    const isoRel = path.join(
+      "data",
+      `test-backup-iso-${process.pid}-${Date.now()}`
+    );
+    const isoAbs = path.join(process.cwd(), isoRel);
+    const isoDbName = "iso-backup.sqlite";
+    const isoDb = path.join(isoAbs, isoDbName);
+    const out = path.join(isoAbs, "out");
+    fs.rmSync(isoAbs, { recursive: true, force: true });
+    fs.mkdirSync(isoAbs, { recursive: true });
+    // Minimal valid sqlite payload: copy current closed test DB snapshot.
     closeDb();
+    const shared = dbPath();
+    if (!fs.existsSync(shared)) {
+      ensureReady();
+      closeDb();
+    }
+    fs.copyFileSync(shared, isoDb);
+    for (const suffix of ["-wal", "-shm"]) {
+      const side = `${shared}${suffix}`;
+      if (fs.existsSync(side)) fs.unlinkSync(side);
+    }
+
+    const before = fs.readFileSync(isoDb);
+    const env = {
+      ...process.env,
+      DATA_DIR: isoRel,
+      DB_FILE: isoDbName,
+    };
     execFileSync(process.execPath, ["scripts/backup-db.mjs", "--out", out], {
       cwd: process.cwd(),
-      env: {
-        ...process.env,
-        DATA_DIR: "data",
-        DB_FILE: path.basename(db),
-      },
+      env,
       encoding: "utf8",
     });
-    expect(fs.existsSync(path.join(out, path.basename(db)))).toBe(true);
+    expect(fs.existsSync(path.join(out, isoDbName))).toBe(true);
     expect(fs.existsSync(path.join(out, "manifest.json"))).toBe(true);
 
-    const before = fs.readFileSync(db);
-    fs.writeFileSync(db, Buffer.concat([before, Buffer.from("x")]));
+    fs.writeFileSync(isoDb, Buffer.concat([before, Buffer.from("x")]));
     execFileSync(process.execPath, ["scripts/restore-db.mjs", out], {
       cwd: process.cwd(),
-      env: {
-        ...process.env,
-        DATA_DIR: "data",
-        DB_FILE: path.basename(db),
-      },
+      env,
       encoding: "utf8",
     });
-    const after = fs.readFileSync(db);
+    const after = fs.readFileSync(isoDb);
     expect(after.equals(before)).toBe(true);
-    fs.rmSync(out, { recursive: true, force: true });
+    fs.rmSync(isoAbs, { recursive: true, force: true });
     ensureReady();
   });
 });

@@ -41,6 +41,7 @@ export default function RaschetDetailPage() {
     updateCalculation,
     recalcCalculation,
     addCalcFromDirectory,
+    refresh,
   } = useStore();
   const [dirType, setDirType] = useState<"rascenki" | "ceny" | "park">(
     "rascenki"
@@ -135,21 +136,52 @@ export default function RaschetDetailPage() {
           <>
             <StatusBadge status={calc.status} />
             {!locked ? (
-              <Button
-                variant="secondary"
-                onClick={async () => {
-                  try {
-                    await recalcCalculation(calc.id, calc.scenario);
-                    toast.success("Ставки обновлены из текущих справочников");
-                  } catch (e) {
-                    toast.error(
-                      e instanceof Error ? e.message : "Ошибка пересчёта"
-                    );
-                  }
-                }}
-              >
-                Обновить из справочников
-              </Button>
+              <>
+                <Button
+                  variant="secondary"
+                  onClick={async () => {
+                    try {
+                      await recalcCalculation(calc.id, calc.scenario);
+                      toast.success("Ставки обновлены из текущих справочников");
+                    } catch (e) {
+                      toast.error(
+                        e instanceof Error ? e.message : "Ошибка пересчёта"
+                      );
+                    }
+                  }}
+                >
+                  Обновить из справочников
+                </Button>
+                <Button
+                  variant="outline"
+                  data-testid="recompute-cost-engine"
+                  onClick={async () => {
+                    try {
+                      const { api } = await import("@/lib/api");
+                      await api("/api/raschety", {
+                        method: "PATCH",
+                        body: JSON.stringify({
+                          id: calc.id,
+                          recomputeCost: true,
+                          costPatch: {
+                            vatPercent: null,
+                            profitMethod: "markup",
+                            profitRate: 0.08,
+                          },
+                        }),
+                      });
+                      await refresh();
+                      toast.success("Cost-engine пересчитан (НДС — нет данных)");
+                    } catch (e) {
+                      toast.error(
+                        e instanceof Error ? e.message : "Ошибка cost-engine"
+                      );
+                    }
+                  }}
+                >
+                  Cost-engine
+                </Button>
+              </>
             ) : null}
             <Button
               variant="outline"
@@ -435,6 +467,36 @@ export default function RaschetDetailPage() {
           )}
         </div>
       </section>
+      ) : null}
+
+      {calc.costSummary ? (
+        <section className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
+          <h2 className="font-[family-name:var(--font-display)] text-base">
+            Сводка cost-engine
+          </h2>
+          <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+            <div>C0 (без резерва): {formatMoney(calc.costSummary.C0)}</div>
+            <div>C (с резервом): {formatMoney(calc.costSummary.C)}</div>
+            <div>Прибыль: {formatMoney(calc.costSummary.profit)}</div>
+            <div>Цена без НДС: {formatMoney(calc.costSummary.priceExVat)}</div>
+            <div>
+              НДС:{" "}
+              {calc.costSummary.vatAmount == null
+                ? "нет данных"
+                : formatMoney(calc.costSummary.vatAmount)}
+            </div>
+            <div>
+              Неполнота:{" "}
+              {calc.costSummary.incomplete.length
+                ? calc.costSummary.incomplete.join(", ")
+                : "—"}
+            </div>
+          </dl>
+          <p className="mt-2 text-xs text-[var(--tk-muted)]">
+            Метод {calc.costSummary.method}. Без угадывания Excel и без обещания
+            97%. Север — только подтверждённые статьи.
+          </p>
+        </section>
       ) : null}
 
       <section className="mt-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
