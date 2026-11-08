@@ -22,8 +22,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { DateInputRu } from "@/components/date-input-ru";
 import { api, downloadUrl } from "@/lib/api";
 import { formatDate, formatMoney, formatNumber } from "@/lib/format";
+import {
+  entryDisplayFact,
+  entryDisplayRemain,
+  sumDailyQty,
+} from "@/lib/plan-fact-agg";
 import { useStore } from "@/lib/store";
 
 type PeriodMode = "day" | "month" | "period" | "cum";
@@ -67,17 +73,17 @@ export default function ProizvodstvoPage() {
   const monthFacts = daily.filter((d) => d.date.startsWith(monthKey));
 
   function qtyForWork(name: string, list: typeof daily) {
-    return list
-      .filter((d) => d.workName === name)
-      .reduce((s, d) => s + d.quantity, 0);
+    return sumDailyQty(list, { workName: name });
   }
 
+  // Daily ledger is the display source of truth (same as server after save)
   const totals = plan
     ? plan.entries.reduce(
         (acc, e) => {
+          const fact = entryDisplayFact(e, daily);
           acc.plan += e.plan;
-          acc.fact += e.fact;
-          acc.remain += e.contractRemaining ?? Math.max(0, e.plan - e.fact);
+          acc.fact += fact;
+          acc.remain += entryDisplayRemain(e, daily);
           return acc;
         },
         { plan: 0, fact: 0, remain: 0 }
@@ -86,11 +92,11 @@ export default function ProizvodstvoPage() {
 
   const periodFact =
     period === "day"
-      ? dayFacts.reduce((s, d) => s + d.quantity, 0)
+      ? sumDailyQty(dayFacts)
       : period === "month"
-        ? monthFacts.reduce((s, d) => s + d.quantity, 0)
+        ? sumDailyQty(monthFacts)
         : period === "period"
-          ? daily.reduce((s, d) => s + d.quantity, 0)
+          ? sumDailyQty(daily)
           : totals.fact;
 
   async function submitDaily(withPhoto: boolean) {
@@ -339,16 +345,15 @@ export default function ProizvodstvoPage() {
                 <h3 className="mb-3 font-medium">Дневной факт + фото</h3>
                 <div className="flex flex-wrap items-end gap-2">
                   <div>
-                    <p className="mb-1 text-xs text-[var(--tk-muted)]">Дата</p>
-                    <Input
-                      type="date"
-                      value={date}
-                      onChange={(e) => setDate(e.target.value)}
-                      data-testid="daily-fact-date"
-                    />
-                    <p className="mt-1 text-[11px] text-[var(--tk-muted)]">
-                      {formatDate(date)}
+                    <p className="mb-1 text-xs text-[var(--tk-muted)]">
+                      Дата (ДД.ММ.ГГГГ)
                     </p>
+                    <DateInputRu
+                      value={date}
+                      onChange={setDate}
+                      data-testid="daily-fact-date"
+                      className="w-[140px]"
+                    />
                   </div>
                   <div>
                     <p className="mb-1 text-xs text-[var(--tk-muted)]">
@@ -428,9 +433,9 @@ export default function ProizvodstvoPage() {
                       );
                       const dayQ = qtyForWork(e.workName, dayFacts);
                       const monthQ = qtyForWork(e.workName, monthFacts);
-                      const remain =
-                        e.contractRemaining ?? Math.max(0, e.plan - e.fact);
-                      const variance = e.fact - (base?.plan ?? e.plan);
+                      const fact = entryDisplayFact(e, daily);
+                      const remain = entryDisplayRemain(e, daily);
+                      const variance = fact - (base?.plan ?? e.plan);
                       return (
                         <TableRow key={e.id}>
                           <TableCell>{e.workName}</TableCell>
@@ -449,7 +454,7 @@ export default function ProizvodstvoPage() {
                                           plan: v,
                                           contractRemaining: Math.max(
                                             0,
-                                            v - x.fact
+                                            v - entryDisplayFact(x, daily)
                                           ),
                                         }
                                       : x
@@ -459,7 +464,7 @@ export default function ProizvodstvoPage() {
                             />
                           </TableCell>
                           <TableCell className="text-right">
-                            {formatNumber(e.fact)}
+                            {formatNumber(fact)}
                           </TableCell>
                           <TableCell className="text-right">
                             {formatNumber(dayQ)}

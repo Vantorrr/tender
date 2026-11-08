@@ -42,6 +42,27 @@ export function formatDateTime(iso: string): string {
   }).format(new Date(iso));
 }
 
+/** Parse user DD.MM.YYYY (also accepts YYYY-MM-DD) → ISO date YYYY-MM-DD or null. */
+export function parseDateRu(text: string): string | null {
+  const t = text.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(t)) {
+    const d = new Date(`${t}T12:00:00`);
+    return Number.isNaN(d.getTime()) ? null : t;
+  }
+  const m = /^(\d{1,2})[./](\d{1,2})[./](\d{4})$/.exec(t);
+  if (!m) return null;
+  const dd = Number(m[1]);
+  const mm = Number(m[2]);
+  const yyyy = Number(m[3]);
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  const iso = `${yyyy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+  const d = new Date(`${iso}T12:00:00`);
+  if (Number.isNaN(d.getTime()) || d.getDate() !== dd || d.getMonth() + 1 !== mm) {
+    return null;
+  }
+  return iso;
+}
+
 export function downloadTextFile(filename: string, content: string, mime = "text/plain") {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);

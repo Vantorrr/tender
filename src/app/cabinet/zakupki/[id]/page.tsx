@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { DateInputRu } from "@/components/date-input-ru";
 import { api, getClientToken } from "@/lib/api";
 import { cleanLabel } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney } from "@/lib/format";
@@ -720,10 +721,10 @@ export default function ZakupkaDetailPage() {
                     value={payAmount}
                     onChange={(e) => setPayAmount(e.target.value)}
                   />
-                  <Input
-                    type="date"
+                  <DateInputRu
                     value={payDate}
-                    onChange={(e) => setPayDate(e.target.value)}
+                    onChange={setPayDate}
+                    className="w-[140px]"
                   />
                   <Button
                     data-testid="add-money-payment"
@@ -793,10 +794,10 @@ export default function ZakupkaDetailPage() {
                 value={matUnit}
                 onChange={(e) => setMatUnit(e.target.value)}
               />
-              <Input
-                type="date"
+              <DateInputRu
                 value={matNeedBy}
-                onChange={(e) => setMatNeedBy(e.target.value)}
+                onChange={setMatNeedBy}
+                className="w-[140px]"
               />
               <Input
                 className="min-w-[220px] flex-1"

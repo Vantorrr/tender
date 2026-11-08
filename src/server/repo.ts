@@ -41,6 +41,7 @@ import { mutateAppData, readAppData, resetAppData } from "@/server/db";
 import { hashPassword } from "@/server/passwords";
 import { createSession, publicUser } from "@/server/auth";
 import { randomBytes } from "node:crypto";
+import { recomputeEntriesFromDaily } from "@/lib/plan-fact-agg";
 
 export { assertOrgAccess };
 
@@ -1802,11 +1803,15 @@ export function addDailyProductionFact(
     const pf = data.planFacts.find((p) => p.id === planFactId);
     if (!pf) throw new Error("План/факт не найден");
     assertOrgAccess(actor, pf.orgId, "план/факт");
+    const workName = fact.workName.trim();
+    // Match by workName only — unit from the plan row wins (UI may send «ед»).
+    let row = pf.entries.find((e) => e.workName === workName);
+    const unit = row?.unit ?? fact.unit;
     const entry: DailyFact = {
-      id: `df-${Date.now()}`,
+      id: `df-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       date: fact.date,
-      workName: fact.workName,
-      unit: fact.unit,
+      workName,
+      unit,
       quantity: fact.quantity,
       people: fact.people,
       equipment: fact.equipment,
@@ -1816,34 +1821,11 @@ export function addDailyProductionFact(
       authorId: actorId,
       at: new Date().toISOString(),
     };
-    // Prefer entry unit: UI may send a generic unit; match by workName first.
-    let row = pf.entries.find(
-      (e) => e.workName === fact.workName && e.unit === fact.unit
-    );
-    if (!row) {
-      row = pf.entries.find((e) => e.workName === fact.workName);
-    }
-    if (row && entry.unit !== row.unit) {
-      entry.unit = row.unit;
-    }
     pf.dailyFacts = [...(pf.dailyFacts ?? []), entry];
-    // Update matching entry fact accumulatively (physical, not cash)
-    if (row) {
-      row.fact = Math.round((row.fact + fact.quantity) * 1000) / 1000;
-      row.contractRemaining = Math.max(0, row.plan - row.fact);
-    } else {
-      // Create a physical line so fact is never orphaned from the table
-      pf.entries.push({
-        id: `pfe-${Date.now()}`,
-        workName: fact.workName,
-        unit: fact.unit,
-        plan: 0,
-        fact: fact.quantity,
-        contractRemaining: 0,
-      });
-    }
-    // PnL: физическая стоимость выполненного — не платёж и не выручка
-    const rate = 1; // без выдуманных цен; индекс физ. объёма
+    // Daily records are source of truth for works that have them
+    recomputeEntriesFromDaily(pf);
+    // PnL index from table facts after recompute (not cash / not revenue)
+    const physicalTotal = (pf.entries ?? []).reduce((s, e) => s + e.fact, 0);
     pf.pnl = {
       ...(pf.pnl ?? {
         earnedValue: 0,
@@ -1853,12 +1835,9 @@ export function addDailyProductionFact(
         recognizedRevenue: null,
         notes: [],
       }),
-      earnedValue:
-        Math.round(
-          ((pf.pnl?.earnedValue ?? 0) + fact.quantity * rate) * 100
-        ) / 100,
+      earnedValue: Math.round(physicalTotal * 100) / 100,
       notes: [
-        "Нормативная стоимость физ. факта обновлена (не платёж)",
+        "Нормативная стоимость физ. факта = сумма факта по работам (дневные записи — источник истины)",
         "Поступления/списания кассы не меняются из факта работ",
         "Признанная выручка — отдельно, по умолчанию «нет данных»",
         ...(pf.pnl?.notes ?? []).filter(
@@ -1875,7 +1854,7 @@ export function addDailyProductionFact(
       "daily_fact",
       "planfact",
       planFactId,
-      `${fact.date} ${fact.workName} +${fact.quantity}`
+      `${fact.date} ${workName} +${fact.quantity}`
     );
     return data;
   });

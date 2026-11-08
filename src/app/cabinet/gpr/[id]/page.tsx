@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
+import { DateInputRu } from "@/components/date-input-ru";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, downloadUrl } from "@/lib/api";
@@ -370,33 +371,22 @@ export default function GprDetailPage() {
                 }}
               />
               <div>
-                <Input
-                  type="date"
+                <DateInputRu
                   value={stage.start}
-                  onChange={(e) => {
-                    const delta = diffDays(stage.start, e.target.value);
+                  onChange={(iso) => {
+                    const delta = diffDays(stage.start, iso);
                     void shiftStage(stage.id, delta);
                   }}
                 />
-                <p className="mt-0.5 text-[11px] text-[var(--tk-muted)]">
-                  {formatDate(stage.start)}
-                </p>
               </div>
               <div>
-                <Input
-                  type="date"
+                <DateInputRu
                   value={stage.end}
-                  onChange={(e) => {
-                    const len = Math.max(
-                      1,
-                      diffDays(stage.start, e.target.value)
-                    );
+                  onChange={(iso) => {
+                    const len = Math.max(1, diffDays(stage.start, iso));
                     void shiftStage(stage.id, 0, len);
                   }}
                 />
-                <p className="mt-0.5 text-[11px] text-[var(--tk-muted)]">
-                  {formatDate(stage.end)}
-                </p>
               </div>
               <Input
                 type="number"

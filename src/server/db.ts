@@ -7,6 +7,7 @@ import {
   mergeClientDirectoriesInto,
 } from "@/lib/client-dirs";
 import { DEMO_SECRET_KEYS } from "@/lib/demo-accounts";
+import { recomputeEntriesFromDaily } from "@/lib/plan-fact-agg";
 import { createSeedData } from "@/lib/seed";
 import type { AppData } from "@/lib/types";
 import { config, dbPath } from "@/server/config";
@@ -21,7 +22,8 @@ import { modelConfigured } from "@/server/openrouter";
 import { hashPassword } from "@/server/passwords";
 import { procurementSourceStatus } from "@/server/procurement-source";
 
-const SCHEMA_VERSION = "10";
+/** 11: heal plan/fact entry.fact from dailyFacts when ledger exists. */
+const SCHEMA_VERSION = "11";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -256,23 +258,30 @@ function applySchema9Extras(data: AppData): AppData {
     })),
     conflicts: s.conflicts ?? [],
   }));
-  data.planFacts = (data.planFacts ?? []).map((pf) => ({
-    ...pf,
-    dailyFacts: pf.dailyFacts ?? [],
-    baselineEntries: pf.baselineEntries,
-    pnl: pf.pnl ?? {
-      earnedValue: 0,
-      incurredCosts: 0,
-      cashIn: 0,
-      cashOut: 0,
-      recognizedRevenue: null,
-      notes: [
-        "Физический факт ≠ платёж",
-        "Нормативная стоимость выполненного ≠ поступления/списания",
-        "Признанная выручка = нет данных, пока не подтверждено",
-      ],
-    },
-  }));
+  data.planFacts = (data.planFacts ?? []).map((pf) => {
+    const next = {
+      ...pf,
+      dailyFacts: pf.dailyFacts ?? [],
+      baselineEntries: pf.baselineEntries,
+      pnl: pf.pnl ?? {
+        earnedValue: 0,
+        incurredCosts: 0,
+        cashIn: 0,
+        cashOut: 0,
+        recognizedRevenue: null,
+        notes: [
+          "Физический факт ≠ платёж",
+          "Нормативная стоимость выполненного ≠ поступления/списания",
+          "Признанная выручка = нет данных, пока не подтверждено",
+        ],
+      },
+    };
+    // Heal stale entry.fact when daily ledger exists (units/aggregation bug class)
+    if ((next.dailyFacts?.length ?? 0) > 0) {
+      recomputeEntriesFromDaily(next);
+    }
+    return next;
+  });
   return data;
 }
 

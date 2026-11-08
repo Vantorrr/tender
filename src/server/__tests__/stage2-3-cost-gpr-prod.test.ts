@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { closeDb, ensureReady, readAppData } from "@/server/db";
+import { closeDb, ensureReady, mutateAppData, readAppData } from "@/server/db";
 import {
   addDailyProductionFact,
   recomputeCalculationCost,
@@ -14,6 +14,12 @@ import {
   shiftStages,
   shiftsNeeded,
 } from "@/lib/cost-engine";
+import { parseDateRu, formatDate } from "@/lib/format";
+import {
+  entryDisplayFact,
+  entryDisplayRemain,
+  recomputeEntriesFromDaily,
+} from "@/lib/plan-fact-agg";
 import "./setup";
 
 describe("stage2 cost engine + gantt", () => {
@@ -22,12 +28,68 @@ describe("stage2 cost engine + gantt", () => {
     ensureReady();
   });
 
-  it("schema is 10 with calendar and multi-kind resources on schedules", () => {
+  it("schema is 11 with calendar and multi-kind resources on schedules", () => {
     const data = readAppData();
     const g = data.schedules[0];
     expect(g.calendar?.hoursPerShift).toBeTruthy();
     expect(g.stages[0]?.resources?.length).toBeGreaterThan(1);
     expect(data.supplyRequests).toBeTruthy();
+  });
+
+  it("RU date parse/format is DD.MM.YYYY (not US MM/DD)", () => {
+    expect(parseDateRu("08.11.2026")).toBe("2026-11-08");
+    expect(parseDateRu("08/11/2026")).toBe("2026-11-08"); // DD/MM
+    expect(formatDate("2026-11-08")).toBe("08.11.2026");
+    expect(parseDateRu("2026-11-08")).toBe("2026-11-08");
+    expect(parseDateRu("32.13.2026")).toBeNull();
+  });
+
+  it("plan-fact-agg: display fact follows daily ledger", () => {
+    const pf = {
+      id: "pf-x",
+      orgId: "o",
+      objectId: "o1",
+      title: "t",
+      status: "v_rabote" as const,
+      updatedAt: "",
+      entries: [
+        {
+          id: "e1",
+          workName: "Общий объём",
+          unit: "%",
+          plan: 100,
+          fact: 0,
+          contractRemaining: 100,
+        },
+      ],
+      dailyFacts: [
+        {
+          id: "d1",
+          date: "2026-11-08",
+          workName: "Общий объём",
+          unit: "%",
+          quantity: 1,
+          photos: [],
+          authorId: "u",
+          at: "",
+        },
+        {
+          id: "d2",
+          date: "2026-11-08",
+          workName: "Общий объём",
+          unit: "%",
+          quantity: 1,
+          photos: [],
+          authorId: "u",
+          at: "",
+        },
+      ],
+    };
+    recomputeEntriesFromDaily(pf);
+    expect(pf.entries[0].fact).toBe(2);
+    expect(pf.entries[0].contractRemaining).toBe(98);
+    expect(entryDisplayFact(pf.entries[0], pf.dailyFacts)).toBe(2);
+    expect(entryDisplayRemain(pf.entries[0], pf.dailyFacts)).toBe(98);
   });
 
   it("labor/shifts and bus cost are deterministic; no dual profit", () => {
@@ -217,11 +279,12 @@ describe("stage3 won→production + daily fact + baseline", () => {
     const after = readAppData().planFacts.find((p) => p.id === pfId)!;
     expect(after.dailyFacts?.length).toBe(1);
     expect(after.dailyFacts![0].photos[0].fileName).toBe("day1.jpg");
-    expect(after.entries.find((e) => e.workName === workName)!.fact).toBe(
-      (before.entries.find((e) => e.workName === workName)?.fact ?? 0) + 5
-    );
+    // Once daily ledger exists for the work, fact = sum(daily), not seed+delta
+    expect(after.entries.find((e) => e.workName === workName)!.fact).toBe(5);
     expect(after.pnl?.cashIn).toBe(cashIn);
-    expect(after.pnl?.earnedValue).toBeGreaterThan(before.pnl?.earnedValue ?? 0);
+    expect(after.pnl?.earnedValue).toBe(
+      after.entries.reduce((s, e) => s + e.fact, 0)
+    );
     // baseline unchanged
     expect(after.baselineEntries).toEqual(before.baselineEntries);
   });
@@ -230,8 +293,19 @@ describe("stage3 won→production + daily fact + baseline", () => {
     transferProcurementToProduction("u-ruk", "p-1");
     const pfId = readAppData().procurements.find((p) => p.id === "p-1")!
       .planFactId!;
-    const before = readAppData().planFacts.find((p) => p.id === pfId)!;
     const workName = "Демонтаж перегородок";
+    // Isolate ledger for this work (shared DB across tests in file)
+    mutateAppData((data) => {
+      const pf = data.planFacts.find((p) => p.id === pfId)!;
+      pf.dailyFacts = (pf.dailyFacts ?? []).filter(
+        (d) => d.workName !== workName
+      );
+      const row = pf.entries.find((e) => e.workName === workName)!;
+      row.fact = 0;
+      row.contractRemaining = row.plan;
+      return data;
+    });
+    const before = readAppData().planFacts.find((p) => p.id === pfId)!;
     const entryUnit = before.entries.find((e) => e.workName === workName)!.unit;
     addDailyProductionFact("u-obj", pfId, {
       date: "2026-12-03",
@@ -250,13 +324,64 @@ describe("stage3 won→production + daily fact + baseline", () => {
     const after = readAppData().planFacts.find((p) => p.id === pfId)!;
     const row = after.entries.find((e) => e.workName === workName)!;
     expect(row.unit).toBe(entryUnit);
-    expect(row.fact).toBe(
-      (before.entries.find((e) => e.workName === workName)?.fact ?? 0) + 2
-    );
+    expect(row.fact).toBe(2);
     expect(row.contractRemaining).toBe(Math.max(0, row.plan - row.fact));
     expect(after.pnl?.earnedValue).toBe(
-      (before.pnl?.earnedValue ?? 0) + 2
+      after.entries.reduce((s, e) => s + e.fact, 0)
     );
+  });
+
+  it("two daily ×1 on Общий объём keep fact/remain/variance consistent after reload", () => {
+    // New plan/fact with plan=100 (same shape as won→prod without prior pf)
+    transferProcurementToProduction("u-ruk", "p-2");
+    const pfId = readAppData().procurements.find((p) => p.id === "p-2")!
+      .planFactId!;
+    // Force the rejection shape: Общий объём plan 100 fact 0
+    mutateAppData((data) => {
+      const pf = data.planFacts.find((p) => p.id === pfId)!;
+      pf.entries = [
+        {
+          id: "pfe-reject",
+          workName: "Общий объём",
+          unit: "%",
+          plan: 100,
+          fact: 0,
+          contractRemaining: 100,
+        },
+      ];
+      pf.baselineEntries = structuredClone(pf.entries);
+      pf.dailyFacts = [];
+      return data;
+    });
+    const workName = "Общий объём";
+    addDailyProductionFact("u-obj", pfId, {
+      date: "2026-11-08",
+      workName,
+      unit: "ед",
+      quantity: 1,
+      photos: [],
+    });
+    addDailyProductionFact("u-obj", pfId, {
+      date: "2026-11-08",
+      workName,
+      unit: "ед",
+      quantity: 1,
+      photos: [],
+    });
+    // Simulate save+reload
+    const after = readAppData().planFacts.find((p) => p.id === pfId)!;
+    const row = after.entries.find((e) => e.workName === workName)!;
+    const daySum = (after.dailyFacts ?? [])
+      .filter((d) => d.date === "2026-11-08" && d.workName === workName)
+      .reduce((s, d) => s + d.quantity, 0);
+    expect(daySum).toBe(2);
+    expect(row.fact).toBe(2);
+    expect(row.contractRemaining).toBe(98);
+    expect(row.unit).toBe("%");
+    const basePlan = after.baselineEntries?.find(
+      (b) => b.workName === workName
+    )?.plan;
+    expect(row.fact - (basePlan ?? row.plan)).toBe(-98);
   });
 
   it("second transfer is idempotent (no duplicate project)", () => {
