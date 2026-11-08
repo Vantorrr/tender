@@ -369,6 +369,14 @@ export interface GprStage {
   shiftsPerDay?: number;
   laborHours?: number;
   resources?: GprStageResource[];
+  /**
+   * Confirmed plan volume for this stage (physical units).
+   * null/undefined = нет данных → не подменять выдуманной кривой;
+   * allocatePlanForSlice uses stage volumes when any are set.
+   */
+  planVolume?: number | null;
+  /** Optional link to plan/fact or calc work name. */
+  workName?: string;
 }
 
 export interface WorkCalendar {
@@ -468,16 +476,25 @@ export interface DailyFact {
 }
 
 export interface ContractPnl {
-  /** Normative/calc cost of physical work done — not payments. */
+  /**
+   * Physical volume index (sum of quantities) — NOT money.
+   * Kept as earnedValue for backward-compatible field name in storage.
+   */
   earnedValue: number;
-  /** Confirmed incurred costs. */
+  /** Auto economics from volumes×confirmed rates (null if incomplete). */
+  economicsAuto?: number | null;
+  /** Confirmed incurred costs (₽); may follow auto unless manual. */
   incurredCosts: number;
-  /** Cash in. */
+  /** True when user manually overrode incurredCosts. */
+  incurredManual?: boolean;
+  /** Cash in (₽). */
   cashIn: number;
-  /** Cash out. */
+  /** Cash out (₽). */
   cashOut: number;
   /** Recognized revenue if set; else null = нет данных. */
   recognizedRevenue: number | null;
+  /** Missing rates / inputs for economics. */
+  incomplete?: string[];
   notes: string[];
 }
 
@@ -509,6 +526,8 @@ export interface CostSummarySnapshot {
   priceIncVat: number | null;
   method: string;
   incomplete: string[];
+  /** When true, C0/price must not be presented as a complete confirmed total. */
+  totalsIncomplete?: boolean;
   at: string;
 }
 

@@ -97,7 +97,7 @@ export default function SpravochnikiPage() {
             <input
               ref={fileRef}
               type="file"
-              accept=".xlsx,.xls"
+              accept=".csv,.xlsx"
               className="hidden"
               onChange={async (e) => {
                 const file = e.target.files?.[0];

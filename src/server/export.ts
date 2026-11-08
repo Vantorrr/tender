@@ -131,6 +131,7 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
     "Чел.",
     "Ч/смена",
     "Смен/сут",
+    "Объём плана",
     "Ресурсы",
   ]);
   ws.getRow(1).font = { bold: true };
@@ -149,6 +150,7 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
       s.crewSize ?? "",
       s.hoursPerShift ?? g.calendar?.hoursPerShift ?? "",
       s.shiftsPerDay ?? g.calendar?.shiftsPerDay ?? "",
+      s.planVolume ?? "",
       res,
     ]);
   }
@@ -185,6 +187,30 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
       "",
       { formula: `SUM(G2:G${last})` },
     ]);
+  }
+  const calc = data.calculations.find((c) => c.id === g.calculationId);
+  const sumSheet = wb.addWorksheet("Сводка");
+  sumSheet.addRow(["Показатель", "Значение", "Примечание"]);
+  sumSheet.getRow(1).font = { bold: true };
+  const cs = calc?.costSummary;
+  if (cs) {
+    sumSheet.addRow(["C0", cs.C0, cs.totalsIncomplete ? "НЕПОЛНО" : ""]);
+    sumSheet.addRow(["C", cs.C, ""]);
+    sumSheet.addRow(["Резерв", cs.reserve, ""]);
+    sumSheet.addRow(["Прибыль", cs.profit, ""]);
+    sumSheet.addRow(["Цена без НДС", cs.priceExVat, ""]);
+    sumSheet.addRow([
+      "НДС",
+      cs.vatAmount == null ? "нет данных" : cs.vatAmount,
+      "",
+    ]);
+    sumSheet.addRow([
+      "Неполнота",
+      (cs.incomplete ?? []).join("; ") || "—",
+      cs.totalsIncomplete ? "итоги не подтверждены" : "",
+    ]);
+  } else {
+    sumSheet.addRow(["Сводка", "нет данных", "пересчитайте cost-engine"]);
   }
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
@@ -289,14 +315,34 @@ export async function buildPlanFactXlsx(id: string): Promise<Buffer> {
   const pnl = wb.addWorksheet("PnL");
   pnl.addRow(["Показатель", "Значение", "Примечание"]);
   pnl.getRow(1).font = { bold: true };
-  pnl.addRow(["earnedValue", pf.pnl?.earnedValue ?? 0, "физический факт ≠ платёж"]);
-  pnl.addRow(["incurredCosts", pf.pnl?.incurredCosts ?? 0, ""]);
-  pnl.addRow(["cashIn", pf.pnl?.cashIn ?? 0, "не из факта работ"]);
-  pnl.addRow(["cashOut", pf.pnl?.cashOut ?? 0, "не из факта работ"]);
+  pnl.addRow([
+    "earnedValue",
+    pf.pnl?.earnedValue ?? 0,
+    "физический индекс ≠ платёж",
+  ]);
+  pnl.addRow([
+    "economicsAuto",
+    pf.pnl?.economicsAuto ?? "нет данных",
+    "объём×подтверждённые расценки",
+  ]);
+  pnl.addRow([
+    "incurredCosts",
+    pf.pnl?.incurredCosts ?? 0,
+    pf.pnl?.incurredManual ? "ручная корректировка" : "из auto или 0",
+  ]);
+  pnl.addRow(["cashIn", pf.pnl?.cashIn ?? 0, "касса отдельно"]);
+  pnl.addRow(["cashOut", pf.pnl?.cashOut ?? 0, "касса отдельно"]);
   pnl.addRow([
     "recognizedRevenue",
     pf.pnl?.recognizedRevenue ?? "нет данных",
-    "",
+    "выручка отдельно",
+  ]);
+  pnl.addRow([
+    "incomplete",
+    (pf.pnl?.incomplete ?? []).join("; ") || "—",
+    (pf.pnl?.incomplete?.length ?? 0) > 0
+      ? "экономика неполная"
+      : "",
   ]);
   for (const n of pf.pnl?.notes ?? []) {
     pnl.addRow(["note", n, ""]);

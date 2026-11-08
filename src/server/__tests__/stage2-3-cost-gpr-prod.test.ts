@@ -41,9 +41,9 @@ describe("stage2 cost engine + gantt", () => {
     expect(data.supplyRequests).toBeTruthy();
   });
 
-  it("allocatePlanForSlice uses GPR calendar, not fact−100%", async () => {
+  it("allocatePlanForSlice prefers stage volumes over uniform", async () => {
     const { allocatePlanForSlice } = await import("@/lib/plan-from-gpr");
-    const stages = [
+    const uniform = [
       {
         id: "a",
         name: "A",
@@ -52,15 +52,35 @@ describe("stage2 cost engine + gantt", () => {
         sequence: 1,
       },
     ];
-    const plan = 100;
-    const day = allocatePlanForSlice(plan, stages, "day", "2026-11-05");
-    const month = allocatePlanForSlice(plan, stages, "month", "2026-11-05");
-    const cum = allocatePlanForSlice(plan, stages, "cum", "2026-11-05");
-    expect(day).toBeGreaterThan(0);
-    expect(day).toBeLessThan(plan);
-    expect(month).toBe(plan); // all days in November span
-    expect(cum).toBeGreaterThan(0);
-    expect(cum).toBeLessThanOrEqual(plan);
+    const u = allocatePlanForSlice(100, uniform, "day", "2026-11-05");
+    expect(u.source).toBe("uniform_fallback");
+    expect(u.plan).toBeGreaterThan(0);
+    expect(u.plan).toBeLessThan(100);
+
+    const staged = [
+      {
+        id: "a",
+        name: "A",
+        start: "2026-11-01",
+        end: "2026-11-05",
+        sequence: 1,
+        planVolume: 80,
+      },
+      {
+        id: "b",
+        name: "B",
+        start: "2026-11-06",
+        end: "2026-11-10",
+        sequence: 2,
+        planVolume: 20,
+      },
+    ];
+    const dayA = allocatePlanForSlice(100, staged, "day", "2026-11-02");
+    const dayB = allocatePlanForSlice(100, staged, "day", "2026-11-08");
+    expect(dayA.source).toBe("stage_volumes");
+    expect(dayA.plan).toBeGreaterThan(dayB.plan);
+    const period = allocatePlanForSlice(100, staged, "period", "2026-11-05");
+    expect(period.plan).toBe(100);
   });
 
   it("materialsUnpriced when calc has no material positions", async () => {

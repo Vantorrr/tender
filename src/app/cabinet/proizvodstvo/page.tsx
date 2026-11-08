@@ -100,14 +100,15 @@ export default function ProizvodstvoPage() {
           ? sumDailyQty(daily)
           : totals.fact;
 
-  // Plan for selected slice from GPR calendar (uniform allocation), not «факт − 100%»
+  // Plan for selected slice: stage volumes when present, else uniform fallback
   const gprStages = gpr?.stages ?? [];
-  const periodPlan = allocatePlanForSlice(
+  const planSlice = allocatePlanForSlice(
     totals.plan,
     gprStages,
     period,
     date
   );
+  const periodPlan = planSlice.plan;
   const sliceVariance = periodFact - periodPlan;
 
   async function submitDaily(withPhoto: boolean) {
@@ -312,11 +313,13 @@ export default function ProizvodstvoPage() {
                     }[period]
                   }{" "}
                   из ГПР): {formatNumber(periodPlan)}
-                  {gprStages.length === 0 ? (
-                    <span className="mt-1 block text-[11px] text-amber-800">
-                      нет ГПР — срез плана ограничен
-                    </span>
-                  ) : null}
+                  <span className="mt-1 block text-[11px] text-[var(--tk-muted)]">
+                    {planSlice.source === "stage_volumes"
+                      ? "по объёмам этапов"
+                      : planSlice.source === "uniform_fallback"
+                        ? "равномерно (объёмы этапов не заданы)"
+                        : "нет ГПР — срез ограничен"}
+                  </span>
                 </div>
                 <div className="rounded-xl border bg-white/80 p-3 text-sm">
                   Факт (
@@ -351,12 +354,24 @@ export default function ProizvodstvoPage() {
                   Индекс физ. объёма (не ₽):{" "}
                   {formatNumber(plan.pnl?.earnedValue ?? 0)}
                 </div>
+                <div className="rounded-xl border bg-white/80 p-3 text-sm">
+                  Экономика авто (объём×ставки):{" "}
+                  {plan.pnl?.economicsAuto == null
+                    ? "нет данных"
+                    : formatNumber(plan.pnl.economicsAuto)}
+                  {(plan.pnl?.incomplete?.length ?? 0) > 0 ? (
+                    <span className="mt-1 block text-[11px] text-amber-800">
+                      не хватает: {(plan.pnl?.incomplete ?? []).slice(0, 4).join(", ")}
+                    </span>
+                  ) : null}
+                </div>
               </div>
 
               <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="rounded-xl border bg-white/80 p-3 text-sm">
                   <p className="mb-1 text-xs text-[var(--tk-muted)]">
                     Подтверждённые затраты (₽)
+                    {plan.pnl?.incurredManual ? " · вручную" : ""}
                   </p>
                   <Input
                     data-testid="pnl-incurred"
@@ -366,11 +381,14 @@ export default function ProizvodstvoPage() {
                       updatePlanFact(plan.id, {
                         pnl: {
                           earnedValue: plan.pnl?.earnedValue ?? 0,
+                          economicsAuto: plan.pnl?.economicsAuto ?? null,
                           incurredCosts: v,
+                          incurredManual: true,
                           cashIn: plan.pnl?.cashIn ?? 0,
                           cashOut: plan.pnl?.cashOut ?? 0,
                           recognizedRevenue:
                             plan.pnl?.recognizedRevenue ?? null,
+                          incomplete: plan.pnl?.incomplete,
                           notes: plan.pnl?.notes ?? [],
                         },
                       });
@@ -388,6 +406,7 @@ export default function ProizvodstvoPage() {
                       const v = Number(e.target.value) || 0;
                       updatePlanFact(plan.id, {
                         pnl: {
+                          ...plan.pnl!,
                           earnedValue: plan.pnl?.earnedValue ?? 0,
                           incurredCosts: plan.pnl?.incurredCosts ?? 0,
                           cashIn: v,
@@ -411,6 +430,7 @@ export default function ProizvodstvoPage() {
                       const v = Number(e.target.value) || 0;
                       updatePlanFact(plan.id, {
                         pnl: {
+                          ...plan.pnl!,
                           earnedValue: plan.pnl?.earnedValue ?? 0,
                           incurredCosts: plan.pnl?.incurredCosts ?? 0,
                           cashIn: plan.pnl?.cashIn ?? 0,
@@ -439,6 +459,7 @@ export default function ProizvodstvoPage() {
                       const raw = e.target.value.trim();
                       updatePlanFact(plan.id, {
                         pnl: {
+                          ...plan.pnl!,
                           earnedValue: plan.pnl?.earnedValue ?? 0,
                           incurredCosts: plan.pnl?.incurredCosts ?? 0,
                           cashIn: plan.pnl?.cashIn ?? 0,

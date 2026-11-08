@@ -10,8 +10,15 @@ import {
   updateMoney,
   updateProcurement,
 } from "@/server/repo";
+import { assertSection } from "@/server/acl";
 import { withSection, json } from "@/server/http";
 import type { MoneyPayment, MoneyPlan, ReviewStatus } from "@/lib/types";
+
+const MONEY_ACTIONS = new Set([
+  "ensureMoney",
+  "saveMoney",
+  "addMoneyPayment",
+]);
 
 export async function GET(req: Request) {
   return withSection(req, "zakupki", (user) =>
@@ -78,6 +85,10 @@ export async function POST(req: Request) {
     if (body.action === "transferToProduction") {
       transferProcurementToProduction(user.id, body.id!);
       return json(getBootstrap(user));
+    }
+    // Nested matryoshka: money tab lives under zakupki URL but requires dengi ACL
+    if (body.action && MONEY_ACTIONS.has(body.action)) {
+      assertSection(user, "dengi");
     }
     if (body.action === "ensureMoney") {
       ensureMoneyPlan(user.id, body.id!);

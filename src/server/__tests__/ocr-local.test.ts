@@ -25,59 +25,54 @@ describe("local OCR (tesseract)", () => {
     "fixtures/ocr/scan-fixture.pdf"
   );
 
-  it("detects whether tesseract is installed", () => {
-    // Document presence for the report — either path is valid.
-    expect(typeof tools.tesseract === "string" || tools.tesseract === null).toBe(
-      true
-    );
+  it("requires local tesseract on the verification VM", () => {
+    expect(
+      tools.tesseract,
+      "tesseract-ocr must be installed locally (apt); do not skip OCR acceptance"
+    ).toBeTruthy();
+    expect(fs.existsSync(fixturePng)).toBe(true);
+    expect(fs.existsSync(fixturePdf)).toBe(true);
   });
 
-  it.runIf(Boolean(tools.tesseract) && fs.existsSync(fixturePng))(
-    "reads known text from scan-fixture.png via real tesseract",
-    async () => {
-      setOcrProvider(new TesseractOcrProvider("eng"));
-      const buf = fs.readFileSync(fixturePng);
-      const result = await extractDocumentText({
-        fileName: "scan-fixture.png",
-        buffer: buf,
-        mimeHint: "image/png",
-      });
-      expect(result.provider).toBe("tesseract");
-      expect(result.status).toBe("ok");
-      expect(result.text).toBeTruthy();
-      const plain = (result.text ?? "").toUpperCase();
-      expect(plain.includes("TMA361") || plain.includes("OCR")).toBe(true);
-      expect(plain.includes("OPORA") || plain.includes("ZONA")).toBe(true);
-    }
-  );
+  it("reads known text from scan-fixture.png via real tesseract", async () => {
+    expect(tools.tesseract).toBeTruthy();
+    setOcrProvider(new TesseractOcrProvider("eng"));
+    const buf = fs.readFileSync(fixturePng);
+    const result = await extractDocumentText({
+      fileName: "scan-fixture.png",
+      buffer: buf,
+      mimeHint: "image/png",
+    });
+    expect(result.provider).toBe("tesseract");
+    expect(result.status).toBe("ok");
+    expect(result.text).toBeTruthy();
+    const plain = (result.text ?? "").toUpperCase();
+    expect(plain.includes("TMA361") || plain.includes("OCR")).toBe(true);
+    expect(plain.includes("OPORA") || plain.includes("ZONA")).toBe(true);
+  });
 
-  it.runIf(Boolean(tools.tesseract) && fs.existsSync(fixturePdf))(
-    "OCRs scan-fixture.pdf (pdftoppm or text layer)",
-    async () => {
-      setOcrProvider(new TesseractOcrProvider("eng"));
-      const buf = fs.readFileSync(fixturePdf);
-      const result = await extractDocumentText({
-        fileName: "scan-fixture.pdf",
-        buffer: buf,
-        mimeHint: "application/pdf",
-      });
-      expect(result.provider).toBe("tesseract");
-      expect(["ok", "empty", "unavailable"]).toContain(result.status);
-      if (result.status === "ok") {
-        expect(result.text?.toUpperCase()).toMatch(/TMA361|OCR|OPORA|ZONA/);
-      }
+  it("OCRs scan-fixture.pdf (pdftoppm or text layer)", async () => {
+    expect(tools.tesseract).toBeTruthy();
+    setOcrProvider(new TesseractOcrProvider("eng"));
+    const buf = fs.readFileSync(fixturePdf);
+    const result = await extractDocumentText({
+      fileName: "scan-fixture.pdf",
+      buffer: buf,
+      mimeHint: "application/pdf",
+    });
+    expect(result.provider).toBe("tesseract");
+    expect(["ok", "empty", "unavailable"]).toContain(result.status);
+    if (result.status === "ok") {
+      expect(result.text?.toUpperCase()).toMatch(/TMA361|OCR|OPORA|ZONA/);
     }
-  );
+  });
 
-  it.runIf(!tools.tesseract)(
-    "falls back to not_configured when tesseract absent",
-    async () => {
-      setOcrProvider(new NotConfiguredOcrProvider());
-      const result = await extractDocumentText({
-        fileName: "x.png",
-        buffer: Buffer.from("x"),
-      });
-      expect(result.status).toBe("not_configured");
-    }
-  );
+  it("NotConfiguredOcrProvider reports not_configured when forced", async () => {
+    setOcrProvider(new NotConfiguredOcrProvider());
+    const result = await extractDocumentText({
+      fileName: "x.png",
+      buffer: Buffer.from("x"),
+    });
+    expect(result.status).toBe("not_configured");
+  });
 });

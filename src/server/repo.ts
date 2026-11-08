@@ -41,9 +41,11 @@ import { mutateAppData, readAppData, resetAppData } from "@/server/db";
 import { hashPassword } from "@/server/passwords";
 import { createSession, publicUser } from "@/server/auth";
 import { randomBytes } from "node:crypto";
+import { economicsFromVolumes } from "@/lib/economics-from-rates";
 import { ensureStageResources } from "@/lib/gpr-resources";
 import { totalStageCalendarDays } from "@/lib/plan-from-gpr";
 import { recomputeEntriesFromDaily } from "@/lib/plan-fact-agg";
+import { buildMaterialNeeds, materialNeedsIncomplete } from "@/lib/materials-need";
 
 export { assertOrgAccess };
 
@@ -1733,9 +1735,14 @@ export function recomputeCalculationCost(
       vatPercent: patch?.vatPercent ?? null,
       northern,
     });
+    const matNeeds = buildMaterialNeeds({
+      positions: item.positions,
+      stages: data.schedules.find((s) => s.calculationId === item.id)?.stages,
+    });
     const incomplete = [
       ...engine.incomplete,
       ...(buckets.materialsUnpriced ? ["materials_positions"] : []),
+      ...materialNeedsIncomplete(matNeeds).slice(0, 20),
     ];
     item.costSummary = {
       C0: engine.C0,
@@ -1747,6 +1754,7 @@ export function recomputeCalculationCost(
       priceIncVat: engine.priceIncVat,
       method: `cost-engine:${engine.profitMethod}`,
       incomplete,
+      totalsIncomplete: incomplete.length > 0,
       at: new Date().toISOString(),
     };
     item.dataFlags = [
@@ -1895,26 +1903,46 @@ export function addDailyProductionFact(
     pf.dailyFacts = [...(pf.dailyFacts ?? []), entry];
     // Daily records are source of truth for works that have them
     recomputeEntriesFromDaily(pf);
-    // PnL index from table facts after recompute (not cash / not revenue)
-    const physicalTotal = (pf.entries ?? []).reduce((s, e) => s + e.fact, 0);
+    // Physical index ≠ money; economics only from confirmed rates
+    const proc = data.procurements.find((x) => x.id === pf.procurementId);
+    const calc = data.calculations.find(
+      (c) => c.id === proc?.calculationId || c.procurementId === pf.procurementId
+    );
+    const eco = economicsFromVolumes({
+      entries: pf.entries,
+      daily: pf.dailyFacts,
+      positions: calc?.positions ?? [],
+      directories: data.directories ?? [],
+    });
+    const prev = pf.pnl ?? {
+      earnedValue: 0,
+      incurredCosts: 0,
+      cashIn: 0,
+      cashOut: 0,
+      recognizedRevenue: null,
+      notes: [],
+    };
+    const incurred =
+      prev.incurredManual === true
+        ? prev.incurredCosts
+        : eco.incomplete.length
+          ? prev.incurredCosts
+          : eco.autoIncurred;
     pf.pnl = {
-      ...(pf.pnl ?? {
-        earnedValue: 0,
-        incurredCosts: 0,
-        cashIn: 0,
-        cashOut: 0,
-        recognizedRevenue: null,
-        notes: [],
-      }),
-      earnedValue: Math.round(physicalTotal * 100) / 100,
+      ...prev,
+      earnedValue: eco.physicalIndex,
+      economicsAuto: eco.incomplete.length ? null : eco.autoIncurred,
+      incurredCosts: incurred,
+      incomplete: eco.incomplete,
       notes: [
-        "Нормативная стоимость физ. факта = сумма факта по работам (дневные записи — источник истины)",
-        "Поступления/списания кассы не меняются из факта работ",
-        "Признанная выручка — отдельно, по умолчанию «нет данных»",
-        ...(pf.pnl?.notes ?? []).filter(
+        "earnedValue = физ. индекс объёма (не ₽)",
+        "economicsAuto = объём×подтверждённые расценки (иначе null)",
+        "касса / признанная выручка — отдельные ручные поля",
+        ...(prev.notes ?? []).filter(
           (n) =>
             !n.startsWith("earnedValue") &&
-            !n.startsWith("Нормативная стоимость")
+            !n.startsWith("Нормативная") &&
+            !n.startsWith("economicsAuto")
         ),
       ],
     };

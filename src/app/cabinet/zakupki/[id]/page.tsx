@@ -23,6 +23,7 @@ import { cleanLabel } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney } from "@/lib/format";
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
 import { WORK_TYPES } from "@/lib/pipeline";
+import { userHasSection } from "@/lib/acl";
 import { REVIEW_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
 import type { DocumentCategory, ReviewStatus, SupplyStatus } from "@/lib/types";
 import { useStore } from "@/lib/store";
@@ -42,6 +43,7 @@ export default function ZakupkaDetailPage() {
   const params = useParams<{ id: string }>();
   const {
     data,
+    user,
     orgProcurements,
     setProcurementReview,
     ensureChain,
@@ -53,6 +55,10 @@ export default function ZakupkaDetailPage() {
     refresh,
   } = useStore();
   const procurement = orgProcurements.find((p) => p.id === params.id);
+  const canMoney = user ? userHasSection(user, "dengi") : false;
+  const canGpr = user ? userHasSection(user, "gpr") : false;
+  const canRisks = user ? userHasSection(user, "riski") : false;
+  const canDocs = user ? userHasSection(user, "dokumenty") : false;
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadCategory, setUploadCategory] =
     useState<DocumentCategory>("general");
@@ -179,13 +185,26 @@ export default function ZakupkaDetailPage() {
       <Tabs defaultValue="overview" className="mt-2">
         <TabsList className="mb-4 flex h-auto flex-wrap gap-1">
           <TabsTrigger value="overview">Карточка</TabsTrigger>
-          <TabsTrigger value="docs">Документы ({docs.length})</TabsTrigger>
+          {canDocs ? (
+            <TabsTrigger value="docs">Документы ({docs.length})</TabsTrigger>
+          ) : null}
           <TabsTrigger value="analytics">Аналитика</TabsTrigger>
           <TabsTrigger value="calc">Расчёт</TabsTrigger>
-          <TabsTrigger value="gpr">ГПР</TabsTrigger>
-          <TabsTrigger value="money">Деньги</TabsTrigger>
+          {canGpr ? <TabsTrigger value="gpr">ГПР</TabsTrigger> : null}
+          {canMoney ? (
+            <TabsTrigger value="money" data-testid="tab-money">
+              Деньги
+            </TabsTrigger>
+          ) : (
+            <span
+              className="px-2 text-xs text-[var(--tk-muted)]"
+              data-testid="tab-money-denied"
+            >
+              Деньги (нет ACL)
+            </span>
+          )}
           <TabsTrigger value="supply">Поставки</TabsTrigger>
-          <TabsTrigger value="risks">Риски</TabsTrigger>
+          {canRisks ? <TabsTrigger value="risks">Риски</TabsTrigger> : null}
         </TabsList>
 
         <TabsContent value="overview">
@@ -629,7 +648,12 @@ export default function ZakupkaDetailPage() {
             className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5 text-sm"
             data-testid="project-money-tab"
           >
-            {!money ? (
+            {!canMoney ? (
+              <ErrorState
+                title="Нет доступа к разделу «dengi»"
+                description="Вкладка денег в карточке закупки требует право dengi (вложенный ACL)."
+              />
+            ) : !money ? (
               <div className="space-y-3">
                 <p className="text-[var(--tk-muted)]">
                   Денежный план ещё не создан для этой закупки.
