@@ -23,8 +23,8 @@ import { modelConfigured } from "@/server/openrouter";
 import { hashPassword } from "@/server/passwords";
 import { procurementSourceStatus } from "@/server/procurement-source";
 
-/** 12: stage-named resources + enrich empty runtime GPRs; keep custom complete sets. */
-const SCHEMA_VERSION = "12";
+/** 13: t25u school GPR — workName links, dated stages, catalog-priced resources. */
+const SCHEMA_VERSION = "13";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -304,15 +304,34 @@ function applySchema10Extras(data: AppData): AppData {
   return data;
 }
 
+/** t25u: refresh g-1 stages from seed (workName + priced resources + Nov'26 window). */
+function applyT25uSchoolGprHeal(data: AppData): AppData {
+  const fresh = createSeedData().schedules.find((s) => s.id === "g-1");
+  if (!fresh) return data;
+  data.schedules = data.schedules.map((s) =>
+    s.id === "g-1"
+      ? {
+          ...s,
+          stages: fresh.stages.map((st) => ensureStageResources(st)),
+          version: Math.max(s.version, fresh.version),
+          updatedAt: new Date().toISOString(),
+        }
+      : s
+  );
+  return data;
+}
+
 function migrate(db: DatabaseSync) {
   const row = db.prepare("SELECT payload FROM app_blob WHERE id = 1").get() as
     | { payload: string }
     | undefined;
 
   if (!row) {
-    const seed = applySchema10Extras(
-      applySchema8Extras(
-        installGrandReference(hashSeedUsers(createSeedData()))
+    const seed = applyT25uSchoolGprHeal(
+      applySchema10Extras(
+        applySchema8Extras(
+          installGrandReference(hashSeedUsers(createSeedData()))
+        )
       )
     );
     const now = new Date().toISOString();
@@ -391,6 +410,7 @@ function migrate(db: DatabaseSync) {
     installGrandReference(data);
     applySchema8Extras(data);
     applySchema10Extras(data);
+    applyT25uSchoolGprHeal(data);
 
     db.prepare(
       "UPDATE app_blob SET payload = ?, updated_at = ? WHERE id = 1"

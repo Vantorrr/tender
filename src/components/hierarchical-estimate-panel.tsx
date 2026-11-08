@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,14 +34,23 @@ export function HierarchicalEstimatePanel({
   onAddClick,
 }: Props) {
   const [search, setSearch] = useState("");
-  const [expandAll, setExpandAll] = useState(true);
+  // PDF cue: stages collapsed by default; one stage expanded for overview+detail
+  const [expandAll, setExpandAll] = useState(false);
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [seededOpen, setSeededOpen] = useState(false);
 
   const nodes = useMemo(
     () => buildHierarchicalEstimate({ stages, positions, search }),
     [stages, positions, search]
   );
   const cards = useMemo(() => estimateBudgetCards(nodes), [nodes]);
+
+  useEffect(() => {
+    if (seededOpen || nodes.length === 0) return;
+    const first = nodes.find((n) => n.id !== "_unbound") ?? nodes[0];
+    setSeededOpen(true);
+    setOpen({ [first.id]: true });
+  }, [nodes, seededOpen]);
 
   function isOpen(id: string) {
     if (open[id] != null) return open[id];

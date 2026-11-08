@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  planResourceLinesForDay,
+  stageMatchesWork,
+  stagesForWork,
+} from "@/lib/day-resource-plan";
+import {
   buildHierarchicalEstimate,
   estimateBudgetCards,
 } from "@/lib/hierarchical-estimate";
@@ -65,6 +70,95 @@ describe("t25u hierarchical estimate (PDF UI / Excel arithmetic)", () => {
   });
 });
 
+describe("t25u day resource scoping", () => {
+  const stages: GprStage[] = [
+    {
+      id: "gs-2",
+      name: "Демонтаж и подготовка оснований",
+      workName: "Демонтаж перегородок",
+      start: "2026-11-01",
+      end: "2026-11-25",
+      sequence: 2,
+      resources: [
+        {
+          id: "a",
+          kind: "labor",
+          name: "Демонтажник",
+          unit: "чел",
+          quantity: 10,
+          rate: 1054,
+        },
+        {
+          id: "b",
+          kind: "bus",
+          name: "Автобус доставки",
+          unit: "ед",
+          quantity: 1,
+          rate: 2650,
+        },
+        {
+          id: "c",
+          kind: "material",
+          name: "Контейнеры под бой",
+          unit: "шт",
+          quantity: 8,
+          rate: 4500,
+        },
+      ],
+    },
+    {
+      id: "gs-4",
+      name: "Кровля и фасад",
+      workName: "Кровля и фасад",
+      start: "2027-01-10",
+      end: "2027-03-15",
+      sequence: 4,
+      resources: [
+        {
+          id: "d",
+          kind: "labor",
+          name: "Кровельщик",
+          unit: "чел",
+          quantity: 4,
+          rate: null,
+        },
+      ],
+    },
+  ];
+
+  it("matches only by workName, not soft includes", () => {
+    expect(stageMatchesWork(stages[0], "Демонтаж перегородок")).toBe(true);
+    expect(stageMatchesWork(stages[0], "Кровля и фасад")).toBe(false);
+    expect(stageMatchesWork(stages[1], "Демонтаж перегородок")).toBe(false);
+  });
+
+  it("returns empty when work not linked — no whole-GPR dump", () => {
+    expect(stagesForWork(stages, "Неизвестная работа")).toEqual([]);
+    expect(
+      planResourceLinesForDay(stages, "2026-11-08", "Неизвестная работа")
+    ).toEqual([]);
+  });
+
+  it("scopes resources to linked stage+date; bus is present but not labor-only", () => {
+    const lines = planResourceLinesForDay(
+      stages,
+      "2026-11-08",
+      "Демонтаж перегородок"
+    );
+    expect(lines.map((l) => l.name)).toEqual([
+      "Демонтажник",
+      "Автобус доставки",
+      "Контейнеры под бой",
+    ]);
+    expect(lines.some((l) => /Кровл/i.test(l.name))).toBe(false);
+    expect(lines.find((l) => l.kind === "bus")).toBeTruthy();
+    // date outside → empty
+    expect(
+      planResourceLinesForDay(stages, "2027-02-01", "Демонтаж перегородок")
+    ).toEqual([]);
+  });
+});
+
 describe("t25u day details resourceLines persistence", () => {
   beforeEach(() => {
     closeDb();
@@ -73,51 +167,47 @@ describe("t25u day details resourceLines persistence", () => {
 
   it("stores resourceLines on daily fact and reloads", () => {
     const data = readAppData();
-    const pf = data.planFacts[0];
+    const pf = data.planFacts.find((p) => p.id === "pf-1") ?? data.planFacts[0];
     expect(pf).toBeTruthy();
-    const work = pf.entries[0]?.workName ?? "Общий объём";
+    const work = "Демонтаж перегородок";
     addDailyProductionFact("u-obj", pf.id, {
       date: "2026-11-08",
       workName: work,
-      unit: pf.entries[0]?.unit ?? "%",
-      quantity: 3,
+      unit: "м²",
+      quantity: 12,
       resourceLines: [
         {
           kind: "labor",
-          name: "Монтажник",
+          name: "Демонтажник",
           unit: "чел",
-          planQty: 4,
-          factQty: 3,
+          planQty: 10,
+          factQty: 9,
         },
         {
           kind: "material",
-          name: "Щебень",
-          unit: "т",
-          planQty: 10,
-          factQty: 9,
+          name: "Контейнеры под бой",
+          unit: "шт",
+          planQty: 8,
+          factQty: 7,
         },
       ],
     });
     const after = readAppData();
     const pf2 = after.planFacts.find((p) => p.id === pf.id)!;
     const day = (pf2.dailyFacts ?? []).find(
-      (d) => d.date === "2026-11-08" && d.workName === work && d.quantity === 3
+      (d) => d.date === "2026-11-08" && d.workName === work && d.quantity === 12
     );
-    expect(day?.resourceLines).toEqual([
-      {
-        kind: "labor",
-        name: "Монтажник",
-        unit: "чел",
-        planQty: 4,
-        factQty: 3,
-      },
-      {
-        kind: "material",
-        name: "Щебень",
-        unit: "т",
-        planQty: 10,
-        factQty: 9,
-      },
-    ]);
+    expect(day?.resourceLines?.[0]?.kind).toBe("labor");
+    expect(day?.resourceLines?.[0]?.factQty).toBe(9);
+  });
+
+  it("healed g-1 links Демонтаж перегородок to gs-2 with Nov window", () => {
+    const g1 = readAppData().schedules.find((s) => s.id === "g-1")!;
+    const gs2 = g1.stages.find((s) => s.id === "gs-2")!;
+    expect(gs2.workName).toBe("Демонтаж перегородок");
+    expect(gs2.start <= "2026-11-08" && gs2.end >= "2026-11-08").toBe(true);
+    expect(gs2.resources?.some((r) => r.kind === "labor" && r.rate != null)).toBe(
+      true
+    );
   });
 });

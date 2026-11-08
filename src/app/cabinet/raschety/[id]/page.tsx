@@ -377,93 +377,100 @@ export default function RaschetDetailPage() {
         />
       </div>
 
-      <div className="mb-4 grid gap-2 text-sm sm:grid-cols-4">
-        <div className="rounded-xl border bg-white/80 p-3">
-          Труд: {formatMoney(buckets.labor)}
+      <details className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4">
+        <summary
+          className="cursor-pointer text-sm font-medium"
+          data-testid="flat-positions-toggle"
+        >
+          Плоская ведомость позиций (техническая; основная смета — дерево выше)
+        </summary>
+        <div className="mt-3 mb-3 grid gap-2 text-sm sm:grid-cols-4">
+          <div className="rounded-xl border bg-white/80 p-3">
+            Труд: {formatMoney(buckets.labor)}
+          </div>
+          <div className="rounded-xl border bg-white/80 p-3">
+            Материалы:{" "}
+            {buckets.materialsUnpriced
+              ? "нет данных"
+              : formatMoney(buckets.materials)}
+          </div>
+          <div className="rounded-xl border bg-white/80 p-3">
+            Техника: {formatMoney(buckets.equipment)}
+          </div>
+          <div className="rounded-xl border bg-white/80 p-3">
+            Прочее прямые: {formatMoney(buckets.other)}
+          </div>
         </div>
-        <div className="rounded-xl border bg-white/80 p-3">
-          Материалы:{" "}
-          {buckets.materialsUnpriced
-            ? "нет данных"
-            : formatMoney(buckets.materials)}
-        </div>
-        <div className="rounded-xl border bg-white/80 p-3">
-          Техника: {formatMoney(buckets.equipment)}
-        </div>
-        <div className="rounded-xl border bg-white/80 p-3">
-          Прочее прямые: {formatMoney(buckets.other)}
-        </div>
-      </div>
-
-      <div
-        className="overflow-x-auto rounded-xl border border-[var(--tk-line)] bg-white/80"
-        data-testid="calc-positions-table"
-      >
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Код</TableHead>
-              <TableHead>Наименование</TableHead>
-              <TableHead>Ед.</TableHead>
-              <TableHead className="text-right">Кол-во / потребность</TableHead>
-              <TableHead className="text-right">Расценка</TableHead>
-              <TableHead className="text-right">Стоимость</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {calc.positions.map((p) => (
-              <TableRow key={p.id}>
-                <TableCell className="font-mono text-xs">{p.code}</TableCell>
-                <TableCell className="min-w-[12rem]">{p.name}</TableCell>
-                <TableCell>{p.unit}</TableCell>
-                <TableCell className="text-right">
-                  {locked ? (
-                    formatNumber(p.quantity)
-                  ) : (
-                    <Input
-                      className="ml-auto w-28 text-right"
-                      data-testid={`pos-qty-${p.id}`}
-                      value={String(p.quantity)}
-                      onChange={(e) => {
-                        const v = Number(e.target.value) || 0;
-                        updateCalculation(calc.id, {
-                          positions: calc.positions.map((x) =>
-                            x.id === p.id ? { ...x, quantity: v } : x
-                          ),
-                        });
-                      }}
-                    />
-                  )}
-                </TableCell>
-                <TableCell className="text-right">
-                  {locked ? (
-                    formatMoney(p.rate)
-                  ) : (
-                    <Input
-                      className="ml-auto w-32 text-right"
-                      data-testid={`pos-rate-${p.id}`}
-                      value={String(p.rate)}
-                      onChange={(e) => {
-                        const v = Number(e.target.value) || 0;
-                        updateCalculation(calc.id, {
-                          positions: calc.positions.map((x) =>
-                            x.id === p.id ? { ...x, rate: v } : x
-                          ),
-                        });
-                      }}
-                    />
-                  )}
-                </TableCell>
-                <TableCell className="text-right font-medium">
-                  {formatMoney(
-                    positionLineSum(p, calc.scenarioFactor || 1)
-                  )}
-                </TableCell>
+        <div
+          className="overflow-x-auto rounded-xl border border-[var(--tk-line)] bg-white/80"
+          data-testid="calc-positions-table"
+        >
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Код</TableHead>
+                <TableHead>Наименование</TableHead>
+                <TableHead>Ед.</TableHead>
+                <TableHead className="text-right">Кол-во / потребность</TableHead>
+                <TableHead className="text-right">Расценка</TableHead>
+                <TableHead className="text-right">Стоимость</TableHead>
               </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+            </TableHeader>
+            <TableBody>
+              {calc.positions.map((p) => (
+                <TableRow key={p.id}>
+                  <TableCell className="font-mono text-xs">{p.code}</TableCell>
+                  <TableCell className="min-w-[12rem]">{p.name}</TableCell>
+                  <TableCell>{p.unit}</TableCell>
+                  <TableCell className="text-right">
+                    {locked ? (
+                      formatNumber(p.quantity)
+                    ) : (
+                      <Input
+                        className="ml-auto w-28 text-right"
+                        data-testid={`pos-qty-${p.id}`}
+                        value={String(p.quantity)}
+                        onChange={(e) => {
+                          const v = Number(e.target.value) || 0;
+                          updateCalculation(calc.id, {
+                            positions: calc.positions.map((x) =>
+                              x.id === p.id ? { ...x, quantity: v } : x
+                            ),
+                          });
+                        }}
+                      />
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {locked ? (
+                      formatMoney(p.rate)
+                    ) : (
+                      <Input
+                        className="ml-auto w-32 text-right"
+                        data-testid={`pos-rate-${p.id}`}
+                        value={String(p.rate)}
+                        onChange={(e) => {
+                          const v = Number(e.target.value) || 0;
+                          updateCalculation(calc.id, {
+                            positions: calc.positions.map((x) =>
+                              x.id === p.id ? { ...x, rate: v } : x
+                            ),
+                          });
+                        }}
+                      />
+                    )}
+                  </TableCell>
+                  <TableCell className="text-right font-medium">
+                    {formatMoney(
+                      positionLineSum(p, calc.scenarioFactor || 1)
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </details>
 
       <section className="mt-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
         <h2 className="font-[family-name:var(--font-display)] text-base">

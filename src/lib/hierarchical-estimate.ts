@@ -177,10 +177,14 @@ export function buildHierarchicalEstimate(opts: {
     });
   }
 
-  // Calc positions not already mirrored as stage materials — under «Без этапа»
+  // Calc positions not already present on a stage by name — optional unbound bucket
+  const named = new Set(
+    nodes.flatMap((n) => n.groups.flatMap((g) => g.leaves.map((l) => l.name.toLowerCase())))
+  );
   const unbound: EstimateLeaf[] = [];
   for (const p of opts.positions ?? []) {
     if (p.code === "НР" || p.code === "СП") continue;
+    if (named.has(p.name.toLowerCase())) continue;
     let kind: EstimateKind = "other";
     if (isMaterialPosition(p)) kind = "material";
     else if (isLaborPosition(p)) kind = "labor";

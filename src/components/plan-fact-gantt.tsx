@@ -3,13 +3,6 @@
 import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { diffDays } from "@/lib/cost-engine";
 import { formatDate, formatDateRangeShort } from "@/lib/format";
 import { entryDisplayFact } from "@/lib/plan-fact-agg";
@@ -136,26 +129,19 @@ export function PlanFactGantt({
       <div className="mb-3 flex flex-wrap items-end gap-3">
         <div>
           <p className="mb-1 text-xs text-[var(--tk-muted)]">Фильтр ресурсов</p>
-          <Select
+          <select
+            className="flex h-8 w-[200px] rounded-lg border border-input bg-transparent px-2.5 text-sm"
+            data-testid="gantt-resource-filter"
             value={resourceFilter}
-            onValueChange={(v) => v && setResourceFilter(v)}
+            onChange={(e) => setResourceFilter(e.target.value)}
           >
-            <SelectTrigger className="w-[200px]" data-testid="gantt-resource-filter">
-              <SelectValue>
-                {resourceFilter === "all"
-                  ? "Все ресурсы"
-                  : KIND_RU[resourceFilter] ?? resourceFilter}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Все ресурсы</SelectItem>
-              {resourceKinds.map((k) => (
-                <SelectItem key={k} value={k}>
-                  {KIND_RU[k] ?? k}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            <option value="all">Все ресурсы</option>
+            {resourceKinds.map((k) => (
+              <option key={k} value={k}>
+                {KIND_RU[k] ?? k}
+              </option>
+            ))}
+          </select>
         </div>
         <p className="text-xs text-[var(--tk-muted)]">
           План (серый) / факт-прогресс (синий) · красная линия — текущий день
@@ -178,7 +164,12 @@ export function PlanFactGantt({
           ))}
         </div>
 
-        <div className="space-y-4">
+        <div
+          className="space-y-4"
+          data-testid="gantt-rows"
+          data-row-count={visible.length}
+          data-resource-filter={resourceFilter}
+        >
           {visible.map((stage) => {
             const offset = Math.max(0, diffDays(minStart, stage.start));
             const width = daysBetween(stage.start, stage.end);

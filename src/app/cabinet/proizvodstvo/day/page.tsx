@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState, Suspense } from "react";
+import { useEffect, useMemo, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
@@ -10,66 +10,83 @@ import { DateInputRu } from "@/components/date-input-ru";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
+import {
+  planResourceLinesForDay,
+  stagesForWork,
+} from "@/lib/day-resource-plan";
 import { formatDate, formatNumber } from "@/lib/format";
 import { allocatePlanForSlice } from "@/lib/plan-from-gpr";
 import {
   entryDisplayFact,
   sumDailyQty,
 } from "@/lib/plan-fact-agg";
-import type { DailyResourceLine, GprStage } from "@/lib/types";
+import type { DailyResourceLine } from "@/lib/types";
 import { useStore } from "@/lib/store";
 
-function stageMatchesWork(s: GprStage, workName: string) {
-  if (!workName) return false;
-  return (
-    s.workName === workName ||
-    s.name === workName ||
-    s.name.includes(workName) ||
-    workName.includes(s.name)
-  );
-}
-
-function planResourceLinesForDay(
-  stages: GprStage[],
-  date: string,
-  workName: string
-): DailyResourceLine[] {
-  const coveringWork = stages.filter(
-    (s) => s.start <= date && s.end >= date && stageMatchesWork(s, workName)
-  );
-  const coveringDate = stages.filter(
-    (s) => s.start <= date && s.end >= date
-  );
-  const byWork = stages.filter((s) => stageMatchesWork(s, workName));
-  // Prefer calendar overlap; if selected day is outside ГПР (common in demo),
-  // still show sourced plan lines for the chosen work / whole schedule.
-  const stagesUse = coveringWork.length
-    ? coveringWork
-    : coveringDate.length
-      ? coveringDate
-      : byWork.length
-        ? byWork
-        : stages;
-  const lines: DailyResourceLine[] = [];
-  const seen = new Set<string>();
-  for (const st of stagesUse) {
-    for (const r of st.resources ?? []) {
-      if (r.kind !== "labor" && r.kind !== "material" && r.kind !== "bus") {
-        continue;
-      }
-      const key = `${r.kind}|${r.name}|${r.unit}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      lines.push({
-        kind: r.kind,
-        name: r.name,
-        unit: r.unit || (r.kind === "labor" ? "чел" : "ед."),
-        planQty: r.quantity,
-        factQty: null,
-      });
-    }
+function ResourceRows({
+  lines,
+  all,
+  testPrefix,
+  onChange,
+}: {
+  lines: DailyResourceLine[];
+  all: DailyResourceLine[];
+  testPrefix: string;
+  onChange: (next: DailyResourceLine[]) => void;
+}) {
+  if (lines.length === 0) {
+    return (
+      <li className="text-[var(--tk-muted)]" data-testid={`${testPrefix}-empty`}>
+        нет данных по плану для выбранной работы/даты
+      </li>
+    );
   }
-  return lines;
+  return (
+    <>
+      {lines.map((l, i) => (
+        <li
+          key={`${testPrefix}-${l.kind}-${l.name}-${i}`}
+          className="grid grid-cols-[1fr_4rem_5rem_4rem] items-center gap-2"
+        >
+          <span>
+            {l.name}{" "}
+            <span className="text-xs text-[var(--tk-muted)]">{l.unit}</span>
+          </span>
+          <span className="text-right text-[var(--tk-muted)]">
+            {formatNumber(l.planQty)}
+          </span>
+          <Input
+            className="h-8"
+            type="number"
+            min={0}
+            step="any"
+            placeholder="факт"
+            value={l.factQty == null ? "" : String(l.factQty)}
+            data-testid={`${testPrefix}-fact-${i}`}
+            onChange={(e) => {
+              const raw = e.target.value.trim();
+              const factQty = raw === "" ? null : Number(raw) || 0;
+              const target = lines[i];
+              onChange(
+                all.map((x) => (x === target ? { ...x, factQty } : x))
+              );
+            }}
+          />
+          <span
+            className={`text-right text-xs ${
+              l.factQty != null && l.factQty < l.planQty
+                ? "text-rose-700"
+                : "text-[var(--tk-muted)]"
+            }`}
+          >
+            {l.factQty == null
+              ? "—"
+              : `Δ ${formatNumber(l.factQty - l.planQty)}`}
+          </span>
+        </li>
+      ))}
+    </>
+  );
 }
 
 function DayDetailsInner() {
@@ -79,7 +96,9 @@ function DayDetailsInner() {
   const photoRef = useRef<HTMLInputElement>(null);
 
   const planFactId = sp.get("planFactId") ?? "";
-  const [date, setDate] = useState(sp.get("date") ?? new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(
+    sp.get("date") ?? new Date().toISOString().slice(0, 10)
+  );
   const workParam = sp.get("work") ?? "";
 
   const plan = data.planFacts.find(
@@ -105,14 +124,24 @@ function DayDetailsInner() {
     ? entryDisplayFact(entry, plan?.dailyFacts ?? [])
     : 0;
 
-  const dayPlan = schedule
-    ? allocatePlanForSlice(
-        entry?.plan ?? 0,
-        schedule.stages,
-        "day",
-        date
-      ).plan
-    : 0;
+  const linkedStages = useMemo(
+    () => stagesForWork(schedule?.stages ?? [], selectedWork, date),
+    [schedule?.stages, selectedWork, date]
+  );
+  const linkedAnyDate = useMemo(
+    () => stagesForWork(schedule?.stages ?? [], selectedWork),
+    [schedule?.stages, selectedWork]
+  );
+
+  const dayPlan = useMemo(() => {
+    if (!entry || !linkedStages.length) return 0;
+    return allocatePlanForSlice(
+      entry.plan,
+      linkedStages,
+      "day",
+      date
+    ).plan;
+  }, [entry, linkedStages, date]);
 
   const baselineLines = useMemo(
     () =>
@@ -131,6 +160,11 @@ function DayDetailsInner() {
   const [qty, setQty] = useState(String(dayQty || ""));
   const [caption, setCaption] = useState("");
 
+  useEffect(() => {
+    setLines(null);
+    setQty(dayQty ? String(dayQty) : "");
+  }, [date, selectedWork, dayQty]);
+
   if (!user) return null;
   if (!plan) {
     return (
@@ -140,6 +174,14 @@ function DayDetailsInner() {
       />
     );
   }
+
+  const people = displayLines.filter((l) => l.kind === "labor");
+  const materials = displayLines.filter((l) => l.kind === "material");
+  const transport = displayLines.filter(
+    (l) => l.kind === "bus" || l.kind === "equipment"
+  );
+  const linkMissing = linkedAnyDate.length === 0;
+  const dateMiss = !linkMissing && linkedStages.length === 0;
 
   async function save(withPhoto: boolean) {
     try {
@@ -186,10 +228,11 @@ function DayDetailsInner() {
   }
 
   const photos = dayFacts.flatMap((d) => d.photos ?? []);
-  const delta = (Number(qty) || dayQty) - dayPlan;
+  const factVal = Number(qty) || dayQty;
+  const delta = factVal - dayPlan;
 
   return (
-    <div data-testid="day-details">
+    <div data-testid="day-details" className="relative isolate">
       <PageHeader
         title="Детали дня"
         description={`${procurement?.title ?? plan.title} · ${selectedWork || "работа"} · ${formatDate(date)}`}
@@ -224,10 +267,7 @@ function DayDetailsInner() {
           <DateInputRu
             data-testid="day-date"
             value={date}
-            onChange={(iso) => {
-              setDate(iso);
-              setLines(null);
-            }}
+            onChange={(iso) => setDate(iso)}
           />
         </div>
         <div>
@@ -236,10 +276,7 @@ function DayDetailsInner() {
             className="flex h-9 min-w-[220px] rounded-lg border border-input bg-transparent px-2.5 text-sm"
             data-testid="day-work"
             value={selectedWork}
-            onChange={(e) => {
-              setWorkName(e.target.value);
-              setLines(null);
-            }}
+            onChange={(e) => setWorkName(e.target.value)}
           >
             {workOptions.map((w) => (
               <option key={w} value={w}>
@@ -248,17 +285,48 @@ function DayDetailsInner() {
             ))}
           </select>
         </div>
+        {linkMissing ? (
+          <p
+            className="self-end text-sm text-amber-800"
+            data-testid="day-link-missing"
+          >
+            Вид работ не связан с этапом ГПР — план ресурсов и срез дня: нет
+            данных
+          </p>
+        ) : null}
+        {dateMiss ? (
+          <p
+            className="self-end text-sm text-amber-800"
+            data-testid="day-date-miss"
+          >
+            Дата вне периода связанного этапа ГПР
+            {linkedAnyDate[0]
+              ? ` (${formatDate(linkedAnyDate[0].start)}–${formatDate(linkedAnyDate[0].end)})`
+              : ""}
+          </p>
+        ) : null}
       </div>
 
-      <div className="mb-6 grid gap-3 sm:grid-cols-2">
+      <div
+        className="mb-6 grid gap-3 sm:grid-cols-2"
+        data-testid="day-plan-fact-row"
+      >
         <div
           className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-5"
           data-testid="day-plan-card"
         >
           <p className="text-xs text-[var(--tk-muted)]">План (срез дня из ГПР)</p>
           <p className="mt-1 font-[family-name:var(--font-display)] text-3xl">
-            {formatNumber(dayPlan)}{" "}
-            <span className="text-base font-normal">{entry?.unit ?? ""}</span>
+            {linkedStages.length === 0 ? (
+              <span className="text-lg text-amber-800">нет данных</span>
+            ) : (
+              <>
+                {formatNumber(dayPlan)}{" "}
+                <span className="text-base font-normal">
+                  {entry?.unit ?? ""}
+                </span>
+              </>
+            )}
           </p>
         </div>
         <div
@@ -267,13 +335,13 @@ function DayDetailsInner() {
         >
           <p className="text-xs text-teal-100">Факт за день</p>
           <p className="mt-1 font-[family-name:var(--font-display)] text-3xl">
-            {formatNumber(Number(qty) || dayQty)}{" "}
+            {formatNumber(factVal)}{" "}
             <span className="text-base font-normal">{entry?.unit ?? ""}</span>
           </p>
           <p className="mt-2 text-sm">
             Δ к плану дня:{" "}
             <span className={delta < 0 ? "text-rose-200" : "text-teal-100"}>
-              {formatNumber(delta)}
+              {linkedStages.length === 0 ? "—" : formatNumber(delta)}
             </span>
           </p>
           <p className="mt-1 text-xs text-teal-100">
@@ -287,118 +355,49 @@ function DayDetailsInner() {
         <div className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4">
           <h3 className="mb-2 font-medium">Люди</h3>
           <ul className="space-y-2 text-sm" data-testid="day-people-list">
-            {displayLines.filter((l) => l.kind === "labor" || l.kind === "bus").length ===
-            0 ? (
-              <li className="text-[var(--tk-muted)]">нет данных по плану ресурсов</li>
-            ) : (
-              displayLines
-                .filter((l) => l.kind === "labor" || l.kind === "bus")
-                .map((l, i) => (
-                  <li
-                    key={`p-${l.name}-${i}`}
-                    className="grid grid-cols-[1fr_4rem_5rem_4rem] items-center gap-2"
-                  >
-                    <span>{l.name}</span>
-                    <span className="text-right text-[var(--tk-muted)]">
-                      {formatNumber(l.planQty)}
-                    </span>
-                    <Input
-                      className="h-8"
-                      type="number"
-                      min={0}
-                      step="any"
-                      placeholder="факт"
-                      value={l.factQty == null ? "" : String(l.factQty)}
-                      data-testid={`day-people-fact-${i}`}
-                      onChange={(e) => {
-                        const raw = e.target.value.trim();
-                        const factQty = raw === "" ? null : Number(raw) || 0;
-                        const people = displayLines.filter(
-                          (x) => x.kind === "labor" || x.kind === "bus"
-                        );
-                        const target = people[i];
-                        setLines(
-                          displayLines.map((x) =>
-                            x === target ? { ...x, factQty } : x
-                          )
-                        );
-                      }}
-                    />
-                    <span
-                      className={`text-right text-xs ${
-                        l.factQty != null && l.factQty < l.planQty
-                          ? "text-rose-700"
-                          : "text-[var(--tk-muted)]"
-                      }`}
-                    >
-                      {l.factQty == null
-                        ? "—"
-                        : `Δ ${formatNumber(l.factQty - l.planQty)}`}
-                    </span>
-                  </li>
-                ))
-            )}
+            <ResourceRows
+              lines={people}
+              all={displayLines}
+              testPrefix="day-people"
+              onChange={setLines}
+            />
           </ul>
         </div>
         <div className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4">
           <h3 className="mb-2 font-medium">Материалы</h3>
           <ul className="space-y-2 text-sm" data-testid="day-materials-list">
-            {displayLines.filter((l) => l.kind === "material").length === 0 ? (
-              <li className="text-[var(--tk-muted)]">нет данных по плану материалов</li>
-            ) : (
-              displayLines
-                .filter((l) => l.kind === "material")
-                .map((l, i) => (
-                  <li
-                    key={`m-${l.name}-${i}`}
-                    className="grid grid-cols-[1fr_4rem_5rem_4rem] items-center gap-2"
-                  >
-                    <span>
-                      {l.name}{" "}
-                      <span className="text-xs text-[var(--tk-muted)]">
-                        {l.unit}
-                      </span>
-                    </span>
-                    <span className="text-right text-[var(--tk-muted)]">
-                      {formatNumber(l.planQty)}
-                    </span>
-                    <Input
-                      className="h-8"
-                      type="number"
-                      min={0}
-                      step="any"
-                      placeholder="факт"
-                      value={l.factQty == null ? "" : String(l.factQty)}
-                      data-testid={`day-mat-fact-${i}`}
-                      onChange={(e) => {
-                        const raw = e.target.value.trim();
-                        const factQty = raw === "" ? null : Number(raw) || 0;
-                        setLines(
-                          displayLines.map((x) =>
-                            x.name === l.name && x.kind === "material"
-                              ? { ...x, factQty }
-                              : x
-                          )
-                        );
-                      }}
-                    />
-                    <span className="text-right text-xs text-[var(--tk-muted)]">
-                      {l.factQty == null
-                        ? "—"
-                        : `Δ ${formatNumber(l.factQty - l.planQty)}`}
-                    </span>
-                  </li>
-                ))
-            )}
+            <ResourceRows
+              lines={materials}
+              all={displayLines}
+              testPrefix="day-mat"
+              onChange={setLines}
+            />
           </ul>
         </div>
+      </div>
+
+      <div className="mb-6 rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4">
+        <h3 className="mb-2 font-medium">Техника / транспорт</h3>
+        <p className="mb-2 text-xs text-[var(--tk-muted)]">
+          Автобус и техника — не в блоке «Люди»
+        </p>
+        <ul className="space-y-2 text-sm" data-testid="day-transport-list">
+          <ResourceRows
+            lines={transport}
+            all={displayLines}
+            testPrefix="day-transport"
+            onChange={setLines}
+          />
+        </ul>
       </div>
 
       <div className="mb-6 rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4">
         <h3 className="mb-2 font-medium">Факт объёма и фотоотчёт</h3>
         <div className="mb-3 flex flex-wrap items-end gap-3">
           <div>
-            <p className="mb-1 text-xs text-[var(--tk-muted)]">Факт, {entry?.unit}</p>
+            <p className="mb-1 text-xs text-[var(--tk-muted)]">
+              Факт, {entry?.unit}
+            </p>
             <Input
               className="w-32"
               type="number"
@@ -415,14 +414,14 @@ function DayDetailsInner() {
               data-testid="day-caption"
               value={caption}
               onChange={(e) => setCaption(e.target.value)}
-              placeholder="например: укладка арматуры"
+              placeholder="подпись к снимку"
             />
           </div>
           <Input
             type="file"
             accept="image/*"
             ref={photoRef}
-            data-testid="day-photo-input"
+            data-testid="day-upload-input"
           />
           <Button data-testid="day-save" onClick={() => void save(false)}>
             Сохранить
@@ -437,7 +436,9 @@ function DayDetailsInner() {
           <Button
             variant="outline"
             data-testid="day-reload"
-            onClick={() => void refresh().then(() => toast.success("Обновлено"))}
+            onClick={() =>
+              void refresh().then(() => toast.success("Обновлено"))
+            }
           >
             Обновить
           </Button>
@@ -457,16 +458,35 @@ function DayDetailsInner() {
                 href={`/api/proizvodstvo/photo?id=${ph.id}&disposition=inline`}
                 target="_blank"
                 rel="noreferrer"
-                className="rounded-xl border border-[var(--tk-line)] p-3 text-sm hover:bg-stone-50"
+                className="overflow-hidden rounded-xl border border-[var(--tk-line)] hover:bg-stone-50"
                 data-testid={`day-photo-${ph.id}`}
               >
-                <p className="font-medium">{ph.fileName}</p>
-                <p className="text-xs text-[var(--tk-muted)]">
-                  {ph.at ? new Date(ph.at).toLocaleString("ru-RU") : "—"}
-                </p>
-                {ph.caption ? (
-                  <p className="mt-1 text-xs">{ph.caption}</p>
-                ) : null}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={`/api/proizvodstvo/photo?id=${ph.id}&disposition=inline`}
+                  alt={ph.caption || ph.fileName}
+                  className="h-28 w-full object-cover bg-stone-100"
+                />
+                <div className="p-2 text-sm">
+                  <p className="font-medium tabular-nums">
+                    {ph.at
+                      ? new Date(ph.at).toLocaleString("ru-RU", {
+                          day: "2-digit",
+                          month: "2-digit",
+                          year: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
+                      : "—"}
+                  </p>
+                  {ph.caption ? (
+                    <p className="mt-0.5 text-xs">{ph.caption}</p>
+                  ) : (
+                    <p className="mt-0.5 text-xs text-[var(--tk-muted)]">
+                      {ph.fileName}
+                    </p>
+                  )}
+                </div>
               </a>
             ))
           )}
