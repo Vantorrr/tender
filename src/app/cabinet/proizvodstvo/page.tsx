@@ -23,15 +23,17 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api, downloadUrl } from "@/lib/api";
-import { formatMoney, formatNumber } from "@/lib/format";
+import { formatDate, formatMoney, formatNumber } from "@/lib/format";
 import { useStore } from "@/lib/store";
+
+type PeriodMode = "day" | "month" | "period" | "cum";
 
 export default function ProizvodstvoPage() {
   const { data, user, updatePlanFact, refresh, orgProcurements } = useStore();
   const [pfId, setPfId] = useState("");
-  const [workName, setWorkName] = useState("Общий объём");
-  const [qty, setQty] = useState("1");
+  const [period, setPeriod] = useState<PeriodMode>("cum");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [qty, setQty] = useState("1");
   const photoRef = useRef<HTMLInputElement>(null);
 
   const objects = useMemo(
@@ -46,19 +48,50 @@ export default function ProizvodstvoPage() {
   const plan = plans.find((p) => p.id === activeId);
   const object = objects.find((o) => o.id === plan?.objectId);
   const procurement = orgProcurements.find((p) => p.id === plan?.procurementId);
+  const gpr = data.schedules.find(
+    (s) => s.id === procurement?.gprId && s.orgId === user?.orgId
+  );
+
+  const workOptions = plan?.entries.map((e) => e.workName) ?? [];
+  const [workName, setWorkName] = useState("");
+  const selectedWork =
+    workName || workOptions[0] || "Общий объём";
+  const selectedEntry = plan?.entries.find((e) => e.workName === selectedWork);
+  const selectedUnit = selectedEntry?.unit ?? "%";
 
   if (!user) return null;
+
+  const daily = plan?.dailyFacts ?? [];
+  const dayFacts = daily.filter((d) => d.date === date);
+  const monthKey = date.slice(0, 7);
+  const monthFacts = daily.filter((d) => d.date.startsWith(monthKey));
+
+  function qtyForWork(name: string, list: typeof daily) {
+    return list
+      .filter((d) => d.workName === name)
+      .reduce((s, d) => s + d.quantity, 0);
+  }
 
   const totals = plan
     ? plan.entries.reduce(
         (acc, e) => {
           acc.plan += e.plan;
           acc.fact += e.fact;
+          acc.remain += e.contractRemaining ?? Math.max(0, e.plan - e.fact);
           return acc;
         },
-        { plan: 0, fact: 0 }
+        { plan: 0, fact: 0, remain: 0 }
       )
-    : { plan: 0, fact: 0 };
+    : { plan: 0, fact: 0, remain: 0 };
+
+  const periodFact =
+    period === "day"
+      ? dayFacts.reduce((s, d) => s + d.quantity, 0)
+      : period === "month"
+        ? monthFacts.reduce((s, d) => s + d.quantity, 0)
+        : period === "period"
+          ? daily.reduce((s, d) => s + d.quantity, 0)
+          : totals.fact;
 
   async function submitDaily(withPhoto: boolean) {
     if (!plan) return;
@@ -67,8 +100,8 @@ export default function ProizvodstvoPage() {
         const form = new FormData();
         form.append("planFactId", plan.id);
         form.append("date", date);
-        form.append("workName", workName);
-        form.append("unit", "ед");
+        form.append("workName", selectedWork);
+        form.append("unit", selectedUnit);
         form.append("quantity", qty);
         form.append("photo", photoRef.current.files[0]);
         await api("/api/proizvodstvo", { method: "POST", body: form });
@@ -80,26 +113,30 @@ export default function ProizvodstvoPage() {
             planFactId: plan.id,
             fact: {
               date,
-              workName,
-              unit: "ед",
+              workName: selectedWork,
+              unit: selectedUnit,
               quantity: Number(qty) || 0,
             },
           }),
         });
       }
       await refresh();
-      toast.success("Дневной факт сохранён (не платёж)");
+      toast.success("Дневной факт сохранён (это не платёж)");
       if (photoRef.current) photoRef.current.value = "";
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка факта");
     }
   }
 
+  const candidates = orgProcurements.filter(
+    (p) => p.lifecycle !== "production"
+  );
+
   return (
     <div>
       <PageHeader
         title="Производство · план/факт"
-        description="День / месяц / период. Фото и ручной факт. PnL отделён от кассы. Базовый план сохраняется при переводе won→production."
+        description="День / месяц / период / накопительно. Фото и ручной факт. Финансовый результат отделён от кассы. Базовый план сохраняется при переводе в производство."
         actions={
           plan ? (
             <Button
@@ -116,40 +153,46 @@ export default function ProizvodstvoPage() {
       />
 
       <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
-        Физический факт ≠ платёж. earnedValue / incurredCosts ≠ cashIn / cashOut.
-        recognizedRevenue = «нет данных», пока не подтверждено.
+        Физический факт ≠ платёж. Нормативная стоимость выполненного и
+        подтверждённые затраты ≠ поступления/списания кассы. Признанная выручка
+        — отдельно («нет данных», пока не подтверждено).
       </div>
 
-      <div className="mb-6 flex flex-wrap gap-2">
-        {orgProcurements
-          .filter((p) => p.lifecycle !== "production")
-          .slice(0, 6)
-          .map((p) => (
-            <Button
-              key={p.id}
-              size="sm"
-              variant="outline"
-              data-testid={`win-to-prod-${p.id}`}
-              onClick={async () => {
-                try {
-                  await api("/api/zakupki", {
-                    method: "POST",
-                    body: JSON.stringify({
-                      action: "transferToProduction",
-                      id: p.id,
-                    }),
-                  });
-                  await refresh();
-                  toast.success("В производство без дубля проекта");
-                } catch (e) {
-                  toast.error(e instanceof Error ? e.message : "Ошибка");
-                }
-              }}
-            >
-              Выигран → производство: {p.number}
-            </Button>
-          ))}
-      </div>
+      {candidates.length > 0 ? (
+        <div className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4">
+          <h3 className="mb-2 text-sm font-medium">Перевести в производство</h3>
+          <div className="flex flex-wrap gap-2">
+            {candidates.slice(0, 8).map((p) => (
+              <Button
+                key={p.id}
+                size="sm"
+                variant="outline"
+                data-testid={`win-to-prod-${p.id}`}
+                onClick={async () => {
+                  try {
+                    await api("/api/zakupki", {
+                      method: "POST",
+                      body: JSON.stringify({
+                        action: "transferToProduction",
+                        id: p.id,
+                      }),
+                    });
+                    await refresh();
+                    toast.success(
+                      `«${p.title.slice(0, 40)}» в производстве (без дубля)`
+                    );
+                  } catch (e) {
+                    toast.error(e instanceof Error ? e.message : "Ошибка");
+                  }
+                }}
+              >
+                {p.title.slice(0, 36)}
+                {p.title.length > 36 ? "…" : ""}
+              </Button>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {objects.map((o) => (
@@ -182,9 +225,7 @@ export default function ProizvodstvoPage() {
               <p className="mb-1 text-xs text-[var(--tk-muted)]">Карточка</p>
               <Select value={activeId} onValueChange={(v) => v && setPfId(v)}>
                 <SelectTrigger className="w-[280px]">
-                  <SelectValue>
-                    {plan?.title ?? "План/факт"}
-                  </SelectValue>
+                  <SelectValue>{plan?.title ?? "План/факт"}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
                   {plans.map((p) => (
@@ -197,56 +238,155 @@ export default function ProizvodstvoPage() {
             </div>
             {procurement ? (
               <p className="text-sm text-[var(--tk-muted)]">
-                Проект {procurement.number} · lifecycle{" "}
-                {procurement.lifecycle ?? "—"}
+                Проект {procurement.number}
+                {procurement.lifecycle === "production"
+                  ? " · в производстве"
+                  : ""}
                 {plan?.baselineAt
-                  ? ` · baseline ${plan.baselineAt.slice(0, 10)}`
+                  ? ` · базовый план от ${formatDate(plan.baselineAt)}`
                   : ""}
               </p>
             ) : null}
+            <div>
+              <p className="mb-1 text-xs text-[var(--tk-muted)]">Срез</p>
+              <Select
+                value={period}
+                onValueChange={(v) => v && setPeriod(v as PeriodMode)}
+              >
+                <SelectTrigger className="w-[180px]" data-testid="period-mode">
+                  <SelectValue>
+                    {
+                      {
+                        day: "День",
+                        month: "Месяц",
+                        period: "Период (все дни)",
+                        cum: "Накоплено",
+                      }[period]
+                    }
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="day">День</SelectItem>
+                  <SelectItem value="month">Месяц</SelectItem>
+                  <SelectItem value="period">Период</SelectItem>
+                  <SelectItem value="cum">Накоплено</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           {plan ? (
             <>
-              <div className="mb-4 grid gap-3 sm:grid-cols-4">
+              <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  План: {formatNumber(totals.plan)}
+                  План (накоплено): {formatNumber(totals.plan)}
                 </div>
                 <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  Факт: {formatNumber(totals.fact)}
+                  Факт ({
+                    { day: "день", month: "месяц", period: "период", cum: "накоплено" }[
+                      period
+                    ]
+                  }
+                  ): {formatNumber(periodFact)}
                 </div>
                 <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  earnedValue: {formatNumber(plan.pnl?.earnedValue ?? 0)}
+                  Остаток договора: {formatNumber(totals.remain)}
                 </div>
                 <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  cashIn: {formatMoney(plan.pnl?.cashIn ?? 0)} / cashOut:{" "}
-                  {formatMoney(plan.pnl?.cashOut ?? 0)}
+                  Норм. стоимость факта:{" "}
+                  {formatNumber(plan.pnl?.earnedValue ?? 0)}
                 </div>
               </div>
+
+              <div className="mb-4 grid gap-3 sm:grid-cols-3">
+                <div className="rounded-xl border bg-white/80 p-3 text-sm">
+                  Поступления (касса):{" "}
+                  {formatMoney(plan.pnl?.cashIn ?? 0)}
+                </div>
+                <div className="rounded-xl border bg-white/80 p-3 text-sm">
+                  Списания (касса):{" "}
+                  {formatMoney(plan.pnl?.cashOut ?? 0)}
+                </div>
+                <div className="rounded-xl border bg-white/80 p-3 text-sm">
+                  Признанная выручка:{" "}
+                  {plan.pnl?.recognizedRevenue == null
+                    ? "нет данных"
+                    : formatMoney(plan.pnl.recognizedRevenue)}
+                </div>
+              </div>
+
+              {gpr ? (
+                <div className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4 text-sm">
+                  <h3 className="font-medium">Связь с ГПР</h3>
+                  <p className="mt-1 text-[var(--tk-muted)]">
+                    {gpr.title} · этапы: {gpr.stages.length} ·{" "}
+                    {formatDate(gpr.stages[0]?.start ?? "")} —{" "}
+                    {formatDate(
+                      gpr.stages[gpr.stages.length - 1]?.end ?? ""
+                    )}
+                  </p>
+                  <ul className="mt-2 space-y-1 text-xs text-[var(--tk-muted)]">
+                    {gpr.stages.slice(0, 5).map((st) => (
+                      <li key={st.id}>
+                        {st.name}: {formatDate(st.start)}–{formatDate(st.end)}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
 
               <div className="mb-6 rounded-xl border bg-white/80 p-4">
                 <h3 className="mb-3 font-medium">Дневной факт + фото</h3>
                 <div className="flex flex-wrap items-end gap-2">
-                  <Input
-                    type="date"
-                    value={date}
-                    onChange={(e) => setDate(e.target.value)}
-                  />
-                  <Input
-                    value={workName}
-                    onChange={(e) => setWorkName(e.target.value)}
-                    placeholder="Вид работ"
-                  />
-                  <Input
-                    value={qty}
-                    onChange={(e) => setQty(e.target.value)}
-                    className="w-24"
-                  />
+                  <div>
+                    <p className="mb-1 text-xs text-[var(--tk-muted)]">Дата</p>
+                    <Input
+                      type="date"
+                      value={date}
+                      onChange={(e) => setDate(e.target.value)}
+                      data-testid="daily-fact-date"
+                    />
+                    <p className="mt-1 text-[11px] text-[var(--tk-muted)]">
+                      {formatDate(date)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-xs text-[var(--tk-muted)]">
+                      Вид работ
+                    </p>
+                    <Select
+                      value={selectedWork}
+                      onValueChange={(v) => v && setWorkName(v)}
+                    >
+                      <SelectTrigger className="w-[220px]">
+                        <SelectValue>{selectedWork}</SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {workOptions.map((w) => (
+                          <SelectItem key={w} value={w}>
+                            {w}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <p className="mb-1 text-xs text-[var(--tk-muted)]">
+                      Объём ({selectedUnit})
+                    </p>
+                    <Input
+                      value={qty}
+                      onChange={(e) => setQty(e.target.value)}
+                      className="w-24"
+                      data-testid="daily-fact-qty"
+                    />
+                  </div>
                   <input
                     ref={photoRef}
                     type="file"
                     accept="image/*,.pdf"
                     className="text-sm"
+                    data-testid="daily-fact-photo-input"
                   />
                   <Button
                     data-testid="daily-fact-save"
@@ -272,8 +412,13 @@ export default function ProizvodstvoPage() {
                       <TableHead>Ед.</TableHead>
                       <TableHead className="text-right">План</TableHead>
                       <TableHead className="text-right">Факт</TableHead>
+                      <TableHead className="text-right">За день</TableHead>
+                      <TableHead className="text-right">За месяц</TableHead>
                       <TableHead className="text-right">Остаток</TableHead>
-                      <TableHead className="text-right">Baseline</TableHead>
+                      <TableHead className="text-right">
+                        Базовый план
+                      </TableHead>
+                      <TableHead className="text-right">Отклонение</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -281,6 +426,11 @@ export default function ProizvodstvoPage() {
                       const base = plan.baselineEntries?.find(
                         (b) => b.id === e.id || b.workName === e.workName
                       );
+                      const dayQ = qtyForWork(e.workName, dayFacts);
+                      const monthQ = qtyForWork(e.workName, monthFacts);
+                      const remain =
+                        e.contractRemaining ?? Math.max(0, e.plan - e.fact);
+                      const variance = e.fact - (base?.plan ?? e.plan);
                       return (
                         <TableRow key={e.id}>
                           <TableCell>{e.workName}</TableCell>
@@ -293,7 +443,16 @@ export default function ProizvodstvoPage() {
                                 const v = Number(ev.target.value) || 0;
                                 updatePlanFact(plan.id, {
                                   entries: plan.entries.map((x) =>
-                                    x.id === e.id ? { ...x, plan: v } : x
+                                    x.id === e.id
+                                      ? {
+                                          ...x,
+                                          plan: v,
+                                          contractRemaining: Math.max(
+                                            0,
+                                            v - x.fact
+                                          ),
+                                        }
+                                      : x
                                   ),
                                 });
                               }}
@@ -303,12 +462,28 @@ export default function ProizvodstvoPage() {
                             {formatNumber(e.fact)}
                           </TableCell>
                           <TableCell className="text-right">
-                            {formatNumber(
-                              e.contractRemaining ?? Math.max(0, e.plan - e.fact)
-                            )}
+                            {formatNumber(dayQ)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatNumber(monthQ)}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatNumber(remain)}
                           </TableCell>
                           <TableCell className="text-right text-[var(--tk-muted)]">
                             {base ? formatNumber(base.plan) : "—"}
+                          </TableCell>
+                          <TableCell
+                            className={`text-right ${
+                              variance < 0
+                                ? "text-rose-700"
+                                : variance > 0
+                                  ? "text-emerald-700"
+                                  : ""
+                            }`}
+                            title="Факт минус базовый план (доказательно по числам таблицы, без выдуманных причин)"
+                          >
+                            {formatNumber(variance)}
                           </TableCell>
                         </TableRow>
                       );
@@ -318,12 +493,12 @@ export default function ProizvodstvoPage() {
               </div>
 
               <div className="mt-6">
-                <h3 className="mb-2 font-medium">Дневные записи</h3>
+                <h3 className="mb-2 font-medium">Дневные записи и фотоотчёт</h3>
                 <ul className="space-y-2 text-sm">
-                  {(plan.dailyFacts ?? []).length === 0 ? (
+                  {daily.length === 0 ? (
                     <li className="text-[var(--tk-muted)]">Пока нет фактов</li>
                   ) : (
-                    (plan.dailyFacts ?? [])
+                    daily
                       .slice()
                       .reverse()
                       .map((d) => (
@@ -332,11 +507,25 @@ export default function ProizvodstvoPage() {
                           className="rounded-lg border px-3 py-2"
                           data-testid={`daily-${d.id}`}
                         >
-                          {d.date} · {d.workName}: {d.quantity} {d.unit}
-                          {d.photos?.length
-                            ? ` · фото ${d.photos.map((p) => p.fileName).join(", ")}`
-                            : ""}
-                          {d.comment ? ` · ${d.comment}` : ""}
+                          <div>
+                            {formatDate(d.date)} · {d.workName}: {d.quantity}{" "}
+                            {d.unit}
+                            {d.comment ? ` · ${d.comment}` : ""}
+                          </div>
+                          {(d.photos?.length ?? 0) > 0 ? (
+                            <div className="mt-1 flex flex-wrap gap-2">
+                              {d.photos.map((ph) => (
+                                <span
+                                  key={ph.id}
+                                  className="inline-flex items-center rounded-md bg-stone-100 px-2 py-1 text-xs"
+                                  data-testid={`photo-${ph.id}`}
+                                >
+                                  📷 {ph.fileName}
+                                  {ph.caption ? ` — ${ph.caption}` : ""}
+                                </span>
+                              ))}
+                            </div>
+                          ) : null}
                         </li>
                       ))
                   )}

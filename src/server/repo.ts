@@ -6,6 +6,7 @@ import type {
   DailyFact,
   DocumentItem,
   GprSchedule,
+  MoneyPayment,
   MoneyPlan,
   PlanFact,
   PlanFactEntry,
@@ -13,6 +14,8 @@ import type {
   RiskRegistry,
   Role,
   SectionKey,
+  SupplyRequest,
+  SupplyStatus,
   User,
 } from "@/lib/types";
 import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
@@ -1813,19 +1816,34 @@ export function addDailyProductionFact(
       authorId: actorId,
       at: new Date().toISOString(),
     };
-    pf.dailyFacts = [...(pf.dailyFacts ?? []), entry];
-    // Update matching entry fact accumulatively (physical, not cash)
-    const row = pf.entries.find(
+    // Prefer entry unit: UI may send a generic unit; match by workName first.
+    let row = pf.entries.find(
       (e) => e.workName === fact.workName && e.unit === fact.unit
     );
+    if (!row) {
+      row = pf.entries.find((e) => e.workName === fact.workName);
+    }
+    if (row && entry.unit !== row.unit) {
+      entry.unit = row.unit;
+    }
+    pf.dailyFacts = [...(pf.dailyFacts ?? []), entry];
+    // Update matching entry fact accumulatively (physical, not cash)
     if (row) {
       row.fact = Math.round((row.fact + fact.quantity) * 1000) / 1000;
-      if (row.contractRemaining != null) {
-        row.contractRemaining = Math.max(0, row.plan - row.fact);
-      }
+      row.contractRemaining = Math.max(0, row.plan - row.fact);
+    } else {
+      // Create a physical line so fact is never orphaned from the table
+      pf.entries.push({
+        id: `pfe-${Date.now()}`,
+        workName: fact.workName,
+        unit: fact.unit,
+        plan: 0,
+        fact: fact.quantity,
+        contractRemaining: 0,
+      });
     }
-    // PnL: earnedValue from physical fact proxy — not cash
-    const rate = 1; // no invented prices; treat quantity as units toward earned index
+    // PnL: физическая стоимость выполненного — не платёж и не выручка
+    const rate = 1; // без выдуманных цен; индекс физ. объёма
     pf.pnl = {
       ...(pf.pnl ?? {
         earnedValue: 0,
@@ -1840,9 +1858,14 @@ export function addDailyProductionFact(
           ((pf.pnl?.earnedValue ?? 0) + fact.quantity * rate) * 100
         ) / 100,
       notes: [
-        "earnedValue обновлён по физическому факту (не платёж)",
-        "cashIn/cashOut не меняются автоматически из факта работ",
-        ...(pf.pnl?.notes ?? []).filter((n) => !n.startsWith("earnedValue")),
+        "Нормативная стоимость физ. факта обновлена (не платёж)",
+        "Поступления/списания кассы не меняются из факта работ",
+        "Признанная выручка — отдельно, по умолчанию «нет данных»",
+        ...(pf.pnl?.notes ?? []).filter(
+          (n) =>
+            !n.startsWith("earnedValue") &&
+            !n.startsWith("Нормативная стоимость")
+        ),
       ],
     };
     pf.updatedAt = new Date().toISOString();
@@ -1858,3 +1881,134 @@ export function addDailyProductionFact(
   });
 }
 
+
+const SUPPLY_STATUS_RU: Record<SupplyStatus, string> = {
+  need: "Потребность",
+  quoted_draft: "Черновик КП",
+  ordered: "Заказано",
+  in_transit: "В пути",
+  delivered: "Поставлено",
+  accepted: "Принято",
+  cancelled: "Отменено",
+};
+
+export function supplyStatusLabel(s: SupplyStatus): string {
+  return SUPPLY_STATUS_RU[s] ?? s;
+}
+
+export function upsertSupplyRequest(
+  actorId: string,
+  input: {
+    id?: string;
+    procurementId: string;
+    materialName: string;
+    unit: string;
+    qtyNeed: number;
+    needBy: string;
+    workName?: string;
+    status?: SupplyStatus;
+    quoteDraftText?: string;
+    supplierNote?: string;
+    qtyOrdered?: number;
+    qtyDelivered?: number;
+    unitPrice?: number | null;
+  }
+) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const p = data.procurements.find((x) => x.id === input.procurementId);
+    if (!p) throw new Error("Закупка не найдена");
+    assertOrgAccess(actor, p.orgId, "поставок");
+    data.supplyRequests = data.supplyRequests ?? [];
+    const now = new Date().toISOString();
+    if (input.id) {
+      const row = data.supplyRequests.find((s) => s.id === input.id);
+      if (!row) throw new Error("Потребность не найдена");
+      Object.assign(row, {
+        materialName: input.materialName,
+        unit: input.unit,
+        qtyNeed: input.qtyNeed,
+        needBy: input.needBy,
+        workName: input.workName,
+        status: input.status ?? row.status,
+        quoteDraftText: input.quoteDraftText ?? row.quoteDraftText,
+        supplierNote: input.supplierNote ?? row.supplierNote,
+        qtyOrdered: input.qtyOrdered ?? row.qtyOrdered,
+        qtyDelivered: input.qtyDelivered ?? row.qtyDelivered,
+        unitPrice:
+          input.unitPrice === undefined ? row.unitPrice : input.unitPrice,
+        updatedAt: now,
+      });
+      audit(data, actorId, "update", "supply", row.id, row.materialName);
+      return data;
+    }
+    const id = `sup-${Date.now()}`;
+    const row: SupplyRequest = {
+      id,
+      orgId: p.orgId,
+      procurementId: p.id,
+      materialName: input.materialName,
+      unit: input.unit,
+      qtyNeed: input.qtyNeed,
+      qtyOrdered: input.qtyOrdered ?? 0,
+      qtyDelivered: input.qtyDelivered ?? 0,
+      needBy: input.needBy,
+      status: input.status ?? "need",
+      quoteDraftText: input.quoteDraftText,
+      supplierNote: input.supplierNote,
+      unitPrice: input.unitPrice ?? null,
+      workName: input.workName,
+      createdAt: now,
+      updatedAt: now,
+    };
+    data.supplyRequests.unshift(row);
+    p.supplyRequestIds = [...(p.supplyRequestIds ?? []), id];
+    audit(data, actorId, "create", "supply", id, row.materialName);
+    return data;
+  });
+}
+
+export function addMoneyPayment(
+  actorId: string,
+  moneyId: string,
+  payment: Omit<MoneyPayment, "id">
+) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const plan = data.moneyPlans.find((m) => m.id === moneyId);
+    if (!plan) throw new Error("Денежный план не найден");
+    assertOrgAccess(actor, plan.orgId, "денежного плана");
+    const row: MoneyPayment = { ...payment, id: `pay-${Date.now()}` };
+    plan.payments = [...plan.payments, row];
+    plan.updatedAt = new Date().toISOString();
+    audit(data, actorId, "create", "money_payment", row.id, row.title);
+    return data;
+  });
+}
+
+export function ensureMoneyPlan(actorId: string, procurementId: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const p = data.procurements.find((x) => x.id === procurementId);
+    if (!p) throw new Error("Закупка не найдена");
+    assertOrgAccess(actor, p.orgId, "денежного плана");
+    if (p.moneyId) {
+      const existing = data.moneyPlans.find((m) => m.id === p.moneyId);
+      if (existing) return data;
+    }
+    const id = `m-${Date.now()}`;
+    const now = new Date().toISOString();
+    data.moneyPlans.unshift({
+      id,
+      orgId: p.orgId,
+      procurementId: p.id,
+      title: `Деньги — ${p.title.slice(0, 48)}`,
+      status: "v_rabote",
+      payments: [],
+      updatedAt: now,
+    });
+    p.moneyId = id;
+    audit(data, actorId, "create", "money", id, "План создан в карточке проекта");
+    return data;
+  });
+}

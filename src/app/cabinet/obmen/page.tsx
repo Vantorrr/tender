@@ -138,6 +138,45 @@ export default function ObmenPage() {
         </ol>
       </section>
 
+      {data.smetaExchanges[0] ? (
+        <section
+          className="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 p-5"
+          data-testid="obmen-last-result"
+        >
+          <h2 className="font-[family-name:var(--font-display)] text-base">
+            Последний результат обмена
+          </h2>
+          <p className="mt-2 text-sm">
+            {data.smetaExchanges[0].name} · позиций{" "}
+            {data.smetaExchanges[0].positionsMapped} · расхождений{" "}
+            {data.smetaExchanges[0].discrepancies.length} ·{" "}
+            {data.smetaExchanges[0].confirmed ? "подтверждено" : "черновик"} ·{" "}
+            {formatDateTime(data.smetaExchanges[0].at)}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                document
+                  .getElementById(`obmen-row-${data.smetaExchanges[0].id}`)
+                  ?.scrollIntoView({ behavior: "smooth", block: "center" });
+              }}
+            >
+              Открыть в истории
+            </Button>
+            {activeCalc ? (
+              <a
+                className="inline-flex h-8 items-center rounded-lg border px-3 text-sm"
+                href={`/cabinet/raschety/${activeCalc}`}
+              >
+                Открыть расчёт
+              </a>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
       <section className="overflow-x-auto rounded-xl border border-[var(--tk-line)] bg-white/80">
         <div className="border-b border-[var(--tk-line)] px-4 py-3 font-[family-name:var(--font-display)] text-base">
           История обменов
@@ -165,7 +204,7 @@ export default function ObmenPage() {
               </TableRow>
             ) : (
               data.smetaExchanges.map((sx) => (
-                <TableRow key={sx.id}>
+                <TableRow key={sx.id} id={`obmen-row-${sx.id}`}>
                   <TableCell className="font-medium">{sx.name}</TableCell>
                   <TableCell>{sx.positionsMapped}</TableCell>
                   <TableCell>

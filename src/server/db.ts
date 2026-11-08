@@ -21,7 +21,7 @@ import { modelConfigured } from "@/server/openrouter";
 import { hashPassword } from "@/server/passwords";
 import { procurementSourceStatus } from "@/server/procurement-source";
 
-const SCHEMA_VERSION = "9";
+const SCHEMA_VERSION = "10";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -252,15 +252,7 @@ function applySchema9Extras(data: AppData): AppData {
       crewSize: st.crewSize ?? 4,
       hoursPerShift: st.hoursPerShift ?? s.calendar?.hoursPerShift ?? 8,
       shiftsPerDay: st.shiftsPerDay ?? s.calendar?.shiftsPerDay ?? 1,
-      resources: st.resources ?? [
-        {
-          id: `res-${st.id}-labor`,
-          kind: "labor" as const,
-          name: "Бригада",
-          quantity: st.crewSize ?? 4,
-          unit: "чел",
-        },
-      ],
+      resources: st.resources ?? defaultStageResources(st.id, st.crewSize ?? 4),
     })),
     conflicts: s.conflicts ?? [],
   }));
@@ -275,10 +267,74 @@ function applySchema9Extras(data: AppData): AppData {
       cashOut: 0,
       recognizedRevenue: null,
       notes: [
-        "Физический факт ≠ платёж; earnedValue ≠ cashIn",
-        "recognizedRevenue = нет данных, пока не подтверждено",
+        "Физический факт ≠ платёж",
+        "Нормативная стоимость выполненного ≠ поступления/списания",
+        "Признанная выручка = нет данных, пока не подтверждено",
       ],
     },
+  }));
+  return data;
+}
+
+function defaultStageResources(stageId: string, crew: number) {
+  return [
+    {
+      id: `res-${stageId}-labor`,
+      kind: "labor" as const,
+      name: "Бригада основных работ",
+      quantity: crew,
+      unit: "чел",
+    },
+    {
+      id: `res-${stageId}-mat`,
+      kind: "material" as const,
+      name: "Основные материалы этапа",
+      quantity: 1,
+      unit: "компл",
+    },
+    {
+      id: `res-${stageId}-eq`,
+      kind: "equipment" as const,
+      name: "Вспомогательная техника",
+      quantity: 1,
+      unit: "маш",
+    },
+    {
+      id: `res-${stageId}-bus`,
+      kind: "bus" as const,
+      name: "Автобус доставки персонала",
+      quantity: Math.max(1, Math.ceil(crew / 20)),
+      unit: "ед",
+    },
+  ];
+}
+
+/** Additive schema-10: supply cycle hooks on procurements. */
+function applySchema10Extras(data: AppData): AppData {
+  applySchema9Extras(data);
+  data.supplyRequests = data.supplyRequests ?? [];
+  data.procurements = (data.procurements ?? []).map((p) => ({
+    ...p,
+    supplyRequestIds: p.supplyRequestIds ?? [],
+  }));
+  // Enrich stages that only had a single generic labor stub
+  data.schedules = (data.schedules ?? []).map((s) => ({
+    ...s,
+    stages: (s.stages ?? []).map((st) => {
+      const res = st.resources ?? [];
+      const onlyLaborStub =
+        res.length === 1 &&
+        res[0]?.kind === "labor" &&
+        /^Бригада$/i.test(res[0]?.name ?? "");
+      return {
+        ...st,
+        resources: onlyLaborStub
+          ? defaultStageResources(st.id, st.crewSize ?? 4)
+          : res.length
+            ? res
+            : defaultStageResources(st.id, st.crewSize ?? 4),
+      };
+    }),
   }));
   return data;
 }
@@ -289,7 +345,7 @@ function migrate(db: DatabaseSync) {
     | undefined;
 
   if (!row) {
-    const seed = applySchema9Extras(
+    const seed = applySchema10Extras(
       applySchema8Extras(
         installGrandReference(hashSeedUsers(createSeedData()))
       )
@@ -369,7 +425,7 @@ function migrate(db: DatabaseSync) {
     metaSet(db, "client_xlsx_imported", "1");
     installGrandReference(data);
     applySchema8Extras(data);
-    applySchema9Extras(data);
+    applySchema10Extras(data);
 
     db.prepare(
       "UPDATE app_blob SET payload = ?, updated_at = ? WHERE id = 1"

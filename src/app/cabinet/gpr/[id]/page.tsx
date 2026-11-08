@@ -9,13 +9,21 @@ import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, downloadUrl } from "@/lib/api";
-import { diffDays } from "@/lib/cost-engine";
-import { formatDate } from "@/lib/format";
+import { bucketsFromPositions, diffDays } from "@/lib/cost-engine";
+import { formatDate, formatDateRangeShort, formatMoney } from "@/lib/format";
 import { useStore } from "@/lib/store";
 
 function daysBetween(a: string, b: string) {
   return Math.max(1, Math.abs(diffDays(a, b)) || 1);
 }
+
+const KIND_RU: Record<string, string> = {
+  labor: "Люди",
+  material: "Материалы",
+  equipment: "Техника",
+  bus: "Автобусы",
+  other: "Прочее",
+};
 
 export default function GprDetailPage() {
   const params = useParams<{ id: string }>();
@@ -43,6 +51,11 @@ export default function GprDetailPage() {
   );
   const totalDays = daysBetween(minStart, maxEnd) || 1;
   const cal = schedule.calendar;
+  const calc = data.calculations.find((c) => c.id === schedule.calculationId);
+  const buckets = calc
+    ? bucketsFromPositions(calc.positions, calc.scenarioFactor || 1)
+    : null;
+  const cost = calc?.costSummary;
 
   async function shiftStage(
     stageId: string,
@@ -132,10 +145,12 @@ export default function GprDetailPage() {
               return (
                 <div
                   key={stage.id}
-                  className="grid items-center gap-2 sm:grid-cols-[200px_1fr] sm:gap-3"
+                  className="grid items-center gap-2 sm:grid-cols-[minmax(220px,280px)_1fr] sm:gap-3"
                 >
-                  <div className="text-sm">
-                    <div className="font-medium">{stage.name}</div>
+                  <div className="min-w-0 text-sm sm:min-w-[220px]">
+                    <div className="font-medium leading-snug break-words">
+                      {stage.name}
+                    </div>
                     <div className="text-xs text-[var(--tk-muted)]">
                       {formatDate(stage.start)} — {formatDate(stage.end)}
                       {stage.crewSize
@@ -146,13 +161,14 @@ export default function GprDetailPage() {
                       <div className="mt-1 text-[11px] text-[var(--tk-muted)]">
                         {stage.resources!.map((r) => (
                           <span key={r.id} className="mr-2">
-                            {r.kind}:{r.name}×{r.quantity}
+                            {KIND_RU[r.kind] ?? r.kind}: {r.name} ×{r.quantity}{" "}
+                            {r.unit}
                           </span>
                         ))}
                       </div>
                     ) : null}
                   </div>
-                  <div className="relative h-10 rounded-md bg-stone-100">
+                  <div className="relative h-12 rounded-md bg-stone-100">
                     <div
                       role="slider"
                       aria-label={`Полоса ${stage.name}`}
@@ -181,15 +197,16 @@ export default function GprDetailPage() {
                         setDrag(null);
                         if (deltaDays !== 0) void shiftStage(stage.id, deltaDays);
                       }}
-                      className={`gantt-row-${stage.id} absolute top-1 flex h-8 cursor-grab items-center justify-between rounded-md bg-teal-700/90 px-2 text-[11px] font-medium text-white active:cursor-grabbing`}
+                      className={`gantt-row-${stage.id} absolute top-1 flex h-10 cursor-grab items-center justify-between rounded-md bg-teal-700/90 px-2 text-[11px] font-medium text-white active:cursor-grabbing`}
                       style={{
                         left: `${(offset / totalDays) * 100}%`,
-                        width: `${(width / totalDays) * 100}%`,
-                        minWidth: 48,
+                        width: `${Math.max((width / totalDays) * 100, 12)}%`,
+                        minWidth: 120,
                       }}
+                      title={formatDateRangeShort(stage.start, stage.end)}
                     >
-                      <span className="truncate">
-                        {stage.start.slice(5)}→{stage.end.slice(5)}
+                      <span className="whitespace-nowrap">
+                        {formatDateRangeShort(stage.start, stage.end)}
                       </span>
                       <span
                         className="ml-2 h-full w-2 shrink-0 cursor-ew-resize rounded-sm bg-white/50"
@@ -259,6 +276,42 @@ export default function GprDetailPage() {
         </div>
       </div>
 
+      <div
+        className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5"
+        data-testid="gpr-cost-summary"
+      >
+        <h2 className="mb-2 font-[family-name:var(--font-display)] text-base">
+          Сводка ГПР / себестоимость (без двойного счёта)
+        </h2>
+        {cost && buckets ? (
+          <dl className="grid gap-2 text-sm sm:grid-cols-3">
+            <div>Прямые · труд: {formatMoney(buckets.labor)}</div>
+            <div>Прямые · материалы: {formatMoney(buckets.materials)}</div>
+            <div>Прямые · техника: {formatMoney(buckets.equipment)}</div>
+            <div>C0 (без резерва): {formatMoney(cost.C0)}</div>
+            <div>Резерв: {formatMoney(cost.reserve)}</div>
+            <div>C (с резервом): {formatMoney(cost.C)}</div>
+            <div>Прибыль: {formatMoney(cost.profit)}</div>
+            <div>Цена без НДС: {formatMoney(cost.priceExVat)}</div>
+            <div>
+              НДС:{" "}
+              {cost.vatAmount == null
+                ? "нет данных"
+                : formatMoney(cost.vatAmount)}
+            </div>
+          </dl>
+        ) : (
+          <p className="text-sm text-[var(--tk-muted)]">
+            Сводка появится после пересчёта cost-engine в связанном черновике
+            расчёта. Здесь нет угаданных Excel-формул.
+          </p>
+        )}
+        <p className="mt-2 text-xs text-[var(--tk-muted)]">
+          Материалы/труд/техника — расшифровка прямых D, не прибавляются к D
+          повторно. НР и СП из позиций не дублируются в прямых.
+        </p>
+      </div>
+
       <div className="mb-6 overflow-x-auto rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
         <h2 className="mb-2 font-[family-name:var(--font-display)] text-base">
           Сводка ресурсов (люди / материалы / техника / автобусы)
@@ -276,9 +329,14 @@ export default function GprDetailPage() {
           <tbody>
             {schedule.stages.flatMap((stage) =>
               (stage.resources ?? []).map((r) => (
-                <tr key={`${stage.id}-${r.id}`} className="border-b border-[var(--tk-line)]/60">
+                <tr
+                  key={`${stage.id}-${r.id}`}
+                  className="border-b border-[var(--tk-line)]/60"
+                >
                   <td className="py-1 pr-2">{stage.name}</td>
-                  <td className="py-1 pr-2">{r.kind}</td>
+                  <td className="py-1 pr-2">
+                    {KIND_RU[r.kind] ?? r.kind}
+                  </td>
                   <td className="py-1 pr-2">{r.name}</td>
                   <td className="py-1 pr-2">{r.quantity}</td>
                   <td className="py-1">{r.unit ?? "—"}</td>
@@ -311,22 +369,35 @@ export default function GprDetailPage() {
                   });
                 }}
               />
-              <Input
-                type="date"
-                value={stage.start}
-                onChange={(e) => {
-                  const delta = diffDays(stage.start, e.target.value);
-                  void shiftStage(stage.id, delta);
-                }}
-              />
-              <Input
-                type="date"
-                value={stage.end}
-                onChange={(e) => {
-                  const len = Math.max(1, diffDays(stage.start, e.target.value));
-                  void shiftStage(stage.id, 0, len);
-                }}
-              />
+              <div>
+                <Input
+                  type="date"
+                  value={stage.start}
+                  onChange={(e) => {
+                    const delta = diffDays(stage.start, e.target.value);
+                    void shiftStage(stage.id, delta);
+                  }}
+                />
+                <p className="mt-0.5 text-[11px] text-[var(--tk-muted)]">
+                  {formatDate(stage.start)}
+                </p>
+              </div>
+              <div>
+                <Input
+                  type="date"
+                  value={stage.end}
+                  onChange={(e) => {
+                    const len = Math.max(
+                      1,
+                      diffDays(stage.start, e.target.value)
+                    );
+                    void shiftStage(stage.id, 0, len);
+                  }}
+                />
+                <p className="mt-0.5 text-[11px] text-[var(--tk-muted)]">
+                  {formatDate(stage.end)}
+                </p>
+              </div>
               <Input
                 type="number"
                 min={1}

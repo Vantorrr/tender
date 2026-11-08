@@ -22,11 +22,12 @@ describe("stage2 cost engine + gantt", () => {
     ensureReady();
   });
 
-  it("schema is 9 with calendar on schedules", () => {
+  it("schema is 10 with calendar and multi-kind resources on schedules", () => {
     const data = readAppData();
     const g = data.schedules[0];
     expect(g.calendar?.hoursPerShift).toBeTruthy();
-    expect(g.stages[0]?.resources?.length).toBeGreaterThan(0);
+    expect(g.stages[0]?.resources?.length).toBeGreaterThan(1);
+    expect(data.supplyRequests).toBeTruthy();
   });
 
   it("labor/shifts and bus cost are deterministic; no dual profit", () => {
@@ -223,6 +224,39 @@ describe("stage3 won→production + daily fact + baseline", () => {
     expect(after.pnl?.earnedValue).toBeGreaterThan(before.pnl?.earnedValue ?? 0);
     // baseline unchanged
     expect(after.baselineEntries).toEqual(before.baselineEntries);
+  });
+
+  it("daily fact matches by workName when unit mismatches (UI bug regression)", () => {
+    transferProcurementToProduction("u-ruk", "p-1");
+    const pfId = readAppData().procurements.find((p) => p.id === "p-1")!
+      .planFactId!;
+    const before = readAppData().planFacts.find((p) => p.id === pfId)!;
+    const workName = "Демонтаж перегородок";
+    const entryUnit = before.entries.find((e) => e.workName === workName)!.unit;
+    addDailyProductionFact("u-obj", pfId, {
+      date: "2026-12-03",
+      workName,
+      unit: "ед", // wrong unit from UI
+      quantity: 1,
+      photos: [],
+    });
+    addDailyProductionFact("u-obj", pfId, {
+      date: "2026-12-03",
+      workName,
+      unit: "ед",
+      quantity: 1,
+      photos: [],
+    });
+    const after = readAppData().planFacts.find((p) => p.id === pfId)!;
+    const row = after.entries.find((e) => e.workName === workName)!;
+    expect(row.unit).toBe(entryUnit);
+    expect(row.fact).toBe(
+      (before.entries.find((e) => e.workName === workName)?.fact ?? 0) + 2
+    );
+    expect(row.contractRemaining).toBe(Math.max(0, row.plan - row.fact));
+    expect(after.pnl?.earnedValue).toBe(
+      (before.pnl?.earnedValue ?? 0) + 2
+    );
   });
 
   it("second transfer is idempotent (no duplicate project)", () => {

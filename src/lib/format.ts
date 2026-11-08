@@ -12,12 +12,24 @@ export function formatNumber(value: number, digits = 2): string {
   }).format(value);
 }
 
+/** Calendar day as DD.MM.YYYY (client requirement). */
 export function formatDate(iso: string): string {
-  return new Intl.DateTimeFormat("ru-RU", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  }).format(new Date(iso));
+  const d = new Date(iso.includes("T") ? iso : `${iso}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return iso;
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  return `${dd}.${mm}.${yyyy}`;
+}
+
+/** Compact bar label DD.MM→DD.MM (same year omitted on end when equal). */
+export function formatDateRangeShort(startIso: string, endIso: string): string {
+  const a = formatDate(startIso);
+  const b = formatDate(endIso);
+  if (a.slice(6) === b.slice(6)) {
+    return `${a.slice(0, 5)}–${b.slice(0, 5)}.${a.slice(6)}`;
+  }
+  return `${a}–${b}`;
 }
 
 export function formatDateTime(iso: string): string {

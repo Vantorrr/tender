@@ -17,14 +17,25 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { getClientToken } from "@/lib/api";
+import { api, getClientToken } from "@/lib/api";
 import { cleanLabel } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney } from "@/lib/format";
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
 import { WORK_TYPES } from "@/lib/pipeline";
 import { REVIEW_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
-import type { DocumentCategory, ReviewStatus } from "@/lib/types";
+import type { DocumentCategory, ReviewStatus, SupplyStatus } from "@/lib/types";
 import { useStore } from "@/lib/store";
+import { Input } from "@/components/ui/input";
+
+const SUPPLY_RU: Record<SupplyStatus, string> = {
+  need: "Потребность",
+  quoted_draft: "Черновик КП",
+  ordered: "Заказано",
+  in_transit: "В пути",
+  delivered: "Поставлено",
+  accepted: "Принято",
+  cancelled: "Отменено",
+};
 
 export default function ZakupkaDetailPage() {
   const params = useParams<{ id: string }>();
@@ -38,6 +49,7 @@ export default function ZakupkaDetailPage() {
     createDocumentUpload,
     updateRisk,
     parseRiskContract,
+    refresh,
   } = useStore();
   const procurement = orgProcurements.find((p) => p.id === params.id);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -45,6 +57,17 @@ export default function ZakupkaDetailPage() {
     useState<DocumentCategory>("general");
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [payTitle, setPayTitle] = useState("Аванс");
+  const [payAmount, setPayAmount] = useState("0");
+  const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
+  const [matName, setMatName] = useState("");
+  const [matQty, setMatQty] = useState("1");
+  const [matUnit, setMatUnit] = useState("шт");
+  const [matNeedBy, setMatNeedBy] = useState(
+    new Date().toISOString().slice(0, 10)
+  );
+  const [matQuote, setMatQuote] = useState("");
 
   const docs = useMemo(
     () =>
@@ -86,8 +109,17 @@ export default function ZakupkaDetailPage() {
     ? `/api/dokumenty/file?id=${previewDoc.id}&disposition=inline`
     : null;
 
+  const supplies = useMemo(
+    () =>
+      (data.supplyRequests ?? []).filter(
+        (s) => s.procurementId === procurement?.id
+      ),
+    [data.supplyRequests, procurement?.id]
+  );
+
   async function onUpload(file: File) {
     setBusy(true);
+    setUploadError(null);
     try {
       await createDocumentUpload({
         procurementId: procurement!.id,
@@ -96,8 +128,14 @@ export default function ZakupkaDetailPage() {
         category: uploadCategory,
       });
       toast.success(`Файл «${file.name}» добавлен в закупку`);
+      await refresh();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Ошибка загрузки");
+      const msg =
+        e instanceof Error
+          ? e.message
+          : "Ошибка загрузки (неподдерживаемый или повреждённый файл)";
+      setUploadError(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }
@@ -145,6 +183,7 @@ export default function ZakupkaDetailPage() {
           <TabsTrigger value="calc">Расчёт</TabsTrigger>
           <TabsTrigger value="gpr">ГПР</TabsTrigger>
           <TabsTrigger value="money">Деньги</TabsTrigger>
+          <TabsTrigger value="supply">Поставки</TabsTrigger>
           <TabsTrigger value="risks">Риски</TabsTrigger>
         </TabsList>
 
@@ -296,6 +335,15 @@ export default function ZakupkaDetailPage() {
         </TabsContent>
 
         <TabsContent value="docs">
+          {uploadError ? (
+            <Alert
+              className="mb-4 border-rose-200 bg-rose-50 text-rose-950"
+              data-testid="upload-error"
+            >
+              <AlertTitle>Загрузка не принята</AlertTitle>
+              <AlertDescription>{uploadError}</AlertDescription>
+            </Alert>
+          ) : null}
           <div className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4">
             <div>
               <p className="mb-1 text-xs text-[var(--tk-muted)]">Категория</p>
@@ -558,8 +606,7 @@ export default function ZakupkaDetailPage() {
                   ))}
                 </ul>
                 <p className="mt-3 text-xs text-[var(--tk-muted)]">
-                  Drag-редактор Ганта — этап 2 (partial). Даты читаемы; полный
-                  перенос полос позже.
+                  Полный Гант с перетаскиванием и сводкой — в карточке ГПР.
                 </p>
                 <Link
                   className="mt-3 inline-flex h-9 items-center rounded-lg border px-3 text-sm"
@@ -577,28 +624,292 @@ export default function ZakupkaDetailPage() {
         </TabsContent>
 
         <TabsContent value="money">
-          <div className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5 text-sm">
-            {money ? (
+          <div
+            className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5 text-sm"
+            data-testid="project-money-tab"
+          >
+            {!money ? (
+              <div className="space-y-3">
+                <p className="text-[var(--tk-muted)]">
+                  Денежный план ещё не создан для этой закупки.
+                </p>
+                <Button
+                  data-testid="ensure-money"
+                  onClick={async () => {
+                    try {
+                      await api("/api/zakupki", {
+                        method: "POST",
+                        body: JSON.stringify({
+                          action: "ensureMoney",
+                          id: procurement.id,
+                        }),
+                      });
+                      await refresh();
+                      toast.success("Денежный план создан в карточке проекта");
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : "Ошибка");
+                    }
+                  }}
+                >
+                  Создать план денег
+                </Button>
+              </div>
+            ) : (
               <>
                 <p className="font-medium">{money.title}</p>
-                <ul className="mt-3 space-y-1">
+                <ul className="mt-3 space-y-2">
                   {money.payments.map((pay) => (
-                    <li key={pay.id}>
-                      {pay.title}: {formatMoney(pay.amount)} · {pay.date}
+                    <li
+                      key={pay.id}
+                      className="flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2"
+                    >
+                      <Input
+                        className="w-40"
+                        value={pay.title}
+                        onChange={async (e) => {
+                          const title = e.target.value;
+                          await api("/api/zakupki", {
+                            method: "POST",
+                            body: JSON.stringify({
+                              action: "saveMoney",
+                              moneyId: money.id,
+                              patch: {
+                                payments: money.payments.map((x) =>
+                                  x.id === pay.id ? { ...x, title } : x
+                                ),
+                              },
+                            }),
+                          });
+                          await refresh();
+                        }}
+                      />
+                      <Input
+                        className="w-32"
+                        value={String(pay.amount)}
+                        onChange={async (e) => {
+                          const amount = Number(e.target.value) || 0;
+                          await api("/api/zakupki", {
+                            method: "POST",
+                            body: JSON.stringify({
+                              action: "saveMoney",
+                              moneyId: money.id,
+                              patch: {
+                                payments: money.payments.map((x) =>
+                                  x.id === pay.id ? { ...x, amount } : x
+                                ),
+                              },
+                            }),
+                          });
+                          await refresh();
+                        }}
+                      />
+                      <span className="text-xs text-[var(--tk-muted)]">
+                        {formatDate(pay.date)} · {formatMoney(pay.amount)}
+                      </span>
                     </li>
                   ))}
                 </ul>
+                <div className="mt-4 flex flex-wrap items-end gap-2 border-t pt-4">
+                  <Input
+                    placeholder="Название"
+                    value={payTitle}
+                    onChange={(e) => setPayTitle(e.target.value)}
+                  />
+                  <Input
+                    className="w-28"
+                    value={payAmount}
+                    onChange={(e) => setPayAmount(e.target.value)}
+                  />
+                  <Input
+                    type="date"
+                    value={payDate}
+                    onChange={(e) => setPayDate(e.target.value)}
+                  />
+                  <Button
+                    data-testid="add-money-payment"
+                    onClick={async () => {
+                      try {
+                        await api("/api/zakupki", {
+                          method: "POST",
+                          body: JSON.stringify({
+                            action: "addMoneyPayment",
+                            moneyId: money.id,
+                            payment: {
+                              type: "avans",
+                              title: payTitle || "Платёж",
+                              amount: Number(payAmount) || 0,
+                              date: payDate,
+                              week: 1,
+                              month: Number(payDate.slice(5, 7)) || 1,
+                            },
+                          }),
+                        });
+                        await refresh();
+                        toast.success("Платёж сохранён");
+                      } catch (e) {
+                        toast.error(
+                          e instanceof Error ? e.message : "Ошибка сохранения"
+                        );
+                      }
+                    }}
+                  >
+                    Добавить и сохранить
+                  </Button>
+                </div>
                 <p className="mt-3 text-xs text-[var(--tk-muted)]">
-                  Отдельный пункт сайдбара «Деньги» убран — план в контексте
-                  проекта. Полный PnL производства — этап 3.
+                  Деньги ведутся в карточке проекта (не в сайдбаре). Это касса /
+                  график платежей — не путать с физ. фактом производства.
                 </p>
               </>
-            ) : (
-              <p className="text-[var(--tk-muted)]">
-                Денежный план ещё не создан (кнопка артефактов на вкладке
-                «Карточка»).
-              </p>
             )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="supply">
+          <div
+            className="space-y-4 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5 text-sm"
+            data-testid="supply-tab"
+          >
+            <h3 className="font-medium">
+              Потребность → черновик КП → поставка
+            </h3>
+            <p className="text-xs text-[var(--tk-muted)]">
+              Отправка писем поставщикам не выполняется. Можно подготовить текст
+              запроса КП и вести статусы вручную.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Input
+                placeholder="Материал"
+                value={matName}
+                onChange={(e) => setMatName(e.target.value)}
+              />
+              <Input
+                className="w-24"
+                value={matQty}
+                onChange={(e) => setMatQty(e.target.value)}
+              />
+              <Input
+                className="w-20"
+                value={matUnit}
+                onChange={(e) => setMatUnit(e.target.value)}
+              />
+              <Input
+                type="date"
+                value={matNeedBy}
+                onChange={(e) => setMatNeedBy(e.target.value)}
+              />
+              <Input
+                className="min-w-[220px] flex-1"
+                placeholder="Черновик текста КП (не отправка)"
+                value={matQuote}
+                onChange={(e) => setMatQuote(e.target.value)}
+              />
+              <Button
+                data-testid="supply-create"
+                onClick={async () => {
+                  if (!matName.trim()) {
+                    toast.error("Укажите материал");
+                    return;
+                  }
+                  try {
+                    await api("/api/supply", {
+                      method: "POST",
+                      body: JSON.stringify({
+                        procurementId: procurement.id,
+                        materialName: matName.trim(),
+                        unit: matUnit || "шт",
+                        qtyNeed: Number(matQty) || 0,
+                        needBy: matNeedBy,
+                        status: matQuote.trim() ? "quoted_draft" : "need",
+                        quoteDraftText: matQuote.trim() || undefined,
+                      }),
+                    });
+                    await refresh();
+                    toast.success("Потребность сохранена");
+                    setMatName("");
+                    setMatQuote("");
+                  } catch (e) {
+                    toast.error(e instanceof Error ? e.message : "Ошибка");
+                  }
+                }}
+              >
+                Сохранить потребность
+              </Button>
+            </div>
+            <ul className="space-y-2">
+              {supplies.length === 0 ? (
+                <li className="text-[var(--tk-muted)]">Пока нет потребностей</li>
+              ) : (
+                supplies.map((s) => (
+                  <li
+                    key={s.id}
+                    className="rounded-lg border px-3 py-2"
+                    data-testid={`supply-${s.id}`}
+                  >
+                    <div className="font-medium">
+                      {s.materialName} · {s.qtyNeed} {s.unit} · к{" "}
+                      {formatDate(s.needBy)}
+                    </div>
+                    <div className="text-xs text-[var(--tk-muted)]">
+                      {SUPPLY_RU[s.status]} · заказано {s.qtyOrdered} ·
+                      поставлено {s.qtyDelivered}
+                    </div>
+                    {s.quoteDraftText ? (
+                      <pre className="mt-2 whitespace-pre-wrap rounded bg-stone-50 p-2 text-xs">
+                        {s.quoteDraftText}
+                      </pre>
+                    ) : null}
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {(
+                        [
+                          "need",
+                          "quoted_draft",
+                          "ordered",
+                          "in_transit",
+                          "delivered",
+                          "accepted",
+                        ] as SupplyStatus[]
+                      ).map((st) => (
+                        <Button
+                          key={st}
+                          size="sm"
+                          variant={s.status === st ? "default" : "outline"}
+                          onClick={async () => {
+                            await api("/api/supply", {
+                              method: "POST",
+                              body: JSON.stringify({
+                                id: s.id,
+                                procurementId: procurement.id,
+                                materialName: s.materialName,
+                                unit: s.unit,
+                                qtyNeed: s.qtyNeed,
+                                needBy: s.needBy,
+                                status: st,
+                                qtyDelivered:
+                                  st === "delivered" || st === "accepted"
+                                    ? s.qtyNeed
+                                    : s.qtyDelivered,
+                                qtyOrdered:
+                                  st === "ordered" ||
+                                  st === "in_transit" ||
+                                  st === "delivered" ||
+                                  st === "accepted"
+                                    ? Math.max(s.qtyOrdered, s.qtyNeed)
+                                    : s.qtyOrdered,
+                                quoteDraftText: s.quoteDraftText,
+                              }),
+                            });
+                            await refresh();
+                          }}
+                        >
+                          {SUPPLY_RU[st]}
+                        </Button>
+                      ))}
+                    </div>
+                  </li>
+                ))
+              )}
+            </ul>
           </div>
         </TabsContent>
 

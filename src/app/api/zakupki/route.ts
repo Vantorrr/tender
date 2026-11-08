@@ -1,14 +1,17 @@
 import {
+  addMoneyPayment,
+  ensureMoneyPlan,
   ensureProcurementChain,
   getBootstrap,
   refreshProcurementAnalytics,
   sendProcurementToCalculation,
   setProcurementReview,
   transferProcurementToProduction,
+  updateMoney,
   updateProcurement,
 } from "@/server/repo";
 import { withSection, json } from "@/server/http";
-import type { ReviewStatus } from "@/lib/types";
+import type { MoneyPayment, MoneyPlan, ReviewStatus } from "@/lib/types";
 
 export async function GET(req: Request) {
   return withSection(req, "zakupki", (user) =>
@@ -48,24 +51,50 @@ export async function POST(req: Request) {
         | "ensureChain"
         | "sendToCalculation"
         | "refreshAnalytics"
-        | "transferToProduction";
+        | "transferToProduction"
+        | "ensureMoney"
+        | "saveMoney"
+        | "addMoneyPayment";
       id?: string;
+      moneyId?: string;
+      patch?: Partial<MoneyPlan>;
+      payment?: Omit<MoneyPayment, "id">;
     };
-    if (!body.id) return json({ error: "Не указан id" }, 400);
+    if (!body.id && body.action !== "saveMoney" && body.action !== "addMoneyPayment") {
+      return json({ error: "Не указан id" }, 400);
+    }
     if (body.action === "ensureChain") {
-      ensureProcurementChain(user.id, body.id);
+      ensureProcurementChain(user.id, body.id!);
       return json(getBootstrap(user));
     }
     if (body.action === "sendToCalculation") {
-      sendProcurementToCalculation(user.id, body.id);
+      sendProcurementToCalculation(user.id, body.id!);
       return json(getBootstrap(user));
     }
     if (body.action === "refreshAnalytics") {
-      refreshProcurementAnalytics(user.id, body.id);
+      refreshProcurementAnalytics(user.id, body.id!);
       return json(getBootstrap(user));
     }
     if (body.action === "transferToProduction") {
-      transferProcurementToProduction(user.id, body.id);
+      transferProcurementToProduction(user.id, body.id!);
+      return json(getBootstrap(user));
+    }
+    if (body.action === "ensureMoney") {
+      ensureMoneyPlan(user.id, body.id!);
+      return json(getBootstrap(user));
+    }
+    if (body.action === "saveMoney") {
+      if (!body.moneyId || !body.patch) {
+        return json({ error: "Нужны moneyId и patch" }, 400);
+      }
+      updateMoney(user.id, body.moneyId, body.patch);
+      return json(getBootstrap(user));
+    }
+    if (body.action === "addMoneyPayment") {
+      if (!body.moneyId || !body.payment) {
+        return json({ error: "Нужны moneyId и payment" }, 400);
+      }
+      addMoneyPayment(user.id, body.moneyId, body.payment);
       return json(getBootstrap(user));
     }
     return json({ error: "Некорректный запрос" }, 400);

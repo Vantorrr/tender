@@ -142,6 +142,38 @@ export interface Procurement {
   createdAt: string;
   lifecycle?: ProjectLifecycle;
   wonAt?: string;
+  /** Materials / supply cycle (need → quote draft → delivery) — no auto-send. */
+  supplyRequestIds?: string[];
+}
+
+export type SupplyStatus =
+  | "need"
+  | "quoted_draft"
+  | "ordered"
+  | "in_transit"
+  | "delivered"
+  | "accepted"
+  | "cancelled";
+
+/** Потребность → КП-черновик (не отправка) → поставка/факт. */
+export interface SupplyRequest {
+  id: string;
+  orgId: string;
+  procurementId: string;
+  workName?: string;
+  materialName: string;
+  unit: string;
+  qtyNeed: number;
+  qtyOrdered: number;
+  qtyDelivered: number;
+  needBy: string;
+  status: SupplyStatus;
+  /** Текст запроса КП — только черновик, без send. */
+  quoteDraftText?: string;
+  supplierNote?: string;
+  unitPrice?: number | null;
+  updatedAt: string;
+  createdAt: string;
 }
 
 export interface DocVersion {
@@ -535,4 +567,5 @@ export interface AppData {
   directories: DirectoryVersion[];
   auditLog: AuditEntry[];
   smetaExchanges: SmetaExchangeVersion[];
+  supplyRequests?: SupplyRequest[];
 }

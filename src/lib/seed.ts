@@ -1124,5 +1124,6 @@ export function createSeedData(): AppData {
         confirmed: true,
       },
     ],
+    supplyRequests: [],
   };
 }

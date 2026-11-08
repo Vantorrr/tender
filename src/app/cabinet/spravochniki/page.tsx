@@ -61,6 +61,7 @@ export default function SpravochnikiPage() {
   const { data, setDirectoryCurrent, importDirectoryFile } = useStore();
   const [tab, setTab] = useState<DirectoryVersion["type"]>("rascenki");
   const [query, setQuery] = useState("");
+  const [lastImport, setLastImport] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const items = useMemo(
@@ -103,11 +104,14 @@ export default function SpravochnikiPage() {
                 if (!file) return;
                 try {
                   await importDirectoryFile(tab, file);
-                  toast.success("Импорт Excel выполнен");
+                  const msg = `${new Date().toLocaleString("ru-RU")}: «${file.name}» → ${typeLabel[tab]} (новая версия текущая)`;
+                  setLastImport(msg);
+                  toast.success("Импорт Excel выполнен — результат ниже");
                 } catch (err) {
-                  toast.error(
-                    err instanceof Error ? err.message : "Ошибка импорта"
-                  );
+                  const msg =
+                    err instanceof Error ? err.message : "Ошибка импорта";
+                  setLastImport(`Ошибка: ${msg}`);
+                  toast.error(msg);
                 }
                 e.target.value = "";
               }}
@@ -115,7 +119,11 @@ export default function SpravochnikiPage() {
             <Button variant="outline" onClick={downloadTemplate}>
               Скачать шаблон
             </Button>
-            <Button variant="outline" onClick={() => fileRef.current?.click()}>
+            <Button
+              variant="outline"
+              data-testid="dir-import-btn"
+              onClick={() => fileRef.current?.click()}
+            >
               Импорт Excel
             </Button>
             <a
@@ -127,6 +135,20 @@ export default function SpravochnikiPage() {
           </>
         }
       />
+
+      {lastImport ? (
+        <div
+          className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-950"
+          data-testid="dir-import-result"
+        >
+          Результат импорта: {lastImport}
+        </div>
+      ) : (
+        <div className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white/80 px-4 py-3 text-sm text-[var(--tk-muted)]">
+          Импорт Excel создаёт новую версию справочника и делает её текущей для
+          расчётов. Результат импорта отображается здесь же.
+        </div>
+      )}
 
       <Tabs
         value={tab}
