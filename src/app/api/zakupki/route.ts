@@ -1,6 +1,8 @@
 import {
   ensureProcurementChain,
   getBootstrap,
+  refreshProcurementAnalytics,
+  sendProcurementToCalculation,
   setProcurementReview,
   updateProcurement,
 } from "@/server/repo";
@@ -41,11 +43,23 @@ export async function PATCH(req: Request) {
 export async function POST(req: Request) {
   return withSection(req, "zakupki", async (user) => {
     const body = (await req.json()) as {
-      action?: "ensureChain";
+      action?:
+        | "ensureChain"
+        | "sendToCalculation"
+        | "refreshAnalytics";
       id?: string;
     };
-    if (body.action === "ensureChain" && body.id) {
+    if (!body.id) return json({ error: "Не указан id" }, 400);
+    if (body.action === "ensureChain") {
       ensureProcurementChain(user.id, body.id);
+      return json(getBootstrap(user));
+    }
+    if (body.action === "sendToCalculation") {
+      sendProcurementToCalculation(user.id, body.id);
+      return json(getBootstrap(user));
+    }
+    if (body.action === "refreshAnalytics") {
+      refreshProcurementAnalytics(user.id, body.id);
       return json(getBootstrap(user));
     }
     return json({ error: "Некорректный запрос" }, 400);

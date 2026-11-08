@@ -83,7 +83,7 @@ export default function DengiPage() {
     <div>
       <PageHeader
         title="Деньги"
-        description="Авансы, поступления и ключевые платежи с сводкой по неделе и месяцу."
+        description="Убрано из сайдбара — денежный план в карточке проекта. Авансы/поступления; PnL производства — этап 3."
         actions={
           plan ? (
             <Button

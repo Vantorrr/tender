@@ -17,12 +17,14 @@ export function createSeedData(): AppData {
         name: "ООО «АльфаСтрой»",
         inn: "7701234567",
         active: true,
+        joinCode: "JOIN-ALFA-361",
       },
       {
         id: "org-beta",
         name: "АО «БетаИнжиниринг»",
         inn: "7812345678",
         active: true,
+        joinCode: "JOIN-BETA-361",
       },
     ],
     users: [
@@ -228,6 +230,7 @@ export function createSeedData(): AppData {
         moneyId: "m-1",
         planFactId: "pf-1",
         tags: ["капремонт", "образование", "44-ФЗ"],
+        workType: "общестрой",
         createdAt: "2026-10-20T09:00:00Z",
       },
       {
@@ -252,6 +255,7 @@ export function createSeedData(): AppData {
         calculationId: "c-2",
         planFactId: "pf-2",
         tags: ["склад", "223-ФЗ"],
+        workType: "общестрой",
         createdAt: "2026-10-22T11:30:00Z",
       },
       {
@@ -272,6 +276,7 @@ export function createSeedData(): AppData {
         attachments: [],
         documentIds: [],
         tags: ["дубликат"],
+        workType: "общестрой",
         createdAt: "2026-10-21T09:00:00Z",
       },
       {
@@ -296,6 +301,7 @@ export function createSeedData(): AppData {
         gprId: "g-2",
         moneyId: "m-2",
         tags: ["водоканал", "реконструкция"],
+        workType: "инженерные сети",
         createdAt: "2026-10-10T08:00:00Z",
       },
       {
@@ -315,7 +321,48 @@ export function createSeedData(): AppData {
         attachments: [],
         documentIds: [],
         tags: ["благоустройство"],
+        workType: "благоустройство",
         createdAt: "2026-10-18T14:00:00Z",
+      },
+      {
+        id: "p-norilsk-1",
+        orgId: "org-alfa",
+        number: "NOR-2026-001",
+        title: "Ремонт автодороги — Норильск, участок восток",
+        customer: "МУП «НорДор»",
+        region: "Норильск",
+        nmck: 67800000,
+        deadline: "2026-12-15T12:00:00Z",
+        source: "Ручной ввод (источник площадки не согласован)",
+        status: "zagruzheno",
+        reviewStatus: "novaya",
+        syncStatus: "aktualno",
+        syncAt: "2026-10-27T06:55:00Z",
+        attachments: [],
+        documentIds: [],
+        tags: ["дорожные", "север"],
+        workType: "дорожные",
+        createdAt: "2026-10-25T09:00:00Z",
+      },
+      {
+        id: "p-yamal-1",
+        orgId: "org-alfa",
+        number: "YAM-2026-014",
+        title: "Инженерные сети вахтового городка — Ямал",
+        customer: "ООО «ЯмалСтройСервис»",
+        region: "Ямал",
+        nmck: 92100000,
+        deadline: "2027-01-20T12:00:00Z",
+        source: "Ручной ввод (источник площадки не согласован)",
+        status: "v_rabote",
+        reviewStatus: "na_rassmotrenii",
+        syncStatus: "aktualno",
+        syncAt: "2026-10-27T06:55:00Z",
+        attachments: [],
+        documentIds: [],
+        tags: ["инженерные сети", "север"],
+        workType: "инженерные сети",
+        createdAt: "2026-10-25T10:00:00Z",
       },
       {
         id: "p-beta-1",
@@ -335,6 +382,7 @@ export function createSeedData(): AppData {
         objectId: "obj-3",
         documentIds: [],
         tags: ["мост", "инфраструктура"],
+        workType: "общестрой",
         createdAt: "2026-10-19T10:00:00Z",
       },
     ],
@@ -418,6 +466,7 @@ export function createSeedData(): AppData {
         title: "Локальная смета заказчика",
         fileName: "smeta_zakazchika.xlsx",
         fileType: "xlsx",
+        category: "estimate",
         status: "trebuet_proverki",
         versions: [
           {
@@ -481,6 +530,7 @@ export function createSeedData(): AppData {
         title: "Проект контракта — очистные",
         fileName: "dogovor-proekt.docx",
         fileType: "docx",
+        category: "contract",
         status: "gotovo",
         versions: [
           {
@@ -534,6 +584,10 @@ export function createSeedData(): AppData {
         version: 3,
         authorId: "u-smet",
         updatedAt: "2026-10-30T10:00:00Z",
+        kind: "resource_draft",
+        immutable: false,
+        changeLog: [],
+        dataFlags: ["seed_resource_draft"],
       },
       {
         id: "c-2",
@@ -541,6 +595,9 @@ export function createSeedData(): AppData {
         procurementId: "p-2",
         title: "Черновой расчёт — склад «Север»",
         status: "v_rabote",
+        kind: "resource_draft",
+        immutable: false,
+        changeLog: [],
         positions: [
           {
             id: "cp-6",
@@ -574,6 +631,9 @@ export function createSeedData(): AppData {
         procurementId: "p-4",
         title: "Расчёт — очистные сооружения",
         status: "gotovo",
+        kind: "resource_draft",
+        immutable: false,
+        changeLog: [],
         positions: [
           {
             id: "cp-8",

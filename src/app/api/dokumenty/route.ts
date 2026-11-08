@@ -1,29 +1,54 @@
 import {
   createDocument,
   getBootstrap,
+  refreshProcurementAnalytics,
   updateDocument,
 } from "@/server/repo";
 import { analyzeUpload } from "@/server/grand-smeta";
 import { config } from "@/server/config";
+import {
+  archiveExtractDir,
+  detectArchiveFormat,
+  extractArchiveSafely,
+} from "@/server/safe-archive";
 import { saveUpload } from "@/server/uploads";
-import { withSection, json } from "@/server/http";
-import type { DocumentItem } from "@/lib/types";
+import { withAnySection, json } from "@/server/http";
+import type { DocumentCategory, DocumentItem } from "@/lib/types";
+
+const DOC_SECTIONS = ["dokumenty", "zakupki", "riski"] as const;
+
+function inferCategory(
+  raw: string | null,
+  fileName: string
+): DocumentCategory {
+  if (raw === "estimate" || raw === "contract" || raw === "tz" || raw === "archive" || raw === "other" || raw === "general") {
+    return raw;
+  }
+  if (/smeta|смет/i.test(fileName)) return "estimate";
+  if (/dogovor|договор|контракт/i.test(fileName)) return "contract";
+  if (/tz|тз|извещ/i.test(fileName)) return "tz";
+  if (/\.zip$/i.test(fileName)) return "archive";
+  return "general";
+}
 
 export async function GET(req: Request) {
-  return withSection(req, "dokumenty", (user) =>
+  return withAnySection(req, [...DOC_SECTIONS], (user) =>
     json({ items: getBootstrap(user).data.documents })
   );
 }
 
 export async function POST(req: Request) {
-  return withSection(req, "dokumenty", async (user) => {
+  return withAnySection(req, [...DOC_SECTIONS], async (user) => {
     const contentType = req.headers.get("content-type") ?? "";
 
     if (contentType.includes("multipart/form-data")) {
       const form = await req.formData();
       const file = form.get("file");
       const procurementId = String(form.get("procurementId") ?? "");
-      // Explicit opt-in only; OPENROUTER_ON_UPLOAD must also be on for paid path at upload.
+      const category = inferCategory(
+        String(form.get("category") ?? "") || null,
+        file instanceof File ? file.name : ""
+      );
       const wantLlm =
         String(form.get("useLlm") ?? "") === "1" ||
         String(form.get("useLlm") ?? "").toLowerCase() === "true";
@@ -43,13 +68,49 @@ export async function POST(req: Request) {
         );
       }
       const ext = file.name.split(".").pop()?.toLowerCase();
+      const buf = Buffer.from(await file.arrayBuffer());
+      const archiveFormat = detectArchiveFormat(file.name, buf);
+
+      if (archiveFormat !== "none") {
+        const tempId = `d-${Date.now()}`;
+        const stored = await saveUpload(tempId, file.name, buf);
+        const extracted = extractArchiveSafely(
+          file.name,
+          buf,
+          archiveExtractDir(tempId)
+        );
+        createDocument(user.id, {
+          orgId: user.orgId,
+          procurementId,
+          title: String(form.get("title") ?? "").trim() || file.name,
+          fileName: file.name,
+          fileType: archiveFormat === "zip" ? "zip" : "other",
+          category: "archive",
+          storedPath: stored.storedPath,
+          fileSize: stored.fileSize,
+          extractionErrors: extracted.errors,
+          extractedFiles: extracted.files.map((f) => ({
+            name: f.name,
+            size: f.size,
+            relativePath: f.relativePath,
+          })),
+        });
+        refreshProcurementAnalytics(user.id, procurementId);
+        return json({
+          ...getBootstrap(user),
+          archive: {
+            ok: extracted.ok,
+            format: extracted.format,
+            errors: extracted.errors,
+            files: extracted.files.map((f) => f.name),
+          },
+        });
+      }
+
       const fileType =
         ext === "docx" || ext === "xlsx" || ext === "pdf" ? ext : "pdf";
-      const buf = Buffer.from(await file.arrayBuffer());
       let prepared;
       try {
-        // Cancellable timeout — clear on success so the timer cannot
-        // reject as an unhandledRejection after a finished upload.
         let timer: ReturnType<typeof setTimeout> | undefined;
         const timeout = new Promise<never>((_, reject) => {
           timer = setTimeout(
@@ -81,10 +142,12 @@ export async function POST(req: Request) {
         title,
         fileName: file.name,
         fileType,
+        category,
         storedPath: stored.storedPath,
         fileSize: stored.fileSize,
         prepared,
       });
+      refreshProcurementAnalytics(user.id, procurementId);
       return json(getBootstrap(user));
     }
 
@@ -92,7 +155,8 @@ export async function POST(req: Request) {
       procurementId?: string;
       title?: string;
       fileName?: string;
-      fileType?: "pdf" | "docx" | "xlsx";
+      fileType?: DocumentItem["fileType"];
+      category?: DocumentCategory;
     };
     if (!body.procurementId) {
       return json({ error: "Укажите закупку" }, 400);
@@ -104,13 +168,15 @@ export async function POST(req: Request) {
       title: body.title || body.fileName,
       fileName: body.fileName,
       fileType: body.fileType || "pdf",
+      category: body.category ?? inferCategory(null, body.fileName),
     });
+    refreshProcurementAnalytics(user.id, body.procurementId);
     return json(getBootstrap(user));
   });
 }
 
 export async function PATCH(req: Request) {
-  return withSection(req, "dokumenty", async (user) => {
+  return withAnySection(req, [...DOC_SECTIONS], async (user) => {
     const body = (await req.json()) as {
       id?: string;
       patch?: Partial<DocumentItem>;

@@ -84,6 +84,7 @@ interface StoreContextValue {
     procurementId: string;
     title?: string;
     file: File;
+    category?: string;
   }) => Promise<void>;
   updateSchedule: (id: string, patch: Partial<GprSchedule>) => Promise<void>;
   updateMoney: (id: string, patch: Partial<MoneyPlan>) => Promise<void>;
@@ -103,6 +104,8 @@ interface StoreContextValue {
   importSmetaFile: (file: File, calcId?: string) => Promise<void>;
   runSyncJob: () => Promise<void>;
   ensureChain: (procurementId: string) => Promise<void>;
+  sendToCalculation: (procurementId: string) => Promise<void>;
+  refreshAnalytics: (procurementId: string) => Promise<void>;
   markAllNotificationsRead: () => Promise<void>;
   setOrganizationActive: (orgId: string, active: boolean) => Promise<void>;
   importClientXlsx: () => Promise<{
@@ -446,11 +449,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       procurementId: string;
       title?: string;
       file: File;
+      category?: string;
     }) => {
       const form = new FormData();
       form.append("file", input.file);
       form.append("procurementId", input.procurementId);
       if (input.title) form.append("title", input.title);
+      if (input.category) form.append("category", input.category);
       const boot = await api<BootstrapResponse>("/api/dokumenty", {
         method: "POST",
         body: form,
@@ -598,6 +603,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [applyBoot]
   );
 
+  const sendToCalculation = useCallback(
+    async (procurementId: string) => {
+      const boot = await api<BootstrapResponse>("/api/zakupki", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "sendToCalculation",
+          id: procurementId,
+        }),
+      });
+      applyBoot(boot);
+    },
+    [applyBoot]
+  );
+
+  const refreshAnalytics = useCallback(
+    async (procurementId: string) => {
+      const boot = await api<BootstrapResponse>("/api/zakupki", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "refreshAnalytics",
+          id: procurementId,
+        }),
+      });
+      applyBoot(boot);
+    },
+    [applyBoot]
+  );
+
   const addAudit = useCallback(() => {
     /* audit is server-side now */
   }, []);
@@ -651,6 +684,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     importSmetaFile,
     runSyncJob,
     ensureChain,
+    sendToCalculation,
+    refreshAnalytics,
     addAudit,
     orgProcurements,
     orgDocuments,

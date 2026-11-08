@@ -21,7 +21,7 @@ import { modelConfigured } from "@/server/openrouter";
 import { hashPassword } from "@/server/passwords";
 import { procurementSourceStatus } from "@/server/procurement-source";
 
-const SCHEMA_VERSION = "7";
+const SCHEMA_VERSION = "8";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -131,13 +131,108 @@ function hashSeedUsers(data: AppData): AppData {
   };
 }
 
+/** Additive schema-8 fields — safe on fresh seed and upgrades. */
+function applySchema8Extras(data: AppData): AppData {
+  const now = new Date().toISOString();
+  data.organizations = (data.organizations ?? []).map((org) => ({
+    ...org,
+    joinCode:
+      org.joinCode ??
+      `JOIN-${org.id.replace(/^org-/, "").toUpperCase()}-361`,
+  }));
+  data.procurements = (data.procurements ?? []).map((p) => {
+    let workType = p.workType;
+    if (!workType) {
+      const hay = `${p.title} ${p.tags?.join(" ") ?? ""}`.toLowerCase();
+      if (/дорог|асфальт|бурен/.test(hay)) workType = "дорожные";
+      else if (/благ|двор/.test(hay)) workType = "благоустройство";
+      else if (/мост|склад|школ|капремонт|реконстр|перевооруж/.test(hay))
+        workType = "общестрой";
+      else if (/водоканал|сет|очистн|конденсат/.test(hay))
+        workType = "инженерные сети";
+      else workType = "прочее";
+    }
+    return { ...p, workType };
+  });
+  const hasNorilsk = data.procurements.some((p) =>
+    /норильск/i.test(p.region)
+  );
+  const hasYamal = data.procurements.some((p) => /ямал/i.test(p.region));
+  if (!hasNorilsk) {
+    data.procurements.push({
+      id: "p-norilsk-1",
+      orgId: "org-alfa",
+      number: "NOR-2026-001",
+      title: "Ремонт автодороги — Норильск, участок восток",
+      customer: "МУП «НорДор»",
+      region: "Норильск",
+      nmck: 67800000,
+      deadline: "2026-12-15T12:00:00Z",
+      source: "Ручной ввод (источник площадки не согласован)",
+      status: "zagruzheno",
+      reviewStatus: "novaya",
+      syncStatus: "aktualno",
+      syncAt: now,
+      attachments: [],
+      documentIds: [],
+      tags: ["дорожные", "север"],
+      workType: "дорожные",
+      createdAt: now,
+    });
+  }
+  if (!hasYamal) {
+    data.procurements.push({
+      id: "p-yamal-1",
+      orgId: "org-alfa",
+      number: "YAM-2026-014",
+      title: "Инженерные сети вахтового городка — Ямал",
+      customer: "ООО «ЯмалСтройСервис»",
+      region: "Ямал",
+      nmck: 92100000,
+      deadline: "2027-01-20T12:00:00Z",
+      source: "Ручной ввод (источник площадки не согласован)",
+      status: "v_rabote",
+      reviewStatus: "na_rassmotrenii",
+      syncStatus: "aktualno",
+      syncAt: now,
+      attachments: [],
+      documentIds: [],
+      tags: ["инженерные сети", "север"],
+      workType: "инженерные сети",
+      createdAt: now,
+    });
+  }
+  data.calculations = (data.calculations ?? []).map((c) => {
+    if (c.kind) return c;
+    const isOriginalTitle = /заказчик|оригинал|смет[аы] заказ/i.test(c.title);
+    return {
+      ...c,
+      kind: isOriginalTitle ? "customer_original" : "resource_draft",
+      immutable: Boolean(isOriginalTitle),
+      changeLog: c.changeLog ?? [],
+      dataFlags: c.dataFlags ?? ["migrated_schema_8"],
+    };
+  });
+  for (const p of data.procurements) {
+    if (p.calculationId && !p.originalCalculationId) {
+      const calc = data.calculations.find((c) => c.id === p.calculationId);
+      if (calc?.kind === "customer_original") {
+        p.originalCalculationId = calc.id;
+      }
+    }
+  }
+  return data;
+}
+
 function migrate(db: DatabaseSync) {
   const row = db.prepare("SELECT payload FROM app_blob WHERE id = 1").get() as
     | { payload: string }
     | undefined;
 
   if (!row) {
-    const seed = installGrandReference(hashSeedUsers(createSeedData()));
+    const seed = applySchema8Extras(
+      installGrandReference(hashSeedUsers(createSeedData()))
+    );
     const now = new Date().toISOString();
     db.prepare(
       "INSERT INTO app_blob (id, payload, updated_at) VALUES (1, ?, ?)"
@@ -212,6 +307,8 @@ function migrate(db: DatabaseSync) {
     );
     metaSet(db, "client_xlsx_imported", "1");
     installGrandReference(data);
+    applySchema8Extras(data);
+
     db.prepare(
       "UPDATE app_blob SET payload = ?, updated_at = ? WHERE id = 1"
     ).run(JSON.stringify(data), new Date().toISOString());

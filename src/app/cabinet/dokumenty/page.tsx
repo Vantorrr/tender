@@ -44,7 +44,7 @@ export default function DokumentyPage() {
     <div>
       <PageHeader
         title="Документы"
-        description="Загрузка PDF/DOCX/XLSX на сервер, аналитическая записка, версии и повторный разбор."
+        description="Раздел убран из сайдбара: работайте с файлами внутри карточки закупки. Эта страница — deep-link / список."
         actions={
           <>
             <select
