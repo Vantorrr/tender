@@ -479,6 +479,16 @@ export interface DailyFactPhoto {
   caption?: string;
 }
 
+export interface DailyResourceLine {
+  kind: "labor" | "material" | "equipment" | "bus" | "other";
+  name: string;
+  unit: string;
+  /** Plan qty from GPR/resources for the day (sourced). */
+  planQty: number;
+  /** Fact qty entered on site; null = нет данных. */
+  factQty: number | null;
+}
+
 export interface DailyFact {
   id: string;
   date: string;
@@ -488,6 +498,8 @@ export interface DailyFact {
   people?: number;
   equipment?: string;
   materialsNote?: string;
+  /** Plan/fact lines for people & materials on the day (t25u day details). */
+  resourceLines?: DailyResourceLine[];
   comment?: string;
   photos: DailyFactPhoto[];
   authorId: string;

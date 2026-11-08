@@ -24,9 +24,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api, downloadUrl } from "@/lib/api";
+import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-panel";
 import { bucketsFromPositions } from "@/lib/cost-engine";
 import { formatMoney, formatNumber } from "@/lib/format";
 import type { Calculation } from "@/lib/types";
+import type { EstimateLeaf } from "@/lib/hierarchical-estimate";
 import { useStore } from "@/lib/store";
 import {
   calculationTotals,
@@ -40,6 +42,7 @@ export default function RaschetDetailPage() {
     data,
     user,
     updateCalculation,
+    updateSchedule,
     recalcCalculation,
     addCalcFromDirectory,
     refresh,
@@ -51,6 +54,7 @@ export default function RaschetDetailPage() {
   const [qty, setQty] = useState("1");
   const [rateKey, setRateKey] = useState<string>("price");
   const [filter, setFilter] = useState("");
+  const [showDirAdd, setShowDirAdd] = useState(false);
 
   const calc = user
     ? data.calculations.find(
@@ -108,10 +112,59 @@ export default function RaschetDetailPage() {
     const hay = `${p.code} ${p.name} ${p.unit}`.toLowerCase();
     return /матер|м²|м2|т\b|сэндвич|бетон|арматур|компл/.test(hay);
   });
+  const linkedSchedule = data.schedules.find(
+    (s) => s.calculationId === calc.id && s.orgId === user.orgId
+  );
 
   function exportExcelLike() {
     downloadUrl(`/api/export?kind=calc-xlsx&id=${calc!.id}`);
     toast.success("Скачивание XLSX…");
+  }
+
+  function patchEstimateLeaf(
+    leaf: EstimateLeaf,
+    patch: { quantity?: number; rate?: number | null }
+  ) {
+    if (leaf.source === "stage_resource" && leaf.stageId && linkedSchedule) {
+      updateSchedule(linkedSchedule.id, {
+        stages: linkedSchedule.stages.map((s) =>
+          s.id !== leaf.stageId
+            ? s
+            : {
+                ...s,
+                resources: (s.resources ?? []).map((r) =>
+                  r.id !== leaf.id
+                    ? r
+                    : {
+                        ...r,
+                        quantity: patch.quantity ?? r.quantity,
+                        rate:
+                          patch.rate !== undefined ? patch.rate : r.rate,
+                      }
+                ),
+              }
+        ),
+      });
+      return;
+    }
+    if (leaf.source === "calc_position" && leaf.positionId) {
+      updateCalculation(calc!.id, {
+        positions: calc!.positions.map((p) =>
+          p.id !== leaf.positionId
+            ? p
+            : {
+                ...p,
+                quantity: patch.quantity ?? p.quantity,
+                rate:
+                  patch.rate === undefined
+                    ? p.rate
+                    : patch.rate == null
+                      ? 0
+                      : patch.rate,
+              }
+        ),
+      });
+    }
   }
 
   function exportPdfLike() {
@@ -302,6 +355,26 @@ export default function RaschetDetailPage() {
             {formatMoney(total)}
           </div>
         </div>
+      </div>
+
+      <div className="mb-8">
+        <HierarchicalEstimatePanel
+          stages={linkedSchedule?.stages ?? []}
+          positions={calc.positions}
+          locked={locked}
+          costTotal={calc.costSummary?.priceExVat ?? calc.costSummary?.C0 ?? null}
+          costIncomplete={Boolean(calc.costSummary?.totalsIncomplete)}
+          onPatchLeaf={patchEstimateLeaf}
+          onExport={exportExcelLike}
+          onAddClick={() => {
+            setShowDirAdd(true);
+            requestAnimationFrame(() => {
+              document
+                .getElementById("estimate-add-directory")
+                ?.scrollIntoView({ behavior: "smooth", block: "start" });
+            });
+          }}
+        />
       </div>
 
       <div className="mb-4 grid gap-2 text-sm sm:grid-cols-4">
@@ -508,7 +581,10 @@ export default function RaschetDetailPage() {
       ) : null}
 
       {!locked ? (
-      <section className="mt-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
+      <section
+        id="estimate-add-directory"
+        className={`mt-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5 ${showDirAdd ? "ring-2 ring-sky-400" : ""}`}
+      >
         <h2 className="font-[family-name:var(--font-display)] text-base">
           Добавить из справочника (только в черновик)
         </h2>

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
@@ -264,6 +265,15 @@ export default function ProizvodstvoPage() {
                   ? ` · базовый план от ${formatDate(plan.baselineAt)}`
                   : ""}
               </p>
+            ) : null}
+            {plan ? (
+              <Link
+                href={`/cabinet/proizvodstvo/day?planFactId=${encodeURIComponent(plan.id)}&date=${encodeURIComponent(date)}&work=${encodeURIComponent(selectedWork)}`}
+                className="inline-flex h-8 items-center rounded-lg border border-border bg-background px-2.5 text-sm hover:bg-muted"
+                data-testid="open-day-details"
+              >
+                Детали дня →
+              </Link>
             ) : null}
             <div>
               <p className="mb-1 text-xs text-[var(--tk-muted)]">Срез</p>

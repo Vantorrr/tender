@@ -1,7 +1,6 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
@@ -11,15 +10,12 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, downloadUrl } from "@/lib/api";
+import { PlanFactGantt } from "@/components/plan-fact-gantt";
 import { collectCalendarWarnings } from "@/lib/calendar-availability";
 import { bucketsFromPositions, diffDays } from "@/lib/cost-engine";
-import { formatDate, formatDateRangeShort, formatMoney } from "@/lib/format";
+import { formatDate, formatMoney } from "@/lib/format";
 import { buildMaterialNeeds } from "@/lib/materials-need";
 import { useStore } from "@/lib/store";
-
-function daysBetween(a: string, b: string) {
-  return Math.max(1, Math.abs(diffDays(a, b)) || 1);
-}
 
 const KIND_RU: Record<string, string> = {
   labor: "Люди",
@@ -32,12 +28,6 @@ const KIND_RU: Record<string, string> = {
 export default function GprDetailPage() {
   const params = useParams<{ id: string }>();
   const { data, user, updateSchedule, updateCalculation, refresh } = useStore();
-  const trackRef = useRef<HTMLDivElement>(null);
-  const [drag, setDrag] = useState<{
-    stageId: string;
-    startX: number;
-    mode: "move" | "resize";
-  } | null>(null);
 
   if (!user) return null;
   const schedule = data.schedules.find(
@@ -45,15 +35,6 @@ export default function GprDetailPage() {
   );
   if (!schedule) return <ErrorState title="ГПР не найден" />;
 
-  const minStart = schedule.stages.reduce(
-    (m, s) => (s.start < m ? s.start : m),
-    schedule.stages[0]?.start ?? ""
-  );
-  const maxEnd = schedule.stages.reduce(
-    (m, s) => (s.end > m ? s.end : m),
-    schedule.stages[0]?.end ?? ""
-  );
-  const totalDays = daysBetween(minStart, maxEnd) || 1;
   const cal = schedule.calendar;
   const calc = data.calculations.find((c) => c.id === schedule.calculationId);
   const buckets = calc
@@ -70,6 +51,9 @@ export default function GprDetailPage() {
         stages: schedule.stages,
       })
     : [];
+  const planFact = data.planFacts.find(
+    (p) => p.procurementId === schedule.procurementId
+  );
 
   async function shiftStage(
     stageId: string,
@@ -141,153 +125,21 @@ export default function GprDetailPage() {
         </div>
       ) : null}
 
-      <div className="mb-6 overflow-x-auto rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
+      <div className="mb-6" data-testid="gantt-track">
         <h2 className="mb-2 font-[family-name:var(--font-display)] text-base">
-          Гант — перетаскивание полос
+          План / факт · Гант
         </h2>
-        <p className="mb-4 text-xs text-[var(--tk-muted)]">
-          Drag полосы = сдвиг дат; правый край = изменение длительности. Каскад
-          FS по зависимостям. Даты на полосах читаемы.
+        <p className="mb-3 text-xs text-[var(--tk-muted)]">
+          Приоритет — шкала дат и полосы план/факт (не таблица распределения
+          слева). Drag синей полосы = сдвиг; ←/→ = ±1 день.
         </p>
-        <div className="space-y-3" ref={trackRef} data-testid="gantt-track">
-          {schedule.stages
-            .slice()
-            .sort((a, b) => a.sequence - b.sequence)
-            .map((stage) => {
-              const offset = Math.max(0, diffDays(minStart, stage.start));
-              const width = daysBetween(stage.start, stage.end);
-              return (
-                <div
-                  key={stage.id}
-                  className="grid items-center gap-2 sm:grid-cols-[minmax(220px,280px)_1fr] sm:gap-3"
-                >
-                  <div className="min-w-0 text-sm sm:min-w-[220px]">
-                    <div className="font-medium leading-snug break-words">
-                      {stage.name}
-                    </div>
-                    <div className="text-xs text-[var(--tk-muted)]">
-                      {formatDate(stage.start)} — {formatDate(stage.end)}
-                      {stage.crewSize
-                        ? ` · ${stage.crewSize} чел`
-                        : ""}
-                    </div>
-                    {(stage.resources?.length ?? 0) > 0 ? (
-                      <div className="mt-1 text-[11px] text-[var(--tk-muted)]">
-                        {stage.resources!.map((r) => (
-                          <span key={r.id} className="mr-2">
-                            {KIND_RU[r.kind] ?? r.kind}: {r.name} ×{r.quantity}{" "}
-                            {r.unit}
-                          </span>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="relative h-12 rounded-md bg-stone-100">
-                    <div
-                      role="slider"
-                      aria-label={`Полоса ${stage.name}`}
-                      data-testid={`gantt-bar-${stage.id}`}
-                      tabIndex={0}
-                      draggable
-                      onDragStart={(e) => {
-                        setDrag({
-                          stageId: stage.id,
-                          startX: e.clientX,
-                          mode: "move",
-                        });
-                      }}
-                      onDragEnd={(e) => {
-                        if (!drag || drag.stageId !== stage.id) return;
-                        const track = trackRef.current?.querySelector(
-                          `.gantt-row-${stage.id}`
-                        ) as HTMLElement | null;
-                        const w =
-                          track?.clientWidth ||
-                          trackRef.current?.clientWidth ||
-                          600;
-                        const pxPerDay = w / totalDays;
-                        const deltaPx = e.clientX - drag.startX;
-                        const deltaDays = Math.round(deltaPx / pxPerDay);
-                        setDrag(null);
-                        if (deltaDays !== 0) void shiftStage(stage.id, deltaDays);
-                      }}
-                      className={`gantt-row-${stage.id} absolute top-1 flex h-10 cursor-grab items-center justify-between rounded-md bg-teal-700/90 px-2 text-[11px] font-medium text-white active:cursor-grabbing`}
-                      style={{
-                        left: `${(offset / totalDays) * 100}%`,
-                        width: `${Math.max((width / totalDays) * 100, 12)}%`,
-                        minWidth: 120,
-                      }}
-                      title={formatDateRangeShort(stage.start, stage.end)}
-                    >
-                      <span className="whitespace-nowrap">
-                        {formatDateRangeShort(stage.start, stage.end)}
-                      </span>
-                      <span
-                        className="ml-2 h-full w-2 shrink-0 cursor-ew-resize rounded-sm bg-white/50"
-                        title="Изменить длительность"
-                        onMouseDown={(e) => {
-                          e.stopPropagation();
-                          const startX = e.clientX;
-                          const startWidth = width;
-                          const onMove = (ev: MouseEvent) => {
-                            const trackW =
-                              (
-                                trackRef.current?.querySelector(
-                                  `.gantt-row-${stage.id}`
-                                ) as HTMLElement | null
-                              )?.parentElement?.clientWidth || 600;
-                            const pxPerDay = trackW / totalDays;
-                            const d = Math.round(
-                              (ev.clientX - startX) / pxPerDay
-                            );
-                            void d;
-                            (e.target as HTMLElement).dataset.pending = String(
-                              Math.max(1, startWidth + d)
-                            );
-                          };
-                          const onUp = () => {
-                            window.removeEventListener("mousemove", onMove);
-                            window.removeEventListener("mouseup", onUp);
-                            const pending = Number(
-                              (e.target as HTMLElement).dataset.pending ??
-                                startWidth
-                            );
-                            if (pending !== startWidth) {
-                              void shiftStage(stage.id, 0, pending);
-                            }
-                          };
-                          window.addEventListener("mousemove", onMove);
-                          window.addEventListener("mouseup", onUp);
-                        }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-        </div>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {schedule.stages.map((s) => (
-            <div key={`btns-${s.id}`} className="flex gap-1">
-              <Button
-                size="sm"
-                variant="outline"
-                data-testid={`gantt-shift-left-${s.id}`}
-                onClick={() => shiftStage(s.id, -1)}
-              >
-                ← {s.name.slice(0, 12)}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                data-testid={`gantt-shift-right-${s.id}`}
-                onClick={() => shiftStage(s.id, 1)}
-              >
-                {s.name.slice(0, 12)} →
-              </Button>
-            </div>
-          ))}
-        </div>
+        <PlanFactGantt
+          stages={schedule.stages}
+          entries={planFact?.entries}
+          dailyFacts={planFact?.dailyFacts}
+          planFactId={planFact?.id}
+          onShift={(id, d, resize) => void shiftStage(id, d, resize)}
+        />
       </div>
 
       <div

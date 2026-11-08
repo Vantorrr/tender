@@ -1940,6 +1940,7 @@ export function addDailyProductionFact(
       people: fact.people,
       equipment: fact.equipment,
       materialsNote: fact.materialsNote,
+      resourceLines: fact.resourceLines,
       comment: fact.comment,
       photos: fact.photos ?? [],
       authorId: actorId,

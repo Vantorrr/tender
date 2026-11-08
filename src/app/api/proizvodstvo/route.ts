@@ -5,10 +5,47 @@ import {
   updatePlanFact,
 } from "@/server/repo";
 import { withAnySection, json } from "@/server/http";
-import type { PlanFact } from "@/lib/types";
+import type { DailyResourceLine, PlanFact } from "@/lib/types";
 import { saveUpload } from "@/server/uploads";
 
 const SECTIONS = ["proizvodstvo", "zakupki"] as const;
+
+function parseResourceLines(raw: unknown): DailyResourceLine[] | undefined {
+  if (raw == null || raw === "") return undefined;
+  let parsed: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!Array.isArray(parsed)) return undefined;
+  return parsed
+    .map((row) => {
+      if (!row || typeof row !== "object") return null;
+      const r = row as Record<string, unknown>;
+      const kind = String(r.kind ?? "other") as DailyResourceLine["kind"];
+      return {
+        kind:
+          kind === "labor" ||
+          kind === "material" ||
+          kind === "equipment" ||
+          kind === "bus" ||
+          kind === "other"
+            ? kind
+            : "other",
+        name: String(r.name ?? ""),
+        unit: String(r.unit ?? ""),
+        planQty: Number(r.planQty) || 0,
+        factQty:
+          r.factQty == null || r.factQty === ""
+            ? null
+            : Number(r.factQty) || 0,
+      } satisfies DailyResourceLine;
+    })
+    .filter((x): x is DailyResourceLine => Boolean(x && x.name));
+}
 
 export async function GET(req: Request) {
   return withAnySection(req, [...SECTIONS], (user) =>
@@ -71,7 +108,10 @@ export async function POST(req: Request) {
         people: form.get("people") ? Number(form.get("people")) : undefined,
         equipment: String(form.get("equipment") ?? "") || undefined,
         materialsNote: String(form.get("materialsNote") ?? "") || undefined,
-        comment: String(form.get("comment") ?? "") || undefined,
+        resourceLines: parseResourceLines(form.get("resourceLines")),
+        comment:
+          String(form.get("comment") ?? form.get("caption") ?? "") ||
+          undefined,
         photos,
       });
       return json(getBootstrap(user));
@@ -89,6 +129,7 @@ export async function POST(req: Request) {
         people?: number;
         equipment?: string;
         materialsNote?: string;
+        resourceLines?: DailyResourceLine[];
         comment?: string;
       };
     };
