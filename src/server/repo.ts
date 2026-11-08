@@ -1733,6 +1733,10 @@ export function recomputeCalculationCost(
       vatPercent: patch?.vatPercent ?? null,
       northern,
     });
+    const incomplete = [
+      ...engine.incomplete,
+      ...(buckets.materialsUnpriced ? ["materials_positions"] : []),
+    ];
     item.costSummary = {
       C0: engine.C0,
       C: engine.C,
@@ -1742,7 +1746,7 @@ export function recomputeCalculationCost(
       vatAmount: engine.vatAmount,
       priceIncVat: engine.priceIncVat,
       method: `cost-engine:${engine.profitMethod}`,
-      incomplete: engine.incomplete,
+      incomplete,
       at: new Date().toISOString(),
     };
     item.dataFlags = [
