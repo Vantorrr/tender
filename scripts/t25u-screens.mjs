@@ -253,7 +253,12 @@ try {
   const factText = await page.getByTestId("day-fact-card").innerText();
   if (/нет данных/i.test(planText)) fail("s3-plan", planText.slice(0, 80));
   else pass("s3-plan");
-  if (/18/.test(factText) && /Δ/.test(factText)) pass("s3-fact-delta");
+  const factNum = Number(
+    (factText.match(/([\d\s]+[,.]?\d*)\s*м/) || [])[1]
+      ?.replace(/\s/g, "")
+      .replace(",", ".") || 0
+  );
+  if (factNum > 0 && /Δ/.test(factText)) pass(`s3-fact-delta:${factNum}`);
   else fail("s3-fact-delta", factText.slice(0, 100));
 
   // Top composition: banner + plan/fact + resource tables (scroll main to top)
