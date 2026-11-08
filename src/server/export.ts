@@ -7,6 +7,19 @@ import {
 import { readAppData } from "@/server/db";
 import { estimateKey, parseGrandBuffer } from "@/server/grand-smeta";
 
+function isResourceDraftExport(calc: {
+  kind?: string;
+  immutable?: boolean;
+  costSummary?: { resourceSlices?: unknown; method?: string } | null;
+}): boolean {
+  if (calc.immutable || calc.kind === "customer_original") return false;
+  return Boolean(
+    calc.costSummary?.resourceSlices ||
+      (calc.kind === "resource_draft" &&
+        calc.costSummary?.method?.includes("resource-schedule"))
+  );
+}
+
 export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
   const data = readAppData();
   const calc = data.calculations.find((c) => c.id === calcId);
@@ -27,20 +40,66 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
 
   const factor = calc.scenarioFactor || 1;
   for (const p of calc.positions) {
-    const sum = positionLineSum(p, factor);
+    const sum = p.rateMissing ? null : positionLineSum(p, factor);
     ws.addRow({
       code: p.code,
       name: p.name,
       unit: p.unit,
       qty: p.quantity,
-      rate: p.rate,
+      rate: p.rateMissing ? null : p.rate,
       sum,
     });
   }
-  const totals = calculationTotals(calc);
   const dir = data.directories.find((d) => d.id === calc.directoryVersionId);
   ws.addRow({});
-  ws.addRow({ code: "Итого", sum: totals.total });
+
+  const slices = calc.costSummary?.resourceSlices;
+  const partial =
+    Boolean(calc.costSummary?.totalsIncomplete) || Boolean(slices?.partial);
+  if (isResourceDraftExport(calc) && slices) {
+    // Resource draft: Excel V/W/X/Y/Z (OH43% / markup40%) — not НР15/СП8.
+    ws.addRow({
+      code: "V_direct",
+      name: partial ? "V прямые (PARTIAL)" : "V прямые",
+      sum: slices.direct,
+    });
+    ws.addRow({
+      code: "W_oh43",
+      name: partial ? "W НР 43% (PARTIAL)" : "W НР 43%",
+      sum: slices.overhead,
+    });
+    ws.addRow({
+      code: "X_cost_oh",
+      name: partial ? "X с/с с НР (PARTIAL)" : "X с/с с НР",
+      sum: slices.costWithOh,
+    });
+    ws.addRow({
+      code: "Y_markup40",
+      name: partial ? "Y наценка 40% (PARTIAL)" : "Y наценка 40%",
+      sum: slices.profit,
+    });
+    ws.addRow({
+      code: "Z_total",
+      name: partial ? "Z итого (PARTIAL)" : "Z итого",
+      sum: slices.total,
+    });
+    ws.addRow({
+      code: "Q_hours",
+      name: "Q часы (без материалов)",
+      sum: slices.hours,
+    });
+  } else {
+    // Immutable original / legacy: позиции × коэф. + НР15/СП8
+    const totals = calculationTotals(calc);
+    ws.addRow({
+      code: "Итого",
+      name:
+        calc.kind === "customer_original" || calc.immutable
+          ? "Оригинал (НР15/СП8)"
+          : "Итого",
+      sum: totals.total,
+    });
+  }
   ws.addRow({
     code: "Сценарий",
     name:
@@ -89,13 +148,38 @@ export async function buildCalculationPdf(calcId: string): Promise<Buffer> {
   y -= 6;
   const factor = calc.scenarioFactor || 1;
   for (const p of calc.positions) {
-    const sum = positionLineSum(p, factor);
-    const line = `${p.code} | ${p.quantity} x ${p.rate} = ${Math.round(sum)}`;
-    draw(line.replace(/[^\x00-\x7F]/g, "?"), 9);
-    if (y < 60) break;
+    if (p.rateMissing) {
+      draw(`${p.code} | ${p.quantity} x (no rate) = PARTIAL`, 9);
+    } else {
+      const sum = positionLineSum(p, factor);
+      draw(
+        `${p.code} | ${p.quantity} x ${p.rate} = ${Math.round(sum)}`.replace(
+          /[^\x00-\x7F]/g,
+          "?"
+        ),
+        9
+      );
+    }
+    if (y < 100) break;
   }
-  const totals = calculationTotals(calc);
-  draw(`TOTAL: ${Math.round(totals.total)} RUB`, 12, true);
+  const slices = calc.costSummary?.resourceSlices;
+  const partial =
+    Boolean(calc.costSummary?.totalsIncomplete) || Boolean(slices?.partial);
+  if (isResourceDraftExport(calc) && slices) {
+    const tag = partial ? " PARTIAL" : "";
+    draw(`V direct: ${Math.round(slices.direct)}${tag}`, 11, true);
+    draw(`W OH43%: ${Math.round(slices.overhead)}${tag}`, 11, true);
+    draw(`X cost+OH: ${Math.round(slices.costWithOh)}${tag}`, 11, true);
+    draw(`Y markup40%: ${Math.round(slices.profit)}${tag}`, 11, true);
+    draw(`Z TOTAL: ${Math.round(slices.total)}${tag}`, 12, true);
+  } else {
+    const totals = calculationTotals(calc);
+    const label =
+      calc.kind === "customer_original" || calc.immutable
+        ? "ORIGINAL TOTAL (NR15/SP8)"
+        : "TOTAL";
+    draw(`${label}: ${Math.round(totals.total)} RUB`, 12, true);
+  }
   const bytes = await pdf.save();
   return Buffer.from(bytes);
 }

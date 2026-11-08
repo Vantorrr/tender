@@ -51,6 +51,7 @@ import {
   type ResourceScheduleParams,
 } from "@/lib/resource-schedule-model";
 import {
+  isResourceLinkedDraft,
   patchStageResource,
   syncDraftFromStages,
 } from "@/lib/unified-resource-sync";
@@ -939,12 +940,14 @@ export function updateSchedule(
         ? { ...s, ...safe, updatedAt: new Date().toISOString() }
         : s
     );
-    // If stages were patched on a linked resource draft — resync cost slices.
+    // Only resync explicit resource-linked drafts — never rewrite unrelated/legacy positions.
     const updated = data.schedules.find((s) => s.id === id)!;
     if (safe.stages) {
       const calc = data.calculations.find((c) => c.id === updated.calculationId);
-      if (calc && calc.kind !== "customer_original" && !calc.immutable) {
-        const synced = syncDraftFromStages(calc, updated.stages);
+      if (calc && isResourceLinkedDraft(calc)) {
+        const synced = syncDraftFromStages(calc, updated.stages, {
+          replacePositions: true,
+        });
         Object.assign(calc, synced.calc);
       }
     }
@@ -984,8 +987,10 @@ export function patchScheduleResourceAndSync(
       input.stageId
     );
     schedule.updatedAt = new Date().toISOString();
-    if (calc) {
-      const synced = syncDraftFromStages(calc, schedule.stages);
+    if (calc && isResourceLinkedDraft(calc)) {
+      const synced = syncDraftFromStages(calc, schedule.stages, {
+        replacePositions: true,
+      });
       Object.assign(calc, synced.calc);
       calc.changeLog = [
         ...(calc.changeLog ?? []),
@@ -996,6 +1001,17 @@ export function patchScheduleResourceAndSync(
           detail: `Ресурс ${input.resourceId}: qty/rate → единый пересчёт V/W/X/Y/Z`,
         },
       ];
+    } else if (calc && !isResourceLinkedDraft(calc)) {
+      // Schedule resource edited, but calc is not a resource-linked draft —
+      // do not replace positions / cost of an unrelated estimate.
+      audit(
+        data,
+        actorId,
+        "patch_resource",
+        "gpr",
+        scheduleId,
+        `Ресурс ${input.resourceId} обновлён без sync сметы ${calc.id} (не resource-linked draft)`
+      );
     }
     audit(
       data,
@@ -1796,9 +1812,15 @@ export function recomputeCalculationCost(
       item.resourceScheduleParams = EXCEL_RESOURCE_SCHEDULE_DEFAULTS;
     }
 
-    // Unified path: GPR stage resources are SoT when present + resource-schedule economics.
-    if (useRs && linkedSchedule?.stages?.length) {
-      const synced = syncDraftFromStages(item, linkedSchedule.stages);
+    // Unified path only for explicit resource-linked drafts.
+    if (
+      useRs &&
+      linkedSchedule?.stages?.length &&
+      isResourceLinkedDraft(item)
+    ) {
+      const synced = syncDraftFromStages(item, linkedSchedule.stages, {
+        replacePositions: true,
+      });
       Object.assign(item, synced.calc);
       const matNeeds = buildMaterialNeeds({
         positions: item.positions,

@@ -369,6 +369,19 @@ export interface Calculation {
 
 export type GprDependencyType = "FS" | "SS" | "FF" | "SF";
 
+/**
+ * How `quantity` is interpreted for Excel Q = L×N×O×P.
+ * - count_per_shift: L = headcount/machines; need hours/shifts/days
+ * - total_hours: L already = hours (маш-ч / н-ч); N=O=P identity 1
+ * - material_qty: materials — R=qty×rate, never contributes to Q-hours
+ * - uncertain: unit basis unknown — do not invent N/O/P or zero the line
+ */
+export type ResourceQuantityBasis =
+  | "count_per_shift"
+  | "total_hours"
+  | "material_qty"
+  | "uncertain";
+
 export interface GprStageResource {
   id: string;
   kind: "labor" | "equipment" | "material" | "bus" | "other";
@@ -377,6 +390,14 @@ export interface GprStageResource {
   unit: string;
   /** Confirmed unit rate; null/undefined = нет данных (не считать как 0 ₽). */
   rate?: number | null;
+  /** Optional explicit basis; otherwise inferred from unit/kind. */
+  quantityBasis?: ResourceQuantityBasis;
+  /** N — hours per shift (count_per_shift). */
+  hoursPerShift?: number | null;
+  /** O — shifts per day. */
+  shiftsPerDay?: number | null;
+  /** P — participation days. */
+  days?: number | null;
 }
 
 export interface GprStage {
@@ -583,8 +604,11 @@ export interface CostSummarySnapshot {
     profit: number;
     /** Z = X+Y */
     total: number;
+    /** Q-hours from labor/equipment/bus only — never materials. */
     hours: number;
     knownAmount: number;
+    /** True when V is incomplete → W/X/Y/Z are also partial. */
+    partial?: boolean;
     skipped?: string[];
   };
 }

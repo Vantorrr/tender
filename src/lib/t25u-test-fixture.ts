@@ -185,14 +185,18 @@ function testSchedule(orgId: string): GprSchedule {
             unit: "компл",
             rate: null,
           },
-          // Single bus for whole TEST GPR — no duplicates on later stages
+          // Bus A — stage 1; distinct from bus B on gst-2 (both summed, not leave-first)
           {
             id: "rst-1-bus",
             kind: "bus",
-            name: "Автобус доставки",
+            name: "Автобус мобилизации",
             quantity: 1,
             unit: "ед",
             rate: 2650,
+            quantityBasis: "count_per_shift",
+            hoursPerShift: 11,
+            shiftsPerDay: 1,
+            days: 2,
           },
         ],
       },
@@ -238,6 +242,19 @@ function testSchedule(orgId: string): GprSchedule {
             quantity: 2,
             unit: "маш",
             rate: 5800,
+          },
+          // Bus B — golden Q: 2×11×1×3×2650 = 174900 (full tariff, no extra fuel/driver)
+          {
+            id: "rst-2-bus",
+            kind: "bus",
+            name: "Автобус доставки",
+            quantity: 2,
+            unit: "ед",
+            rate: 2650,
+            quantityBasis: "count_per_shift",
+            hoursPerShift: 11,
+            shiftsPerDay: 1,
+            days: 3,
           },
         ],
       },
@@ -328,20 +345,6 @@ function testProcurement(orgId: string, objectId: string): Procurement {
   };
 }
 
-/** Strip duplicate buses on TEST schedule only (keep first by sequence). */
-function healTestScheduleBuses(schedule: GprSchedule): void {
-  let busSeen = false;
-  for (const st of schedule.stages.slice().sort((a, b) => a.sequence - b.sequence)) {
-    const next = (st.resources ?? []).filter((r) => {
-      if (r.kind !== "bus") return true;
-      if (busSeen) return false;
-      busSeen = true;
-      return true;
-    });
-    st.resources = next;
-  }
-}
-
 /**
  * Insert TEST entities if absent — never patches school p-1/g-1/c-1/pf-1.
  * No-op unless opt-in (test/demo env).
@@ -371,24 +374,63 @@ export function ensureT25uTestFixture(data: AppData): AppData {
   }
   if (!data.schedules.some((s) => s.id === T25U_TEST.scheduleId)) {
     data.schedules.push(testSchedule(orgId));
+  } else {
+    // Additive heal: ensure golden bus B exists on gst-2 (sum with bus A; never leave-first)
+    const schedule = data.schedules.find((s) => s.id === T25U_TEST.scheduleId)!;
+    const gst2 = schedule.stages.find((s) => s.id === "gst-2");
+    if (gst2 && !(gst2.resources ?? []).some((r) => r.id === "rst-2-bus")) {
+      gst2.resources = [
+        ...(gst2.resources ?? []),
+        {
+          id: "rst-2-bus",
+          kind: "bus",
+          name: "Автобус доставки",
+          quantity: 2,
+          unit: "ед",
+          rate: 2650,
+          quantityBasis: "count_per_shift",
+          hoursPerShift: 11,
+          shiftsPerDay: 1,
+          days: 3,
+        },
+      ];
+    }
+    const gst1 = schedule.stages.find((s) => s.id === "gst-1");
+    const bus1 = gst1?.resources?.find((r) => r.id === "rst-1-bus");
+    if (bus1) {
+      bus1.name = bus1.name.includes("мобилиз")
+        ? bus1.name
+        : "Автобус мобилизации";
+      bus1.quantityBasis = bus1.quantityBasis ?? "count_per_shift";
+      bus1.hoursPerShift = bus1.hoursPerShift ?? 11;
+      bus1.shiftsPerDay = bus1.shiftsPerDay ?? 1;
+      bus1.days = bus1.days ?? 2;
+    }
   }
   if (!data.planFacts.some((p) => p.id === T25U_TEST.planFactId)) {
     data.planFacts.push(testPlanFact(orgId, objectId));
   }
 
-  // Heal already-installed TEST contour: single bus + sync draft from stages
   const schedule = data.schedules.find((s) => s.id === T25U_TEST.scheduleId);
   const draft = data.calculations.find((c) => c.id === T25U_TEST.calculationId);
   const original = data.calculations.find(
     (c) => c.id === T25U_TEST.originalCalculationId
   );
-  if (schedule) healTestScheduleBuses(schedule);
   if (draft && schedule) {
     draft.pairedCalculationId =
       draft.pairedCalculationId ?? T25U_TEST.originalCalculationId;
     draft.resourceScheduleParams =
       draft.resourceScheduleParams ?? { ...EXCEL_RESOURCE_SCHEDULE_DEFAULTS };
-    const synced = syncDraftFromStages(draft, schedule.stages);
+    draft.dataFlags = [
+      ...new Set([
+        ...(draft.dataFlags ?? []),
+        "t25u_test_fixture",
+        "unified_resource_tree",
+      ]),
+    ];
+    const synced = syncDraftFromStages(draft, schedule.stages, {
+      replacePositions: true,
+    });
     Object.assign(draft, synced.calc);
   }
   if (original) {

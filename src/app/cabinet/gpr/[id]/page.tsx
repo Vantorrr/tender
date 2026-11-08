@@ -176,20 +176,39 @@ export default function GprDetailPage() {
               {cost.resourceSlices ? (
                 <>
                   <div data-testid="gpr-slice-v">
-                    V прямые: {formatMoney(cost.resourceSlices.direct)}
+                    V прямые
+                    {cost.totalsIncomplete || cost.resourceSlices.partial
+                      ? " · PARTIAL"
+                      : ""}
+                    : {formatMoney(cost.resourceSlices.direct)}
                   </div>
                   <div data-testid="gpr-slice-w">
-                    W НР 43%: {formatMoney(cost.resourceSlices.overhead)}
+                    W НР 43%
+                    {cost.totalsIncomplete || cost.resourceSlices.partial
+                      ? " · PARTIAL"
+                      : ""}
+                    : {formatMoney(cost.resourceSlices.overhead)}
                   </div>
                   <div data-testid="gpr-slice-x">
-                    X с/с с НР: {formatMoney(cost.resourceSlices.costWithOh)}
+                    X с/с с НР
+                    {cost.totalsIncomplete || cost.resourceSlices.partial
+                      ? " · PARTIAL"
+                      : ""}
+                    : {formatMoney(cost.resourceSlices.costWithOh)}
                   </div>
                   <div data-testid="gpr-slice-y">
-                    Y наценка 40%: {formatMoney(cost.resourceSlices.profit)}
+                    Y наценка 40%
+                    {cost.totalsIncomplete || cost.resourceSlices.partial
+                      ? " · PARTIAL"
+                      : ""}
+                    : {formatMoney(cost.resourceSlices.profit)}
                   </div>
                   <div data-testid="gpr-slice-z">
-                    Z итого: {formatMoney(cost.resourceSlices.total)}
-                    {cost.totalsIncomplete ? " · неполно" : ""}
+                    Z итого
+                    {cost.totalsIncomplete || cost.resourceSlices.partial
+                      ? " · PARTIAL"
+                      : ""}
+                    : {formatMoney(cost.resourceSlices.total)}
                   </div>
                   <div data-testid="gpr-materials-cost">
                     S материалы:{" "}

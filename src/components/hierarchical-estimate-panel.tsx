@@ -107,7 +107,10 @@ export function HierarchicalEstimatePanel({
           className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
           data-testid="budget-card-direct-v"
         >
-          <p className="text-xs text-[var(--tk-muted)]">V · прямые (S+T+U)</p>
+          <p className="text-xs text-[var(--tk-muted)]">
+            V · прямые (S+T+U)
+            {incomplete ? " · PARTIAL" : ""}
+          </p>
           <p className="mt-1 font-[family-name:var(--font-display)] text-2xl">
             {slices
               ? formatMoney(slices.direct)
@@ -117,7 +120,7 @@ export function HierarchicalEstimatePanel({
           </p>
           {incomplete ? (
             <p className="mt-1 text-xs text-amber-800" data-testid="budget-incomplete">
-              итог неполный — есть ресурсы без ставки
+              V неполный — W/X/Y/Z тоже partial
             </p>
           ) : null}
         </div>
@@ -125,12 +128,19 @@ export function HierarchicalEstimatePanel({
           className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
           data-testid="budget-card-oh-w"
         >
-          <p className="text-xs text-[var(--tk-muted)]">W · НР 43% от прямых</p>
+          <p className="text-xs text-[var(--tk-muted)]">
+            W · НР 43% от прямых
+            {incomplete ? " · PARTIAL" : ""}
+          </p>
           <p className="mt-1 text-xl font-semibold">
             {slices ? formatMoney(slices.overhead) : "нет данных"}
           </p>
-          <p className="mt-1 text-[11px] text-[var(--tk-muted)]">
-            X с/с с НР:{" "}
+          <p
+            className="mt-1 text-[11px] text-[var(--tk-muted)]"
+            data-testid="budget-card-x"
+          >
+            X с/с с НР
+            {incomplete ? " · PARTIAL" : ""}:{" "}
             {slices ? formatMoney(slices.costWithOh) : "—"}
           </p>
         </div>
@@ -140,6 +150,7 @@ export function HierarchicalEstimatePanel({
         >
           <p className="text-xs text-[var(--tk-muted)]">
             Z · итого (X + наценка 40%)
+            {incomplete ? " · PARTIAL" : ""}
           </p>
           <p className="mt-1 font-[family-name:var(--font-display)] text-2xl">
             {slices
@@ -148,9 +159,14 @@ export function HierarchicalEstimatePanel({
                 ? formatMoney(costSummary.priceExVat)
                 : "нет данных"}
           </p>
-          <p className="mt-1 text-[11px] text-[var(--tk-muted)]">
-            Y прибыль: {slices ? formatMoney(slices.profit) : "—"} · та же база
-            сводка / cost-engine / экспорт
+          <p
+            className="mt-1 text-[11px] text-[var(--tk-muted)]"
+            data-testid="budget-card-y"
+          >
+            Y прибыль
+            {incomplete ? " · PARTIAL" : ""}:{" "}
+            {slices ? formatMoney(slices.profit) : "—"} · та же база сводка /
+            cost-engine / экспорт сметы
           </p>
         </div>
       </div>
