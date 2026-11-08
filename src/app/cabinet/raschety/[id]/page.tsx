@@ -371,11 +371,28 @@ export default function RaschetDetailPage() {
             {calc.kind === "customer_original"
               ? "Оригинал сметы (immutable)"
               : draftSlices
-                ? "Черновик · Z (ресурсный)"
-                : "Итого черновика"}
+                ? `Черновик · Z (ресурсный)${
+                    calc.costSummary?.totalsIncomplete || draftSlices.partial
+                      ? " · PARTIAL"
+                      : ""
+                  }`
+                : calc.costSummary?.totalsIncomplete
+                  ? "Итого черновика · PARTIAL"
+                  : "Итого черновика"}
           </div>
           <div className="font-[family-name:var(--font-display)] text-xl">
             {formatMoney(total)}
+            {(calc.costSummary?.totalsIncomplete ||
+              draftSlices?.partial ||
+              (calc.costSummary?.incomplete?.length ?? 0) > 0) &&
+            calc.kind !== "customer_original" ? (
+              <span
+                className="ml-2 text-sm font-normal text-amber-800"
+                data-testid="calc-total-chip-partial"
+              >
+                PARTIAL
+              </span>
+            ) : null}
           </div>
         </div>
       </div>
@@ -385,6 +402,7 @@ export default function RaschetDetailPage() {
           stages={linkedSchedule?.stages ?? []}
           positions={calc.positions}
           locked={locked}
+          resourceScheduleParams={calc.resourceScheduleParams}
           originalTotal={
             calc.kind === "customer_original"
               ? totals.total

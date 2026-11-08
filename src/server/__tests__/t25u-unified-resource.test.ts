@@ -10,19 +10,31 @@ import {
   inferQuantityBasis,
   resolveResourceDimensions,
 } from "@/lib/resource-dimensions";
+import { classifyDirectCostBucket, bucketsFromPositions } from "@/lib/cost-engine";
 import {
   EXCEL_RESOURCE_SCHEDULE_DEFAULTS,
   machineHourFullTariffCost,
   rollupResourceSchedule,
+  type ResourceScheduleParams,
 } from "@/lib/resource-schedule-model";
-import { T25U_TEST, isT25uTestFixtureOptIn } from "@/lib/t25u-test-fixture";
+import {
+  T25U_TEST,
+  ensureT25uTestFixture,
+  isT25uTestFixtureOptIn,
+} from "@/lib/t25u-test-fixture";
 import {
   isResourceLinkedDraft,
   stagesToResourceLines,
   syncDraftFromStages,
 } from "@/lib/unified-resource-sync";
-import type { GprStage } from "@/lib/types";
-import { closeDb, ensureReady, readAppData } from "@/server/db";
+import type { CalcPosition, GprStage } from "@/lib/types";
+import {
+  closeDb,
+  ensureReady,
+  mutateAppData,
+  readAppData,
+  resetAppData,
+} from "@/server/db";
 import {
   buildCalculationPdf,
   buildCalculationXlsx,
@@ -34,6 +46,21 @@ import {
   updateSchedule,
 } from "@/server/repo";
 import "./setup";
+
+function resetT25uDb() {
+  closeDb();
+  ensureReady();
+  resetAppData();
+  mutateAppData((d) => ensureT25uTestFixture(d));
+}
+
+/** Non-default N/O — must flow into tree/sync/export when no per-resource override. */
+const NON_DEFAULT_PARAMS: ResourceScheduleParams = {
+  ...EXCEL_RESOURCE_SCHEDULE_DEFAULTS,
+  hoursPerShift: 10,
+  personnelShiftsPerDay: 1,
+  equipmentShiftsPerDay: 1,
+};
 
 async function loadXlsx(buf: Buffer) {
   const wb = new ExcelJS.Workbook();
@@ -105,8 +132,7 @@ function completeFixtureStages(): GprStage[] {
 
 describe("t25u shared dimensions (P1 #1)", () => {
   beforeEach(() => {
-    closeDb();
-    ensureReady();
+    resetT25uDb();
   });
 
   it("total_hours for чел.-ч / маш.-ч without explicit basis (dot units)", () => {
@@ -264,7 +290,7 @@ describe("t25u shared dimensions (P1 #1)", () => {
     );
   });
 
-  it("PARTIAL fixture marks incomplete amounts", () => {
+  it("PARTIAL known 10000 asserts all derivatives W/X/Y/Z", () => {
     const stages: GprStage[] = [
       {
         id: "p1",
@@ -302,14 +328,227 @@ describe("t25u shared dimensions (P1 #1)", () => {
     ];
     const build = stagesToResourceLines(stages);
     expect(build.incomplete.some((x) => x.includes("miss"))).toBe(true);
-    expect(build.knownDirect).toBe(10000);
+    // Known V from OK only: 1×10×1×1×1000
+    const V = 10000;
+    expect(build.knownDirect).toBe(V);
+    const rollup = rollupResourceSchedule({
+      params: EXCEL_RESOURCE_SCHEDULE_DEFAULTS,
+      lines: build.lines,
+      materialsTotal: build.materialsTotal,
+    });
+    // Independent hand derivatives on known V (PARTIAL — missing rate excluded)
+    const W = roundMoney(V * 0.43); // 4300
+    const X = roundMoney(V + W); // 14300
+    const Y = roundMoney(X * 0.4); // 5720
+    const Z = roundMoney(X + Y); // 20020
+    expect(W).toBe(4300);
+    expect(X).toBe(14300);
+    expect(Y).toBe(5720);
+    expect(Z).toBe(20020);
+    expect(rollup.direct).toBe(V);
+    expect(rollup.overhead).toBe(W);
+    expect(rollup.costWithOh).toBe(X);
+    expect(rollup.profit).toBe(Y);
+    expect(rollup.total).toBe(Z);
+    expect(rollup.incomplete.some((i) => i.includes("miss"))).toBe(true);
+  });
+
+  it("non-default params: tree/model/GPR/xlsx/pdf share independent expecteds", async () => {
+    // No per-resource N/O/P — must read NON_DEFAULT_PARAMS (not silent 11×2 defaults)
+    const stages: GprStage[] = [
+      {
+        id: "nd-1",
+        name: "Non-default pack",
+        start: "2026-01-01",
+        end: "2026-01-03", // 3 calendar days
+        sequence: 1,
+        resources: [
+          {
+            id: "nd-lab",
+            kind: "labor",
+            name: "Crew ND",
+            quantity: 2,
+            unit: "чел",
+            rate: 1400,
+            quantityBasis: "count_per_shift",
+          },
+          {
+            id: "nd-bus",
+            kind: "bus",
+            name: "Bus ND",
+            quantity: 2,
+            unit: "ед",
+            rate: 2650,
+            quantityBasis: "count_per_shift",
+          },
+          {
+            id: "nd-mat",
+            kind: "material",
+            name: "Sand ND",
+            quantity: 10,
+            unit: "т",
+            rate: 500,
+            quantityBasis: "material_qty",
+          },
+        ],
+      },
+    ];
+    // Hand: Q_lab=2×10×1×3=60 R=84000; Q_bus=60 R=159000; S=5000
+    const V = 84000 + 159000 + 5000; // 248000
+    const W = roundMoney(V * 0.43); // 106640
+    const X = roundMoney(V + W); // 354640
+    const Y = roundMoney(X * 0.4); // 141856
+    const Z = roundMoney(X + Y); // 496496
+    expect({ V, W, X, Y, Z }).toEqual({
+      V: 248000,
+      W: 106640,
+      X: 354640,
+      Y: 141856,
+      Z: 496496,
+    });
+
+    // Defaults would give labor Q=2×11×2×3=132 — tree must NOT use that
+    const treeDefault = buildHierarchicalEstimate({ stages });
+    const labDefault = treeDefault
+      .flatMap((n) => n.groups.flatMap((g) => g.leaves))
+      .find((l) => l.id === "nd-lab")!;
+    expect(labDefault.hoursQ).toBe(132);
+
+    const tree = buildHierarchicalEstimate({
+      stages,
+      params: NON_DEFAULT_PARAMS,
+    });
+    const lab = tree
+      .flatMap((n) => n.groups.flatMap((g) => g.leaves))
+      .find((l) => l.id === "nd-lab")!;
+    const bus = tree
+      .flatMap((n) => n.groups.flatMap((g) => g.leaves))
+      .find((l) => l.id === "nd-bus")!;
+    expect(lab.hoursQ).toBe(60);
+    expect(lab.amount).toBe(84000);
+    expect(bus.hoursQ).toBe(60);
+    expect(bus.amount).toBe(159000);
+
+    const build = stagesToResourceLines(stages, NON_DEFAULT_PARAMS);
+    expect(build.knownDirect).toBe(V);
+    const rollup = rollupResourceSchedule({
+      params: NON_DEFAULT_PARAMS,
+      lines: build.lines,
+      materialsTotal: build.materialsTotal,
+    });
+    expect(rollup.direct).toBe(V);
+    expect(rollup.overhead).toBe(W);
+    expect(rollup.costWithOh).toBe(X);
+    expect(rollup.profit).toBe(Y);
+    expect(rollup.total).toBe(Z);
+
+    // Persist via repo only (no hand writeAppData)
+    updateSchedule("u-smet", T25U_TEST.scheduleId, { stages });
+    recomputeCalculationCost("u-smet", T25U_TEST.calculationId, {
+      useResourceScheduleEconomics: true,
+      resourceScheduleParams: NON_DEFAULT_PARAMS,
+    });
+
+    const after = readAppData();
+    const slices = after.calculations.find(
+      (c) => c.id === T25U_TEST.calculationId
+    )!.costSummary!.resourceSlices!;
+    expect(slices.direct).toBe(V);
+    expect(slices.overhead).toBe(W);
+    expect(slices.costWithOh).toBe(X);
+    expect(slices.profit).toBe(Y);
+    expect(slices.total).toBe(Z);
+
+    const treeLive = buildHierarchicalEstimate({
+      stages: after.schedules.find((s) => s.id === T25U_TEST.scheduleId)!.stages,
+      params:
+        after.calculations.find((c) => c.id === T25U_TEST.calculationId)!
+          .resourceScheduleParams,
+    });
+    expect(
+      treeLive.flatMap((n) => n.groups.flatMap((g) => g.leaves)).find((l) => l.id === "nd-lab")!
+        .amount
+    ).toBe(84000);
+
+    const xlsx = await buildCalculationXlsx(T25U_TEST.calculationId);
+    const wb = await loadXlsx(xlsx);
+    const ws = wb.getWorksheet("Расчёт")!;
+    const cell = (code: string) => {
+      let v = 0;
+      ws.eachRow((row) => {
+        if (String(row.getCell(1).value) === code) v = Number(row.getCell(6).value);
+      });
+      return v;
+    };
+    expect(cell("V_direct")).toBe(V);
+    expect(cell("W_oh43")).toBe(W);
+    expect(cell("X_cost_oh")).toBe(X);
+    expect(cell("Y_markup40")).toBe(Y);
+    expect(cell("Z_total")).toBe(Z);
+
+    const pdfText = pdfExtractText(await buildCalculationPdf(T25U_TEST.calculationId));
+    expect(pdfText).toMatch(new RegExp(`V direct:\\s*${Math.round(V)}`));
+    expect(pdfText).toMatch(new RegExp(`W OH43%:\\s*${Math.round(W)}`));
+    expect(pdfText).toMatch(new RegExp(`X cost\\+OH:\\s*${Math.round(X)}`));
+    expect(pdfText).toMatch(new RegExp(`Y markup40%:\\s*${Math.round(Y)}`));
+    expect(pdfText).toMatch(new RegExp(`Z TOTAL:\\s*${Math.round(Z)}`));
+
+    const gpr = await loadXlsx(await buildGprXlsx(T25U_TEST.scheduleId));
+    const res = gpr.getWorksheet("Ресурсы")!;
+    let labR: number | null = null;
+    let busR: number | null = null;
+    res.eachRow((row) => {
+      const name = String(row.getCell(3).value ?? "");
+      if (name === "Crew ND") labR = Number(row.getCell(12).value);
+      if (name === "Bus ND") busR = Number(row.getCell(12).value);
+    });
+    expect(labR).toBe(84000);
+    expect(busR).toBe(159000);
+  });
+
+  it("shared classify: MAT- code → materials; bare containers → other visible", () => {
+    expect(
+      classifyDirectCostBucket({
+        code: "MAT-1",
+        name: "Контейнеры под бой",
+        unit: "шт",
+      })
+    ).toBe("materials");
+    expect(
+      classifyDirectCostBucket({
+        code: "X-9",
+        name: "Контейнеры под бой",
+        unit: "шт",
+      })
+    ).toBe("other");
+    const positions: CalcPosition[] = [
+      {
+        id: "p-mat",
+        code: "MAT-1",
+        name: "Контейнеры под бой",
+        unit: "шт",
+        quantity: 8,
+        rate: 4500,
+      },
+      {
+        id: "p-oth",
+        code: "MISC",
+        name: "Прочая услуга",
+        unit: "усл",
+        quantity: 1,
+        rate: 1000,
+      },
+    ];
+    const b = bucketsFromPositions(positions);
+    expect(b.materials).toBe(36000);
+    expect(b.other).toBe(1000);
+    expect(b.labor + b.materials + b.equipment + b.other).toBe(37000);
   });
 });
 
 describe("t25u export PARTIAL + numerics (P1 #3 + evidence)", () => {
   beforeEach(() => {
-    closeDb();
-    ensureReady();
+    resetT25uDb();
   });
 
   it("calc-pdf asserts numeric V/W/X/Y/Z values", async () => {
@@ -360,80 +599,107 @@ describe("t25u export PARTIAL + numerics (P1 #3 + evidence)", () => {
     expect(totalStatus).toMatch(/PARTIAL/i);
   });
 
-  it("genuine qty/rate mutate → close/reopen DB → export+tree share constants", async () => {
-    const before = readAppData();
-    const bus0 = before.schedules
-      .find((s) => s.id === T25U_TEST.scheduleId)!
-      .stages.flatMap((s) => s.resources ?? [])
-      .find((r) => r.id === "rst-2-bus")!;
-    expect(bus0.quantity).toBe(2);
+  it("genuine qty/rate mutate → close/reopen → tree/xlsx/pdf/GPR share independent V–Z", async () => {
+    // Seed a COMPLETE minimal fixture so V/W/X/Y/Z are hand-computable
+    const stages = completeFixtureStages();
+    updateSchedule("u-smet", T25U_TEST.scheduleId, { stages });
+    recomputeCalculationCost("u-smet", T25U_TEST.calculationId, {
+      useResourceScheduleEconomics: true,
+      resourceScheduleParams: EXCEL_RESOURCE_SCHEDULE_DEFAULTS,
+    });
 
-    // Genuine mutation: qty 2→3, rate 2650→2700
+    // Genuine mutation: labor qty 2→3 (bus/mat unchanged)
     patchScheduleResourceAndSync("u-smet", T25U_TEST.scheduleId, {
-      resourceId: "rst-2-bus",
-      stageId: "gst-2",
+      resourceId: "cf-lab",
+      stageId: "cf-1",
       quantity: 3,
-      rate: 2700,
+    });
+
+    // Independent hand constants (NOT read from costSummary under test):
+    // Labor Q=3×11×1×3=99 R=99×1400=138600
+    // Bus Q=66 R=174900; Mat S=5000
+    const expectedQ = 99;
+    const expectedR = 138600;
+    const V = 138600 + 174900 + 5000; // 318500
+    const W = roundMoney(V * 0.43); // 136955
+    const X = roundMoney(V + W); // 455455
+    const Y = roundMoney(X * 0.4); // 182182
+    const Z = roundMoney(X + Y); // 637637
+    expect({ V, W, X, Y, Z }).toEqual({
+      V: 318500,
+      W: 136955,
+      X: 455455,
+      Y: 182182,
+      Z: 637637,
     });
 
     const mid = readAppData();
-    const bus1 = mid.schedules
+    const lab1 = mid.schedules
       .find((s) => s.id === T25U_TEST.scheduleId)!
       .stages.flatMap((s) => s.resources ?? [])
-      .find((r) => r.id === "rst-2-bus")!;
-    expect(bus1.quantity).toBe(3);
-    expect(bus1.rate).toBe(2700);
-    const expectedQ = 3 * 11 * 1 * 3; // 99
-    const expectedR = roundMoney(expectedQ * 2700);
-    const zAfter = mid.calculations.find((c) => c.id === T25U_TEST.calculationId)!
-      .costSummary!.resourceSlices!.total;
+      .find((r) => r.id === "cf-lab")!;
+    expect(lab1.quantity).toBe(3);
 
     // Reopen DB WITHOUT writeAppData hand-save
     closeDb();
     ensureReady();
     const after = readAppData();
-    const bus2 = after.schedules
+    const lab2 = after.schedules
       .find((s) => s.id === T25U_TEST.scheduleId)!
       .stages.flatMap((s) => s.resources ?? [])
-      .find((r) => r.id === "rst-2-bus")!;
-    expect(bus2.quantity).toBe(3);
-    expect(bus2.rate).toBe(2700);
+      .find((r) => r.id === "cf-lab")!;
+    expect(lab2.quantity).toBe(3);
 
+    const params =
+      after.calculations.find((c) => c.id === T25U_TEST.calculationId)!
+        .resourceScheduleParams ?? EXCEL_RESOURCE_SCHEDULE_DEFAULTS;
     const tree = buildHierarchicalEstimate({
       stages: after.schedules.find((s) => s.id === T25U_TEST.scheduleId)!.stages,
+      params,
     });
     const leaf = tree
       .flatMap((n) => n.groups.flatMap((g) => g.leaves))
-      .find((l) => l.id === "rst-2-bus")!;
+      .find((l) => l.id === "cf-lab")!;
     expect(leaf.hoursQ).toBe(expectedQ);
     expect(leaf.amount).toBe(expectedR);
 
     const draft = after.calculations.find((c) => c.id === T25U_TEST.calculationId)!;
-    expect(draft.costSummary!.resourceSlices!.total).toBe(zAfter);
+    expect(draft.costSummary!.resourceSlices!.direct).toBe(V);
+    expect(draft.costSummary!.resourceSlices!.overhead).toBe(W);
+    expect(draft.costSummary!.resourceSlices!.costWithOh).toBe(X);
+    expect(draft.costSummary!.resourceSlices!.profit).toBe(Y);
+    expect(draft.costSummary!.resourceSlices!.total).toBe(Z);
 
     const xlsx = await buildCalculationXlsx(T25U_TEST.calculationId);
     const wb = await loadXlsx(xlsx);
     const ws = wb.getWorksheet("Расчёт")!;
-    let zCell = 0;
-    ws.eachRow((row) => {
-      if (String(row.getCell(1).value) === "Z_total") {
-        zCell = Number(row.getCell(6).value);
-      }
-    });
-    expect(zCell).toBe(zAfter);
+    const cell = (code: string) => {
+      let v = 0;
+      ws.eachRow((row) => {
+        if (String(row.getCell(1).value) === code) v = Number(row.getCell(6).value);
+      });
+      return v;
+    };
+    expect(cell("V_direct")).toBe(V);
+    expect(cell("W_oh43")).toBe(W);
+    expect(cell("X_cost_oh")).toBe(X);
+    expect(cell("Y_markup40")).toBe(Y);
+    expect(cell("Z_total")).toBe(Z);
 
     const pdfText = pdfExtractText(
       await buildCalculationPdf(T25U_TEST.calculationId)
     );
-    expect(pdfText).toMatch(
-      new RegExp(`Z TOTAL:\\s*${Math.round(zAfter)}`)
-    );
+    expect(pdfText).toMatch(new RegExp(`V direct:\\s*${Math.round(V)}`));
+    expect(pdfText).toMatch(new RegExp(`W OH43%:\\s*${Math.round(W)}`));
+    expect(pdfText).toMatch(new RegExp(`X cost\\+OH:\\s*${Math.round(X)}`));
+    expect(pdfText).toMatch(new RegExp(`Y markup40%:\\s*${Math.round(Y)}`));
+    expect(pdfText).toMatch(new RegExp(`Z TOTAL:\\s*${Math.round(Z)}`));
 
     const gpr = await loadXlsx(await buildGprXlsx(T25U_TEST.scheduleId));
     const res = gpr.getWorksheet("Ресурсы")!;
     let gprR: number | null = null;
     res.eachRow((row) => {
-      if (String(row.getCell(3).value) === "Автобус доставки") {
+      if (String(row.getCell(3).value) === "Crew") {
         gprR = Number(row.getCell(12).value);
       }
     });
@@ -443,8 +709,7 @@ describe("t25u export PARTIAL + numerics (P1 #3 + evidence)", () => {
 
 describe("t25u school non-destructive + custom line", () => {
   beforeEach(() => {
-    closeDb();
-    ensureReady();
+    resetT25uDb();
   });
 
   it("updateSchedule with unrelated custom line preserves dates/rates/facts/photos/custom", () => {

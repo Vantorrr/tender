@@ -319,6 +319,30 @@ export function runCostEngine(input: CostEngineInput): CostEngineResult {
   };
 }
 
+/**
+ * Shared direct-cost bucket classification for tree cards, GPR summary, and
+ * cost-engine. Explicit sync codes (LAB-/MAT-/EQ-/BUS-) win over name heuristics.
+ * Ambiguous leftovers stay `other` — never silently force into materials.
+ */
+export type DirectCostBucket = "labor" | "materials" | "equipment" | "other";
+
+export function classifyDirectCostBucket(
+  p: Pick<CalcPosition, "code" | "name" | "unit">
+): DirectCostBucket {
+  const code = (p.code || "").trim().toUpperCase();
+  if (code === "НР" || code === "СП") return "other";
+  if (/^LAB([-\s]|$)/i.test(code)) return "labor";
+  if (/^MAT([-\s]|$)/i.test(code)) return "materials";
+  if (/^(EQ|BUS)([-\s]|$)/i.test(code)) return "equipment";
+  const hay = `${p.code} ${p.name} ${p.unit}`.toLowerCase();
+  if (/н-ч|чел|труд|зарп|свар|монтажн/.test(hay)) return "labor";
+  if (/матер|м²|м2|т\b|сэндвич|бетон|арматур/.test(hay)) return "materials";
+  if (/маш|техник|jcb|экскав|кран|атс|дсм|автобус|bus/.test(hay)) {
+    return "equipment";
+  }
+  return "other";
+}
+
 /** Split calc positions into cost buckets without double-counting НР/СП rows. */
 export function bucketsFromPositions(
   positions: CalcPosition[],
@@ -340,18 +364,14 @@ export function bucketsFromPositions(
   let hasMaterialPositions = false;
   for (const p of positions) {
     if (p.code === "НР" || p.code === "СП") continue;
-    const hay = `${p.code} ${p.name} ${p.unit}`.toLowerCase();
-    if (/матер|м²|м2|т\b|сэндвич|бетон|арматур/.test(hay)) {
-      hasMaterialPositions = true;
-    }
+    const bucket = classifyDirectCostBucket(p);
+    if (bucket === "materials") hasMaterialPositions = true;
     // Missing rate must not become a confirmed 0 ₽ contribution.
     if (p.rateMissing) continue;
     const sum = p.quantity * p.rate * factor;
-    if (/н-ч|чел|труд|зарп|свар|монтажн/.test(hay)) labor += sum;
-    else if (/матер|м²|м2|т\b|сэндвич|бетон|арматур/.test(hay)) {
-      materials += sum;
-    } else if (/маш|техник|jcb|экскав|кран|атс|дсм|автобус|bus/.test(hay))
-      equipment += sum;
+    if (bucket === "labor") labor += sum;
+    else if (bucket === "materials") materials += sum;
+    else if (bucket === "equipment") equipment += sum;
     else other += sum;
   }
   return {

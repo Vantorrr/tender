@@ -3,11 +3,15 @@
  * Amounts use shared resolveResourceDimensions (same Q/R as cost-engine / export).
  */
 import { roundMoney } from "@/lib/calc-math";
+import { classifyDirectCostBucket } from "@/lib/cost-engine";
 import {
   resolveResourceDimensions,
   type ResolvedResourceDims,
 } from "@/lib/resource-dimensions";
-import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
+import {
+  EXCEL_RESOURCE_SCHEDULE_DEFAULTS,
+  type ResourceScheduleParams,
+} from "@/lib/resource-schedule-model";
 import type {
   CalcPosition,
   GprStage,
@@ -106,22 +110,12 @@ function resourceKind(r: GprStageResource): EstimateKind {
   return "other";
 }
 
-function isMaterialPosition(p: CalcPosition): boolean {
-  if (p.code === "НР" || p.code === "СП") return false;
-  const hay = `${p.code} ${p.name} ${p.unit}`.toLowerCase();
-  return /матер|м²|м2|т\b|сэндвич|бетон|арматур|компл/.test(hay);
-}
-
-function isLaborPosition(p: CalcPosition): boolean {
-  if (p.code === "НР" || p.code === "СП") return false;
-  const hay = `${p.code} ${p.name}`.toLowerCase();
-  return /труд|чел|рабоч|монтажн|сварщ|бетонщ|арматурщ/.test(hay);
-}
-
-function isEquipmentPosition(p: CalcPosition): boolean {
-  if (p.code === "НР" || p.code === "СП") return false;
-  const hay = `${p.code} ${p.name}`.toLowerCase();
-  return /техник|кран|экскаватор|каток|самосвал|машино|маш-ч|маш\.-ч/.test(hay);
+function estimateKindFromPosition(p: CalcPosition): EstimateKind {
+  const bucket = classifyDirectCostBucket(p);
+  if (bucket === "labor") return "labor";
+  if (bucket === "materials") return "material";
+  if (bucket === "equipment") return "equipment";
+  return "other";
 }
 
 function groupLeaves(leaves: EstimateLeaf[]): EstimateGroup[] {
@@ -166,7 +160,8 @@ export function buildHierarchicalEstimate(opts: {
   stages: GprStage[];
   positions?: CalcPosition[];
   search?: string;
-  params?: typeof EXCEL_RESOURCE_SCHEDULE_DEFAULTS;
+  /** Live calc.resourceScheduleParams — required for non-default N/O hours/shifts. */
+  params?: ResourceScheduleParams;
 }): EstimateStageNode[] {
   const params = opts.params ?? EXCEL_RESOURCE_SCHEDULE_DEFAULTS;
   const q = (opts.search ?? "").trim().toLowerCase();
@@ -207,11 +202,7 @@ export function buildHierarchicalEstimate(opts: {
   for (const p of opts.positions ?? []) {
     if (p.code === "НР" || p.code === "СП") continue;
     if (named.has(p.name.toLowerCase())) continue;
-    let kind: EstimateKind = "other";
-    if (isMaterialPosition(p)) kind = "material";
-    else if (isLaborPosition(p)) kind = "labor";
-    else if (isEquipmentPosition(p)) kind = "equipment";
-    else continue;
+    const kind = estimateKindFromPosition(p);
     const rate =
       p.rateMissing || !(Number.isFinite(p.rate) && p.rate > 0)
         ? null
@@ -230,7 +221,7 @@ export function buildHierarchicalEstimate(opts: {
       positionId: p.id,
       incomplete: rate == null ? ["rate"] : [],
       basis: kind === "material" ? "material_qty" : "total_hours",
-      hoursQ: kind === "material" ? null : p.quantity,
+      hoursQ: kind === "material" || kind === "other" ? null : p.quantity,
     };
     if (match(leaf.name) || match(KIND_LABEL[kind])) unbound.push(leaf);
   }
@@ -253,15 +244,19 @@ export function estimateBudgetCards(nodes: EstimateStageNode[]): {
   labor: number | null;
   equipment: number | null;
   materials: number | null;
+  /** Прочие — never silently folded into materials. */
+  other: number | null;
   totalKnown: number | null;
   incomplete: boolean;
 } {
   let labor = 0;
   let equipment = 0;
   let materials = 0;
+  let other = 0;
   let anyLabor = false;
   let anyEq = false;
   let anyMat = false;
+  let anyOther = false;
   let incomplete = false;
   for (const n of nodes) {
     if (n.incomplete) incomplete = true;
@@ -277,6 +272,9 @@ export function estimateBudgetCards(nodes: EstimateStageNode[]): {
       } else if (g.kind === "material") {
         materials += g.subtotal;
         anyMat = true;
+      } else if (g.kind === "other") {
+        other += g.subtotal;
+        anyOther = true;
       }
     }
   }
@@ -284,11 +282,13 @@ export function estimateBudgetCards(nodes: EstimateStageNode[]): {
     anyLabor ? labor : null,
     anyEq ? equipment : null,
     anyMat ? materials : null,
+    anyOther ? other : null,
   ].filter((n): n is number => n != null);
   return {
     labor: anyLabor ? roundMoney(labor) : null,
     equipment: anyEq ? roundMoney(equipment) : null,
     materials: anyMat ? roundMoney(materials) : null,
+    other: anyOther ? roundMoney(other) : null,
     totalKnown: parts.length ? roundMoney(parts.reduce((s, n) => s + n, 0)) : null,
     incomplete,
   };

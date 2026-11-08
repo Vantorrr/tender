@@ -10,12 +10,15 @@ import {
   estimateBudgetCards,
   type EstimateLeaf,
 } from "@/lib/hierarchical-estimate";
+import type { ResourceScheduleParams } from "@/lib/resource-schedule-model";
 import type { CalcPosition, CostSummarySnapshot, GprStage } from "@/lib/types";
 
 type Props = {
   stages: GprStage[];
   positions: CalcPosition[];
   locked?: boolean;
+  /** Live calc.resourceScheduleParams — must match sync/export (no silent defaults). */
+  resourceScheduleParams?: ResourceScheduleParams;
   /** Immutable customer original total (позиции × коэф. + НР15/СП8) — separate model. */
   originalTotal?: number | null;
   originalLabel?: string;
@@ -30,6 +33,7 @@ export function HierarchicalEstimatePanel({
   stages,
   positions,
   locked,
+  resourceScheduleParams,
   originalTotal,
   originalLabel,
   costSummary,
@@ -45,8 +49,14 @@ export function HierarchicalEstimatePanel({
   const [seededOpen, setSeededOpen] = useState(false);
 
   const nodes = useMemo(
-    () => buildHierarchicalEstimate({ stages, positions, search }),
-    [stages, positions, search]
+    () =>
+      buildHierarchicalEstimate({
+        stages,
+        positions,
+        search,
+        params: resourceScheduleParams,
+      }),
+    [stages, positions, search, resourceScheduleParams]
   );
   const cards = useMemo(() => estimateBudgetCards(nodes), [nodes]);
   const slices = costSummary?.resourceSlices;
@@ -194,10 +204,15 @@ export function HierarchicalEstimatePanel({
             ) : (
               <span className="ml-2 text-amber-800">S мат.: нет данных</span>
             )}
+            {cards.other != null && cards.other > 0 ? (
+              <span className="ml-2" data-testid="budget-card-other">
+                Прочие: {formatMoney(cards.other)}
+              </span>
+            ) : null}
           </div>
         </div>
       ) : (
-        <div className="mb-4 grid gap-3 sm:grid-cols-2">
+        <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <div
             className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
             data-testid="budget-card-labor"
@@ -216,6 +231,24 @@ export function HierarchicalEstimatePanel({
               {cards.equipment == null ? "нет данных" : formatMoney(cards.equipment)}
             </p>
           </div>
+          <div
+            className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
+            data-testid="budget-card-materials"
+          >
+            <p className="text-xs text-[var(--tk-muted)]">Дерево · материалы</p>
+            <p className="mt-1 text-xl font-semibold">
+              {cards.materials == null ? "нет данных" : formatMoney(cards.materials)}
+            </p>
+          </div>
+          {cards.other != null && cards.other > 0 ? (
+            <div
+              className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
+              data-testid="budget-card-other"
+            >
+              <p className="text-xs text-[var(--tk-muted)]">Дерево · прочие</p>
+              <p className="mt-1 text-xl font-semibold">{formatMoney(cards.other)}</p>
+            </div>
+          ) : null}
         </div>
       )}
 

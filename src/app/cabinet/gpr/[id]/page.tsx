@@ -216,6 +216,17 @@ export default function GprDetailPage() {
                       ? formatMoney(cost.resourceSlices.materials)
                       : "нет данных"}
                   </div>
+                  <div data-testid="gpr-labor-cost">
+                    T люди: {formatMoney(cost.resourceSlices.labor)}
+                  </div>
+                  <div data-testid="gpr-equipment-cost">
+                    U техника: {formatMoney(cost.resourceSlices.equipment)}
+                  </div>
+                  {buckets && buckets.other > 0 ? (
+                    <div data-testid="gpr-other-cost">
+                      Прочие: {formatMoney(buckets.other)}
+                    </div>
+                  ) : null}
                 </>
               ) : (
                 <>
@@ -227,6 +238,11 @@ export default function GprDetailPage() {
                       : formatMoney(buckets.materials)}
                   </div>
                   <div>Прямые · техника: {formatMoney(buckets.equipment)}</div>
+                  {buckets.other > 0 ? (
+                    <div data-testid="gpr-other-cost">
+                      Прочие: {formatMoney(buckets.other)}
+                    </div>
+                  ) : null}
                   <div>
                     C0 (без резерва): {formatMoney(cost.C0)}
                     {cost.totalsIncomplete ? " · неполно" : ""}
