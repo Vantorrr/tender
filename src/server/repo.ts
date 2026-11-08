@@ -50,6 +50,10 @@ import {
   EXCEL_RESOURCE_SCHEDULE_DEFAULTS,
   type ResourceScheduleParams,
 } from "@/lib/resource-schedule-model";
+import {
+  patchStageResource,
+  syncDraftFromStages,
+} from "@/lib/unified-resource-sync";
 
 export { assertOrgAccess };
 
@@ -935,7 +939,72 @@ export function updateSchedule(
         ? { ...s, ...safe, updatedAt: new Date().toISOString() }
         : s
     );
+    // If stages were patched on a linked resource draft — resync cost slices.
+    const updated = data.schedules.find((s) => s.id === id)!;
+    if (safe.stages) {
+      const calc = data.calculations.find((c) => c.id === updated.calculationId);
+      if (calc && calc.kind !== "customer_original" && !calc.immutable) {
+        const synced = syncDraftFromStages(calc, updated.stages);
+        Object.assign(calc, synced.calc);
+      }
+    }
     audit(data, actorId, "update", "gpr", id, "Обновление ГПР");
+    return data;
+  });
+}
+
+/**
+ * Edit one stage resource (qty/rate) and recompute the linked resource draft
+ * from the unified tree → positions + V/W/X/Y/Z costSummary.
+ */
+export function patchScheduleResourceAndSync(
+  actorId: string,
+  scheduleId: string,
+  input: {
+    resourceId: string;
+    stageId?: string;
+    quantity?: number;
+    rate?: number | null;
+  }
+) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const schedule = data.schedules.find((s) => s.id === scheduleId);
+    if (!schedule) throw new Error("ГПР не найден");
+    assertOrgAccess(actor, schedule.orgId, "ГПР");
+    const calc = data.calculations.find((c) => c.id === schedule.calculationId);
+    if (calc) {
+      assertOrgAccess(actor, calc.orgId, "расчёта");
+      assertEditableCalculation(calc);
+    }
+    schedule.stages = patchStageResource(
+      schedule.stages,
+      input.resourceId,
+      { quantity: input.quantity, rate: input.rate },
+      input.stageId
+    );
+    schedule.updatedAt = new Date().toISOString();
+    if (calc) {
+      const synced = syncDraftFromStages(calc, schedule.stages);
+      Object.assign(calc, synced.calc);
+      calc.changeLog = [
+        ...(calc.changeLog ?? []),
+        {
+          id: `cl-${Date.now()}`,
+          at: new Date().toISOString(),
+          actorId,
+          detail: `Ресурс ${input.resourceId}: qty/rate → единый пересчёт V/W/X/Y/Z`,
+        },
+      ];
+    }
+    audit(
+      data,
+      actorId,
+      "patch_resource",
+      "gpr",
+      scheduleId,
+      `Ресурс ${input.resourceId} → sync draft ${schedule.calculationId}`
+    );
     return data;
   });
 }
@@ -1718,6 +1787,41 @@ export function recomputeCalculationCost(
       item.resourceScheduleParams = patch.resourceScheduleParams;
     }
 
+    const linkedSchedule = data.schedules.find(
+      (s) => s.calculationId === item.id
+    );
+    const useRs =
+      patch?.useResourceScheduleEconomics ?? Boolean(item.resourceScheduleParams);
+    if (useRs && !item.resourceScheduleParams) {
+      item.resourceScheduleParams = EXCEL_RESOURCE_SCHEDULE_DEFAULTS;
+    }
+
+    // Unified path: GPR stage resources are SoT when present + resource-schedule economics.
+    if (useRs && linkedSchedule?.stages?.length) {
+      const synced = syncDraftFromStages(item, linkedSchedule.stages);
+      Object.assign(item, synced.calc);
+      const matNeeds = buildMaterialNeeds({
+        positions: item.positions,
+        stages: linkedSchedule.stages,
+      });
+      const extra = materialNeedsIncomplete(matNeeds).slice(0, 20);
+      if (extra.length && item.costSummary) {
+        item.costSummary.incomplete = [
+          ...new Set([...(item.costSummary.incomplete ?? []), ...extra]),
+        ];
+        item.costSummary.totalsIncomplete = true;
+      }
+      audit(
+        data,
+        actorId,
+        "recompute",
+        "calculation",
+        calcId,
+        "Cost-engine unified tree → V/W/X/Y/Z"
+      );
+      return data;
+    }
+
     const buckets = bucketsFromPositions(
       item.positions,
       item.scenarioFactor || 1
@@ -1737,16 +1841,7 @@ export function recomputeCalculationCost(
         "Северные/вахтовые элементы есть в эталоне (ШР/ТС/Персонал); универсальный коэффициент не применяем без подтверждения базы",
       ],
     };
-    const rs =
-      item.resourceScheduleParams ??
-      (patch?.useResourceScheduleEconomics
-        ? EXCEL_RESOURCE_SCHEDULE_DEFAULTS
-        : null);
-    const useRs =
-      patch?.useResourceScheduleEconomics ?? Boolean(item.resourceScheduleParams);
-    if (useRs && !item.resourceScheduleParams) {
-      item.resourceScheduleParams = EXCEL_RESOURCE_SCHEDULE_DEFAULTS;
-    }
+    const rs = item.resourceScheduleParams;
     const Dapprox =
       buckets.labor + buckets.materials + buckets.equipment + buckets.other + logistics;
     const site = useRs
@@ -1779,7 +1874,7 @@ export function recomputeCalculationCost(
     });
     const matNeeds = buildMaterialNeeds({
       positions: item.positions,
-      stages: data.schedules.find((s) => s.calculationId === item.id)?.stages,
+      stages: linkedSchedule?.stages,
     });
     const incomplete = [
       ...engine.incomplete,

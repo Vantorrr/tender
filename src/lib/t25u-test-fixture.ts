@@ -1,7 +1,12 @@
 /**
  * Isolated t25u TEST fixture — separate from school №12 GPR/calc/facts.
  * Marked in titles with «[TEST]»; never mutates existing p-1 / g-1 / c-1 / pf-1.
+ *
+ * OPT-IN only: install when T25U_TEST_FIXTURE=1, PROCUREMENT_DEMO=1, or NODE_ENV=test.
+ * Never auto-inject into every tenant on prod migrate.
  */
+import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
+import { syncDraftFromStages } from "@/lib/unified-resource-sync";
 import type {
   AppData,
   Calculation,
@@ -13,6 +18,7 @@ import type {
 export const T25U_TEST = {
   procurementId: "p-t25u-test",
   calculationId: "c-t25u-test",
+  originalCalculationId: "c-t25u-original",
   scheduleId: "g-t25u-test",
   planFactId: "pf-t25u-test",
   workName: "Демонтаж перегородок",
@@ -20,12 +26,89 @@ export const T25U_TEST = {
   date: "2026-11-08",
 } as const;
 
+/** Gate for installing the demo/test contour — not a silent prod migrate. */
+export function isT25uTestFixtureOptIn(
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  // Explicit off wins (even under NODE_ENV=test) — proves prod migrate path.
+  if (env.T25U_TEST_FIXTURE === "0") return false;
+  if (env.T25U_TEST_FIXTURE === "1") return true;
+  if (env.PROCUREMENT_DEMO === "1") return true;
+  if (env.NODE_ENV === "test") return true;
+  return false;
+}
+
 export function isT25uTestTitle(title: string | undefined | null): boolean {
   return Boolean(title && /\[TEST\]/i.test(title));
 }
 
 export function isT25uTestId(id: string | undefined | null): boolean {
   return Boolean(id && id.includes("t25u-test"));
+}
+
+/** Frozen customer estimate positions — NR15/SP8 total ≈ 74 897 ₽ (immutable). */
+function originalPositions() {
+  return [
+    {
+      id: "cto-1",
+      code: "LAB-T",
+      name: "Демонтажник",
+      unit: "чел",
+      quantity: 10,
+      rate: 1054,
+    },
+    {
+      id: "cto-2",
+      code: "LAB-W",
+      name: "Электрогазосварщик 3 разряда",
+      unit: "чел",
+      quantity: 2,
+      rate: 1376,
+    },
+    {
+      id: "cto-3",
+      code: "ATS-T",
+      name: "JCB 5 CX",
+      unit: "маш",
+      quantity: 2,
+      rate: 5800,
+    },
+    {
+      id: "cto-4",
+      code: "MAT-T",
+      name: "Контейнеры под бой",
+      unit: "шт",
+      quantity: 8,
+      rate: 4500,
+    },
+  ];
+}
+
+function testOriginalCalculation(orgId: string): Calculation {
+  return {
+    id: T25U_TEST.originalCalculationId,
+    orgId,
+    procurementId: T25U_TEST.procurementId,
+    title: "[TEST] Смета заказчика (оригинал) — t25u",
+    kind: "customer_original",
+    status: "gotovo",
+    positions: originalPositions(),
+    assumptions: [
+      "[TEST] Immutable оригинал; правки только в resource_draft",
+      "Итого позиций×коэф.+НР15/СП8 ≈ 74897 ₽ — не путать с ресурсным Z (НР43%/наценка40%)",
+    ],
+    scenario: "bazovyy",
+    scenarioFactor: 1,
+    participateDecision: "uchastvovat",
+    directoryVersionId: "dir-rascenki-client-1",
+    version: 1,
+    authorId: "u-smet",
+    updatedAt: "2026-11-08T12:00:00Z",
+    immutable: true,
+    pairedCalculationId: T25U_TEST.calculationId,
+    changeLog: [],
+    dataFlags: ["t25u_test_fixture", "immutable_original"],
+  };
 }
 
 function testCalculation(orgId: string): Calculation {
@@ -36,42 +119,13 @@ function testCalculation(orgId: string): Calculation {
     title: "[TEST] Расчёт стоимости — демо-контур t25u",
     kind: "resource_draft",
     status: "v_rabote",
-    positions: [
-      {
-        id: "ctp-1",
-        code: "LAB-T",
-        name: "Демонтажник",
-        unit: "чел",
-        quantity: 10,
-        rate: 1054,
-      },
-      {
-        id: "ctp-2",
-        code: "LAB-W",
-        name: "Электрогазосварщик 3 разряда",
-        unit: "чел",
-        quantity: 2,
-        rate: 1376,
-      },
-      {
-        id: "ctp-3",
-        code: "ATS-T",
-        name: "JCB 5 CX",
-        unit: "маш",
-        quantity: 2,
-        rate: 5800,
-      },
-      {
-        id: "ctp-4",
-        code: "MAT-T",
-        name: "Контейнеры под бой",
-        unit: "шт",
-        quantity: 8,
-        rate: 4500,
-      },
-    ],
+    positions: originalPositions().map((p) => ({
+      ...p,
+      id: p.id.replace("cto-", "ctp-"),
+    })),
     assumptions: [
       "[TEST] Изолированный контур приёмки t25u — не данные школы №12",
+      "Единая ресурсная модель: дерево qty/rate → cost-engine V/W/X/Y/Z",
     ],
     scenario: "bazovyy",
     scenarioFactor: 1,
@@ -81,8 +135,10 @@ function testCalculation(orgId: string): Calculation {
     authorId: "u-smet",
     updatedAt: "2026-11-08T12:00:00Z",
     immutable: false,
+    pairedCalculationId: T25U_TEST.originalCalculationId,
     changeLog: [],
-    dataFlags: ["t25u_test_fixture"],
+    dataFlags: ["t25u_test_fixture", "unified_resource_tree"],
+    resourceScheduleParams: { ...EXCEL_RESOURCE_SCHEDULE_DEFAULTS },
   };
 }
 
@@ -116,7 +172,7 @@ function testSchedule(orgId: string): GprSchedule {
           {
             id: "rst-1-eq",
             kind: "equipment",
-            name: "JCB 5 CX",
+            name: "JCB 5 CX мобилизация",
             quantity: 1,
             unit: "маш",
             rate: 5800,
@@ -129,6 +185,7 @@ function testSchedule(orgId: string): GprSchedule {
             unit: "компл",
             rate: null,
           },
+          // Single bus for whole TEST GPR — no duplicates on later stages
           {
             id: "rst-1-bus",
             kind: "bus",
@@ -182,14 +239,6 @@ function testSchedule(orgId: string): GprSchedule {
             unit: "маш",
             rate: 5800,
           },
-          {
-            id: "rst-2-bus",
-            kind: "bus",
-            name: "Автобус доставки",
-            quantity: 1,
-            unit: "ед",
-            rate: 2650,
-          },
         ],
       },
       {
@@ -202,7 +251,6 @@ function testSchedule(orgId: string): GprSchedule {
         crewSize: 2,
         planVolume: 50,
         workName: "Сдача",
-        // no labor — proves Gantt resource filter
         resources: [
           {
             id: "rst-3-mat",
@@ -219,14 +267,6 @@ function testSchedule(orgId: string): GprSchedule {
             quantity: 1,
             unit: "маш",
             rate: null,
-          },
-          {
-            id: "rst-3-bus",
-            kind: "bus",
-            name: "Автобус доставки",
-            quantity: 1,
-            unit: "ед",
-            rate: 2650,
           },
         ],
       },
@@ -288,8 +328,27 @@ function testProcurement(orgId: string, objectId: string): Procurement {
   };
 }
 
-/** Insert TEST entities if absent — never patches school p-1/g-1/c-1/pf-1. */
+/** Strip duplicate buses on TEST schedule only (keep first by sequence). */
+function healTestScheduleBuses(schedule: GprSchedule): void {
+  let busSeen = false;
+  for (const st of schedule.stages.slice().sort((a, b) => a.sequence - b.sequence)) {
+    const next = (st.resources ?? []).filter((r) => {
+      if (r.kind !== "bus") return true;
+      if (busSeen) return false;
+      busSeen = true;
+      return true;
+    });
+    st.resources = next;
+  }
+}
+
+/**
+ * Insert TEST entities if absent — never patches school p-1/g-1/c-1/pf-1.
+ * No-op unless opt-in (test/demo env).
+ */
 export function ensureT25uTestFixture(data: AppData): AppData {
+  if (!isT25uTestFixtureOptIn()) return data;
+
   const orgId =
     data.organizations.find((o) => o.id === "org-alfa")?.id ??
     data.organizations[0]?.id ??
@@ -302,6 +361,11 @@ export function ensureT25uTestFixture(data: AppData): AppData {
   if (!data.procurements.some((p) => p.id === T25U_TEST.procurementId)) {
     data.procurements.push(testProcurement(orgId, objectId));
   }
+  if (
+    !data.calculations.some((c) => c.id === T25U_TEST.originalCalculationId)
+  ) {
+    data.calculations.push(testOriginalCalculation(orgId));
+  }
   if (!data.calculations.some((c) => c.id === T25U_TEST.calculationId)) {
     data.calculations.push(testCalculation(orgId));
   }
@@ -310,6 +374,28 @@ export function ensureT25uTestFixture(data: AppData): AppData {
   }
   if (!data.planFacts.some((p) => p.id === T25U_TEST.planFactId)) {
     data.planFacts.push(testPlanFact(orgId, objectId));
+  }
+
+  // Heal already-installed TEST contour: single bus + sync draft from stages
+  const schedule = data.schedules.find((s) => s.id === T25U_TEST.scheduleId);
+  const draft = data.calculations.find((c) => c.id === T25U_TEST.calculationId);
+  const original = data.calculations.find(
+    (c) => c.id === T25U_TEST.originalCalculationId
+  );
+  if (schedule) healTestScheduleBuses(schedule);
+  if (draft && schedule) {
+    draft.pairedCalculationId =
+      draft.pairedCalculationId ?? T25U_TEST.originalCalculationId;
+    draft.resourceScheduleParams =
+      draft.resourceScheduleParams ?? { ...EXCEL_RESOURCE_SCHEDULE_DEFAULTS };
+    const synced = syncDraftFromStages(draft, schedule.stages);
+    Object.assign(draft, synced.calc);
+  }
+  if (original) {
+    original.immutable = true;
+    original.kind = "customer_original";
+    original.pairedCalculationId =
+      original.pairedCalculationId ?? T25U_TEST.calculationId;
   }
   return data;
 }

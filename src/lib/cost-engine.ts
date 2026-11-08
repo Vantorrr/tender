@@ -340,13 +340,17 @@ export function bucketsFromPositions(
   let hasMaterialPositions = false;
   for (const p of positions) {
     if (p.code === "НР" || p.code === "СП") continue;
-    const sum = p.quantity * p.rate * factor;
     const hay = `${p.code} ${p.name} ${p.unit}`.toLowerCase();
+    if (/матер|м²|м2|т\b|сэндвич|бетон|арматур/.test(hay)) {
+      hasMaterialPositions = true;
+    }
+    // Missing rate must not become a confirmed 0 ₽ contribution.
+    if (p.rateMissing) continue;
+    const sum = p.quantity * p.rate * factor;
     if (/н-ч|чел|труд|зарп|свар|монтажн/.test(hay)) labor += sum;
     else if (/матер|м²|м2|т\b|сэндвич|бетон|арматур/.test(hay)) {
-      hasMaterialPositions = true;
       materials += sum;
-    } else if (/маш|техник|jcb|экскав|кран|атс|дсм/.test(hay))
+    } else if (/маш|техник|jcb|экскав|кран|атс|дсм|автобус|bus/.test(hay))
       equipment += sum;
     else other += sum;
   }

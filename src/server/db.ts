@@ -25,10 +25,11 @@ import { hashPassword } from "@/server/passwords";
 import { procurementSourceStatus } from "@/server/procurement-source";
 
 /**
- * 14: additive isolated [TEST] t25u fixture only.
- * Does NOT rewrite school g-1 dates/rates/facts (heals from schema 13 removed).
+ * 15: unified resource tree sync; TEST fixture OPT-IN only
+ * (T25U_TEST_FIXTURE=1 / PROCUREMENT_DEMO=1 / NODE_ENV=test).
+ * Does NOT rewrite school g-1 dates/rates/facts/photos; no silent prod inject.
  */
-const SCHEMA_VERSION = "14";
+const SCHEMA_VERSION = "15";
 
 declare global {
   // eslint-disable-next-line no-var

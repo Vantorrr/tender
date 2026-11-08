@@ -248,15 +248,41 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
     "кол-во×ч/смена×смен/сут×дни",
   ]);
   rsSheet.addRow(["Сумма ресурса", "R=Q*M", "ставка без двойного ГСМ/водителя"]);
+  const slices = cs?.resourceSlices;
   rsSheet.addRow([
-    "Прямые",
-    "V=S+T+U",
+    "Прямые V",
+    slices ? slices.direct : "V=S+T+U",
     "материалы+люди+техника",
   ]);
-  rsSheet.addRow(["НР сумма", "W=V*B8", ""]);
-  rsSheet.addRow(["С/с с НР", "X=V+W", ""]);
-  rsSheet.addRow(["Прибыль сумма", "Y=X*B9", ""]);
-  rsSheet.addRow(["Итого", "Z=X+Y", ""]);
+  rsSheet.addRow([
+    "НР W",
+    slices ? slices.overhead : "W=V*B8",
+    "",
+  ]);
+  rsSheet.addRow([
+    "С/с с НР X",
+    slices ? slices.costWithOh : "X=V+W",
+    "",
+  ]);
+  rsSheet.addRow([
+    "Прибыль Y",
+    slices ? slices.profit : "Y=X*B9",
+    "",
+  ]);
+  rsSheet.addRow([
+    "Итого Z",
+    slices ? slices.total : "Z=X+Y",
+    slices?.skipped?.length
+      ? `пропуск дублей: ${slices.skipped.join(",")}`
+      : "",
+  ]);
+  if (slices) {
+    rsSheet.addRow(["S материалы", slices.materials, ""]);
+    rsSheet.addRow(["T люди", slices.labor, ""]);
+    rsSheet.addRow(["U техника", slices.equipment, ""]);
+    rsSheet.addRow(["Q часы", slices.hours, ""]);
+    rsSheet.addRow(["R известное", slices.knownAmount, ""]);
+  }
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 

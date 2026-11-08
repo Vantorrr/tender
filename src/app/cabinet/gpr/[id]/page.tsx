@@ -173,22 +173,51 @@ export default function GprDetailPage() {
               </Alert>
             )}
             <dl className="grid gap-2 text-sm sm:grid-cols-3">
-              <div>Прямые · труд: {formatMoney(buckets.labor)}</div>
-              <div data-testid="gpr-materials-cost">
-                Прямые · материалы:{" "}
-                {buckets.materialsUnpriced
-                  ? "нет данных"
-                  : formatMoney(buckets.materials)}
-              </div>
-              <div>Прямые · техника: {formatMoney(buckets.equipment)}</div>
-              <div>
-                C0 (без резерва): {formatMoney(cost.C0)}
-                {cost.totalsIncomplete ? " · неполно" : ""}
-              </div>
-              <div>Резерв: {formatMoney(cost.reserve)}</div>
-              <div>C (с резервом): {formatMoney(cost.C)}</div>
-              <div>Прибыль: {formatMoney(cost.profit)}</div>
-              <div>Цена без НДС: {formatMoney(cost.priceExVat)}</div>
+              {cost.resourceSlices ? (
+                <>
+                  <div data-testid="gpr-slice-v">
+                    V прямые: {formatMoney(cost.resourceSlices.direct)}
+                  </div>
+                  <div data-testid="gpr-slice-w">
+                    W НР 43%: {formatMoney(cost.resourceSlices.overhead)}
+                  </div>
+                  <div data-testid="gpr-slice-x">
+                    X с/с с НР: {formatMoney(cost.resourceSlices.costWithOh)}
+                  </div>
+                  <div data-testid="gpr-slice-y">
+                    Y наценка 40%: {formatMoney(cost.resourceSlices.profit)}
+                  </div>
+                  <div data-testid="gpr-slice-z">
+                    Z итого: {formatMoney(cost.resourceSlices.total)}
+                    {cost.totalsIncomplete ? " · неполно" : ""}
+                  </div>
+                  <div data-testid="gpr-materials-cost">
+                    S материалы:{" "}
+                    {cost.resourceSlices.materials > 0
+                      ? formatMoney(cost.resourceSlices.materials)
+                      : "нет данных"}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div>Прямые · труд: {formatMoney(buckets.labor)}</div>
+                  <div data-testid="gpr-materials-cost">
+                    Прямые · материалы:{" "}
+                    {buckets.materialsUnpriced
+                      ? "нет данных"
+                      : formatMoney(buckets.materials)}
+                  </div>
+                  <div>Прямые · техника: {formatMoney(buckets.equipment)}</div>
+                  <div>
+                    C0 (без резерва): {formatMoney(cost.C0)}
+                    {cost.totalsIncomplete ? " · неполно" : ""}
+                  </div>
+                  <div>Резерв: {formatMoney(cost.reserve)}</div>
+                  <div>C (с резервом): {formatMoney(cost.C)}</div>
+                  <div>Прибыль: {formatMoney(cost.profit)}</div>
+                  <div>Цена без НДС: {formatMoney(cost.priceExVat)}</div>
+                </>
+              )}
               <div>
                 НДС:{" "}
                 {cost.vatAmount == null

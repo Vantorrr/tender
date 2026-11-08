@@ -43,7 +43,7 @@ export default function RaschetDetailPage() {
     data,
     user,
     updateCalculation,
-    updateSchedule,
+    patchScheduleResource,
     recalcCalculation,
     addCalcFromDirectory,
     refresh,
@@ -103,7 +103,15 @@ export default function RaschetDetailPage() {
       : compareCalculations(calc, paired);
 
   const totals = calculationTotals(calc);
-  const total = totals.total;
+  const originalTotals = paired ? calculationTotals(paired) : null;
+  const draftSlices = calc.costSummary?.resourceSlices;
+  /** Draft chip: unified Z when present; never pretend NR15/SP8 == resource Z. */
+  const total =
+    calc.kind === "resource_draft" && draftSlices
+      ? draftSlices.total
+      : calc.kind === "customer_original"
+        ? totals.total
+        : (calc.costSummary?.priceExVat ?? totals.total);
   const buckets = bucketsFromPositions(
     calc.positions,
     calc.scenarioFactor || 1
@@ -122,49 +130,45 @@ export default function RaschetDetailPage() {
     toast.success("Скачивание XLSX…");
   }
 
-  function patchEstimateLeaf(
+  async function patchEstimateLeaf(
     leaf: EstimateLeaf,
     patch: { quantity?: number; rate?: number | null }
   ) {
-    if (leaf.source === "stage_resource" && leaf.stageId && linkedSchedule) {
-      updateSchedule(linkedSchedule.id, {
-        stages: linkedSchedule.stages.map((s) =>
-          s.id !== leaf.stageId
-            ? s
-            : {
-                ...s,
-                resources: (s.resources ?? []).map((r) =>
-                  r.id !== leaf.id
-                    ? r
-                    : {
-                        ...r,
-                        quantity: patch.quantity ?? r.quantity,
-                        rate:
-                          patch.rate !== undefined ? patch.rate : r.rate,
-                      }
-                ),
-              }
-        ),
-      });
-      return;
-    }
-    if (leaf.source === "calc_position" && leaf.positionId) {
-      updateCalculation(calc!.id, {
-        positions: calc!.positions.map((p) =>
-          p.id !== leaf.positionId
-            ? p
-            : {
-                ...p,
-                quantity: patch.quantity ?? p.quantity,
-                rate:
-                  patch.rate === undefined
-                    ? p.rate
-                    : patch.rate == null
-                      ? 0
-                      : patch.rate,
-              }
-        ),
-      });
+    try {
+      if (leaf.source === "stage_resource" && linkedSchedule) {
+        await patchScheduleResource(linkedSchedule.id, {
+          resourceId: leaf.id,
+          stageId: leaf.stageId,
+          quantity: patch.quantity,
+          rate: patch.rate,
+        });
+        return;
+      }
+      if (leaf.source === "calc_position" && leaf.positionId) {
+        const rateMissing = patch.rate === null;
+        await updateCalculation(calc!.id, {
+          positions: calc!.positions.map((p) =>
+            p.id !== leaf.positionId
+              ? p
+              : {
+                  ...p,
+                  quantity: patch.quantity ?? p.quantity,
+                  rate:
+                    patch.rate === undefined
+                      ? p.rate
+                      : patch.rate == null
+                        ? 0
+                        : patch.rate,
+                  rateMissing:
+                    patch.rate === undefined
+                      ? p.rateMissing
+                      : rateMissing,
+                }
+          ),
+        });
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Не удалось обновить ресурс");
     }
   }
 
@@ -364,7 +368,11 @@ export default function RaschetDetailPage() {
         </div>
         <div className="tk-glass rounded-3xl px-4 py-2" data-testid="calc-total-chip">
           <div className="text-xs text-[var(--tk-muted)]">
-            Итого сметы (позиции × коэф.)
+            {calc.kind === "customer_original"
+              ? "Оригинал сметы (immutable)"
+              : draftSlices
+                ? "Черновик · Z (ресурсный)"
+                : "Итого черновика"}
           </div>
           <div className="font-[family-name:var(--font-display)] text-xl">
             {formatMoney(total)}
@@ -377,9 +385,21 @@ export default function RaschetDetailPage() {
           stages={linkedSchedule?.stages ?? []}
           positions={calc.positions}
           locked={locked}
-          estimateTotal={total}
+          originalTotal={
+            calc.kind === "customer_original"
+              ? totals.total
+              : originalTotals?.total ?? null
+          }
+          originalLabel={
+            calc.kind === "customer_original"
+              ? "Этот документ — оригинал (immutable)"
+              : "Оригинал сметы (immutable)"
+          }
+          costSummary={calc.costSummary}
           costIncomplete={Boolean(calc.costSummary?.totalsIncomplete)}
-          onPatchLeaf={patchEstimateLeaf}
+          onPatchLeaf={(leaf, patch) => {
+            void patchEstimateLeaf(leaf, patch);
+          }}
           onExport={exportExcelLike}
           onAddClick={() => {
             setShowDirAdd(true);

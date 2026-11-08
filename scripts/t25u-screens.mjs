@@ -2,6 +2,7 @@
  * t25u visual acceptance — real product UI only.
  * No evaluate/addStyleTag sticky overrides, no toast hide hacks.
  * Isolated [TEST] fixture (g-t25u-test / pf-t25u-test / c-t25u-test).
+ * Requires T25U_TEST_FIXTURE=1 (or PROCUREMENT_DEMO=1) on the server.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -125,12 +126,17 @@ try {
     pass("s1-leaves");
   } else fail("s1-leaves", "none");
 
-  const estLabel = await page.getByTestId("budget-card-estimate-total").innerText();
-  const treeLabel = await page.getByTestId("budget-card-total").innerText();
-  if (/позиции × коэф/i.test(estLabel)) pass("s1-estimate-basis-label");
-  else fail("s1-estimate-basis-label", estLabel.slice(0, 80));
-  if (/Дерево ресурсов|qty×rate/i.test(treeLabel)) pass("s1-tree-basis-label");
-  else fail("s1-tree-basis-label", treeLabel.slice(0, 80));
+  const origLabel = await page.getByTestId("budget-card-original").innerText();
+  const zLabel = await page.getByTestId("budget-card-total-z").innerText();
+  const vLabel = await page.getByTestId("budget-card-direct-v").innerText();
+  if (/оригинал|immutable|НР15/i.test(origLabel)) pass("s1-original-basis-label");
+  else fail("s1-original-basis-label", origLabel.slice(0, 80));
+  if (/Z|наценка|40%/i.test(zLabel)) pass("s1-z-basis-label");
+  else fail("s1-z-basis-label", zLabel.slice(0, 80));
+  if (/V|прямые/i.test(vLabel)) pass("s1-v-basis-label");
+  else fail("s1-v-basis-label", vLabel.slice(0, 80));
+  if (await page.getByTestId("budget-incomplete").count()) pass("s1-incomplete-banner");
+  else pass("s1-incomplete-optional");
 
   const flatVisible =
     (await page.getByTestId("calc-positions-table").count()) &&

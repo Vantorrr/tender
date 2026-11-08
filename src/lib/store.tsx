@@ -87,6 +87,15 @@ interface StoreContextValue {
     category?: string;
   }) => Promise<void>;
   updateSchedule: (id: string, patch: Partial<GprSchedule>) => Promise<void>;
+  patchScheduleResource: (
+    scheduleId: string,
+    input: {
+      resourceId: string;
+      stageId?: string;
+      quantity?: number;
+      rate?: number | null;
+    }
+  ) => Promise<void>;
   updateMoney: (id: string, patch: Partial<MoneyPlan>) => Promise<void>;
   updateRisk: (id: string, patch: Partial<RiskRegistry>) => Promise<void>;
   parseRiskContract: (id: string) => Promise<void>;
@@ -476,6 +485,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [applyBoot]
   );
 
+  const patchScheduleResource = useCallback(
+    async (
+      scheduleId: string,
+      input: {
+        resourceId: string;
+        stageId?: string;
+        quantity?: number;
+        rate?: number | null;
+      }
+    ) => {
+      const boot = await api<BootstrapResponse>("/api/gpr", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id: scheduleId,
+          action: "patchResource",
+          resourceId: input.resourceId,
+          stageId: input.stageId,
+          quantity: input.quantity,
+          rate: input.rate,
+        }),
+      });
+      applyBoot(boot);
+    },
+    [applyBoot]
+  );
+
   const updateMoney = useCallback(
     async (id: string, patch: Partial<MoneyPlan>) => {
       const boot = await api<BootstrapResponse>("/api/dengi", {
@@ -673,6 +708,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     reanalyzeDocument,
     createDocumentUpload,
     updateSchedule,
+    patchScheduleResource,
     updateMoney,
     updateRisk,
     parseRiskContract,

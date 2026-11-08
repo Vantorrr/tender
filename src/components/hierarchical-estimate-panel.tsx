@@ -10,14 +10,16 @@ import {
   estimateBudgetCards,
   type EstimateLeaf,
 } from "@/lib/hierarchical-estimate";
-import type { CalcPosition, GprStage } from "@/lib/types";
+import type { CalcPosition, CostSummarySnapshot, GprStage } from "@/lib/types";
 
 type Props = {
   stages: GprStage[];
   positions: CalcPosition[];
   locked?: boolean;
-  /** Full estimate (позиции × коэф. сценария) — separate basis from tree qty×rate. */
-  estimateTotal?: number | null;
+  /** Immutable customer original total (позиции × коэф. + НР15/СП8) — separate model. */
+  originalTotal?: number | null;
+  originalLabel?: string;
+  costSummary?: CostSummarySnapshot | null;
   costIncomplete?: boolean;
   onPatchLeaf: (leaf: EstimateLeaf, patch: { quantity?: number; rate?: number | null }) => void;
   onExport?: () => void;
@@ -28,7 +30,9 @@ export function HierarchicalEstimatePanel({
   stages,
   positions,
   locked,
-  estimateTotal,
+  originalTotal,
+  originalLabel,
+  costSummary,
   costIncomplete,
   onPatchLeaf,
   onExport,
@@ -45,6 +49,12 @@ export function HierarchicalEstimatePanel({
     [stages, positions, search]
   );
   const cards = useMemo(() => estimateBudgetCards(nodes), [nodes]);
+  const slices = costSummary?.resourceSlices;
+  const incomplete =
+    costIncomplete ||
+    cards.incomplete ||
+    Boolean(costSummary?.totalsIncomplete) ||
+    (costSummary?.incomplete?.length ?? 0) > 0;
 
   useEffect(() => {
     if (seededOpen || nodes.length === 0) return;
@@ -81,60 +91,117 @@ export function HierarchicalEstimatePanel({
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div
           className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
-          data-testid="budget-card-estimate-total"
+          data-testid="budget-card-original"
         >
           <p className="text-xs text-[var(--tk-muted)]">
-            Итого сметы (позиции × коэф.)
+            {originalLabel ?? "Оригинал сметы (immutable)"}
           </p>
           <p className="mt-1 font-[family-name:var(--font-display)] text-2xl">
-            {estimateTotal != null ? formatMoney(estimateTotal) : "нет данных"}
+            {originalTotal != null ? formatMoney(originalTotal) : "нет данных"}
           </p>
           <p className="mt-1 text-[11px] text-[var(--tk-muted)]">
-            та же база, что сводка / cost-engine / экспорт
+            позиции × коэф. + НР15/СП8 — не ресурсный Z
           </p>
         </div>
         <div
           className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
-          data-testid="budget-card-total"
+          data-testid="budget-card-direct-v"
+        >
+          <p className="text-xs text-[var(--tk-muted)]">V · прямые (S+T+U)</p>
+          <p className="mt-1 font-[family-name:var(--font-display)] text-2xl">
+            {slices
+              ? formatMoney(slices.direct)
+              : cards.totalKnown != null
+                ? formatMoney(cards.totalKnown)
+                : "нет данных"}
+          </p>
+          {incomplete ? (
+            <p className="mt-1 text-xs text-amber-800" data-testid="budget-incomplete">
+              итог неполный — есть ресурсы без ставки
+            </p>
+          ) : null}
+        </div>
+        <div
+          className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
+          data-testid="budget-card-oh-w"
+        >
+          <p className="text-xs text-[var(--tk-muted)]">W · НР 43% от прямых</p>
+          <p className="mt-1 text-xl font-semibold">
+            {slices ? formatMoney(slices.overhead) : "нет данных"}
+          </p>
+          <p className="mt-1 text-[11px] text-[var(--tk-muted)]">
+            X с/с с НР:{" "}
+            {slices ? formatMoney(slices.costWithOh) : "—"}
+          </p>
+        </div>
+        <div
+          className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
+          data-testid="budget-card-total-z"
         >
           <p className="text-xs text-[var(--tk-muted)]">
-            Дерево ресурсов (qty×rate, известное)
+            Z · итого (X + наценка 40%)
           </p>
           <p className="mt-1 font-[family-name:var(--font-display)] text-2xl">
-            {cards.totalKnown != null
-              ? formatMoney(cards.totalKnown)
-              : "нет данных"}
+            {slices
+              ? formatMoney(slices.total)
+              : costSummary?.priceExVat != null
+                ? formatMoney(costSummary.priceExVat)
+                : "нет данных"}
           </p>
-          {(costIncomplete || cards.incomplete) && (
-            <p className="mt-1 text-xs text-amber-800">дерево неполно</p>
-          )}
-        </div>
-        <div
-          className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
-          data-testid="budget-card-labor"
-        >
-          <p className="text-xs text-[var(--tk-muted)]">Дерево · люди</p>
-          <p className="mt-1 text-xl font-semibold">
-            {cards.labor == null ? "нет данных" : formatMoney(cards.labor)}
+          <p className="mt-1 text-[11px] text-[var(--tk-muted)]">
+            Y прибыль: {slices ? formatMoney(slices.profit) : "—"} · та же база
+            сводка / cost-engine / экспорт
           </p>
-        </div>
-        <div
-          className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
-          data-testid="budget-card-equipment"
-        >
-          <p className="text-xs text-[var(--tk-muted)]">Дерево · техника</p>
-          <p className="mt-1 text-xl font-semibold">
-            {cards.equipment == null ? "нет данных" : formatMoney(cards.equipment)}
-          </p>
-          {cards.materials != null ? (
-            <p className="mt-1 text-xs text-[var(--tk-muted)]">
-              Материалы: {formatMoney(cards.materials)}
-            </p>
-          ) : (
-            <p className="mt-1 text-xs text-amber-800">Материалы: нет данных</p>
-          )}
         </div>
       </div>
+
+      {slices ? (
+        <div
+          className="mb-4 grid gap-2 rounded-xl border border-[var(--tk-line)] bg-stone-50/80 p-3 text-xs sm:grid-cols-4"
+          data-testid="budget-slices-qr"
+        >
+          <div>
+            Q часы (изв.): {formatNumber(slices.hours)}
+          </div>
+          <div>
+            R известное: {formatMoney(slices.knownAmount)}
+          </div>
+          <div data-testid="budget-card-labor">
+            T люди: {formatMoney(slices.labor)}
+          </div>
+          <div data-testid="budget-card-equipment">
+            U техника: {formatMoney(slices.equipment)}
+            {slices.materials > 0 ? (
+              <span className="ml-2 text-[var(--tk-muted)]">
+                S мат.: {formatMoney(slices.materials)}
+              </span>
+            ) : (
+              <span className="ml-2 text-amber-800">S мат.: нет данных</span>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="mb-4 grid gap-3 sm:grid-cols-2">
+          <div
+            className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
+            data-testid="budget-card-labor"
+          >
+            <p className="text-xs text-[var(--tk-muted)]">Дерево · люди</p>
+            <p className="mt-1 text-xl font-semibold">
+              {cards.labor == null ? "нет данных" : formatMoney(cards.labor)}
+            </p>
+          </div>
+          <div
+            className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
+            data-testid="budget-card-equipment"
+          >
+            <p className="text-xs text-[var(--tk-muted)]">Дерево · техника</p>
+            <p className="mt-1 text-xl font-semibold">
+              {cards.equipment == null ? "нет данных" : formatMoney(cards.equipment)}
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Input

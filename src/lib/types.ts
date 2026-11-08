@@ -263,6 +263,11 @@ export interface CalcPosition {
   unit: string;
   quantity: number;
   rate: number;
+  /**
+   * When true, `rate` is a non-authoritative placeholder (often 0).
+   * Confirmed totals must exclude this line — missing rate ≠ 0 ₽.
+   */
+  rateMissing?: boolean;
   normId?: string;
   priceId?: string;
 }
@@ -560,6 +565,28 @@ export interface CostSummarySnapshot {
   /** When true, C0/price must not be presented as a complete confirmed total. */
   totalsIncomplete?: boolean;
   at: string;
+  /**
+   * Excel Ресурсный_график slices (S/T/U → V/W/X/Y/Z) from the unified tree.
+   * Present when method includes resource-schedule / unified-tree.
+   */
+  resourceSlices?: {
+    materials: number;
+    labor: number;
+    equipment: number;
+    /** V = S+T+U */
+    direct: number;
+    /** W = V × OH */
+    overhead: number;
+    /** X = V+W */
+    costWithOh: number;
+    /** Y = X × markup */
+    profit: number;
+    /** Z = X+Y */
+    total: number;
+    hours: number;
+    knownAmount: number;
+    skipped?: string[];
+  };
 }
 
 export interface ProjectObject {
