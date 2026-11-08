@@ -207,6 +207,7 @@ describe("t22u closeout remediable", () => {
     await wb.xlsx.load(buf as unknown as ExcelJS.Buffer);
     expect(wb.getWorksheet("Сводка")).toBeTruthy();
     expect(wb.getWorksheet("Ресурсы")).toBeTruthy();
+    expect(wb.getWorksheet("Ресурсный_параметры")).toBeTruthy();
     const res = wb.getWorksheet("Ресурсы")!;
     // formula on G2 when resources exist
     const g2 = res.getCell("G2").value as { formula?: string } | null;

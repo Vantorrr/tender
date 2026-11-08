@@ -327,6 +327,18 @@ export interface Calculation {
     notes: string[];
   };
   costSummary?: CostSummarySnapshot;
+  /**
+   * Excel «Ресурсный_график» B4–B9 style params when used.
+   * profitMarkupOnCostWithOh is markup on (D+НР), not revenue margin.
+   */
+  resourceScheduleParams?: {
+    personHourRate: number;
+    personnelShiftsPerDay: number;
+    hoursPerShift: number;
+    equipmentShiftsPerDay: number;
+    overheadRate: number;
+    profitMarkupOnCostWithOh: number;
+  };
   busRoutes?: Array<{
     people: number;
     seats: number;
@@ -334,12 +346,19 @@ export interface Calculation {
     roundTrip: boolean;
     idleKm: number;
     fuelPer100Km: number;
+    fuelLitersPerHour?: number;
     fuelPricePerLiter: number;
     driverShiftCost: number;
     driverIncludedInTariff: boolean;
+    tariffPerMachineHour?: number | null;
     tariffPerShift: number | null;
+    tariffBasis?: "schedule_fixed" | "tariffs_sheet_full" | "unspecified";
     ownershipMode: "rent" | "own" | "none";
     days: number;
+    hoursPerShift?: number;
+    shiftsPerDay?: number;
+    quantity?: number;
+    costingMode?: "machine_hour_full_tariff" | "route_decompose";
   }>;
 }
 

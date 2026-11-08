@@ -196,8 +196,16 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
   if (cs) {
     sumSheet.addRow(["C0", cs.C0, cs.totalsIncomplete ? "НЕПОЛНО" : ""]);
     sumSheet.addRow(["C", cs.C, ""]);
-    sumSheet.addRow(["Резерв", cs.reserve, ""]);
-    sumSheet.addRow(["Прибыль", cs.profit, ""]);
+    sumSheet.addRow([
+      "Резерв",
+      cs.reserve,
+      "не путать с резервом отпуска; общий непредвиденный — только если подтверждён",
+    ]);
+    sumSheet.addRow([
+      "Прибыль",
+      cs.profit,
+      "наценка на с/с с НР (не маржа выручки)",
+    ]);
     sumSheet.addRow(["Цена без НДС", cs.priceExVat, ""]);
     sumSheet.addRow([
       "НДС",
@@ -212,6 +220,43 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
   } else {
     sumSheet.addRow(["Сводка", "нет данных", "пересчитайте cost-engine"]);
   }
+  const rs = calc?.resourceScheduleParams;
+  const rsSheet = wb.addWorksheet("Ресурсный_параметры");
+  rsSheet.addRow(["Параметр", "Значение", "Локатор/смысл"]);
+  rsSheet.getRow(1).font = { bold: true };
+  const p = rs ?? {
+    personHourRate: 1400,
+    personnelShiftsPerDay: 2,
+    hoursPerShift: 11,
+    equipmentShiftsPerDay: 1,
+    overheadRate: 0.43,
+    profitMarkupOnCostWithOh: 0.4,
+  };
+  rsSheet.addRow(["Стоимость 1 чел.-часа", p.personHourRate, "B4"]);
+  rsSheet.addRow(["Смен персонала/сутки", p.personnelShiftsPerDay, "B5"]);
+  rsSheet.addRow(["Часов в смене", p.hoursPerShift, "B6"]);
+  rsSheet.addRow(["Смен техники/сутки", p.equipmentShiftsPerDay, "B7"]);
+  rsSheet.addRow(["НР (доля от прямых)", p.overheadRate, "B8"]);
+  rsSheet.addRow([
+    "Прибыль (наценка на с/с с НР)",
+    p.profitMarkupOnCostWithOh,
+    "B9",
+  ]);
+  rsSheet.addRow([
+    "Часы ресурса",
+    "Q=L*N*O*P",
+    "кол-во×ч/смена×смен/сут×дни",
+  ]);
+  rsSheet.addRow(["Сумма ресурса", "R=Q*M", "ставка без двойного ГСМ/водителя"]);
+  rsSheet.addRow([
+    "Прямые",
+    "V=S+T+U",
+    "материалы+люди+техника",
+  ]);
+  rsSheet.addRow(["НР сумма", "W=V*B8", ""]);
+  rsSheet.addRow(["С/с с НР", "X=V+W", ""]);
+  rsSheet.addRow(["Прибыль сумма", "Y=X*B9", ""]);
+  rsSheet.addRow(["Итого", "Z=X+Y", ""]);
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 

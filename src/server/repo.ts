@@ -46,6 +46,10 @@ import { ensureStageResources } from "@/lib/gpr-resources";
 import { totalStageCalendarDays } from "@/lib/plan-from-gpr";
 import { recomputeEntriesFromDaily } from "@/lib/plan-fact-agg";
 import { buildMaterialNeeds, materialNeedsIncomplete } from "@/lib/materials-need";
+import {
+  EXCEL_RESOURCE_SCHEDULE_DEFAULTS,
+  type ResourceScheduleParams,
+} from "@/lib/resource-schedule-model";
 
 export { assertOrgAccess };
 
@@ -1625,9 +1629,17 @@ export function shiftGprStage(
           confirmedItems: [],
           notes: ["Северные ставки не подтверждены"],
         };
-        const site = overheadsFromWorks(
-          buckets.labor + buckets.equipment
-        ).nr;
+        const rs = calc.resourceScheduleParams;
+        const useRs = Boolean(rs);
+        const Dapprox =
+          buckets.labor +
+          buckets.materials +
+          buckets.equipment +
+          buckets.other +
+          logistics;
+        const site = useRs
+          ? Math.round(Dapprox * rs!.overheadRate * 100) / 100
+          : overheadsFromWorks(buckets.labor + buckets.equipment).nr;
         const engine = runCostEngine({
           directLabor: buckets.labor,
           directMaterials: buckets.materials,
@@ -1638,8 +1650,8 @@ export function shiftGprStage(
           officeOverhead: 0,
           reserve: calc.costSummary?.reserve ?? 0,
           profitMethod: "markup",
-          profitRate: 0.08,
-          includeReserveInPriceBase: true,
+          profitRate: useRs ? rs!.profitMarkupOnCostWithOh : 0.08,
+          includeReserveInPriceBase: useRs ? false : true,
           vatPercent: null,
           northern,
         });
@@ -1651,7 +1663,9 @@ export function shiftGprStage(
           priceExVat: engine.priceExVat,
           vatAmount: engine.vatAmount,
           priceIncVat: engine.priceIncVat,
-          method: `cost-engine:${engine.profitMethod}+gpr-shift`,
+          method: useRs
+            ? `cost-engine:${engine.profitMethod}+gpr-shift+resource-schedule-excel`
+            : `cost-engine:${engine.profitMethod}+gpr-shift`,
           incomplete: engine.incomplete,
           at: new Date().toISOString(),
         };
@@ -1687,6 +1701,9 @@ export function recomputeCalculationCost(
     profitRate?: number;
     vatPercent?: number | null;
     includeReserveInPriceBase?: boolean;
+    resourceScheduleParams?: ResourceScheduleParams;
+    /** When true (default if resourceScheduleParams set): OH = D×overheadRate. */
+    useResourceScheduleEconomics?: boolean;
   }
 ) {
   return mutateAppData((data) => {
@@ -1697,6 +1714,9 @@ export function recomputeCalculationCost(
     assertEditableCalculation(item);
     if (patch?.northern) item.northern = patch.northern;
     if (patch?.busRoutes) item.busRoutes = patch.busRoutes;
+    if (patch?.resourceScheduleParams) {
+      item.resourceScheduleParams = patch.resourceScheduleParams;
+    }
 
     const buckets = bucketsFromPositions(
       item.positions,
@@ -1713,13 +1733,33 @@ export function recomputeCalculationCost(
     const northern: NorthernInputs = item.northern ?? {
       applicable: false,
       confirmedItems: [],
-      notes: ["Северные ставки не подтверждены — не применяем универсальный коэффициент"],
+      notes: [
+        "Северные/вахтовые элементы есть в эталоне (ШР/ТС/Персонал); универсальный коэффициент не применяем без подтверждения базы",
+      ],
     };
-    const site =
-      patch?.siteOverhead ??
-      overheadsFromWorks(buckets.labor + buckets.equipment).nr;
+    const rs =
+      item.resourceScheduleParams ??
+      (patch?.useResourceScheduleEconomics
+        ? EXCEL_RESOURCE_SCHEDULE_DEFAULTS
+        : null);
+    const useRs =
+      patch?.useResourceScheduleEconomics ?? Boolean(item.resourceScheduleParams);
+    if (useRs && !item.resourceScheduleParams) {
+      item.resourceScheduleParams = EXCEL_RESOURCE_SCHEDULE_DEFAULTS;
+    }
+    const Dapprox =
+      buckets.labor + buckets.materials + buckets.equipment + buckets.other + logistics;
+    const site = useRs
+      ? patch?.siteOverhead ??
+        Math.round(Dapprox * (rs?.overheadRate ?? 0.43) * 100) / 100
+      : patch?.siteOverhead ??
+        overheadsFromWorks(buckets.labor + buckets.equipment).nr;
     const office = patch?.officeOverhead ?? 0;
-    const reserve = patch?.reserve ?? 0;
+    // Contingency reserve ≠ vacation reserve; Excel sheet has no project contingency.
+    const reserve = patch?.reserve ?? item.costSummary?.reserve ?? 0;
+    const profitRate = useRs
+      ? patch?.profitRate ?? rs?.profitMarkupOnCostWithOh ?? 0.4
+      : patch?.profitRate ?? 0.08;
     const engine = runCostEngine({
       directLabor: buckets.labor,
       directMaterials: buckets.materials,
@@ -1730,8 +1770,10 @@ export function recomputeCalculationCost(
       officeOverhead: office,
       reserve,
       profitMethod: patch?.profitMethod ?? "markup",
-      profitRate: patch?.profitRate ?? 0.08,
-      includeReserveInPriceBase: patch?.includeReserveInPriceBase ?? true,
+      profitRate,
+      // Excel marks up cost-with-OH; contingency (if any) stays separate unless confirmed.
+      includeReserveInPriceBase:
+        patch?.includeReserveInPriceBase ?? (useRs ? false : true),
       vatPercent: patch?.vatPercent ?? null,
       northern,
     });
@@ -1752,7 +1794,9 @@ export function recomputeCalculationCost(
       priceExVat: engine.priceExVat,
       vatAmount: engine.vatAmount,
       priceIncVat: engine.priceIncVat,
-      method: `cost-engine:${engine.profitMethod}`,
+      method: useRs
+        ? `cost-engine:${engine.profitMethod}+resource-schedule-excel`
+        : `cost-engine:${engine.profitMethod}`,
       incomplete,
       totalsIncomplete: incomplete.length > 0,
       at: new Date().toISOString(),
@@ -1760,6 +1804,7 @@ export function recomputeCalculationCost(
     item.dataFlags = [
       ...(item.dataFlags ?? []).filter((f) => !f.startsWith("cost_")),
       "cost_engine_v1",
+      ...(useRs ? ["resource_schedule_excel_economics"] : []),
       ...engine.flags,
       ...busFlags,
       ...(engine.incomplete.length ? ["requires_manual_check"] : []),

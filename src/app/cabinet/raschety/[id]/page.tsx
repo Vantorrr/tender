@@ -176,12 +176,24 @@ export default function RaschetDetailPage() {
                           costPatch: {
                             vatPercent: null,
                             profitMethod: "markup",
-                            profitRate: 0.08,
+                            // Excel Ресурсный_график: НР 43% от прямых, прибыль = наценка 40% на с/с с НР
+                            useResourceScheduleEconomics: true,
+                            profitRate: 0.4,
+                            resourceScheduleParams: calc.resourceScheduleParams ?? {
+                              personHourRate: 1400,
+                              personnelShiftsPerDay: 2,
+                              hoursPerShift: 11,
+                              equipmentShiftsPerDay: 1,
+                              overheadRate: 0.43,
+                              profitMarkupOnCostWithOh: 0.4,
+                            },
                           },
                         }),
                       });
                       await refresh();
-                      toast.success("Cost-engine пересчитан (НДС — нет данных)");
+                      toast.success(
+                        "Cost-engine: НР×прямые + наценка на с/с с НР (НДС — нет данных)"
+                      );
                     } catch (e) {
                       toast.error(
                         e instanceof Error ? e.message : "Ошибка cost-engine"
@@ -439,11 +451,23 @@ export default function RaschetDetailPage() {
             маржа.
           </p>
           <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-[var(--tk-muted)]">
-            <li>Вахта / мобилизация / проживание / питание</li>
-            <li>Автобусы: люди, места, плечо, топливо, водитель в тарифе?</li>
-            <li>Объектовые и офисные накладные (база распределения)</li>
-            <li>Резерв отдельно от C0</li>
-            <li>НДС %, дата цен, валюта</li>
+            <li>
+              Вахта / РК+СН / северные множители — из подтверждённых баз (ШР/ТС),
+              не универсальный коэффициент
+            </li>
+            <li>
+              Автобус: полная маш.-ч ставка уже с амортизацией/ГСМ/ФОТ/ТО — не
+              добавлять водителя/ГСМ сверху; расход топлива в эталоне — л/час
+            </li>
+            <li>
+              НР как % от прямых (эталон 43%); прибыль = наценка на с/с с НР
+              (эталон 40%), не маржа выручки
+            </li>
+            <li>
+              Резерв отпуска ≠ общий резерв непредвиденных (последний — только
+              если подтверждён отдельно)
+            </li>
+            <li>НДС %, дата цен, валюта; 14 позиций без тарифа → 0 + «неполно»</li>
           </ul>
           <Button
             className="mt-3"
@@ -459,11 +483,14 @@ export default function RaschetDetailPage() {
                     costPatch: {
                       vatPercent: null,
                       profitMethod: "markup",
-                      profitRate: 0.08,
+                      useResourceScheduleEconomics: true,
+                      profitRate: 0.4,
                       northern: calc.northern ?? {
                         applicable: true,
                         confirmedItems: [],
-                        notes: ["ставки севера — уточнить у Егора"],
+                        notes: [
+                          "север/вахта в эталоне есть; подтверждайте базу каждого коэффициента",
+                        ],
                       },
                     },
                   }),

@@ -28,14 +28,39 @@ export interface BusRouteInput {
   distanceKmOneWay: number;
   roundTrip: boolean;
   idleKm: number;
+  /**
+   * Excel Тарифы uses liters/HOUR for bus (AH9=6.1), not L/100km.
+   * Prefer fuelLitersPerHour when costingMode is machine_hour_full_tariff.
+   */
   fuelPer100Km: number;
+  fuelLitersPerHour?: number;
   fuelPricePerLiter: number;
   driverShiftCost: number;
   /** If true, driver cost already in tariff — do not add again. */
   driverIncludedInTariff: boolean;
+  /**
+   * Full machine-hour tariff (Excel M / Тарифы AH21) already embeds
+   * amort+GSM+FOT+TO(+OH policy). Do not add fuel/driver on top.
+   */
+  tariffPerMachineHour?: number | null;
   tariffPerShift: number | null;
+  /**
+   * schedule_fixed = value typed on Ресурсный_график (e.g. M17=2650);
+   * tariffs_sheet_full = Тарифы!AH21 chain; unspecified = unknown.
+   * Never silently swap bases.
+   */
+  tariffBasis?: "schedule_fixed" | "tariffs_sheet_full" | "unspecified";
   ownershipMode: "rent" | "own" | "none";
   days: number;
+  hoursPerShift?: number;
+  shiftsPerDay?: number;
+  quantity?: number;
+  /**
+   * machine_hour_full_tariff — Excel Ресурсный_график equipment/bus rows:
+   * Q=L*N*O*P, R=Q*M, no extra fuel/driver.
+   * route_decompose — optional route model (needs confirmed capacity/routes).
+   */
+  costingMode?: "machine_hour_full_tariff" | "route_decompose";
 }
 
 export interface CostEngineInput {
@@ -110,6 +135,51 @@ export function busCost(input: BusRouteInput): {
   flags: string[];
 } {
   const flags: string[] = [];
+  const mode = input.costingMode ?? "route_decompose";
+  const qty = Math.max(1, input.quantity ?? Math.ceil(Math.max(0, input.people) / Math.max(1, input.seats)));
+  const hoursPerShift = input.hoursPerShift ?? 11;
+  const shiftsPerDay = input.shiftsPerDay ?? 1;
+
+  if (mode === "machine_hour_full_tariff") {
+    const rate =
+      input.tariffPerMachineHour ??
+      (input.tariffPerShift != null
+        ? input.tariffPerShift / Math.max(1, hoursPerShift)
+        : null);
+    if (rate == null || !Number.isFinite(rate)) {
+      flags.push("bus_missing_full_tariff");
+      return {
+        tripsPerDay: 0,
+        buses: qty,
+        distanceKmPerDay: 0,
+        fuelLiters: 0,
+        fuelCost: 0,
+        driverCost: 0,
+        tariffCost: 0,
+        total: 0,
+        flags,
+      };
+    }
+    const hours = qty * hoursPerShift * shiftsPerDay * Math.max(0, input.days);
+    const tariffCost = roundMoney(hours * rate);
+    flags.push("full_machine_hour_tariff");
+    flags.push("no_extra_fuel_or_driver_on_top");
+    flags.push("fuel_basis_liters_per_hour_not_per_100km");
+    if (input.tariffBasis) flags.push(`tariff_basis:${input.tariffBasis}`);
+    // Intentionally zero fuel/driver — embedded in full tariff (Тарифы AH chain).
+    return {
+      tripsPerDay: 0,
+      buses: qty,
+      distanceKmPerDay: 0,
+      fuelLiters: 0,
+      fuelCost: 0,
+      driverCost: 0,
+      tariffCost,
+      total: tariffCost,
+      flags,
+    };
+  }
+
   const seats = Math.max(1, input.seats);
   const tripsPerDay = Math.ceil(Math.max(0, input.people) / seats);
   const buses = Math.max(1, Math.ceil(input.people / seats));
@@ -117,8 +187,19 @@ export function busCost(input: BusRouteInput): {
     ? input.distanceKmOneWay * 2
     : input.distanceKmOneWay;
   const distanceKmPerDay = tripsPerDay * leg + input.idleKm;
-  const fuelLiters =
-    (distanceKmPerDay * input.fuelPer100Km) / 100 * Math.max(0, input.days);
+  let fuelLiters = 0;
+  if (input.fuelLitersPerHour != null && input.fuelLitersPerHour > 0) {
+    flags.push("fuel_liters_per_hour");
+    fuelLiters =
+      input.fuelLitersPerHour *
+      hoursPerShift *
+      shiftsPerDay *
+      buses *
+      Math.max(0, input.days);
+  } else {
+    fuelLiters =
+      ((distanceKmPerDay * input.fuelPer100Km) / 100) * Math.max(0, input.days);
+  }
   const fuelCost = roundMoney(fuelLiters * input.fuelPricePerLiter);
   let driverCost = 0;
   if (!input.driverIncludedInTariff) {
@@ -136,6 +217,9 @@ export function busCost(input: BusRouteInput): {
   if (input.ownershipMode === "own" && input.tariffPerShift != null) {
     flags.push("own_mode_uses_ownership_cost_not_full_rent");
     tariffCost = roundMoney(input.tariffPerShift * input.days * buses);
+  }
+  if (input.driverIncludedInTariff && fuelCost > 0) {
+    flags.push("check_full_tariff_may_already_include_fuel");
   }
   const total = roundMoney(fuelCost + driverCost + tariffCost);
   return {

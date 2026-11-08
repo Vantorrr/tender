@@ -1,0 +1,114 @@
+{
+  "description": "Anonymized minimal fixture mirroring Excel Ресурсный_график semantics for one work pack (not the client road file). Locators are structural only.",
+  "params": {
+    "personHourRate": 1400,
+    "personnelShiftsPerDay": 2,
+    "hoursPerShift": 11,
+    "equipmentShiftsPerDay": 1,
+    "overheadRate": 0.43,
+    "profitMarkupOnCostWithOh": 0.4
+  },
+  "materialsTotal": 0,
+  "notes": [
+    "Bus rate is schedule_fixed example (2650), distinct from tariffs_sheet_full chain — do not auto-swap.",
+    "Fuel in tariffs sheet is L/hour, not L/100km; full tariff must not stack driver/GSM.",
+    "Ordinal days 1..N only — no calendar/holiday solver.",
+    "Missing tariffs contribute 0 + incomplete (Excel K4-style)."
+  ],
+  "lines": [
+    {
+      "id": "w1",
+      "workId": "w1",
+      "kind": "work",
+      "name": "Work pack A",
+      "quantity": 1,
+      "rate": null,
+      "hoursPerShift": 11,
+      "shiftsPerDay": 1,
+      "days": 3
+    },
+    {
+      "id": "r-itr",
+      "workId": "w1",
+      "kind": "resource",
+      "name": "Staff A",
+      "category": "people",
+      "quantity": 4,
+      "rate": 1400,
+      "tariffBasis": "person_hour_param",
+      "hoursPerShift": 11,
+      "shiftsPerDay": 2,
+      "days": 3
+    },
+    {
+      "id": "r-geo",
+      "workId": "w1",
+      "kind": "resource",
+      "name": "Staff B",
+      "category": "people",
+      "quantity": 2,
+      "rate": 1400,
+      "tariffBasis": "person_hour_param",
+      "hoursPerShift": 11,
+      "shiftsPerDay": 2,
+      "days": 3
+    },
+    {
+      "id": "r-lab",
+      "workId": "w1",
+      "kind": "resource",
+      "name": "Staff C",
+      "category": "people",
+      "quantity": 4,
+      "rate": 1400,
+      "tariffBasis": "person_hour_param",
+      "hoursPerShift": 11,
+      "shiftsPerDay": 2,
+      "days": 3
+    },
+    {
+      "id": "r-bus",
+      "workId": "w1",
+      "kind": "resource",
+      "name": "Shift bus (anon)",
+      "category": "equipment",
+      "quantity": 2,
+      "rate": 2650,
+      "tariffBasis": "schedule_fixed",
+      "hoursPerShift": 11,
+      "shiftsPerDay": 1,
+      "days": 3
+    },
+    {
+      "id": "r-miss",
+      "workId": "w1",
+      "kind": "resource",
+      "name": "Equipment without tariff",
+      "category": "equipment",
+      "quantity": 1,
+      "rate": null,
+      "tariffBasis": "unspecified",
+      "hoursPerShift": 11,
+      "shiftsPerDay": 1,
+      "days": 3
+    }
+  ],
+  "expected": {
+    "labor": 924000,
+    "equipment": 174900,
+    "materials": 0,
+    "direct": 1098900,
+    "overhead": 472527,
+    "costWithOh": 1571427,
+    "profit": 628570.8,
+    "total": 2199997.8,
+    "busHours": 66,
+    "busAmount": 174900,
+    "missingTariffIncomplete": true
+  },
+  "tariffBasisAmbiguity": {
+    "schedule_fixed_example": 2650,
+    "tariffs_sheet_full_example_cache": 3438.887869,
+    "rule": "Do not silently choose; require explicit tariffBasis."
+  }
+}
