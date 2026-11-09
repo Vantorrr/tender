@@ -119,7 +119,7 @@ export interface Procurement {
   title: string;
   customer: string;
   region: string;
-  nmck: number;
+  nmck: number | null;
   deadline: string;
   source: string;
   status: CardStatus;
@@ -127,7 +127,13 @@ export interface Procurement {
   syncStatus: "aktualno" | "ustarelo" | "oshibka_sinhronizacii";
   syncAt: string;
   duplicateOf?: string;
-  attachments: { id: string; name: string; type: string; size: string }[];
+  attachments: {
+    id: string;
+    name: string;
+    type: string;
+    size: string;
+    sourceUrl?: string;
+  }[];
   objectId?: string;
   documentIds: string[];
   calculationId?: string;

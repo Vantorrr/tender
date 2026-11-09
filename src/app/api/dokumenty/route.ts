@@ -10,6 +10,7 @@ import { config } from "@/server/config";
 import {
   archiveExtractDir,
   detectArchiveFormat,
+  extractRarArchiveSafely,
   extractArchiveSafely,
 } from "@/server/safe-archive";
 import { saveUpload } from "@/server/uploads";
@@ -75,11 +76,9 @@ export async function POST(req: Request) {
       if (archiveFormat !== "none") {
         const tempId = `d-${Date.now()}`;
         const stored = await saveUpload(tempId, file.name, buf);
-        const extracted = extractArchiveSafely(
-          file.name,
-          buf,
-          archiveExtractDir(tempId)
-        );
+        const extracted = archiveFormat === "rar"
+          ? await extractRarArchiveSafely(file.name, buf, archiveExtractDir(tempId))
+          : extractArchiveSafely(file.name, buf, archiveExtractDir(tempId));
         const archiveDoc = createDocument(user.id, {
           orgId: user.orgId,
           procurementId,

@@ -7,11 +7,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import zlib from "node:zlib";
+import { createExtractorFromData } from "node-unrar-js";
 import { config } from "@/server/config";
 
 export type ArchiveExtractResult = {
   ok: boolean;
-  format: "zip" | "unsupported" | "none";
+  format: "zip" | "rar" | "unsupported" | "none";
   files: Array<{
     name: string;
     size: number;
@@ -266,7 +267,8 @@ export function detectArchiveFormat(
 ): ArchiveExtractResult["format"] {
   const lower = fileName.toLowerCase();
   if (isZip(bytes) || lower.endsWith(".zip")) return "zip";
-  if (/\.(rar|7z|tar|gz|tgz)$/i.test(lower)) return "unsupported";
+  if (/\.rar$/i.test(lower)) return "rar";
+  if (/\.(7z|tar|gz|tgz)$/i.test(lower)) return "unsupported";
   return "none";
 }
 
@@ -279,13 +281,15 @@ export function extractArchiveSafely(
   if (format === "none") {
     return { ok: true, format, files: [], errors: [], skipped: [] };
   }
-  if (format === "unsupported") {
+  if (format === "unsupported" || format === "rar") {
     return {
       ok: false,
       format,
       files: [],
       errors: [
-        `Формат архива «${fileName}» не поддерживается безопасным извлечением (только ZIP).`,
+        format === "rar"
+          ? `Для распаковки «${fileName}» вызовите RAR-распаковщик.`
+          : `Формат архива «${fileName}» не поддерживается безопасным извлечением (ZIP/RAR).`,
       ],
       skipped: [],
     };
@@ -331,6 +335,109 @@ export function extractArchiveSafely(
     errors,
     skipped,
   };
+}
+
+/** RAR extraction in memory with the same path/count/size limits as ZIP. */
+export async function extractRarArchiveSafely(
+  fileName: string,
+  bytes: Buffer,
+  targetDir: string
+): Promise<ArchiveExtractResult> {
+  const files: ArchiveExtractResult["files"] = [];
+  const errors: string[] = [];
+  const skipped: string[] = [];
+  try {
+    const archiveBytes = Uint8Array.from(bytes).buffer;
+    const extractor = await createExtractorFromData({ data: archiveBytes });
+    const listing = extractor.getFileList();
+    const headers = [...listing.fileHeaders];
+    if (listing.arcHeader.flags.volume) {
+      return {
+        ok: false,
+        format: "rar",
+        files,
+        errors: ["Многотомные RAR-архивы не поддерживаются"],
+        skipped,
+      };
+    }
+
+    let totalUncompressed = 0;
+    const allowedNames: string[] = [];
+    for (const header of headers) {
+      const unsafe = unsafeName(header.name);
+      if (header.flags.directory) continue;
+      if (unsafe) {
+        errors.push(`${header.name}: ${unsafe}`);
+        skipped.push(header.name);
+        continue;
+      }
+      if (header.flags.encrypted) {
+        errors.push(`${header.name}: зашифрованный файл не разобран`);
+        skipped.push(header.name);
+        continue;
+      }
+      if (header.unpSize > MAX_SINGLE) {
+        errors.push(`${header.name}: файл больше лимита ${MAX_SINGLE} байт`);
+        skipped.push(header.name);
+        continue;
+      }
+      if (totalUncompressed + header.unpSize > MAX_UNCOMPRESSED) {
+        errors.push(`${header.name}: превышен общий лимит распаковки`);
+        skipped.push(header.name);
+        continue;
+      }
+      if (allowedNames.length >= MAX_FILES) {
+        errors.push(`${header.name}: превышен лимит ${MAX_FILES} файлов`);
+        skipped.push(header.name);
+        continue;
+      }
+      totalUncompressed += header.unpSize;
+      allowedNames.push(header.name);
+    }
+    if (allowedNames.length === 0) {
+      return { ok: errors.length === 0, format: "rar", files, errors, skipped };
+    }
+    const extracted = extractor.extract({ files: allowedNames });
+    fs.mkdirSync(targetDir, { recursive: true });
+    for (const entry of extracted.files) {
+      const rel = entry.fileHeader.name.replace(/\\/g, "/");
+      const data = entry.extraction;
+      if (!data) {
+        errors.push(`${rel}: содержимое не извлечено`);
+        skipped.push(rel);
+        continue;
+      }
+      if (data.length > MAX_SINGLE || data.length !== entry.fileHeader.unpSize) {
+        errors.push(`${rel}: размер результата не совпадает с безопасным лимитом`);
+        skipped.push(rel);
+        continue;
+      }
+      const abs = path.resolve(targetDir, rel);
+      const resolvedRoot = path.resolve(targetDir);
+      if (!abs.startsWith(resolvedRoot + path.sep)) {
+        errors.push(`${rel}: выход за каталог распаковки`);
+        skipped.push(rel);
+        continue;
+      }
+      fs.mkdirSync(path.dirname(abs), { recursive: true });
+      fs.writeFileSync(abs, Buffer.from(data));
+      files.push({
+        name: path.basename(rel),
+        size: data.length,
+        relativePath: rel,
+        absolutePath: abs,
+      });
+    }
+    return { ok: errors.length === 0, format: "rar", files, errors, skipped };
+  } catch (error) {
+    return {
+      ok: false,
+      format: "rar",
+      files,
+      errors: [error instanceof Error ? error.message.slice(0, 180) : "RAR не удалось распаковать"],
+      skipped,
+    };
+  }
 }
 
 export function archiveExtractDir(docId: string): string {

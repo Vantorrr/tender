@@ -83,9 +83,10 @@ function insertNotice(
     attachments: [
       {
         id: `a-auto-${Date.now()}`,
-        name: notice.attachmentName ?? "izveshchenie.pdf",
-        type: "pdf",
-        size: "640 КБ",
+        name: notice.attachmentName ?? "Документы не приложены",
+        type: notice.attachmentType ?? "—",
+        size: notice.attachmentSize ?? "—",
+        ...(notice.attachmentUrl ? { sourceUrl: notice.attachmentUrl } : {}),
       },
     ],
     documentIds: [],

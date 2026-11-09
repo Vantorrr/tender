@@ -143,6 +143,45 @@ export default function ZakupkaDetailPage() {
     }
   }
 
+  async function onImportSourceAttachment(attachment: { id: string; name: string }) {
+    setBusy(true);
+    setUploadError(null);
+    try {
+      const response = await fetch("/api/zakupki/source-file", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ procurementId: procurement!.id, attachmentId: attachment.id }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error ?? "Не удалось скачать файл источника");
+      }
+      const file = new File([await response.blob()], attachment.name, {
+        type: response.headers.get("content-type") ?? "application/octet-stream",
+      });
+      await createDocumentUpload({
+        procurementId: procurement!.id,
+        title: attachment.name,
+        file,
+        category: /смет|smeta/i.test(attachment.name)
+          ? "estimate"
+          : /договор|контракт|dogovor/i.test(attachment.name)
+            ? "contract"
+            : /\.(zip|rar|7z)$/i.test(attachment.name)
+              ? "archive"
+              : "general",
+      });
+      toast.success(`Файл «${attachment.name}» загружен в карточку`);
+      await refresh();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Ошибка загрузки файла";
+      setUploadError(message);
+      toast.error(message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div>
       <PageHeader
@@ -359,6 +398,24 @@ export default function ZakupkaDetailPage() {
               <AlertDescription>{uploadError}</AlertDescription>
             </Alert>
           ) : null}
+          {procurement.attachments.some((attachment) => attachment.sourceUrl) ? (
+            <section className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4">
+              <h2 className="font-medium">Файлы с площадки</h2>
+              <p className="mt-1 text-xs text-[var(--tk-muted)]">
+                Скачайте пакет в карточку: PDF, DOCX, XLSX, ZIP и RAR будут разобраны автоматически.
+              </p>
+              <ul className="mt-3 space-y-2">
+                {procurement.attachments.filter((attachment) => attachment.sourceUrl).map((attachment) => (
+                  <li key={attachment.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 text-sm">
+                    <span>{attachment.name} · {attachment.size}</span>
+                    <Button size="sm" variant="outline" disabled={busy} onClick={() => void onImportSourceAttachment(attachment)}>
+                      Скачать и разобрать
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
           <div className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4">
             <div>
               <p className="mb-1 text-xs text-[var(--tk-muted)]">Категория</p>
@@ -380,7 +437,7 @@ export default function ZakupkaDetailPage() {
               ref={fileRef}
               type="file"
               className="hidden"
-              accept=".pdf,.docx,.xlsx,.zip"
+              accept=".pdf,.docx,.xlsx,.zip,.rar"
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (f) void onUpload(f);
@@ -395,7 +452,7 @@ export default function ZakupkaDetailPage() {
               Добавить файл вручную
             </Button>
             <p className="text-xs text-[var(--tk-muted)]">
-              PDF / DOCX / XLSX / ZIP. Ошибки распаковки архива показываются явно.
+              PDF / DOCX / XLSX / ZIP / RAR. Ошибки распаковки показываются в карточке.
             </p>
           </div>
           <ul className="space-y-2">

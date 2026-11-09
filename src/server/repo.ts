@@ -775,16 +775,21 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
           {
             id: `cp-${Date.now()}`,
             code: "01-01-001-01",
-            name: "Подготовительные работы (авто)",
+            name: p.nmck == null
+              ? "Черновик: заполнить объём и цену по ТЗ"
+              : "Подготовительные работы (авто)",
             unit: "компл",
             quantity: 1,
-            rate: Math.round(p.nmck * 0.02),
+            rate: p.nmck == null ? 0 : Math.round(p.nmck * 0.02),
           },
         ],
         assumptions: [
           "Сформировано из карточки закупки",
           "Требует проверки сметчика",
           "Собственные ресурсы только в черновике — не в смете заказчика",
+          ...(p.nmck == null
+            ? ["НМЦК источник не публикует; нулевая цена — пустая заготовка, заполнить вручную"]
+            : []),
         ],
         scenario: "bazovyy",
         scenarioFactor: 1,
@@ -857,7 +862,7 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
         procurementId: p.id,
         title: `Деньги — ${p.title.slice(0, 48)}`,
         status: "v_rabote",
-        payments: [
+        payments: p.nmck == null ? [] : [
           {
             id: `mp-${Date.now()}`,
             type: "avans",
@@ -1454,10 +1459,12 @@ export function sendProcurementToCalculation(
               {
                 id: `cp-${Date.now()}`,
                 code: "01-01-001-01",
-                name: "Подготовительные работы (ресурсный черновик)",
+                name: p.nmck == null
+                  ? "Черновик: заполнить объём и цену по ТЗ"
+                  : "Подготовительные работы (ресурсный черновик)",
                 unit: "компл",
                 quantity: 1,
-                rate: Math.round(p.nmck * 0.02),
+                rate: p.nmck == null ? 0 : Math.round(p.nmck * 0.02),
               },
             ];
       data.calculations.unshift({
@@ -1471,6 +1478,9 @@ export function sendProcurementToCalculation(
           "Ресурсный метод: черновик для редактирования",
           "Не является утверждённой нормативной сметой",
           "Цифры из справочников / объёмов; причины отклонений без выдумок",
+          ...(p.nmck == null
+            ? ["НМЦК источник не публикует; нулевая цена — пустая заготовка, заполнить вручную"]
+            : []),
         ],
         scenario: "bazovyy",
         scenarioFactor: 1,

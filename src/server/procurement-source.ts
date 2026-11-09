@@ -1,7 +1,7 @@
 /**
- * Adapter boundary for the external procurement feed.
- * Real vendor credentials are NOT agreed (kickoff) — do not invent them.
- * Default runtime = empty stub with honest `not_configured` (never invents notices).
+ * Adapter boundary for external procurement feeds.
+ * Nornickel's public local tenders page is read-only and needs no credentials.
+ * Closed SRM/ETP sources remain unconfigured until the customer provides access.
  * Explicit demo mode (`PROCUREMENT_DEMO=1`) may emit a stable synthetic notice for isolated demos.
  * Tests inject MockProcurementSource — never call a real vendor API from CI.
  */
@@ -11,10 +11,13 @@ export type ProcurementNoticeDraft = {
   title: string;
   customer: string;
   region: string;
-  nmck: number;
+  nmck: number | null;
   deadline: string;
   source: string;
   attachmentName?: string;
+  attachmentType?: string;
+  attachmentSize?: string;
+  attachmentUrl?: string;
   tags?: string[];
 };
 
@@ -110,6 +113,117 @@ export class ConfiguredProcurementSource implements ProcurementSource {
   }
 }
 
+const NORILSK_TENDERS_URL = "https://nornickel.ru/suppliers/tenders/local/";
+
+function componentJson(html: string, componentName: string): unknown {
+  const marker = new RegExp(`\\"${componentName}\\"\\s*:\\s*`).exec(html);
+  if (!marker) return null;
+  const start = marker.index + marker[0].length;
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let i = start; i < html.length; i += 1) {
+    const char = html[i];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') quoted = false;
+      continue;
+    }
+    if (char === '"') quoted = true;
+    else if (char === "{" || char === "[") depth += 1;
+    else if (char === "}" || char === "]") {
+      depth -= 1;
+      if (depth === 0) return JSON.parse(html.slice(start, i + 1));
+    }
+  }
+  return null;
+}
+
+function fieldValue(value: unknown): string {
+  if (typeof value === "string") return value.trim();
+  if (value && typeof value === "object" && "value" in value) {
+    const nested = (value as { value?: unknown }).value;
+    return typeof nested === "string" ? nested.trim() : "";
+  }
+  return "";
+}
+
+/** Public, read-only Norilsk Nickel local procurement feed. */
+export class NornickelLocalProcurementSource implements ProcurementSource {
+  readonly id = "nornickel-local-public";
+
+  async fetchNotices(_orgId: string): Promise<ProcurementFetchResult> {
+    try {
+      const response = await fetch(NORILSK_TENDERS_URL, {
+        headers: { "user-agent": "TMA361 procurement feed/1.0" },
+        signal: AbortSignal.timeout(15_000),
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const html = await response.text();
+      const component = componentJson(html, "local-tenders") as
+        | { items?: unknown[] }
+        | null;
+      if (!component || !Array.isArray(component.items)) {
+        throw new Error("Не удалось распознать формат публичной страницы закупок");
+      }
+      const notices = component.items.flatMap((raw): ProcurementNoticeDraft[] => {
+        if (!raw || typeof raw !== "object") return [];
+        const item = raw as Record<string, unknown>;
+        const name = fieldValue(item.name);
+        const match = /^(\S+)\s+([\s\S]+)$/.exec(name);
+        const number = match?.[1]?.trim() ?? "";
+        const title = match?.[2]?.trim() ?? name;
+        const activeTo = Number(item.activeTo);
+        const deadline = Number.isFinite(activeTo) && activeTo > 0
+          ? new Date(activeTo * 1000).toISOString()
+          : "";
+        if (!number || !title || !deadline || new Date(deadline).getTime() < Date.now()) return [];
+        const customer = fieldValue(item.customer) || "Заказчик не указан";
+        const documentation = item.documentation && typeof item.documentation === "object"
+          ? item.documentation as Record<string, unknown>
+          : {};
+        const path = typeof documentation.link === "string" ? documentation.link : "";
+        const fileName = typeof documentation.origName === "string" ? documentation.origName : "";
+        return [{
+          number,
+          title,
+          customer,
+          region: /\bНПР\b|Норильск/i.test(`${name} ${fieldValue(item.address)}`)
+            ? "Норильский промышленный район (проверить по ТЗ)"
+            : "Не указан в карточке — проверить по ТЗ",
+          nmck: null,
+          deadline,
+          source: "Публичная страница закупок «Норникеля»",
+          attachmentName: fileName || undefined,
+          attachmentType: typeof documentation.type === "string" ? documentation.type : undefined,
+          attachmentSize: typeof documentation.size === "string" ? documentation.size : undefined,
+          attachmentUrl: path.startsWith("/upload/")
+            ? new URL(path, "https://nornickel.ru").toString()
+            : undefined,
+          tags: ["Норникель", "публичная закупка"],
+        }];
+      });
+      return {
+        ok: true,
+        stub: false,
+        status: "ok",
+        detail: `Публичная лента «Норникеля»: получено ${notices.length} актуальных карточек. НМЦК не опубликована в ленте и не подменяется оценкой.`,
+        notices,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        stub: false,
+        status: "error",
+        detail: `Не удалось получить публичную ленту «Норникеля»: ${error instanceof Error ? error.message : "ошибка источника"}`,
+        notices: [],
+      };
+    }
+  }
+}
+
 /** Test-only mock: returns caller-supplied notices, never hits network. */
 export class MockProcurementSource implements ProcurementSource {
   readonly id = "mock-test-source";
@@ -131,6 +245,9 @@ export class MockProcurementSource implements ProcurementSource {
 
 function resolveDefaultSource(): ProcurementSource {
   const mode = (process.env.PROCUREMENT_SOURCE ?? "").toLowerCase();
+  if (mode === "nornickel" || mode === "nornickel-local") {
+    return new NornickelLocalProcurementSource();
+  }
   if (mode === "demo" || process.env.PROCUREMENT_DEMO === "1") {
     return new DemoProcurementSource();
   }
@@ -169,13 +286,16 @@ export function procurementSourceStatus(): {
     (process.env.PROCUREMENT_SOURCE ?? "").toLowerCase() === "demo";
   const hasUrl = Boolean(process.env.PROCUREMENT_API_URL?.trim());
   const configured = hasUrl && source instanceof ConfiguredProcurementSource;
+  const livePublic = source instanceof NornickelLocalProcurementSource;
   return {
     id: source.id,
-    stub: !configured,
+    stub: !configured && !livePublic,
     demo,
-    configured: false, // never claim live until a real adapter exists
-    status: demo ? "demo" : "not_configured",
-    detail: configured
+    configured: livePublic,
+    status: demo ? "demo" : livePublic ? "ok" : "not_configured",
+    detail: livePublic
+      ? "Подключена открытая публичная лента закупок «Норникеля»"
+      : configured
       ? "Адаптер вендора ожидает согласования"
       : demo
         ? "Включён явный демо-режим (синтетика)"
