@@ -6,6 +6,7 @@ import type {
   DailyFact,
   DocumentItem,
   GprSchedule,
+  GprStageResource,
   MoneyPayment,
   MoneyPlan,
   PlanFact,
@@ -983,8 +984,15 @@ export function patchScheduleResourceAndSync(
   input: {
     resourceId: string;
     stageId?: string;
+    name?: string;
+    unit?: string;
+    kind?: GprStageResource["kind"];
     quantity?: number;
     rate?: number | null;
+    hoursPerShift?: number | null;
+    shiftsPerDay?: number | null;
+    days?: number | null;
+    quantityBasis?: GprStageResource["quantityBasis"] | null;
   }
 ) {
   return mutateAppData((data) => {
@@ -1000,7 +1008,17 @@ export function patchScheduleResourceAndSync(
     schedule.stages = patchStageResource(
       schedule.stages,
       input.resourceId,
-      { quantity: input.quantity, rate: input.rate },
+      {
+        name: input.name,
+        unit: input.unit,
+        kind: input.kind,
+        quantity: input.quantity,
+        rate: input.rate,
+        hoursPerShift: input.hoursPerShift,
+        shiftsPerDay: input.shiftsPerDay,
+        days: input.days,
+        quantityBasis: input.quantityBasis,
+      },
       input.stageId
     );
     schedule.updatedAt = new Date().toISOString();

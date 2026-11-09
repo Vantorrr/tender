@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
@@ -29,7 +29,7 @@ import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-pa
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { bucketsFromPositions } from "@/lib/cost-engine";
 import { formatMoney, formatNumber } from "@/lib/format";
-import type { Calculation } from "@/lib/types";
+import type { Calculation, GprStageResource, ResourceQuantityBasis } from "@/lib/types";
 import type { EstimateLeaf } from "@/lib/hierarchical-estimate";
 import type { ResourceScheduleParams } from "@/lib/resource-schedule-model";
 import { useStore } from "@/lib/store";
@@ -41,10 +41,12 @@ import { compareCalculations } from "@/lib/calc-compare";
 
 export default function RaschetDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const {
     data,
     user,
     updateCalculation,
+    updateSchedule,
     patchScheduleResource,
     recalcCalculation,
     addCalcFromDirectory,
@@ -151,15 +153,24 @@ export default function RaschetDetailPage() {
 
   async function patchEstimateLeaf(
     leaf: EstimateLeaf,
-    patch: { quantity?: number; rate?: number | null }
+    patch: {
+      name?: string;
+      unit?: string;
+      quantity?: number;
+      rate?: number | null;
+      hoursPerShift?: number | null;
+      shiftsPerDay?: number | null;
+      days?: number | null;
+      kind?: GprStageResource["kind"];
+      quantityBasis?: ResourceQuantityBasis | null;
+    }
   ) {
     try {
       if (leaf.source === "stage_resource" && linkedSchedule) {
         await patchScheduleResource(linkedSchedule.id, {
           resourceId: leaf.id,
           stageId: leaf.stageId,
-          quantity: patch.quantity,
-          rate: patch.rate,
+          ...patch,
         });
         return;
       }
@@ -625,8 +636,28 @@ export default function RaschetDetailPage() {
             await refresh();
           }}
           onPatchLeaf={(leaf, patch) => {
-            void patchEstimateLeaf(leaf, patch);
+            return patchEstimateLeaf(leaf, patch);
           }}
+          onAddManualResources={async (stageId, resources) => {
+            if (!linkedSchedule || locked) return;
+            await updateSchedule(linkedSchedule.id, {
+              stages: linkedSchedule.stages.map((stage) =>
+                stage.id === stageId
+                  ? {
+                      ...stage,
+                      resources: [
+                        ...(stage.resources ?? []),
+                        ...resources.map((resource) => ({
+                          ...resource,
+                          id: `gprr-${crypto.randomUUID()}`,
+                        })),
+                      ],
+                    }
+                  : stage
+              ),
+            });
+          }}
+          onOpenSchedule={linkedSchedule ? () => router.push(`/cabinet/gpr/${linkedSchedule.id}`) : undefined}
           onExport={exportExcelLike}
           onAddClick={() => {
             setShowDirAdd(true);

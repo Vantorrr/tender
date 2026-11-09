@@ -16,6 +16,7 @@ import type {
   Calculation,
   DocumentItem,
   GprSchedule,
+  GprStageResource,
   MoneyPlan,
   NotificationItem,
   PlanFact,
@@ -25,6 +26,7 @@ import type {
   Role,
   SectionKey,
   User,
+  ResourceQuantityBasis,
 } from "./types";
 
 type PublicUser = Omit<User, "password" | "secretKey" | "secretKeyHash"> & {
@@ -92,8 +94,15 @@ interface StoreContextValue {
     input: {
       resourceId: string;
       stageId?: string;
+      name?: string;
+      unit?: string;
+      kind?: GprStageResource["kind"];
       quantity?: number;
       rate?: number | null;
+      hoursPerShift?: number | null;
+      shiftsPerDay?: number | null;
+      days?: number | null;
+      quantityBasis?: ResourceQuantityBasis | null;
     }
   ) => Promise<void>;
   updateMoney: (id: string, patch: Partial<MoneyPlan>) => Promise<void>;
@@ -492,8 +501,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       input: {
         resourceId: string;
         stageId?: string;
+        name?: string;
+        unit?: string;
+        kind?: GprStageResource["kind"];
         quantity?: number;
         rate?: number | null;
+        hoursPerShift?: number | null;
+        shiftsPerDay?: number | null;
+        days?: number | null;
+        quantityBasis?: ResourceQuantityBasis | null;
       }
     ) => {
       const boot = await api<BootstrapResponse>("/api/gpr", {
@@ -503,8 +519,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           action: "patchResource",
           resourceId: input.resourceId,
           stageId: input.stageId,
+          name: input.name,
+          unit: input.unit,
+          kind: input.kind,
           quantity: input.quantity,
           rate: input.rate,
+          hoursPerShift: input.hoursPerShift,
+          shiftsPerDay: input.shiftsPerDay,
+          days: input.days,
+          quantityBasis: input.quantityBasis,
         }),
       });
       applyBoot(boot);

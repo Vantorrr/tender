@@ -6,6 +6,7 @@ import {
 } from "@/server/repo";
 import { withAnySection, json } from "@/server/http";
 import type { GprSchedule } from "@/lib/types";
+import type { GprStageResource, ResourceQuantityBasis } from "@/lib/types";
 
 const SECTIONS = ["gpr", "zakupki", "raschety"] as const;
 
@@ -26,8 +27,15 @@ export async function PATCH(req: Request) {
       cascade?: boolean;
       resizeDays?: number | null;
       resourceId?: string;
+      name?: string;
+      unit?: string;
+      kind?: GprStageResource["kind"];
       quantity?: number;
       rate?: number | null;
+      hoursPerShift?: number | null;
+      shiftsPerDay?: number | null;
+      days?: number | null;
+      quantityBasis?: ResourceQuantityBasis | null;
     };
     if (!body.id) return json({ error: "Нужен id" }, 400);
     try {
@@ -48,8 +56,15 @@ export async function PATCH(req: Request) {
         patchScheduleResourceAndSync(user.id, body.id, {
           resourceId: body.resourceId,
           stageId: body.stageId,
+          name: body.name,
+          unit: body.unit,
+          kind: body.kind,
           quantity: body.quantity,
           rate: body.rate,
+          hoursPerShift: body.hoursPerShift,
+          shiftsPerDay: body.shiftsPerDay,
+          days: body.days,
+          quantityBasis: body.quantityBasis,
         });
         return json(getBootstrap(user));
       }

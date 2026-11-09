@@ -15,6 +15,8 @@ import {
   type ResourceScheduleParams,
 } from "@/lib/resource-schedule-model";
 import type { CalcPosition, CostSummarySnapshot, GprStage } from "@/lib/types";
+import type { GprStageResource, ResourceQuantityBasis } from "@/lib/types";
+import { SpreadsheetEstimateGrid } from "@/components/spreadsheet-estimate-grid";
 
 type Props = {
   stages: GprStage[];
@@ -33,7 +35,19 @@ type Props = {
     officeOverhead: number;
     reserve: number;
   }) => Promise<void>;
-  onPatchLeaf: (leaf: EstimateLeaf, patch: { quantity?: number; rate?: number | null }) => void;
+  onPatchLeaf: (leaf: EstimateLeaf, patch: {
+    name?: string;
+    unit?: string;
+    quantity?: number;
+    rate?: number | null;
+    hoursPerShift?: number | null;
+    shiftsPerDay?: number | null;
+    days?: number | null;
+    kind?: GprStageResource["kind"];
+    quantityBasis?: ResourceQuantityBasis | null;
+  }) => Promise<void> | void;
+  onAddManualResources?: (stageId: string, resources: Array<Omit<GprStageResource, "id">>) => Promise<void>;
+  onOpenSchedule?: () => void;
   onExport?: () => void;
   onAddClick?: () => void;
 };
@@ -50,10 +64,13 @@ export function HierarchicalEstimatePanel({
   officeOverhead = 0,
   onSaveResourceScheduleParams,
   onPatchLeaf,
+  onAddManualResources,
+  onOpenSchedule,
   onExport,
   onAddClick,
 }: Props) {
   const [search, setSearch] = useState("");
+  const [view, setView] = useState<"sheet" | "tree">("sheet");
   // PDF cue: stages collapsed by default; one stage expanded for overview+detail
   const [expandAll, setExpandAll] = useState(false);
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -95,13 +112,17 @@ export function HierarchicalEstimatePanel({
         <h2 className="font-[family-name:var(--font-display)] text-lg">
           Расчёт стоимости и оценка ресурсов
         </h2>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="mr-2 flex rounded-lg border border-[var(--tk-line)] p-1" aria-label="Вид ресурсного черновика">
+            <Button size="sm" variant={view === "sheet" ? "default" : "ghost"} aria-pressed={view === "sheet"} onClick={() => setView("sheet")}>Таблица</Button>
+            <Button size="sm" variant={view === "tree" ? "default" : "ghost"} aria-pressed={view === "tree"} onClick={() => setView("tree")}>По этапам</Button>
+          </div>
           {onExport ? (
             <Button variant="outline" data-testid="estimate-export" onClick={onExport}>
               Экспорт
             </Button>
           ) : null}
-          {onAddClick && !locked ? (
+          {view === "tree" && onAddClick && !locked ? (
             <Button data-testid="estimate-add" onClick={onAddClick}>
               + Добавить позицию
             </Button>
@@ -275,7 +296,7 @@ export function HierarchicalEstimatePanel({
       ) : null}
 
       {!locked && onSaveResourceScheduleParams ? (
-        <details className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4">
+        <details open className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4">
           <summary className="cursor-pointer text-sm font-medium">
             Параметры ресурсного шаблона · менять для этого проекта
           </summary>
@@ -356,6 +377,19 @@ export function HierarchicalEstimatePanel({
         </details>
       ) : null}
 
+      {view === "sheet" ? (
+        <SpreadsheetEstimateGrid
+          stages={stages}
+          nodes={nodes}
+          params={resourceScheduleParams ?? EXCEL_RESOURCE_SCHEDULE_DEFAULTS}
+          locked={locked}
+          onPatchLeaf={onPatchLeaf}
+          onAddResources={onAddManualResources}
+          onAddFromDirectory={onAddClick}
+          onOpenSchedule={onOpenSchedule}
+        />
+      ) : (
+      <>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Input
           className="max-w-sm"
@@ -533,6 +567,8 @@ export function HierarchicalEstimatePanel({
         )}
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }
