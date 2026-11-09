@@ -240,17 +240,21 @@ export function runCostEngine(input: CostEngineInput): CostEngineResult {
   const incomplete: string[] = [];
 
   let northernKnown = 0;
-  for (const item of input.northern.confirmedItems) {
-    if (item.status === "known" && item.amount != null) {
-      northernKnown = roundMoney(northernKnown + item.amount);
-    } else if (item.status === "clarify") {
-      incomplete.push(`north:${item.id}:${item.name}`);
-    } else if (item.status === "scenario") {
-      flags.push(`north_scenario:${item.id}`);
+  if (!input.northern.applicable) {
+    flags.push("northern_not_applicable");
+    if (input.northern.confirmedItems.some((item) => item.amount != null && item.amount > 0)) {
+      flags.push("northern_marked_not_applicable_but_amounts_present");
     }
-  }
-  if (input.northern.applicable === false && northernKnown > 0) {
-    flags.push("northern_marked_not_applicable_but_amounts_present");
+  } else {
+    for (const item of input.northern.confirmedItems) {
+      if (item.status === "known" && item.amount != null) {
+        northernKnown = roundMoney(northernKnown + item.amount);
+      } else if (item.status === "clarify") {
+        incomplete.push(`north:${item.id}:${item.name}`);
+      } else if (item.status === "scenario") {
+        flags.push(`north_scenario:${item.id}`);
+      }
+    }
   }
 
   const D = roundMoney(

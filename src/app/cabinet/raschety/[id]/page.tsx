@@ -38,6 +38,95 @@ import {
   positionLineSum,
 } from "@/lib/calc-math";
 import { compareCalculations } from "@/lib/calc-compare";
+import type { NorthernInputs } from "@/lib/cost-engine";
+
+function NorthernCostEditor({
+  calculationId,
+  value,
+  onSaved,
+}: {
+  calculationId: string;
+  value?: NorthernInputs;
+  onSaved: () => Promise<void>;
+}) {
+  const [applicable, setApplicable] = useState(value?.applicable ?? true);
+  const [items, setItems] = useState<NorthernInputs["confirmedItems"]>(
+    value?.confirmedItems ?? []
+  );
+  const [saving, setSaving] = useState(false);
+
+  function patchItem(
+    id: string,
+    patch: Partial<NorthernInputs["confirmedItems"][number]>
+  ) {
+    setItems((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      await api("/api/raschety", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id: calculationId,
+          recomputeCost: true,
+          costPatch: {
+            northern: { applicable, confirmedItems: items, notes: [] },
+            useResourceScheduleEconomics: true,
+          },
+        }),
+      });
+      await onSaved();
+      toast.success("Северные затраты сохранены, расчёт обновлён");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось сохранить затраты");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 space-y-3">
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={applicable} onChange={(event) => setApplicable(event.target.checked)} />
+        Для проекта применимы северные/вахтовые затраты
+      </label>
+      {items.length ? (
+        <div className="space-y-2">
+          {items.map((item) => (
+            <div key={item.id} className="grid gap-2 rounded-lg border border-[var(--tk-line)] p-3 sm:grid-cols-2 xl:grid-cols-[1.2fr_0.7fr_0.9fr_1.2fr_auto]">
+              <Input aria-label="Статья северных затрат" placeholder="Например, проживание вахты" value={item.name} onChange={(event) => patchItem(item.id, { name: event.target.value })} />
+              <Select value={item.status} onValueChange={(status) => status && patchItem(item.id, { status: status as NorthernInputs["confirmedItems"][number]["status"] })}>
+                <SelectTrigger aria-label={`Статус · ${item.name}`}>
+                  <SelectValue>{(status) => status === "known" ? "Подтверждено" : status === "clarify" ? "Уточнить" : "Сценарий"}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="known">Подтверждено</SelectItem>
+                  <SelectItem value="clarify">Уточнить</SelectItem>
+                  <SelectItem value="scenario">Сценарий</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input aria-label={`Сумма · ${item.name}`} type="number" min={0} step="0.01" placeholder="Сумма, ₽" value={item.amount ?? ""} onChange={(event) => {
+                const raw = event.target.value.trim();
+                const amount = raw ? Number(raw.replace(",", ".")) : null;
+                patchItem(item.id, { amount: amount != null && Number.isFinite(amount) && amount >= 0 ? amount : null });
+              }} />
+              <Input aria-label={`Основание · ${item.name}`} placeholder="Основание: КП, ШР, документ" value={item.basis} onChange={(event) => patchItem(item.id, { basis: event.target.value })} />
+              <Button variant="ghost" size="sm" aria-label={`Удалить · ${item.name}`} onClick={() => setItems((current) => current.filter((row) => row.id !== item.id))}>Удалить</Button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-[var(--tk-muted)]">Подтверждённые северные затраты не добавлены. Автоматический коэффициент не применяется.</p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" size="sm" onClick={() => setItems((current) => [...current, { id: `north-${Date.now()}`, name: "", status: "clarify", amount: null, basis: "" }])}>Добавить статью</Button>
+        <Button size="sm" disabled={saving} onClick={() => void save()}>{saving ? "Пересчёт…" : "Сохранить и пересчитать"}</Button>
+      </div>
+      <p className="text-xs text-[var(--tk-muted)]">В итог включаются только строки «Подтверждено» с заполненной суммой. Строки «Уточнить» помечают расчёт как неполный; сценарные суммы хранятся отдельно и не включаются.</p>
+    </div>
+  );
+}
 
 export default function RaschetDetailPage() {
   const params = useParams<{ id: string }>();
@@ -819,9 +908,7 @@ export default function RaschetDetailPage() {
             Север / экономика — подтверждаемые входы
           </h2>
           <p className="mt-1 text-sm text-[var(--tk-muted)]">
-            Значения ставок уточнит Егор. Здесь только структура входов: без
-            универсального «северного коэффициента». Прибыль — наценка XOR
-            маржа.
+            Вносите только подтверждённые расходы и указывайте источник суммы. Универсальный «северный коэффициент» не применяется. Прибыль — наценка XOR маржа.
           </p>
           <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-[var(--tk-muted)]">
             <li>
@@ -842,41 +929,12 @@ export default function RaschetDetailPage() {
             </li>
             <li>НДС %, дата цен, валюта; 14 позиций без тарифа → 0 + «неполно»</li>
           </ul>
-          <Button
-            className="mt-3"
-            variant="outline"
-            data-testid="recompute-northern"
-            onClick={async () => {
-              try {
-                await api("/api/raschety", {
-                  method: "PATCH",
-                  body: JSON.stringify({
-                    id: calc.id,
-                    recomputeCost: true,
-                    costPatch: {
-                      vatPercent: null,
-                      profitMethod: "markup",
-                      useResourceScheduleEconomics: true,
-                      profitRate: 0.4,
-                      northern: calc.northern ?? {
-                        applicable: true,
-                        confirmedItems: [],
-                        notes: [
-                          "север/вахта в эталоне есть; подтверждайте базу каждого коэффициента",
-                        ],
-                      },
-                    },
-                  }),
-                });
-                await refresh();
-                toast.success("Пересчёт связанных статей (без выдуманных ставок)");
-              } catch (e) {
-                toast.error(e instanceof Error ? e.message : "Ошибка");
-              }
-            }}
-          >
-            Пересчитать связанные
-          </Button>
+          <NorthernCostEditor
+            key={`${calc.id}:${calc.updatedAt}:${JSON.stringify(calc.northern ?? null)}`}
+            calculationId={calc.id}
+            value={calc.northern}
+            onSaved={refresh}
+          />
         </section>
       ) : null}
 
