@@ -60,3 +60,23 @@ export const NESTED_SECTIONS: SectionKey[] = [
   "riski",
   "obmen",
 ];
+
+/** All routable cabinet sections for ACL (sidebar + nested deep-links). */
+export const SECTION_ROUTES: Array<{ section: SectionKey; href: string }> = [
+  ...NAV_ITEMS.map((item) => ({ section: item.section, href: item.href })),
+  { section: "dokumenty", href: "/cabinet/dokumenty" },
+  { section: "gpr", href: "/cabinet/gpr" },
+  { section: "dengi", href: "/cabinet/dengi" },
+  { section: "riski", href: "/cabinet/riski" },
+  { section: "obmen", href: "/cabinet/obmen" },
+];
+
+export function sectionForPath(pathname: string): SectionKey | null {
+  const ordered = [...SECTION_ROUTES].sort(
+    (a, b) => b.href.length - a.href.length
+  );
+  const hit = ordered.find(
+    (item) => pathname === item.href || pathname.startsWith(item.href + "/")
+  );
+  return hit?.section ?? null;
+}

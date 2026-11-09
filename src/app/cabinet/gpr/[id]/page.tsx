@@ -1,24 +1,44 @@
 "use client";
 
 import { useParams } from "next/navigation";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
+import { DateInputRu } from "@/components/date-input-ru";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { downloadUrl } from "@/lib/api";
-import { formatDate } from "@/lib/format";
+import { api, downloadUrl } from "@/lib/api";
+import { collectCalendarWarnings } from "@/lib/calendar-availability";
+import { bucketsFromPositions, diffDays } from "@/lib/cost-engine";
+import { formatDate, formatDateRangeShort, formatMoney } from "@/lib/format";
+import { buildMaterialNeeds } from "@/lib/materials-need";
 import { useStore } from "@/lib/store";
 
 function daysBetween(a: string, b: string) {
-  const ms = new Date(b).getTime() - new Date(a).getTime();
-  return Math.max(1, Math.round(ms / 86400000));
+  return Math.max(1, Math.abs(diffDays(a, b)) || 1);
 }
+
+const KIND_RU: Record<string, string> = {
+  labor: "Люди",
+  material: "Материалы",
+  equipment: "Техника",
+  bus: "Автобусы",
+  other: "Прочее",
+};
 
 export default function GprDetailPage() {
   const params = useParams<{ id: string }>();
-  const { data, user, updateSchedule } = useStore();
+  const { data, user, updateSchedule, updateCalculation, refresh } = useStore();
+  const trackRef = useRef<HTMLDivElement>(null);
+  const [drag, setDrag] = useState<{
+    stageId: string;
+    startX: number;
+    mode: "move" | "resize";
+  } | null>(null);
+
   if (!user) return null;
   const schedule = data.schedules.find(
     (s) => s.id === params.id && s.orgId === user.orgId
@@ -34,6 +54,50 @@ export default function GprDetailPage() {
     schedule.stages[0]?.end ?? ""
   );
   const totalDays = daysBetween(minStart, maxEnd) || 1;
+  const cal = schedule.calendar;
+  const calc = data.calculations.find((c) => c.id === schedule.calculationId);
+  const buckets = calc
+    ? bucketsFromPositions(calc.positions, calc.scenarioFactor || 1)
+    : null;
+  const cost = calc?.costSummary;
+  const supplies = (data.supplyRequests ?? []).filter(
+    (s) => s.procurementId === schedule.procurementId
+  );
+  const calWarnings = collectCalendarWarnings(schedule.stages, supplies);
+  const matNeeds = calc
+    ? buildMaterialNeeds({
+        positions: calc.positions,
+        stages: schedule.stages,
+      })
+    : [];
+
+  async function shiftStage(
+    stageId: string,
+    deltaDays: number,
+    resizeDays?: number | null
+  ) {
+    try {
+      await api("/api/gpr", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id: schedule!.id,
+          action: "shiftStage",
+          stageId,
+          deltaDays,
+          cascade: true,
+          resizeDays: resizeDays ?? null,
+        }),
+      });
+      await refresh();
+      toast.success(
+        deltaDays === 0
+          ? "Длительность обновлена"
+          : `Сдвиг ${deltaDays > 0 ? "+" : ""}${deltaDays} дн.`
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка сдвига");
+    }
+  }
 
   return (
     <div>
@@ -42,7 +106,9 @@ export default function GprDetailPage() {
         description={`Расчёт «${
           data.calculations.find((c) => c.id === schedule.calculationId)?.title ??
           "—"
-        }» · версия ${schedule.version}`}
+        }» · v${schedule.version} · календарь ${cal?.hoursPerShift ?? 8}ч × ${
+          cal?.shiftsPerDay ?? 1
+        } смен`}
         actions={
           <>
             <StatusBadge status={schedule.status} />
@@ -63,50 +129,460 @@ export default function GprDetailPage() {
                 toast.success("Скачивание XLSX…");
               }}
             >
-              Экспорт
+              Экспорт таблицы
             </Button>
           </>
         }
       />
 
+      {(schedule.conflicts?.length ?? 0) > 0 ? (
+        <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-950">
+          Конфликты зависимостей: {schedule.conflicts!.join("; ")}
+        </div>
+      ) : null}
+
       <div className="mb-6 overflow-x-auto rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
-        <h2 className="mb-4 font-[family-name:var(--font-display)] text-base">
-          Календарь этапов
+        <h2 className="mb-2 font-[family-name:var(--font-display)] text-base">
+          Гант — перетаскивание полос
         </h2>
-        <div className="space-y-3">
+        <p className="mb-4 text-xs text-[var(--tk-muted)]">
+          Drag полосы = сдвиг дат; правый край = изменение длительности. Каскад
+          FS по зависимостям. Даты на полосах читаемы.
+        </p>
+        <div className="space-y-3" ref={trackRef} data-testid="gantt-track">
           {schedule.stages
             .slice()
             .sort((a, b) => a.sequence - b.sequence)
             .map((stage) => {
-              const offset = daysBetween(minStart, stage.start) - 1;
+              const offset = Math.max(0, diffDays(minStart, stage.start));
               const width = daysBetween(stage.start, stage.end);
               return (
-                <div key={stage.id} className="grid items-center gap-2 sm:grid-cols-[180px_1fr] sm:gap-3">
-                  <div className="text-sm">
-                    <div className="font-medium">{stage.name}</div>
+                <div
+                  key={stage.id}
+                  className="grid items-center gap-2 sm:grid-cols-[minmax(220px,280px)_1fr] sm:gap-3"
+                >
+                  <div className="min-w-0 text-sm sm:min-w-[220px]">
+                    <div className="font-medium leading-snug break-words">
+                      {stage.name}
+                    </div>
                     <div className="text-xs text-[var(--tk-muted)]">
                       {formatDate(stage.start)} — {formatDate(stage.end)}
+                      {stage.crewSize
+                        ? ` · ${stage.crewSize} чел`
+                        : ""}
                     </div>
+                    {(stage.resources?.length ?? 0) > 0 ? (
+                      <div className="mt-1 text-[11px] text-[var(--tk-muted)]">
+                        {stage.resources!.map((r) => (
+                          <span key={r.id} className="mr-2">
+                            {KIND_RU[r.kind] ?? r.kind}: {r.name} ×{r.quantity}{" "}
+                            {r.unit}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
-                  <div className="relative h-8 rounded-md bg-[var(--tk-steel-50)]">
+                  <div className="relative h-12 rounded-md bg-stone-100">
                     <div
-                      className="absolute top-1 h-6 rounded-md bg-[var(--tk-steel)]/85"
+                      role="slider"
+                      aria-label={`Полоса ${stage.name}`}
+                      data-testid={`gantt-bar-${stage.id}`}
+                      tabIndex={0}
+                      draggable
+                      onDragStart={(e) => {
+                        setDrag({
+                          stageId: stage.id,
+                          startX: e.clientX,
+                          mode: "move",
+                        });
+                      }}
+                      onDragEnd={(e) => {
+                        if (!drag || drag.stageId !== stage.id) return;
+                        const track = trackRef.current?.querySelector(
+                          `.gantt-row-${stage.id}`
+                        ) as HTMLElement | null;
+                        const w =
+                          track?.clientWidth ||
+                          trackRef.current?.clientWidth ||
+                          600;
+                        const pxPerDay = w / totalDays;
+                        const deltaPx = e.clientX - drag.startX;
+                        const deltaDays = Math.round(deltaPx / pxPerDay);
+                        setDrag(null);
+                        if (deltaDays !== 0) void shiftStage(stage.id, deltaDays);
+                      }}
+                      className={`gantt-row-${stage.id} absolute top-1 flex h-10 cursor-grab items-center justify-between rounded-md bg-teal-700/90 px-2 text-[11px] font-medium text-white active:cursor-grabbing`}
                       style={{
                         left: `${(offset / totalDays) * 100}%`,
-                        width: `${(width / totalDays) * 100}%`,
-                        minWidth: 8,
+                        width: `${Math.max((width / totalDays) * 100, 12)}%`,
+                        minWidth: 120,
                       }}
-                    />
+                      title={formatDateRangeShort(stage.start, stage.end)}
+                    >
+                      <span className="whitespace-nowrap">
+                        {formatDateRangeShort(stage.start, stage.end)}
+                      </span>
+                      <span
+                        className="ml-2 h-full w-2 shrink-0 cursor-ew-resize rounded-sm bg-white/50"
+                        title="Изменить длительность"
+                        onMouseDown={(e) => {
+                          e.stopPropagation();
+                          const startX = e.clientX;
+                          const startWidth = width;
+                          const onMove = (ev: MouseEvent) => {
+                            const trackW =
+                              (
+                                trackRef.current?.querySelector(
+                                  `.gantt-row-${stage.id}`
+                                ) as HTMLElement | null
+                              )?.parentElement?.clientWidth || 600;
+                            const pxPerDay = trackW / totalDays;
+                            const d = Math.round(
+                              (ev.clientX - startX) / pxPerDay
+                            );
+                            void d;
+                            (e.target as HTMLElement).dataset.pending = String(
+                              Math.max(1, startWidth + d)
+                            );
+                          };
+                          const onUp = () => {
+                            window.removeEventListener("mousemove", onMove);
+                            window.removeEventListener("mouseup", onUp);
+                            const pending = Number(
+                              (e.target as HTMLElement).dataset.pending ??
+                                startWidth
+                            );
+                            if (pending !== startWidth) {
+                              void shiftStage(stage.id, 0, pending);
+                            }
+                          };
+                          window.addEventListener("mousemove", onMove);
+                          window.addEventListener("mouseup", onUp);
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
               );
             })}
         </div>
+        <div className="mt-3 flex flex-wrap gap-2">
+          {schedule.stages.map((s) => (
+            <div key={`btns-${s.id}`} className="flex gap-1">
+              <Button
+                size="sm"
+                variant="outline"
+                data-testid={`gantt-shift-left-${s.id}`}
+                onClick={() => shiftStage(s.id, -1)}
+              >
+                ← {s.name.slice(0, 12)}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                data-testid={`gantt-shift-right-${s.id}`}
+                onClick={() => shiftStage(s.id, 1)}
+              >
+                {s.name.slice(0, 12)} →
+              </Button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div
+        className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5"
+        data-testid="gpr-cost-summary"
+      >
+        <h2 className="mb-2 font-[family-name:var(--font-display)] text-base">
+          Сводка ГПР / себестоимость (без двойного счёта)
+        </h2>
+        {cost && buckets ? (
+          <>
+            {(cost.totalsIncomplete || (cost.incomplete?.length ?? 0) > 0) && (
+              <Alert className="mb-3" data-testid="gpr-incomplete-banner">
+                <AlertTitle>Итоги неполны</AlertTitle>
+                <AlertDescription>
+                  C0 / цена не считаются подтверждёнными:{" "}
+                  {(cost.incomplete ?? []).slice(0, 8).join("; ") ||
+                    "есть незаполненные ставки/позиции"}
+                </AlertDescription>
+              </Alert>
+            )}
+            <dl className="grid gap-2 text-sm sm:grid-cols-3">
+              <div>Прямые · труд: {formatMoney(buckets.labor)}</div>
+              <div data-testid="gpr-materials-cost">
+                Прямые · материалы:{" "}
+                {buckets.materialsUnpriced
+                  ? "нет данных"
+                  : formatMoney(buckets.materials)}
+              </div>
+              <div>Прямые · техника: {formatMoney(buckets.equipment)}</div>
+              <div>
+                C0 (без резерва): {formatMoney(cost.C0)}
+                {cost.totalsIncomplete ? " · неполно" : ""}
+              </div>
+              <div>Резерв: {formatMoney(cost.reserve)}</div>
+              <div>C (с резервом): {formatMoney(cost.C)}</div>
+              <div>Прибыль: {formatMoney(cost.profit)}</div>
+              <div>Цена без НДС: {formatMoney(cost.priceExVat)}</div>
+              <div>
+                НДС:{" "}
+                {cost.vatAmount == null
+                  ? "нет данных"
+                  : formatMoney(cost.vatAmount)}
+              </div>
+            </dl>
+          </>
+        ) : (
+          <p className="text-sm text-[var(--tk-muted)]">
+            Сводка появится после пересчёта cost-engine в связанном черновике
+            расчёта. Здесь нет угаданных Excel-формул.
+          </p>
+        )}
+        <p className="mt-2 text-xs text-[var(--tk-muted)]">
+          Материалы/труд/техника — из позиций расчёта. Строка ресурсов этапа без
+          подтверждённой ставки не становится 0 ₽ в цене. НР/СП не дублируются в
+          прямых. После сдвига дат автобусные дни и сводка пересчитываются.
+        </p>
+      </div>
+
+      {calWarnings.length > 0 ? (
+        <div
+          className="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm"
+          data-testid="gpr-calendar-warnings"
+        >
+          <h2 className="mb-2 font-medium">Календарь · доступность</h2>
+          <ul className="space-y-1 text-amber-950">
+            {calWarnings.map((w, i) => (
+              <li key={`${w.kind}-${i}`}>
+                [{w.severity}] {w.message}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <div
+        className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5"
+        data-testid="gpr-material-needs"
+      >
+        <h2 className="mb-2 font-[family-name:var(--font-display)] text-base">
+          Потребность в материалах (из расчёта и ресурсов этапов)
+        </h2>
+        {matNeeds.length === 0 ? (
+          <p className="text-sm text-[var(--tk-muted)]">
+            Нет материальных позиций/ресурсов — укажите в расчёте или ставках
+            ресурсов. Каталог не угадывается.
+          </p>
+        ) : (
+          <ul className="space-y-2 text-sm" data-testid="gpr-material-needs-list">
+            {matNeeds.map((m) => (
+              <li
+                key={m.key}
+                className="flex flex-wrap items-center gap-2 border-b border-[var(--tk-line)]/50 py-1"
+              >
+                <span className="min-w-[180px] font-medium">{m.name}</span>
+                <span className="text-xs text-[var(--tk-muted)]">
+                  {m.source === "calc_position" ? "расчёт" : m.stageName}
+                </span>
+                <Input
+                  className="h-8 w-24"
+                  type="number"
+                  min={0}
+                  step="any"
+                  title="Количество"
+                  data-testid={`mat-need-qty-${m.key}`}
+                  value={m.quantity}
+                  onChange={(e) => {
+                    const q = Number(e.target.value) || 0;
+                    if (m.source === "stage_resource" && m.stageId) {
+                      const rid = m.key.replace(/^res:/, "");
+                      updateSchedule(schedule.id, {
+                        stages: schedule.stages.map((s) =>
+                          s.id === m.stageId
+                            ? {
+                                ...s,
+                                resources: (s.resources ?? []).map((x) =>
+                                  x.id === rid ? { ...x, quantity: q } : x
+                                ),
+                              }
+                            : s
+                        ),
+                      });
+                    } else if (
+                      m.source === "calc_position" &&
+                      calc &&
+                      m.positionId
+                    ) {
+                      updateCalculation(calc.id, {
+                        positions: calc.positions.map((p) =>
+                          p.id === m.positionId ? { ...p, quantity: q } : p
+                        ),
+                      });
+                    }
+                  }}
+                />
+                <span>{m.unit}</span>
+                <Input
+                  className="h-8 w-28"
+                  type="number"
+                  min={0}
+                  step="any"
+                  title="Ставка"
+                  placeholder="нет данных"
+                  data-testid={`mat-need-rate-${m.key}`}
+                  value={m.rate == null ? "" : String(m.rate)}
+                  onChange={(e) => {
+                    const raw = e.target.value.trim();
+                    const rate = raw === "" ? null : Number(raw);
+                    const nextRate =
+                      rate == null || Number.isNaN(rate) ? null : rate;
+                    if (m.source === "stage_resource" && m.stageId) {
+                      const rid = m.key.replace(/^res:/, "");
+                      updateSchedule(schedule.id, {
+                        stages: schedule.stages.map((s) =>
+                          s.id === m.stageId
+                            ? {
+                                ...s,
+                                resources: (s.resources ?? []).map((x) =>
+                                  x.id === rid ? { ...x, rate: nextRate } : x
+                                ),
+                              }
+                            : s
+                        ),
+                      });
+                    } else if (
+                      m.source === "calc_position" &&
+                      calc &&
+                      m.positionId
+                    ) {
+                      updateCalculation(calc.id, {
+                        positions: calc.positions.map((p) =>
+                          p.id === m.positionId
+                            ? { ...p, rate: nextRate ?? 0 }
+                            : p
+                        ),
+                      });
+                    }
+                  }}
+                />
+                <span>
+                  {m.amount == null
+                    ? "сумма: нет данных"
+                    : formatMoney(m.amount)}
+                </span>
+                {m.missing.length ? (
+                  <span className="text-amber-800">
+                    ввод: {m.missing.join(", ")}
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="mb-6 overflow-x-auto rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
+        <h2 className="mb-2 font-[family-name:var(--font-display)] text-base">
+          Сводка ресурсов (люди / материалы / техника / автобусы)
+        </h2>
+        <table className="w-full text-left text-sm" data-testid="gpr-resource-table">
+          <thead>
+            <tr className="border-b border-[var(--tk-line)] text-xs text-[var(--tk-muted)]">
+              <th className="py-1 pr-2">Этап</th>
+              <th className="py-1 pr-2">Вид</th>
+              <th className="py-1 pr-2">Название</th>
+              <th className="py-1 pr-2">Кол-во</th>
+              <th className="py-1 pr-2">Ед.</th>
+              <th className="py-1">Ставка</th>
+            </tr>
+          </thead>
+          <tbody>
+            {schedule.stages.flatMap((stage) =>
+              (stage.resources ?? []).map((r) => (
+                <tr
+                  key={`${stage.id}-${r.id}`}
+                  className="border-b border-[var(--tk-line)]/60"
+                >
+                  <td className="py-1 pr-2">{stage.name}</td>
+                  <td className="py-1 pr-2">
+                    {KIND_RU[r.kind] ?? r.kind}
+                  </td>
+                  <td className="py-1 pr-2">{r.name}</td>
+                  <td className="py-1 pr-2">
+                    <Input
+                      className="h-8 w-20"
+                      type="number"
+                      min={0}
+                      step="any"
+                      value={r.quantity}
+                      data-testid={`res-qty-${r.id}`}
+                      onChange={(e) => {
+                        const q = Number(e.target.value) || 0;
+                        updateSchedule(schedule.id, {
+                          stages: schedule.stages.map((s) =>
+                            s.id === stage.id
+                              ? {
+                                  ...s,
+                                  resources: (s.resources ?? []).map((x) =>
+                                    x.id === r.id ? { ...x, quantity: q } : x
+                                  ),
+                                }
+                              : s
+                          ),
+                        });
+                      }}
+                    />
+                  </td>
+                  <td className="py-1 pr-2">{r.unit ?? "—"}</td>
+                  <td className="py-1">
+                    <Input
+                      className="h-8 w-28"
+                      type="number"
+                      min={0}
+                      step="any"
+                      placeholder="нет данных"
+                      value={r.rate == null ? "" : String(r.rate)}
+                      data-testid={`res-rate-${r.id}`}
+                      onChange={(e) => {
+                        const raw = e.target.value.trim();
+                        const rate =
+                          raw === "" ? null : Number(raw);
+                        updateSchedule(schedule.id, {
+                          stages: schedule.stages.map((s) =>
+                            s.id === stage.id
+                              ? {
+                                  ...s,
+                                  resources: (s.resources ?? []).map((x) =>
+                                    x.id === r.id
+                                      ? {
+                                          ...x,
+                                          rate:
+                                            rate == null ||
+                                            Number.isNaN(rate)
+                                              ? null
+                                              : rate,
+                                        }
+                                      : x
+                                  ),
+                                }
+                              : s
+                          ),
+                        });
+                      }}
+                    />
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
       </div>
 
       <div className="space-y-3">
         <h2 className="font-[family-name:var(--font-display)] text-base">
-          Редактирование этапов
+          Этапы · мощность · зависимости
         </h2>
         {schedule.stages
           .slice()
@@ -114,7 +590,7 @@ export default function GprDetailPage() {
           .map((stage) => (
             <div
               key={stage.id}
-              className="grid gap-2 rounded-xl border border-[var(--tk-line)] bg-white/80 p-3 sm:grid-cols-4"
+              className="grid gap-2 rounded-xl border border-[var(--tk-line)] bg-white/80 p-3 sm:grid-cols-7"
             >
               <Input
                 value={stage.name}
@@ -126,36 +602,107 @@ export default function GprDetailPage() {
                   });
                 }}
               />
+              <div>
+                <DateInputRu
+                  value={stage.start}
+                  onChange={(iso) => {
+                    const delta = diffDays(stage.start, iso);
+                    void shiftStage(stage.id, delta);
+                  }}
+                />
+              </div>
+              <div>
+                <DateInputRu
+                  value={stage.end}
+                  onChange={(iso) => {
+                    const len = Math.max(1, diffDays(stage.start, iso));
+                    void shiftStage(stage.id, 0, len);
+                  }}
+                />
+              </div>
               <Input
-                type="date"
-                value={stage.start}
+                type="number"
+                min={1}
+                value={stage.crewSize ?? 4}
+                title="Численность"
                 onChange={(e) => {
+                  const crew = Number(e.target.value) || 1;
+                  updateSchedule(schedule.id, {
+                    stages: schedule.stages.map((s) => {
+                      if (s.id !== stage.id) return s;
+                      const next = { ...s, crewSize: crew };
+                      return {
+                        ...next,
+                        resources: (next.resources ?? []).map((r) => {
+                          if (r.kind === "labor" && /бригада/i.test(r.name)) {
+                            return { ...r, quantity: crew };
+                          }
+                          if (r.kind === "bus" && /автобус/i.test(r.name)) {
+                            return {
+                              ...r,
+                              quantity: Math.max(1, Math.ceil(crew / 20)),
+                            };
+                          }
+                          return r;
+                        }),
+                      };
+                    }),
+                  });
+                }}
+              />
+              <Input
+                type="number"
+                min={0}
+                step="any"
+                placeholder="объём этапа"
+                title="План объёма этапа (физ.)"
+                data-testid={`stage-plan-volume-${stage.id}`}
+                value={
+                  stage.planVolume == null ? "" : String(stage.planVolume)
+                }
+                onChange={(e) => {
+                  const raw = e.target.value.trim();
                   updateSchedule(schedule.id, {
                     stages: schedule.stages.map((s) =>
-                      s.id === stage.id ? { ...s, start: e.target.value } : s
+                      s.id === stage.id
+                        ? {
+                            ...s,
+                            planVolume:
+                              raw === ""
+                                ? null
+                                : Number(raw) || 0,
+                          }
+                        : s
                     ),
                   });
                 }}
               />
               <Input
-                type="date"
-                value={stage.end}
+                type="number"
+                min={1}
+                value={stage.hoursPerShift ?? 8}
+                title="Часов в смене"
                 onChange={(e) => {
                   updateSchedule(schedule.id, {
                     stages: schedule.stages.map((s) =>
-                      s.id === stage.id ? { ...s, end: e.target.value } : s
+                      s.id === stage.id
+                        ? {
+                            ...s,
+                            hoursPerShift: Number(e.target.value) || 8,
+                          }
+                        : s
                     ),
                   });
                 }}
               />
-              <div className="flex items-center text-sm text-[var(--tk-muted)]">
-                Порядок {stage.sequence}
+              <div className="flex items-center text-xs text-[var(--tk-muted)]">
+                {stage.dependencyType ?? "—"}
                 {stage.dependsOn
-                  ? ` · после ${
-                      schedule.stages.find((s) => s.id === stage.dependsOn)?.name ??
-                      "предыдущего этапа"
+                  ? ` ← ${
+                      schedule.stages.find((s) => s.id === stage.dependsOn)
+                        ?.name ?? stage.dependsOn
                     }`
-                  : ""}
+                  : " без предка"}
               </div>
             </div>
           ))}

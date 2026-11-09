@@ -120,11 +120,143 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
   if (!g) throw new Error("ГПР не найден");
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("ГПР");
-  ws.addRow(["Этап", "Начало", "Окончание", "Порядок", "Зависит от"]);
+  ws.addRow([
+    "Этап",
+    "Начало",
+    "Окончание",
+    "Порядок",
+    "Зависит от",
+    "Тип связи",
+    "Лаг дн.",
+    "Чел.",
+    "Ч/смена",
+    "Смен/сут",
+    "Объём плана",
+    "Ресурсы",
+  ]);
   ws.getRow(1).font = { bold: true };
   for (const s of g.stages) {
-    ws.addRow([s.name, s.start, s.end, s.sequence, s.dependsOn ?? ""]);
+    const res = (s.resources ?? [])
+      .map((r) => `${r.kind}:${r.name}×${r.quantity}${r.unit ? r.unit : ""}`)
+      .join("; ");
+    ws.addRow([
+      s.name,
+      s.start,
+      s.end,
+      s.sequence,
+      s.dependsOn ?? "",
+      s.dependencyType ?? "",
+      s.lagDays ?? 0,
+      s.crewSize ?? "",
+      s.hoursPerShift ?? g.calendar?.hoursPerShift ?? "",
+      s.shiftsPerDay ?? g.calendar?.shiftsPerDay ?? "",
+      s.planVolume ?? "",
+      res,
+    ]);
   }
+  const resSheet = wb.addWorksheet("Ресурсы");
+  resSheet.addRow(["Этап", "Вид", "Название", "Кол-во", "Ед.", "Ставка", "Сумма"]);
+  resSheet.getRow(1).font = { bold: true };
+  let rIdx = 2;
+  for (const s of g.stages) {
+    for (const r of s.resources ?? []) {
+      resSheet.addRow([
+        s.name,
+        r.kind,
+        r.name,
+        r.quantity,
+        r.unit ?? "",
+        r.rate ?? null,
+        null,
+      ]);
+      // Confirmed sum only when rate present; blank rate → blank sum (not 0)
+      resSheet.getCell(`G${rIdx}`).value = {
+        formula: `IF(OR(F${rIdx}="",F${rIdx}=0),"",D${rIdx}*F${rIdx})`,
+      };
+      rIdx += 1;
+    }
+  }
+  if (rIdx > 2) {
+    const last = rIdx - 1;
+    resSheet.addRow([
+      "Итого подтверждённых",
+      "",
+      "",
+      { formula: `SUM(D2:D${last})` },
+      "",
+      "",
+      { formula: `SUM(G2:G${last})` },
+    ]);
+  }
+  const calc = data.calculations.find((c) => c.id === g.calculationId);
+  const sumSheet = wb.addWorksheet("Сводка");
+  sumSheet.addRow(["Показатель", "Значение", "Примечание"]);
+  sumSheet.getRow(1).font = { bold: true };
+  const cs = calc?.costSummary;
+  if (cs) {
+    sumSheet.addRow(["C0", cs.C0, cs.totalsIncomplete ? "НЕПОЛНО" : ""]);
+    sumSheet.addRow(["C", cs.C, ""]);
+    sumSheet.addRow([
+      "Резерв",
+      cs.reserve,
+      "не путать с резервом отпуска; общий непредвиденный — только если подтверждён",
+    ]);
+    sumSheet.addRow([
+      "Прибыль",
+      cs.profit,
+      "наценка на с/с с НР (не маржа выручки)",
+    ]);
+    sumSheet.addRow(["Цена без НДС", cs.priceExVat, ""]);
+    sumSheet.addRow([
+      "НДС",
+      cs.vatAmount == null ? "нет данных" : cs.vatAmount,
+      "",
+    ]);
+    sumSheet.addRow([
+      "Неполнота",
+      (cs.incomplete ?? []).join("; ") || "—",
+      cs.totalsIncomplete ? "итоги не подтверждены" : "",
+    ]);
+  } else {
+    sumSheet.addRow(["Сводка", "нет данных", "пересчитайте cost-engine"]);
+  }
+  const rs = calc?.resourceScheduleParams;
+  const rsSheet = wb.addWorksheet("Ресурсный_параметры");
+  rsSheet.addRow(["Параметр", "Значение", "Локатор/смысл"]);
+  rsSheet.getRow(1).font = { bold: true };
+  const p = rs ?? {
+    personHourRate: 1400,
+    personnelShiftsPerDay: 2,
+    hoursPerShift: 11,
+    equipmentShiftsPerDay: 1,
+    overheadRate: 0.43,
+    profitMarkupOnCostWithOh: 0.4,
+  };
+  rsSheet.addRow(["Стоимость 1 чел.-часа", p.personHourRate, "B4"]);
+  rsSheet.addRow(["Смен персонала/сутки", p.personnelShiftsPerDay, "B5"]);
+  rsSheet.addRow(["Часов в смене", p.hoursPerShift, "B6"]);
+  rsSheet.addRow(["Смен техники/сутки", p.equipmentShiftsPerDay, "B7"]);
+  rsSheet.addRow(["НР (доля от прямых)", p.overheadRate, "B8"]);
+  rsSheet.addRow([
+    "Прибыль (наценка на с/с с НР)",
+    p.profitMarkupOnCostWithOh,
+    "B9",
+  ]);
+  rsSheet.addRow([
+    "Часы ресурса",
+    "Q=L*N*O*P",
+    "кол-во×ч/смена×смен/сут×дни",
+  ]);
+  rsSheet.addRow(["Сумма ресурса", "R=Q*M", "ставка без двойного ГСМ/водителя"]);
+  rsSheet.addRow([
+    "Прямые",
+    "V=S+T+U",
+    "материалы+люди+техника",
+  ]);
+  rsSheet.addRow(["НР сумма", "W=V*B8", ""]);
+  rsSheet.addRow(["С/с с НР", "X=V+W", ""]);
+  rsSheet.addRow(["Прибыль сумма", "Y=X*B9", ""]);
+  rsSheet.addRow(["Итого", "Z=X+Y", ""]);
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
@@ -165,10 +297,100 @@ export async function buildPlanFactXlsx(id: string): Promise<Buffer> {
   if (!pf) throw new Error("План/факт не найден");
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet("ПланФакт");
-  ws.addRow(["Работа", "Ед.", "План", "Факт", "Отклонение"]);
+  ws.addRow(["Работа", "Ед.", "План", "Факт", "Отклонение", "Остаток договора"]);
   ws.getRow(1).font = { bold: true };
+  let rowIdx = 2;
   for (const e of pf.entries) {
-    ws.addRow([e.workName, e.unit, e.plan, e.fact, e.fact - e.plan]);
+    ws.addRow([
+      e.workName,
+      e.unit,
+      e.plan,
+      e.fact,
+      null,
+      e.contractRemaining ?? Math.max(0, e.plan - e.fact),
+    ]);
+    // Excel formulas: deviation = fact - plan; remain = plan - fact
+    ws.getCell(`E${rowIdx}`).value = { formula: `D${rowIdx}-C${rowIdx}` };
+    ws.getCell(`F${rowIdx}`).value = { formula: `MAX(0,C${rowIdx}-D${rowIdx})` };
+    rowIdx += 1;
+  }
+  if (pf.entries.length) {
+    const last = rowIdx - 1;
+    const totalRow = last + 1;
+    ws.addRow(["Итого", "", null, null, null, null]);
+    ws.getCell(`C${totalRow}`).value = { formula: `SUM(C2:C${last})` };
+    ws.getCell(`D${totalRow}`).value = { formula: `SUM(D2:D${last})` };
+    ws.getCell(`E${totalRow}`).value = {
+      formula: `D${totalRow}-C${totalRow}`,
+    };
+    ws.getCell(`F${totalRow}`).value = {
+      formula: `MAX(0,C${totalRow}-D${totalRow})`,
+    };
+  }
+  if (pf.baselineEntries?.length) {
+    const base = wb.addWorksheet("Baseline");
+    base.addRow(["Работа", "Ед.", "План", "Факт", "Зафиксировано"]);
+    base.getRow(1).font = { bold: true };
+    for (const e of pf.baselineEntries) {
+      base.addRow([e.workName, e.unit, e.plan, e.fact, pf.baselineAt ?? ""]);
+    }
+  }
+  const daily = wb.addWorksheet("ЕжедневныйФакт");
+  daily.addRow([
+    "Дата",
+    "Работа",
+    "Ед.",
+    "Кол-во",
+    "Фото",
+    "Автор",
+    "Комментарий",
+  ]);
+  daily.getRow(1).font = { bold: true };
+  for (const d of pf.dailyFacts ?? []) {
+    daily.addRow([
+      d.date,
+      d.workName,
+      d.unit,
+      d.quantity,
+      d.photos.map((p) => p.fileName).join("; "),
+      d.authorId,
+      d.comment ?? "",
+    ]);
+  }
+  const pnl = wb.addWorksheet("PnL");
+  pnl.addRow(["Показатель", "Значение", "Примечание"]);
+  pnl.getRow(1).font = { bold: true };
+  pnl.addRow([
+    "earnedValue",
+    pf.pnl?.earnedValue ?? 0,
+    "физический индекс ≠ платёж",
+  ]);
+  pnl.addRow([
+    "economicsAuto",
+    pf.pnl?.economicsAuto ?? "нет данных",
+    "объём×подтверждённые расценки",
+  ]);
+  pnl.addRow([
+    "incurredCosts",
+    pf.pnl?.incurredCosts ?? 0,
+    pf.pnl?.incurredManual ? "ручная корректировка" : "из auto или 0",
+  ]);
+  pnl.addRow(["cashIn", pf.pnl?.cashIn ?? 0, "касса отдельно"]);
+  pnl.addRow(["cashOut", pf.pnl?.cashOut ?? 0, "касса отдельно"]);
+  pnl.addRow([
+    "recognizedRevenue",
+    pf.pnl?.recognizedRevenue ?? "нет данных",
+    "выручка отдельно",
+  ]);
+  pnl.addRow([
+    "incomplete",
+    (pf.pnl?.incomplete ?? []).join("; ") || "—",
+    (pf.pnl?.incomplete?.length ?? 0) > 0
+      ? "экономика неполная"
+      : "",
+  ]);
+  for (const n of pf.pnl?.notes ?? []) {
+    pnl.addRow(["note", n, ""]);
   }
   return Buffer.from(await wb.xlsx.writeBuffer());
 }

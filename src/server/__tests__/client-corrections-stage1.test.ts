@@ -18,7 +18,11 @@ import {
   archiveExtractDir,
   extractArchiveSafely,
 } from "@/server/safe-archive";
-import { NAV_ITEMS, NESTED_SECTIONS } from "@/components/cabinet/nav";
+import {
+  NAV_ITEMS,
+  NESTED_SECTIONS,
+  sectionForPath,
+} from "@/components/cabinet/nav";
 import zlib from "node:zlib";
 import fs from "node:fs";
 import path from "node:path";
@@ -91,6 +95,15 @@ describe("client corrections stage 1", () => {
     for (const s of NESTED_SECTIONS) {
       expect(sections).not.toContain(s);
     }
+  });
+
+  it("deep-link ACL still maps nested routes (dengi/gpr/dokumenty/riski/obmen)", () => {
+    expect(sectionForPath("/cabinet/dengi")).toBe("dengi");
+    expect(sectionForPath("/cabinet/gpr/g-1")).toBe("gpr");
+    expect(sectionForPath("/cabinet/dokumenty")).toBe("dokumenty");
+    expect(sectionForPath("/cabinet/riski")).toBe("riski");
+    expect(sectionForPath("/cabinet/obmen")).toBe("obmen");
+    expect(sectionForPath("/cabinet/zakupki/p-1")).toBe("zakupki");
   });
 
   it("sendToCalculation creates editable draft + GPR and keeps docs", () => {

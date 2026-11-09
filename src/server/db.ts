@@ -7,6 +7,8 @@ import {
   mergeClientDirectoriesInto,
 } from "@/lib/client-dirs";
 import { DEMO_SECRET_KEYS } from "@/lib/demo-accounts";
+import { ensureStageResources } from "@/lib/gpr-resources";
+import { recomputeEntriesFromDaily } from "@/lib/plan-fact-agg";
 import { createSeedData } from "@/lib/seed";
 import type { AppData } from "@/lib/types";
 import { config, dbPath } from "@/server/config";
@@ -21,7 +23,8 @@ import { modelConfigured } from "@/server/openrouter";
 import { hashPassword } from "@/server/passwords";
 import { procurementSourceStatus } from "@/server/procurement-source";
 
-const SCHEMA_VERSION = "8";
+/** 12: stage-named resources + enrich empty runtime GPRs; keep custom complete sets. */
+const SCHEMA_VERSION = "12";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -224,14 +227,93 @@ function applySchema8Extras(data: AppData): AppData {
   return data;
 }
 
+/** Additive schema-9: gantt calendar, production baseline/daily/PnL hooks. */
+function applySchema9Extras(data: AppData): AppData {
+  data.procurements = (data.procurements ?? []).map((p) => ({
+    ...p,
+    // Never infer "production" from planFactId alone — won→production is explicit.
+    lifecycle:
+      p.lifecycle ??
+      (p.wonAt
+        ? "production"
+        : p.calculationId
+          ? "calculation"
+          : "procurement"),
+  }));
+  data.schedules = (data.schedules ?? []).map((s) => ({
+    ...s,
+    calendar: s.calendar ?? {
+      weekendDays: [0, 6],
+      hoursPerShift: 8,
+      shiftsPerDay: 1,
+      timezone: "Asia/Krasnoyarsk",
+    },
+    stages: (s.stages ?? []).map((st) => {
+      const base = {
+        ...st,
+        dependencyType: st.dependencyType ?? (st.dependsOn ? "FS" : undefined),
+        lagDays: st.lagDays ?? 0,
+        crewSize: st.crewSize ?? 4,
+        hoursPerShift: st.hoursPerShift ?? s.calendar?.hoursPerShift ?? 8,
+        shiftsPerDay: st.shiftsPerDay ?? s.calendar?.shiftsPerDay ?? 1,
+      };
+      return ensureStageResources(base);
+    }),
+    conflicts: s.conflicts ?? [],
+  }));
+  data.planFacts = (data.planFacts ?? []).map((pf) => {
+    const next = {
+      ...pf,
+      dailyFacts: pf.dailyFacts ?? [],
+      baselineEntries: pf.baselineEntries,
+      pnl: pf.pnl ?? {
+        earnedValue: 0,
+        incurredCosts: 0,
+        cashIn: 0,
+        cashOut: 0,
+        recognizedRevenue: null,
+        notes: [
+          "Физический факт ≠ платёж",
+          "Нормативная стоимость выполненного ≠ поступления/списания",
+          "Признанная выручка = нет данных, пока не подтверждено",
+        ],
+      },
+    };
+    // Heal stale entry.fact when daily ledger exists (units/aggregation bug class)
+    if ((next.dailyFacts?.length ?? 0) > 0) {
+      recomputeEntriesFromDaily(next);
+    }
+    return next;
+  });
+  return data;
+}
+
+/** Additive schema-10+: supply cycle + stage-named multi-kind resources. */
+function applySchema10Extras(data: AppData): AppData {
+  applySchema9Extras(data);
+  data.supplyRequests = data.supplyRequests ?? [];
+  data.procurements = (data.procurements ?? []).map((p) => ({
+    ...p,
+    supplyRequestIds: p.supplyRequestIds ?? [],
+  }));
+  // Enrich incomplete stages; preserve complete custom resource sets
+  data.schedules = (data.schedules ?? []).map((s) => ({
+    ...s,
+    stages: (s.stages ?? []).map((st) => ensureStageResources(st)),
+  }));
+  return data;
+}
+
 function migrate(db: DatabaseSync) {
   const row = db.prepare("SELECT payload FROM app_blob WHERE id = 1").get() as
     | { payload: string }
     | undefined;
 
   if (!row) {
-    const seed = applySchema8Extras(
-      installGrandReference(hashSeedUsers(createSeedData()))
+    const seed = applySchema10Extras(
+      applySchema8Extras(
+        installGrandReference(hashSeedUsers(createSeedData()))
+      )
     );
     const now = new Date().toISOString();
     db.prepare(
@@ -308,6 +390,7 @@ function migrate(db: DatabaseSync) {
     metaSet(db, "client_xlsx_imported", "1");
     installGrandReference(data);
     applySchema8Extras(data);
+    applySchema10Extras(data);
 
     db.prepare(
       "UPDATE app_blob SET payload = ?, updated_at = ? WHERE id = 1"

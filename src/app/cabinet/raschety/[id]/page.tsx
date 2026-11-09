@@ -23,7 +23,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { downloadUrl } from "@/lib/api";
+import { api, downloadUrl } from "@/lib/api";
+import { bucketsFromPositions } from "@/lib/cost-engine";
 import { formatMoney, formatNumber } from "@/lib/format";
 import type { Calculation } from "@/lib/types";
 import { useStore } from "@/lib/store";
@@ -41,6 +42,7 @@ export default function RaschetDetailPage() {
     updateCalculation,
     recalcCalculation,
     addCalcFromDirectory,
+    refresh,
   } = useStore();
   const [dirType, setDirType] = useState<"rascenki" | "ceny" | "park">(
     "rascenki"
@@ -97,6 +99,15 @@ export default function RaschetDetailPage() {
 
   const totals = calculationTotals(calc);
   const total = totals.total;
+  const buckets = bucketsFromPositions(
+    calc.positions,
+    calc.scenarioFactor || 1
+  );
+  const materials = calc.positions.filter((p) => {
+    if (p.code === "НР" || p.code === "СП") return false;
+    const hay = `${p.code} ${p.name} ${p.unit}`.toLowerCase();
+    return /матер|м²|м2|т\b|сэндвич|бетон|арматур|компл/.test(hay);
+  });
 
   function exportExcelLike() {
     downloadUrl(`/api/export?kind=calc-xlsx&id=${calc!.id}`);
@@ -135,21 +146,64 @@ export default function RaschetDetailPage() {
           <>
             <StatusBadge status={calc.status} />
             {!locked ? (
-              <Button
-                variant="secondary"
-                onClick={async () => {
-                  try {
-                    await recalcCalculation(calc.id, calc.scenario);
-                    toast.success("Ставки обновлены из текущих справочников");
-                  } catch (e) {
-                    toast.error(
-                      e instanceof Error ? e.message : "Ошибка пересчёта"
-                    );
-                  }
-                }}
-              >
-                Обновить из справочников
-              </Button>
+              <>
+                <Button
+                  variant="secondary"
+                  onClick={async () => {
+                    try {
+                      await recalcCalculation(calc.id, calc.scenario);
+                      toast.success("Ставки обновлены из текущих справочников");
+                    } catch (e) {
+                      toast.error(
+                        e instanceof Error ? e.message : "Ошибка пересчёта"
+                      );
+                    }
+                  }}
+                >
+                  Обновить из справочников
+                </Button>
+                <Button
+                  variant="outline"
+                  data-testid="recompute-cost-engine"
+                  onClick={async () => {
+                    try {
+                      const { api } = await import("@/lib/api");
+                      await api("/api/raschety", {
+                        method: "PATCH",
+                        body: JSON.stringify({
+                          id: calc.id,
+                          recomputeCost: true,
+                          costPatch: {
+                            vatPercent: null,
+                            profitMethod: "markup",
+                            // Excel Ресурсный_график: НР 43% от прямых, прибыль = наценка 40% на с/с с НР
+                            useResourceScheduleEconomics: true,
+                            profitRate: 0.4,
+                            resourceScheduleParams: calc.resourceScheduleParams ?? {
+                              personHourRate: 1400,
+                              personnelShiftsPerDay: 2,
+                              hoursPerShift: 11,
+                              equipmentShiftsPerDay: 1,
+                              overheadRate: 0.43,
+                              profitMarkupOnCostWithOh: 0.4,
+                            },
+                          },
+                        }),
+                      });
+                      await refresh();
+                      toast.success(
+                        "Cost-engine: НР×прямые + наценка на с/с с НР (НДС — нет данных)"
+                      );
+                    } catch (e) {
+                      toast.error(
+                        e instanceof Error ? e.message : "Ошибка cost-engine"
+                      );
+                    }
+                  }}
+                >
+                  Cost-engine
+                </Button>
+              </>
             ) : null}
             <Button
               variant="outline"
@@ -250,29 +304,82 @@ export default function RaschetDetailPage() {
         </div>
       </div>
 
-      <div className="overflow-x-auto rounded-xl border border-[var(--tk-line)] bg-white/80">
+      <div className="mb-4 grid gap-2 text-sm sm:grid-cols-4">
+        <div className="rounded-xl border bg-white/80 p-3">
+          Труд: {formatMoney(buckets.labor)}
+        </div>
+        <div className="rounded-xl border bg-white/80 p-3">
+          Материалы:{" "}
+          {buckets.materialsUnpriced
+            ? "нет данных"
+            : formatMoney(buckets.materials)}
+        </div>
+        <div className="rounded-xl border bg-white/80 p-3">
+          Техника: {formatMoney(buckets.equipment)}
+        </div>
+        <div className="rounded-xl border bg-white/80 p-3">
+          Прочее прямые: {formatMoney(buckets.other)}
+        </div>
+      </div>
+
+      <div
+        className="overflow-x-auto rounded-xl border border-[var(--tk-line)] bg-white/80"
+        data-testid="calc-positions-table"
+      >
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Код</TableHead>
               <TableHead>Наименование</TableHead>
               <TableHead>Ед.</TableHead>
-              <TableHead className="text-right">Кол-во</TableHead>
+              <TableHead className="text-right">Кол-во / потребность</TableHead>
               <TableHead className="text-right">Расценка</TableHead>
-              <TableHead className="text-right">Сумма</TableHead>
+              <TableHead className="text-right">Стоимость</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {calc.positions.map((p) => (
               <TableRow key={p.id}>
                 <TableCell className="font-mono text-xs">{p.code}</TableCell>
-                <TableCell>{p.name}</TableCell>
+                <TableCell className="min-w-[12rem]">{p.name}</TableCell>
                 <TableCell>{p.unit}</TableCell>
                 <TableCell className="text-right">
-                  {formatNumber(p.quantity)}
+                  {locked ? (
+                    formatNumber(p.quantity)
+                  ) : (
+                    <Input
+                      className="ml-auto w-28 text-right"
+                      data-testid={`pos-qty-${p.id}`}
+                      value={String(p.quantity)}
+                      onChange={(e) => {
+                        const v = Number(e.target.value) || 0;
+                        updateCalculation(calc.id, {
+                          positions: calc.positions.map((x) =>
+                            x.id === p.id ? { ...x, quantity: v } : x
+                          ),
+                        });
+                      }}
+                    />
+                  )}
                 </TableCell>
                 <TableCell className="text-right">
-                  {formatMoney(p.rate)}
+                  {locked ? (
+                    formatMoney(p.rate)
+                  ) : (
+                    <Input
+                      className="ml-auto w-32 text-right"
+                      data-testid={`pos-rate-${p.id}`}
+                      value={String(p.rate)}
+                      onChange={(e) => {
+                        const v = Number(e.target.value) || 0;
+                        updateCalculation(calc.id, {
+                          positions: calc.positions.map((x) =>
+                            x.id === p.id ? { ...x, rate: v } : x
+                          ),
+                        });
+                      }}
+                    />
+                  )}
                 </TableCell>
                 <TableCell className="text-right font-medium">
                   {formatMoney(
@@ -284,6 +391,121 @@ export default function RaschetDetailPage() {
           </TableBody>
         </Table>
       </div>
+
+      <section className="mt-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
+        <h2 className="font-[family-name:var(--font-display)] text-base">
+          Материалы — потребность и стоимость
+        </h2>
+        <p className="mt-1 text-sm text-[var(--tk-muted)]">
+          Позиции, классифицированные как материалы. Полный каталог клиента —
+          через справочники. Без выдуманных потерь сверх нормы.
+        </p>
+        {materials.length === 0 ? (
+          <p className="mt-2 text-sm text-[var(--tk-muted)]">
+            Материальных позиций пока нет — добавьте из справочника или
+            импорта.
+          </p>
+        ) : (
+          <Table className="mt-3">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Код</TableHead>
+                <TableHead>Материал</TableHead>
+                <TableHead>Ед.</TableHead>
+                <TableHead className="text-right">Потребность</TableHead>
+                <TableHead className="text-right">Стоимость</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {materials.map((p) => (
+                <TableRow key={`mat-${p.id}`}>
+                  <TableCell className="font-mono text-xs">{p.code}</TableCell>
+                  <TableCell>{p.name}</TableCell>
+                  <TableCell>{p.unit}</TableCell>
+                  <TableCell className="text-right">
+                    {formatNumber(p.quantity)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {formatMoney(
+                      positionLineSum(p, calc.scenarioFactor || 1)
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </section>
+
+      {!locked ? (
+        <section
+          className="mt-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5"
+          data-testid="northern-inputs"
+        >
+          <h2 className="font-[family-name:var(--font-display)] text-base">
+            Север / экономика — подтверждаемые входы
+          </h2>
+          <p className="mt-1 text-sm text-[var(--tk-muted)]">
+            Значения ставок уточнит Егор. Здесь только структура входов: без
+            универсального «северного коэффициента». Прибыль — наценка XOR
+            маржа.
+          </p>
+          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-[var(--tk-muted)]">
+            <li>
+              Вахта / РК+СН / северные множители — из подтверждённых баз (ШР/ТС),
+              не универсальный коэффициент
+            </li>
+            <li>
+              Автобус: полная маш.-ч ставка уже с амортизацией/ГСМ/ФОТ/ТО — не
+              добавлять водителя/ГСМ сверху; расход топлива в эталоне — л/час
+            </li>
+            <li>
+              НР как % от прямых (эталон 43%); прибыль = наценка на с/с с НР
+              (эталон 40%), не маржа выручки
+            </li>
+            <li>
+              Резерв отпуска ≠ общий резерв непредвиденных (последний — только
+              если подтверждён отдельно)
+            </li>
+            <li>НДС %, дата цен, валюта; 14 позиций без тарифа → 0 + «неполно»</li>
+          </ul>
+          <Button
+            className="mt-3"
+            variant="outline"
+            data-testid="recompute-northern"
+            onClick={async () => {
+              try {
+                await api("/api/raschety", {
+                  method: "PATCH",
+                  body: JSON.stringify({
+                    id: calc.id,
+                    recomputeCost: true,
+                    costPatch: {
+                      vatPercent: null,
+                      profitMethod: "markup",
+                      useResourceScheduleEconomics: true,
+                      profitRate: 0.4,
+                      northern: calc.northern ?? {
+                        applicable: true,
+                        confirmedItems: [],
+                        notes: [
+                          "север/вахта в эталоне есть; подтверждайте базу каждого коэффициента",
+                        ],
+                      },
+                    },
+                  }),
+                });
+                await refresh();
+                toast.success("Пересчёт связанных статей (без выдуманных ставок)");
+              } catch (e) {
+                toast.error(e instanceof Error ? e.message : "Ошибка");
+              }
+            }}
+          >
+            Пересчитать связанные
+          </Button>
+        </section>
+      ) : null}
 
       {!locked ? (
       <section className="mt-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
@@ -435,6 +657,36 @@ export default function RaschetDetailPage() {
           )}
         </div>
       </section>
+      ) : null}
+
+      {calc.costSummary ? (
+        <section className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
+          <h2 className="font-[family-name:var(--font-display)] text-base">
+            Сводка cost-engine
+          </h2>
+          <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+            <div>C0 (без резерва): {formatMoney(calc.costSummary.C0)}</div>
+            <div>C (с резервом): {formatMoney(calc.costSummary.C)}</div>
+            <div>Прибыль: {formatMoney(calc.costSummary.profit)}</div>
+            <div>Цена без НДС: {formatMoney(calc.costSummary.priceExVat)}</div>
+            <div>
+              НДС:{" "}
+              {calc.costSummary.vatAmount == null
+                ? "нет данных"
+                : formatMoney(calc.costSummary.vatAmount)}
+            </div>
+            <div>
+              Неполнота:{" "}
+              {calc.costSummary.incomplete.length
+                ? calc.costSummary.incomplete.join(", ")
+                : "—"}
+            </div>
+          </dl>
+          <p className="mt-2 text-xs text-[var(--tk-muted)]">
+            Метод {calc.costSummary.method}. Без угадывания Excel и без обещания
+            97%. Север — только подтверждённые статьи.
+          </p>
+        </section>
       ) : null}
 
       <section className="mt-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
