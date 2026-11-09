@@ -135,6 +135,13 @@ export default function GprDetailPage() {
         </div>
       ) : null}
 
+      {(schedule.assumptions?.length ?? 0) > 0 ? (
+        <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950" data-testid="gpr-assumptions">
+          <p className="font-semibold">Черновик требует подтверждения</p>
+          <ul className="mt-1 list-disc space-y-1 pl-5">{schedule.assumptions!.map((assumption) => <li key={assumption}>{assumption}</li>)}</ul>
+        </div>
+      ) : null}
+
       <div className="mb-6" data-testid="gantt-track">
         <h2 className="mb-2 font-[family-name:var(--font-display)] text-base">
           План / факт · Гант
@@ -533,12 +540,12 @@ export default function GprDetailPage() {
               />
               <Input
                 type="number"
-                min={1}
-                value={stage.crewSize ?? 4}
+                min={0}
+                value={stage.crewSize ?? 0}
                 title="Численность"
                 aria-label={`Численность бригады · ${stage.name}`}
                 onChange={(e) => {
-                  const crew = Number(e.target.value) || 1;
+                  const crew = Math.max(0, Number(e.target.value) || 0);
                   updateSchedule(schedule.id, {
                     stages: schedule.stages.map((s) => {
                       if (s.id !== stage.id) return s;
@@ -548,12 +555,6 @@ export default function GprDetailPage() {
                         resources: (next.resources ?? []).map((r) => {
                           if (r.kind === "labor" && /бригада/i.test(r.name)) {
                             return { ...r, quantity: crew };
-                          }
-                          if (r.kind === "bus" && /автобус/i.test(r.name)) {
-                            return {
-                              ...r,
-                              quantity: Math.max(1, Math.ceil(crew / 20)),
-                            };
                           }
                           return r;
                         }),

@@ -235,10 +235,12 @@ function StageTotals({ stage, params }: { stage: GprStage; params: ResourceSched
     materialsTotal: built.materialsTotal,
   });
   const total = rollup.byWork[0];
-  const hasMaterials = (stage.resources ?? []).some((resource) => resource.kind === "material");
-  const partial = built.incomplete.length > 0 || rollup.incomplete.length > 0 || !hasMaterials;
+  const hasKnownMaterials = (stage.resources ?? []).some((resource) =>
+    resource.kind === "material" && resolveResourceDimensions(resource, stage, params).amount != null
+  );
+  const partial = built.incomplete.length > 0 || rollup.incomplete.length > 0 || !hasKnownMaterials;
   const values = [
-    ["S · Материалы", hasMaterials ? total?.materials ?? 0 : null],
+    ["S · Материалы", hasKnownMaterials ? total?.materials ?? 0 : null],
     ["T · Люди", total?.labor ?? 0],
     ["U · Техника", total?.equipment ?? 0],
     ["V · Прямые", total?.direct ?? 0],
@@ -409,7 +411,7 @@ export function SpreadsheetEstimateGrid({
         <table className="min-w-[2400px] border-separate border-spacing-0 text-xs tabular-nums">
           <thead className="sticky top-0 z-20 bg-stone-100 text-[var(--tk-ink)]">
             <tr>
-              {["A · №", "B · Раздел", "C · Работа / ресурс", "D · Ед.", "E · Объём", "F · Дл., дн.", "G · Начало", "H · Окончание", "I · Тип", "J · Категория", "K · Основание", "L · Кол-во", "M · Тариф, ₽", "N · ч/смена", "O · смен/сутки", "P · дни", "Q · часы", "R · Сумма, ₽", "S · Материалы", "T · Люди", "U · Техника", "V · Прямые", "W · НР", "X · С/с", "Y · Прибыль", "Z · Итого"].map((heading, index) => <th key={heading} className={`sticky top-0 border-b border-r border-[var(--tk-line)] px-2 py-2 text-left font-medium ${index < 3 ? "min-w-[9rem]" : "min-w-[7rem]"}`}>{heading}</th>)}
+              {["A · №", "B · Раздел", "C · Работа / ресурс", "D · Ед.", "E · Объём", "F · Дл., дн.", "G · Начало", "H · Окончание", "I · Тип", "J · Категория", "K · Основание", "L · Кол-во", "M · Тариф, ₽", "N · ч/смена", "O · смен/сутки", "P · дни", "Q · часы", "R · Сумма, ₽", "S · Материалы", "T · Люди", "U · Техника", "V · Прямые", "W · НР", "X · С/с", "Y · Прибыль", "Z · Итого"].map((heading, index) => <th key={heading} style={index < 3 ? { left: [0, 72, 264][index] } : undefined} className={`sticky top-0 border-b border-r border-[var(--tk-line)] px-2 py-2 text-left font-medium ${index < 3 ? "z-30 bg-stone-100" : "z-20"} ${index === 0 ? "w-[72px] min-w-[72px]" : index === 1 ? "w-48 min-w-48" : index === 2 ? "w-64 min-w-64" : "min-w-[7rem]"}`}>{heading}</th>)}
             </tr>
           </thead>
           <tbody>
@@ -424,9 +426,9 @@ export function SpreadsheetEstimateGrid({
               const workLeaves = filteredLeaves.map(({ leaf, label }) => {
                 const resolved = stage && leaf.source === "stage_resource" ? resolveResourceDimensions(stage.resources?.find((r) => r.id === leaf.id) ?? ({ id: leaf.id, kind: "other", name: leaf.name, unit: leaf.unit, quantity: leaf.quantity, rate: leaf.rate } as GprStageResource), stage, params) : null;
                 const row = <tr key={leaf.id} className="group bg-white hover:bg-amber-50/40" data-testid={`resource-grid-row-${leaf.id}`}>
-                  <td className="border-b border-r border-[var(--tk-line)]/70 px-2 py-1 text-[var(--tk-muted)]">↳</td>
-                  <td className="border-b border-r border-[var(--tk-line)]/70 px-2 py-1">{node.name}</td>
-                  <td className="min-w-[16rem] border-b border-r border-[var(--tk-line)]/70 px-1 py-1">{tableInput(leaf, "name")}</td>
+                  <td style={{ left: 0 }} className="sticky z-10 w-[72px] min-w-[72px] border-b border-r border-[var(--tk-line)]/70 bg-white px-2 py-1 text-[var(--tk-muted)]">↳</td>
+                  <td style={{ left: 72 }} className="sticky z-10 w-48 min-w-48 border-b border-r border-[var(--tk-line)]/70 bg-white px-2 py-1">{node.name}</td>
+                  <td style={{ left: 264 }} className="sticky z-10 w-64 min-w-64 border-b border-r border-[var(--tk-line)]/70 bg-white px-1 py-1">{tableInput(leaf, "name")}</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-1 py-1">{tableInput(leaf, "unit")}</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-1 py-1 text-right">{formatNumber(leaf.quantity)}</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-2 py-1 text-right">{plannedDays ?? "—"}</td>
@@ -434,7 +436,7 @@ export function SpreadsheetEstimateGrid({
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-2 py-1">{stage?.end ?? "—"}</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-2 py-1">РЕСУРС</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-1 py-1">{stage && leaf.source === "stage_resource" && !locked ? <select aria-label={`Категория · ${leaf.name}`} className="h-8 min-w-[7.5rem] rounded-md border border-transparent bg-transparent px-1 hover:border-[var(--tk-line)] focus:border-[var(--tk-copper)]" value={stage.resources?.find((r) => r.id === leaf.id)?.kind ?? leaf.kind} onChange={(e) => { const kind = e.target.value as GprStageResource["kind"]; void onPatchLeaf(leaf, { kind, quantityBasis: kind === "material" ? "material_qty" : null }); }}>{Object.entries(KIND_LABEL).filter(([kind]) => kind !== "other").map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}</select> : label}</td>
-                  <td className="border-b border-r border-[var(--tk-line)]/70 px-2 py-1 text-[var(--tk-muted)]">{resolved ? BASIS_LABEL[resolved.basis] : "—"}</td>
+                  <td className="border-b border-r border-[var(--tk-line)]/70 px-1 py-1">{stage && leaf.source === "stage_resource" && !locked ? <select aria-label={`Основание количества · ${leaf.name}`} className="h-8 min-w-[9rem] rounded-md border border-transparent bg-transparent px-1 hover:border-[var(--tk-line)] focus:border-[var(--tk-copper)]" value={resolved?.basis ?? "uncertain"} onChange={(e) => { const quantityBasis = e.target.value as ResourceQuantityBasis; void onPatchLeaf(leaf, { quantityBasis }); }}>{Object.entries(BASIS_LABEL).map(([basis, label]) => <option key={basis} value={basis}>{label}</option>)}</select> : resolved ? BASIS_LABEL[resolved.basis] : "—"}</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-1 py-1">{tableInput(leaf, "quantity")}</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-1 py-1">{tableInput(leaf, "rate")}</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-1 py-1">{stage && leaf.source === "stage_resource" ? tableInput(leaf, "hoursPerShift") : "—"}</td>
@@ -447,9 +449,9 @@ export function SpreadsheetEstimateGrid({
                 return row;
               });
               const workRow = <tr key={`work-${node.id}`} className="bg-stone-50 font-medium" data-testid={`resource-grid-work-${node.id}`}>
-                <td className="border-b border-r border-[var(--tk-line)] px-2 py-2 text-[var(--tk-muted)]">{workIndex + 1}</td>
-                <td className="border-b border-r border-[var(--tk-line)] px-2 py-2"><button type="button" className="text-left hover:underline" onClick={() => setCollapsed((current) => ({ ...current, [node.id]: !current[node.id] }))}>{isCollapsed ? "▸" : "▾"} {node.name}</button></td>
-                <td className="border-b border-r border-[var(--tk-line)] px-2 py-2">{stage?.workName || (isUnbound ? "Позиции расчёта" : node.name)}</td>
+                <td style={{ left: 0 }} className="sticky z-10 w-[72px] min-w-[72px] border-b border-r border-[var(--tk-line)] bg-stone-50 px-2 py-2 text-[var(--tk-muted)]">{workIndex + 1}</td>
+                <td style={{ left: 72 }} className="sticky z-10 w-48 min-w-48 border-b border-r border-[var(--tk-line)] bg-stone-50 px-2 py-2"><button type="button" className="text-left hover:underline" onClick={() => setCollapsed((current) => ({ ...current, [node.id]: !current[node.id] }))}>{isCollapsed ? "▸" : "▾"} {node.name}</button></td>
+                <td style={{ left: 264 }} className="sticky z-10 w-64 min-w-64 border-b border-r border-[var(--tk-line)] bg-stone-50 px-2 py-2">{stage?.workName || (isUnbound ? "Позиции расчёта" : node.name)}</td>
                 <td className="border-b border-r border-[var(--tk-line)] px-2 py-2 text-[var(--tk-muted)]">—</td>
                 <td className="border-b border-r border-[var(--tk-line)] px-2 py-2 text-right">{stage?.planVolume == null ? "нет данных" : formatNumber(stage.planVolume)}</td>
                 <td className="border-b border-r border-[var(--tk-line)] px-2 py-2 text-right">{plannedDays ?? "—"}</td>

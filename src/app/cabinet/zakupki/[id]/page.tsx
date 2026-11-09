@@ -538,8 +538,8 @@ export default function ZakupkaDetailPage() {
                 </Button>
                 <Button
                   size="sm"
-                  disabled={aiAnalyzing || docs.length === 0}
-                  title="Отправит выдержки и метаданные документов в настроенную ИИ-модель"
+                  disabled={aiAnalyzing || docs.length === 0 || !docs.some((document) => document.citations.length > 0)}
+                  title="Модель может вернуть только тезисы с дословной цитатой из загруженных документов"
                   onClick={async () => {
                     setAiAnalyzing(true);
                     try {
@@ -557,10 +557,20 @@ export default function ZakupkaDetailPage() {
               </div>
             </div>
             <p className="mb-3 text-xs text-[var(--tk-muted)]">
-              Сводный запрос отправляет выдержки и метаданные пакета в настроенную OpenRouter-модель; вызов может тарифицироваться.
+              Сводный запрос отправляет выдержки в настроенную OpenRouter-модель; вызов может тарифицироваться. Неподтверждённые тезисы отбрасываются, цифры сметы считает детерминированный модуль.
             </p>
             {analytics ? (
               <>
+                {analytics.quality ? (
+                  <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 rounded-lg border border-[var(--tk-line)] bg-stone-50 px-3 py-2 text-xs" data-testid="analytics-quality">
+                    <span>{analytics.quality.status === "evidence_backed" ? "Источники разобраны" : analytics.quality.status === "needs_review" ? "Нужна проверка источников" : "Недостаточно источников"}</span>
+                    <span>Документов: {analytics.quality.sourceDocuments}</span>
+                    <span>Обязательных типов: {analytics.quality.requiredDocumentsFound}/3</span>
+                    <span>Цитат: {analytics.quality.citationCount}</span>
+                    {analytics.quality.acceptedClaims != null ? <span>Тезисов с цитатой: {analytics.quality.acceptedClaims}</span> : null}
+                    {analytics.quality.rejectedClaims ? <span>Отброшено неподтверждённых: {analytics.quality.rejectedClaims}</span> : null}
+                  </div>
+                ) : null}
                 <p className="mb-2 text-sm font-semibold">
                   Рекомендация:{" "}
                   {PARTICIPATE_LABELS[analytics.recommendation]}

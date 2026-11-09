@@ -68,14 +68,21 @@ export function buildProjectAnalytics(
     recommendation = "insufficient_data";
     rationale =
       "Недостаточно исходников для рекомендации: заполните пакет документов и устраните ошибки извлечения.";
-  } else if (stopHits.length >= 2) {
+  } else if (stopHits.length >= 1) {
     recommendation = "do_not_participate";
     rationale =
-      "В пакете есть критичные замечания (штрафы/условия). Рекомендация условная — окончательное решение за человеком.";
-  } else if (hasEstimate && analyzed.length > 0 && missing.length <= 1) {
+      "В пакете найдено критичное замечание. Рекомендация условная — проверьте источник и примите решение вручную.";
+  } else if (
+    hasEstimate &&
+    hasContract &&
+    hasTz &&
+    analyzed.length === docs.length &&
+    missing.length === 0 &&
+    extractionErrors.length === 0
+  ) {
     recommendation = "participate";
     rationale =
-      "Базовый пакет есть, критичных стоп-факторов меньше двух. Это не гарантия выигрыша и не оценка точности.";
+      "Все обязательные типы документов разобраны, извлечение без ошибок, критичных замечаний не найдено. Это предварительная рекомендация, не гарантия выигрыша.";
   } else {
     recommendation = "insufficient_data";
     rationale =
@@ -104,6 +111,16 @@ export function buildProjectAnalytics(
     method: "deterministic_aggregate_v1",
     disclaimer:
       "Записка собрана детерминированно из загруженных документов. Это не ИИ-экспертное заключение и не обещание точности.",
+    quality: {
+      status: docs.length === 0 || missing.length >= 3
+        ? "insufficient_sources"
+        : missing.length || extractionErrors.length || stopHits.length
+          ? "needs_review"
+          : "evidence_backed",
+      sourceDocuments: docs.length,
+      requiredDocumentsFound: [hasEstimate, hasContract, hasTz].filter(Boolean).length,
+      citationCount: citations.length,
+    },
   };
 }
 

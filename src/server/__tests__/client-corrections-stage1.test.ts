@@ -121,6 +121,16 @@ describe("client corrections stage 1", () => {
     expect(draft.kind).toBe("resource_draft");
     expect(draft.immutable).toBe(false);
     expect(draft.dataFlags?.includes("no_accuracy_promise")).toBe(true);
+    expect(draft.positions).toEqual([]);
+    expect(draft.assumptions).toContain(
+      "Ресурсный черновик создан пустым: объёмы, состав ресурсов и тарифы не подставляются без источника"
+    );
+    const schedule = after.schedules.find((item) => item.id === proc.gprId)!;
+    expect(schedule.assumptions?.length).toBeGreaterThan(0);
+    expect(schedule.stages.every((stage) => stage.crewSize === 0)).toBe(true);
+    expect(schedule.stages.flatMap((stage) => stage.resources ?? []).every((resource) =>
+      resource.quantity === 0 && resource.rate == null && resource.quantityBasis === "uncertain"
+    )).toBe(true);
     expect(
       after.documents.filter((d) => d.procurementId === p.id).length
     ).toBe(docCount);

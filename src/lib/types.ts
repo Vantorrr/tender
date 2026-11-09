@@ -103,6 +103,15 @@ export interface ProjectAnalytics {
   generatedAt: string;
   method: string;
   disclaimer: string;
+  /** Source coverage and evidence validation; this is not an accuracy percentage. */
+  quality?: {
+    status: "insufficient_sources" | "needs_review" | "evidence_backed";
+    sourceDocuments: number;
+    requiredDocumentsFound: number;
+    citationCount: number;
+    acceptedClaims?: number;
+    rejectedClaims?: number;
+  };
 }
 
 export type ProjectLifecycle =
@@ -463,6 +472,8 @@ export interface GprSchedule {
   updatedAt: string;
   calendar?: WorkCalendar;
   conflicts?: string[];
+  /** User-visible assumptions / unconfirmed scaffold inputs. */
+  assumptions?: string[];
 }
 
 export interface MoneyPayment {

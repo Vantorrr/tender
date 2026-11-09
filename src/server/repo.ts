@@ -772,25 +772,12 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
         procurementId: p.id,
         title: `Черновой ресурсный расчёт — ${p.title.slice(0, 48)}`,
         status: "v_rabote",
-        positions: [
-          {
-            id: `cp-${Date.now()}`,
-            code: "01-01-001-01",
-            name: p.nmck == null
-              ? "Черновик: заполнить объём и цену по ТЗ"
-              : "Подготовительные работы (авто)",
-            unit: "компл",
-            quantity: 1,
-            rate: p.nmck == null ? 0 : Math.round(p.nmck * 0.02),
-          },
-        ],
+        positions: [],
         assumptions: [
-          "Сформировано из карточки закупки",
-          "Требует проверки сметчика",
+          "Ресурсный черновик создан пустым: объёмы, состав ресурсов и тарифы не подставляются без источника",
+          "Добавьте позиции из справочника или документов; подтвердите каждую ставку и формулу количества",
           "Собственные ресурсы только в черновике — не в смете заказчика",
-          ...(p.nmck == null
-            ? ["НМЦК источник не публикует; нулевая цена — пустая заготовка, заполнить вручную"]
-            : []),
+          ...(p.nmck == null ? ["НМЦК источник не публикует"] : []),
         ],
         scenario: "bazovyy",
         scenarioFactor: 1,
@@ -829,24 +816,28 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
         status: "v_rabote",
         version: 1,
         authorId: actorId,
+        assumptions: [
+          "Начальные даты и этапы — только навигационная заготовка; замените их по ТЗ, производительности и календарю объекта",
+          "Состав и количество ресурсов не подтверждены: заполните строки перед использованием итогов",
+        ],
         stages: [
           ensureStageResources({
             id: stage1,
             name: "Подготовка",
             start,
-            end: new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10),
+            end: start,
             sequence: 1,
-            crewSize: 4,
+            crewSize: 0,
           }),
           ensureStageResources({
             id: stage2,
             name: "Основные работы",
-            start: new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10),
-            end: new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10),
+            start,
+            end: start,
             sequence: 2,
             dependsOn: stage1,
             dependencyType: "FS",
-            crewSize: 6,
+            crewSize: 0,
           }),
         ],
         updatedAt: now,
@@ -1473,18 +1464,7 @@ export function sendProcurementToCalculation(
       const seedPositions =
         linked && !linked.immutable
           ? structuredClone(linked.positions)
-          : [
-              {
-                id: `cp-${Date.now()}`,
-                code: "01-01-001-01",
-                name: p.nmck == null
-                  ? "Черновик: заполнить объём и цену по ТЗ"
-                  : "Подготовительные работы (ресурсный черновик)",
-                unit: "компл",
-                quantity: 1,
-                rate: p.nmck == null ? 0 : Math.round(p.nmck * 0.02),
-              },
-            ];
+          : [];
       data.calculations.unshift({
         id: draftId,
         orgId: p.orgId,
@@ -1493,12 +1473,11 @@ export function sendProcurementToCalculation(
         status: "v_rabote",
         positions: seedPositions,
         assumptions: [
-          "Ресурсный метод: черновик для редактирования",
+          "Ресурсный черновик создан пустым: объёмы, состав ресурсов и тарифы не подставляются без источника",
+          "Добавьте позиции из справочника или документов; подтвердите каждую ставку и формулу количества",
           "Не является утверждённой нормативной сметой",
           "Цифры из справочников / объёмов; причины отклонений без выдумок",
-          ...(p.nmck == null
-            ? ["НМЦК источник не публикует; нулевая цена — пустая заготовка, заполнить вручную"]
-            : []),
+          ...(p.nmck == null ? ["НМЦК источник не публикует"] : []),
         ],
         scenario: "bazovyy",
         scenarioFactor: 1,
@@ -1564,24 +1543,28 @@ export function sendProcurementToCalculation(
         status: "v_rabote",
         version: 1,
         authorId: actorId,
+        assumptions: [
+          "Начальные даты и этапы — только навигационная заготовка; замените их по ТЗ, производительности и календарю объекта",
+          "Состав и количество ресурсов не подтверждены: заполните строки перед использованием итогов",
+        ],
         stages: [
           ensureStageResources({
             id: stage1,
             name: "Подготовка / мобилизация",
             start: now.slice(0, 10),
-            end: new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10),
+            end: now.slice(0, 10),
             sequence: 1,
-            crewSize: 4,
+            crewSize: 0,
           }),
           ensureStageResources({
             id: `gs-${Date.now() + 1}`,
             name: "Основные работы",
-            start: new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10),
-            end: new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10),
+            start: now.slice(0, 10),
+            end: now.slice(0, 10),
             sequence: 2,
             dependsOn: stage1,
             dependencyType: "FS",
-            crewSize: 6,
+            crewSize: 0,
           }),
         ],
         updatedAt: now,
