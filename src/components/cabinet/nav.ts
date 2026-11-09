@@ -2,16 +2,11 @@ import type { LucideIcon } from "lucide-react";
 import {
   BookOpen,
   Calculator,
-  CalendarRange,
-  FileText,
   FolderKanban,
-  Landmark,
   Scale,
   Settings2,
-  ShieldAlert,
   Users,
   Warehouse,
-  ArrowLeftRight,
 } from "lucide-react";
 import type { SectionKey } from "@/lib/types";
 
@@ -22,13 +17,14 @@ export interface NavItem {
   icon: LucideIcon;
 }
 
+/**
+ * Stage-1 matryoshka: Documents / GPR / Money / Risks live inside the
+ * procurement card — not as top-level sidebar items. Estimate exchange
+ * lives under Справочники.
+ */
 export const NAV_ITEMS: NavItem[] = [
   { section: "zakupki", href: "/cabinet/zakupki", label: "Закупки", icon: FolderKanban },
-  { section: "dokumenty", href: "/cabinet/dokumenty", label: "Документы", icon: FileText },
   { section: "raschety", href: "/cabinet/raschety", label: "Расчёты", icon: Calculator },
-  { section: "gpr", href: "/cabinet/gpr", label: "ГПР", icon: CalendarRange },
-  { section: "dengi", href: "/cabinet/dengi", label: "Деньги", icon: Landmark },
-  { section: "riski", href: "/cabinet/riski", label: "Риски", icon: ShieldAlert },
   {
     section: "proizvodstvo",
     href: "/cabinet/proizvodstvo",
@@ -49,15 +45,18 @@ export const NAV_ITEMS: NavItem[] = [
   },
   { section: "admin", href: "/cabinet/admin", label: "Админ", icon: Settings2 },
   {
-    section: "obmen",
-    href: "/cabinet/obmen",
-    label: "Обмен со сметным ПО",
-    icon: ArrowLeftRight,
-  },
-  {
     section: "instrukciya",
     href: "/cabinet/instrukciya",
     label: "Инструкция",
     icon: Scale,
   },
+];
+
+/** Deep-link sections still gated by ACL but not shown in sidebar. */
+export const NESTED_SECTIONS: SectionKey[] = [
+  "dokumenty",
+  "gpr",
+  "dengi",
+  "riski",
+  "obmen",
 ];

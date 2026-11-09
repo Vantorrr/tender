@@ -15,7 +15,7 @@ export default function GprPage() {
     <div>
       <PageHeader
         title="ГПР"
-        description="График производства работ: этапы, даты, последовательность и календарное представление."
+        description="Раздел убран из сайдбара — график ведётся внутри карточки закупки/расчёта. Drag Ганта — этап 2."
       />
       {items.length === 0 ? (
         <EmptyState

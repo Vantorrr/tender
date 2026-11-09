@@ -14,6 +14,7 @@ import type {
   User,
 } from "@/lib/types";
 import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
+import { buildProjectAnalytics } from "@/lib/project-analytics";
 import { assertOrgAccess } from "@/server/acl";
 import {
   overheadsFromWorks,
@@ -342,6 +343,14 @@ export function updateProcurement(
   });
 }
 
+function assertEditableCalculation(item: Calculation) {
+  if (item.immutable || item.kind === "customer_original") {
+    throw new Error(
+      "Исходная смета заказчика неизменяема — правьте только собственный черновик"
+    );
+  }
+}
+
 export function updateCalculation(
   actorId: string,
   id: string,
@@ -352,12 +361,32 @@ export function updateCalculation(
     const item = data.calculations.find((c) => c.id === id);
     if (!item) throw new Error("Расчёт не найден");
     assertOrgAccess(actor, item.orgId, "расчёта");
-    const { orgId: _o, id: _i, ...safe } = patch;
+    assertEditableCalculation(item);
+    const {
+      orgId: _o,
+      id: _i,
+      immutable: _im,
+      kind: _k,
+      ...safe
+    } = patch;
     void _o;
     void _i;
+    void _im;
+    void _k;
+    const entry = {
+      id: `cl-${Date.now()}`,
+      at: new Date().toISOString(),
+      actorId,
+      detail: "Ручное обновление черновика",
+    };
     data.calculations = data.calculations.map((c) =>
       c.id === id
-        ? { ...c, ...safe, updatedAt: new Date().toISOString() }
+        ? {
+            ...c,
+            ...safe,
+            changeLog: [...(c.changeLog ?? []), entry],
+            updatedAt: new Date().toISOString(),
+          }
         : c
     );
     audit(data, actorId, "update", "calculation", id, "Обновление расчёта");
@@ -377,6 +406,7 @@ export function recalcCalculation(
     const item = data.calculations.find((c) => c.id === id);
     if (!item) throw new Error("Расчёт не найден");
     assertOrgAccess(actor, item.orgId, "расчёта");
+    assertEditableCalculation(item);
     const positions = item.positions.map((p) => {
       if (p.code === "НР" || p.code === "СП") return p;
       const hit = resolveDirectoryRate(data.directories, p.code);
@@ -443,6 +473,7 @@ export function addCalcPositionFromDirectory(
     const item = data.calculations.find((c) => c.id === calcId);
     if (!item) throw new Error("Расчёт не найден");
     assertOrgAccess(actor, item.orgId, "расчёта");
+    assertEditableCalculation(item);
     const dir = data.directories.find(
       (d) => d.type === input.type && d.current
     );
@@ -472,6 +503,15 @@ export function addCalcPositionFromDirectory(
             directoryVersionId: dir.id,
             updatedAt: new Date().toISOString(),
             status: "trebuet_proverki" as CardStatus,
+            changeLog: [
+              ...(c.changeLog ?? []),
+              {
+                id: `cl-${Date.now()}`,
+                at: new Date().toISOString(),
+                actorId,
+                detail: `Добавлена позиция ${pos.code} из справочника (не в нормативную смету заказчика)`,
+              },
+            ],
           }
         : c
     );
@@ -585,10 +625,13 @@ export function createDocument(
     procurementId: string;
     title: string;
     fileName: string;
-    fileType: "pdf" | "docx" | "xlsx";
+    fileType: DocumentItem["fileType"];
+    category?: DocumentItem["category"];
     storedPath?: string;
     fileSize?: number;
     prepared?: UploadAnalysis;
+    extractionErrors?: string[];
+    extractedFiles?: DocumentItem["extractedFiles"];
   }
 ): { documentId: string } {
   let documentId = "";
@@ -603,6 +646,7 @@ export function createDocument(
     assertOrgAccess(actor, proc.orgId, "закупки");
     const id = `d-${Date.now()}`;
     documentId = id;
+    const hasExtractErrors = (input.extractionErrors?.length ?? 0) > 0;
     const doc: DocumentItem = {
       id,
       orgId: input.orgId,
@@ -610,7 +654,10 @@ export function createDocument(
       title: input.title,
       fileName: input.fileName,
       fileType: input.fileType,
-      status: input.prepared?.status ?? "v_rabote",
+      category: input.category ?? "general",
+      status: hasExtractErrors
+        ? "oshibka"
+        : (input.prepared?.status ?? "v_rabote"),
       versions: [
         {
           id: `dv-${Date.now()}`,
@@ -621,12 +668,16 @@ export function createDocument(
             ? `Загрузка. Записка модели ${input.prepared.analysis.narrator} по цифрам сметы`
             : input.prepared
               ? "Загрузка и разбор по параметрам ГРАНД-Смета 2022.3"
-              : "Загрузка на сервер",
+              : hasExtractErrors
+                ? "Загрузка с ошибками извлечения архива"
+                : "Загрузка на сервер",
         },
       ],
       analyticalNote:
         input.prepared?.analyticalNote ??
-        "Файл сохранён. Разбор по форме ГРАНД-Смета не дал результата.",
+        (hasExtractErrors
+          ? `Файл сохранён. Ошибки извлечения: ${input.extractionErrors!.join("; ")}`
+          : "Файл сохранён. Разбор по форме ГРАНД-Смета не дал результата."),
       citations: stampCitationSourceVersion(
         input.prepared?.citations ?? [],
         "doc-v1"
@@ -637,9 +688,23 @@ export function createDocument(
       uploadedAt: new Date().toISOString(),
       storedPath: input.storedPath,
       fileSize: input.fileSize,
+      extractionErrors: input.extractionErrors,
+      extractedFiles: input.extractedFiles,
     };
     data.documents.unshift(doc);
     proc.documentIds = [...proc.documentIds, id];
+    proc.attachments = [
+      ...proc.attachments,
+      {
+        id: `att-${id}`,
+        name: input.fileName,
+        type: input.fileType,
+        size:
+          input.fileSize != null
+            ? `${Math.max(1, Math.round(input.fileSize / 1024))} КБ`
+            : "—",
+      },
+    ];
     audit(data, actorId, "upload", "document", id, `Загружен ${input.fileName}`);
     return data;
   });
@@ -665,7 +730,7 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
         id,
         orgId: p.orgId,
         procurementId: p.id,
-        title: `Черновой расчёт — ${p.title.slice(0, 48)}`,
+        title: `Черновой ресурсный расчёт — ${p.title.slice(0, 48)}`,
         status: "v_rabote",
         positions: [
           {
@@ -680,6 +745,7 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
         assumptions: [
           "Сформировано из карточки закупки",
           "Требует проверки сметчика",
+          "Собственные ресурсы только в черновике — не в смете заказчика",
         ],
         scenario: "bazovyy",
         scenarioFactor: 1,
@@ -688,6 +754,17 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
         version: 1,
         authorId: actorId,
         updatedAt: now,
+        kind: "resource_draft",
+        immutable: false,
+        changeLog: [
+          {
+            id: `cl-${Date.now()}`,
+            at: now,
+            actorId,
+            detail: "Создан ресурсный черновик",
+          },
+        ],
+        dataFlags: ["auto_chain", "requires_manual_check"],
       });
       p.calculationId = id;
       created.push("расчёт");
@@ -1095,4 +1172,392 @@ export function resetDemo(actorId: string): { token: string; actorId: string } {
   // sessions were wiped — выдаём новый токен, чтобы UI не получил 401
   const token = createSession(resolvedActorId);
   return { token, actorId: resolvedActorId };
+}
+
+export function refreshProcurementAnalytics(
+  actorId: string,
+  procurementId: string
+) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const p = data.procurements.find((x) => x.id === procurementId);
+    if (!p) throw new Error("Закупка не найдена");
+    assertOrgAccess(actor, p.orgId, "закупки");
+    const docs = data.documents.filter((d) => d.procurementId === p.id);
+    p.analytics = buildProjectAnalytics(p, docs);
+    audit(
+      data,
+      actorId,
+      "analyze",
+      "procurement",
+      procurementId,
+      `Сводка: ${p.analytics.recommendation}`
+    );
+    return data;
+  });
+}
+
+/**
+ * «Отправить в расчёт»: resource draft + GPR, preserve docs,
+ * freeze customer estimate as immutable original when present.
+ */
+export function sendProcurementToCalculation(
+  actorId: string,
+  procurementId: string
+) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const p = data.procurements.find((x) => x.id === procurementId);
+    if (!p) throw new Error("Закупка не найдена");
+    assertOrgAccess(actor, p.orgId, "закупки");
+    const now = new Date().toISOString();
+    const currentDir =
+      data.directories.find((d) => d.type === "rascenki" && d.current) ??
+      data.directories[0];
+
+    // Snapshot existing linked calc as customer original if not already typed
+    if (p.calculationId) {
+      const existing = data.calculations.find((c) => c.id === p.calculationId);
+      if (existing && !existing.kind) {
+        existing.kind = "resource_draft";
+        existing.immutable = false;
+      }
+      if (
+        existing &&
+        existing.kind === "customer_original" &&
+        !p.originalCalculationId
+      ) {
+        p.originalCalculationId = existing.id;
+      }
+    }
+
+    // Build immutable original from estimate document positions if none
+    const estimateDoc = data.documents.find(
+      (d) =>
+        d.procurementId === p.id &&
+        (d.category === "estimate" || /smeta|смет/i.test(d.fileName))
+    );
+    if (!p.originalCalculationId && estimateDoc?.analysis?.positionCount) {
+      const oid = `c-orig-${Date.now()}`;
+      const qty = Math.max(1, estimateDoc.analysis.positionCount);
+      const rate =
+        estimateDoc.analysis.costThousand != null
+          ? Math.round((estimateDoc.analysis.costThousand * 1000) / qty)
+          : 0;
+      data.calculations.unshift({
+        id: oid,
+        orgId: p.orgId,
+        procurementId: p.id,
+        title: `Смета заказчика (оригинал) — ${p.title.slice(0, 40)}`,
+        status: "gotovo",
+        positions: [
+          {
+            id: `cp-orig-${Date.now()}`,
+            code: "CUST-TOTAL",
+            name: estimateDoc.analysis.workName || "Итог сметы заказчика",
+            unit: "компл",
+            quantity: 1,
+            rate:
+              estimateDoc.analysis.costThousand != null
+                ? Math.round(estimateDoc.analysis.costThousand * 1000)
+                : rate,
+          },
+        ],
+        assumptions: [
+          "Неизменяемый снимок сметы заказчика",
+          `Источник: ${estimateDoc.fileName}`,
+          "Собственные ресурсы сюда не добавляются",
+        ],
+        scenario: "bazovyy",
+        scenarioFactor: 1,
+        participateDecision: null,
+        directoryVersionId: currentDir?.id ?? "dir-rascenki-1",
+        version: 1,
+        authorId: actorId,
+        updatedAt: now,
+        kind: "customer_original",
+        immutable: true,
+        changeLog: [],
+        dataFlags: ["immutable_original", "from_estimate_doc"],
+      });
+      p.originalCalculationId = oid;
+    }
+
+    // Create or refresh editable resource draft
+    let draftId = p.calculationId;
+    const linked = draftId
+      ? data.calculations.find((c) => c.id === draftId)
+      : undefined;
+    if (!linked || linked.kind === "customer_original" || linked.immutable) {
+      draftId = `c-draft-${Date.now()}`;
+      const seedPositions =
+        linked && !linked.immutable
+          ? structuredClone(linked.positions)
+          : [
+              {
+                id: `cp-${Date.now()}`,
+                code: "01-01-001-01",
+                name: "Подготовительные работы (ресурсный черновик)",
+                unit: "компл",
+                quantity: 1,
+                rate: Math.round(p.nmck * 0.02),
+              },
+            ];
+      data.calculations.unshift({
+        id: draftId,
+        orgId: p.orgId,
+        procurementId: p.id,
+        title: `Ресурсный черновик — ${p.title.slice(0, 48)}`,
+        status: "v_rabote",
+        positions: seedPositions,
+        assumptions: [
+          "Ресурсный метод: черновик для редактирования",
+          "Не является утверждённой нормативной сметой",
+          "Цифры из справочников / объёмов; причины отклонений без выдумок",
+        ],
+        scenario: "bazovyy",
+        scenarioFactor: 1,
+        participateDecision: "na_rassmotrenii",
+        directoryVersionId: currentDir?.id ?? "dir-rascenki-1",
+        version: 1,
+        authorId: actorId,
+        updatedAt: now,
+        kind: "resource_draft",
+        immutable: false,
+        pairedCalculationId: p.originalCalculationId,
+        changeLog: [
+          {
+            id: `cl-${Date.now()}`,
+            at: now,
+            actorId,
+            detail: "Создан при «Отправить в расчёт»",
+          },
+        ],
+        dataFlags: ["requires_manual_check", "no_accuracy_promise"],
+      });
+      p.calculationId = draftId;
+    } else {
+      linked.kind = "resource_draft";
+      linked.immutable = false;
+      linked.pairedCalculationId = p.originalCalculationId;
+      linked.status = "v_rabote";
+      linked.updatedAt = now;
+      linked.changeLog = [
+        ...(linked.changeLog ?? []),
+        {
+          id: `cl-${Date.now()}`,
+          at: now,
+          actorId,
+          detail: "Повторная отправка в расчёт",
+        },
+      ];
+      draftId = linked.id;
+      p.calculationId = draftId;
+    }
+
+    if (p.originalCalculationId) {
+      const orig = data.calculations.find(
+        (c) => c.id === p.originalCalculationId
+      );
+      if (orig) {
+        orig.pairedCalculationId = draftId;
+        orig.immutable = true;
+        orig.kind = "customer_original";
+      }
+    }
+
+    // GPR stub linked to draft
+    if (!p.gprId) {
+      const gid = `g-${Date.now()}`;
+      const stage1 = `gs-${Date.now()}`;
+      data.schedules.unshift({
+        id: gid,
+        orgId: p.orgId,
+        procurementId: p.id,
+        calculationId: draftId!,
+        title: `ГПР (черновик) — ${p.title.slice(0, 48)}`,
+        status: "v_rabote",
+        version: 1,
+        authorId: actorId,
+        stages: [
+          {
+            id: stage1,
+            name: "Подготовка / мобилизация",
+            start: now.slice(0, 10),
+            end: new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10),
+            sequence: 1,
+          },
+          {
+            id: `gs-${Date.now() + 1}`,
+            name: "Основные работы",
+            start: new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10),
+            end: new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10),
+            sequence: 2,
+            dependsOn: stage1,
+          },
+        ],
+        updatedAt: now,
+      });
+      p.gprId = gid;
+    } else {
+      data.schedules = data.schedules.map((s) =>
+        s.id === p.gprId
+          ? { ...s, calculationId: draftId!, updatedAt: now }
+          : s
+      );
+    }
+
+    if (p.reviewStatus === "novaya") {
+      p.reviewStatus = "na_rassmotrenii";
+    }
+    p.status = "v_rabote";
+    p.analytics = buildProjectAnalytics(
+      p,
+      data.documents.filter((d) => d.procurementId === p.id)
+    );
+
+    audit(
+      data,
+      actorId,
+      "send_to_calc",
+      "procurement",
+      procurementId,
+      `Черновик ${draftId}; оригинал ${p.originalCalculationId ?? "нет"}`
+    );
+    return data;
+  });
+}
+
+/** Self-registration: create org + first admin (not superadmin). No email. */
+export function registerNewOrganization(input: {
+  orgName: string;
+  inn: string;
+  name: string;
+  email: string;
+  password: string;
+}): { token: string; joinCode: string; userId: string; orgId: string } {
+  const email = input.email.trim().toLowerCase();
+  const orgName = input.orgName.trim();
+  const inn = input.inn.trim();
+  if (!orgName || !inn || !input.name.trim() || !email || !input.password) {
+    throw new Error("Укажите организацию, ИНН, имя, email и пароль");
+  }
+  if (input.password.length < 8) {
+    throw new Error("Пароль не короче 8 символов");
+  }
+  let token = "";
+  let joinCode = "";
+  let userId = "";
+  let orgId = "";
+  mutateAppData((data) => {
+    if (data.users.some((u) => u.email.toLowerCase() === email)) {
+      throw new Error("Пользователь с таким email уже существует");
+    }
+    if (data.organizations.some((o) => o.inn === inn)) {
+      throw new Error("Организация с таким ИНН уже есть — используйте код вступления");
+    }
+    orgId = `org-${Date.now()}`;
+    userId = `u-${Date.now()}`;
+    joinCode = `JOIN-${inn.slice(-4)}-${randomBytes(2).toString("hex").toUpperCase()}`;
+    data.organizations.push({
+      id: orgId,
+      name: orgName,
+      inn,
+      active: true,
+      joinCode,
+    });
+    data.users.push({
+      id: userId,
+      email,
+      password: hashPassword(input.password),
+      name: input.name.trim(),
+      role: "admin",
+      orgId,
+      blocked: false,
+      sections: DEFAULT_SECTIONS.admin,
+      createdAt: new Date().toISOString(),
+    });
+    data.roleHistory.unshift({
+      id: `rh-${Date.now()}`,
+      userId,
+      fromRole: null,
+      toRole: "admin",
+      changedBy: userId,
+      at: new Date().toISOString(),
+      comment: "Саморегистрация организации",
+    });
+    audit(
+      data,
+      userId,
+      "create",
+      "organization",
+      orgId,
+      `Саморегистрация ${orgName}`
+    );
+    return data;
+  });
+  token = createSession(userId);
+  return { token, joinCode, userId, orgId };
+}
+
+/** Join existing org by join code — tender role only, no privilege escalation. */
+export function joinOrganizationByCode(input: {
+  joinCode: string;
+  name: string;
+  email: string;
+  password: string;
+}): { token: string; userId: string; orgId: string } {
+  const email = input.email.trim().toLowerCase();
+  const code = input.joinCode.trim().toUpperCase();
+  if (!code || !input.name.trim() || !email || !input.password) {
+    throw new Error("Укажите код вступления, имя, email и пароль");
+  }
+  if (input.password.length < 8) {
+    throw new Error("Пароль не короче 8 символов");
+  }
+  let token = "";
+  let userId = "";
+  let orgId = "";
+  mutateAppData((data) => {
+    if (data.users.some((u) => u.email.toLowerCase() === email)) {
+      throw new Error("Пользователь с таким email уже существует");
+    }
+    const org = data.organizations.find(
+      (o) => (o.joinCode ?? "").toUpperCase() === code && o.active
+    );
+    if (!org) throw new Error("Код вступления недействителен");
+    orgId = org.id;
+    userId = `u-${Date.now()}`;
+    data.users.push({
+      id: userId,
+      email,
+      password: hashPassword(input.password),
+      name: input.name.trim(),
+      role: "tender",
+      orgId,
+      blocked: false,
+      sections: DEFAULT_SECTIONS.tender,
+      createdAt: new Date().toISOString(),
+    });
+    data.roleHistory.unshift({
+      id: `rh-${Date.now()}`,
+      userId,
+      fromRole: null,
+      toRole: "tender",
+      changedBy: userId,
+      at: new Date().toISOString(),
+      comment: "Вступление по коду организации",
+    });
+    audit(
+      data,
+      userId,
+      "create",
+      "user",
+      userId,
+      `Join org ${orgId} as tender`
+    );
+    return data;
+  });
+  token = createSession(userId);
+  return { token, userId, orgId };
 }

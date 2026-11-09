@@ -53,6 +53,32 @@ export async function withSection(
   });
 }
 
+/** Pass if user has any of the listed sections (matryoshka: docs via zakupki). */
+export async function withAnySection(
+  req: Request,
+  sections: SectionKey[],
+  handler: (user: User) => Promise<NextResponse> | NextResponse
+): Promise<NextResponse> {
+  return withUser(req, async (user) => {
+    if (user.role !== "superadmin") {
+      const ok = sections.some((s) => {
+        try {
+          assertSection(user, s);
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      if (!ok) {
+        throw new Error(
+          `Недостаточно прав для раздела «${sections.join("|")}»`
+        );
+      }
+    }
+    return handler(user);
+  });
+}
+
 export function json(data: unknown, status = 200) {
   return NextResponse.json(data, { status });
 }

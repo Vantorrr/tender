@@ -98,10 +98,16 @@ export const STATUS_LABELS = {
 
 export const REVIEW_LABELS = {
   novaya: "Новая",
-  na_rassmotrenii: "На рассмотрении",
-  odobrena: "Одобрена",
-  otklonena: "Отклонена",
+  na_rassmotrenii: "На рассмотрении / в работе",
+  odobrena: "Участвуем",
+  otklonena: "Не участвуем",
   dublirovana: "Дубликат",
+} as const;
+
+export const PARTICIPATE_RECOMMENDATION_LABELS = {
+  participate: "Участвовать (условно)",
+  do_not_participate: "Не участвовать (условно)",
+  insufficient_data: "Недостаточно данных",
 } as const;
 
 export const REMARK_STATUS_LABELS = {

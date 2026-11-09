@@ -39,6 +39,8 @@ export interface Organization {
   name: string;
   inn: string;
   active: boolean;
+  /** Shareable join code for self-registration (not a privilege token). */
+  joinCode?: string;
 }
 
 export interface User {
@@ -79,6 +81,30 @@ export interface NotificationItem {
   href?: string;
 }
 
+export type WorkTypeCode =
+  | "дорожные"
+  | "общестрой"
+  | "инженерные сети"
+  | "благоустройство"
+  | "спецработы"
+  | "прочее";
+
+export type ParticipateRecommendation =
+  | "participate"
+  | "do_not_participate"
+  | "insufficient_data";
+
+export interface ProjectAnalytics {
+  recommendation: ParticipateRecommendation;
+  summary: string;
+  missingInputs: string[];
+  citationIds: string[];
+  citations: Citation[];
+  generatedAt: string;
+  method: string;
+  disclaimer: string;
+}
+
 export interface Procurement {
   id: string;
   orgId: string;
@@ -98,10 +124,14 @@ export interface Procurement {
   objectId?: string;
   documentIds: string[];
   calculationId?: string;
+  /** Immutable customer estimate calc id (if separated from editable draft). */
+  originalCalculationId?: string;
   gprId?: string;
   moneyId?: string;
   planFactId?: string;
   tags: string[];
+  workType?: WorkTypeCode | string;
+  analytics?: ProjectAnalytics;
   createdAt: string;
 }
 
@@ -154,13 +184,22 @@ export interface DocumentAnalysis {
   narrator?: string;
 }
 
+export type DocumentCategory =
+  | "general"
+  | "estimate"
+  | "contract"
+  | "tz"
+  | "archive"
+  | "other";
+
 export interface DocumentItem {
   id: string;
   orgId: string;
   procurementId: string;
   title: string;
   fileName: string;
-  fileType: "pdf" | "docx" | "xlsx";
+  fileType: "pdf" | "docx" | "xlsx" | "zip" | "other";
+  category?: DocumentCategory;
   status: CardStatus;
   versions: DocVersion[];
   analyticalNote: string;
@@ -171,6 +210,9 @@ export interface DocumentItem {
   storedPath?: string;
   fileSize?: number;
   analysis?: DocumentAnalysis;
+  /** Visible archive / parse failures — never silent. */
+  extractionErrors?: string[];
+  extractedFiles?: Array<{ name: string; size: number; relativePath: string }>;
 }
 
 export interface CalcPosition {
@@ -182,6 +224,31 @@ export interface CalcPosition {
   rate: number;
   normId?: string;
   priceId?: string;
+}
+
+export type CalculationKind = "customer_original" | "resource_draft";
+
+export interface CalcChangeEntry {
+  id: string;
+  at: string;
+  actorId: string;
+  detail: string;
+}
+
+export interface CalcCompareRow {
+  code: string;
+  name: string;
+  unit: string;
+  originalQty: number | null;
+  draftQty: number | null;
+  originalRate: number | null;
+  draftRate: number | null;
+  originalSum: number | null;
+  draftSum: number | null;
+  deltaSum: number | null;
+  status: "matched" | "diff" | "only_original" | "only_draft";
+  reason: string;
+  source: "customer_original" | "resource_draft" | "both";
 }
 
 export interface Calculation {
@@ -199,6 +266,13 @@ export interface Calculation {
   version: number;
   authorId: string;
   updatedAt: string;
+  /** customer_original is immutable; resource_draft is editable. */
+  kind?: CalculationKind;
+  immutable?: boolean;
+  /** Link draft ↔ original within same procurement. */
+  pairedCalculationId?: string;
+  changeLog?: CalcChangeEntry[];
+  dataFlags?: string[];
 }
 
 export interface GprStage {

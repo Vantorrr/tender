@@ -90,7 +90,7 @@ export default function SpravochnikiPage() {
     <div>
       <PageHeader
         title="Справочники"
-        description="Клиентские тарифы, нормо-час и парк — текущие версии участвуют в расчётах."
+        description="Клиентские тарифы, нормо-час и парк — текущие версии участвуют в расчётах. Обмен со сметным ПО — здесь же."
         actions={
           <>
             <input
@@ -118,6 +118,12 @@ export default function SpravochnikiPage() {
             <Button variant="outline" onClick={() => fileRef.current?.click()}>
               Импорт Excel
             </Button>
+            <a
+              href="/cabinet/obmen"
+              className="inline-flex h-9 items-center rounded-lg bg-secondary px-3 text-sm font-medium"
+            >
+              Обмен со сметным ПО
+            </a>
           </>
         }
       />

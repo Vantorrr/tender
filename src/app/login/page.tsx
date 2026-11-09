@@ -68,7 +68,8 @@ export default function LoginPage() {
             </h1>
             <p className="mt-3 max-w-sm text-sm leading-relaxed text-white/75">
               Вход по email и паролю. Суперадмин и администратор также входят
-              секретным ключом.
+              секретным ключом. Новую организацию можно создать через
+              саморегистрацию.
             </p>
           </div>
         </div>
@@ -166,12 +167,18 @@ export default function LoginPage() {
             </Button>
           </form>
 
-          <div className="mt-4 flex items-center justify-between text-sm">
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-sm">
             <Link
               href="/recover"
               className="text-[var(--tk-copper-deep)] hover:underline"
             >
               Восстановить пароль
+            </Link>
+            <Link
+              href="/register"
+              className="text-[var(--tk-copper-deep)] hover:underline"
+            >
+              Саморегистрация
             </Link>
             <Link href="/" className="text-[var(--tk-muted)] hover:underline">
               На главную

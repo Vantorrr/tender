@@ -31,6 +31,7 @@ import {
   calculationTotals,
   positionLineSum,
 } from "@/lib/calc-math";
+import { compareCalculations } from "@/lib/calc-compare";
 
 export default function RaschetDetailPage() {
   const params = useParams<{ id: string }>();
@@ -78,6 +79,22 @@ export default function RaschetDetailPage() {
     return <ErrorState title="Расчёт не найден" />;
   }
 
+  const locked = Boolean(calc.immutable || calc.kind === "customer_original");
+  const paired = calc.pairedCalculationId
+    ? data.calculations.find((c) => c.id === calc.pairedCalculationId)
+    : data.calculations.find(
+        (c) =>
+          c.procurementId === calc.procurementId &&
+          c.id !== calc.id &&
+          (calc.kind === "resource_draft"
+            ? c.kind === "customer_original"
+            : c.kind === "resource_draft")
+      );
+  const compare =
+    calc.kind === "resource_draft"
+      ? compareCalculations(paired, calc)
+      : compareCalculations(calc, paired);
+
   const totals = calculationTotals(calc);
   const total = totals.total;
 
@@ -111,19 +128,29 @@ export default function RaschetDetailPage() {
     <div>
       <PageHeader
         title={calc.title}
-        description={`Справочник: ${dir?.name ?? "—"} v${dir?.version ?? "?"} · закупка ${calc.procurementId}`}
+        description={`Справочник: ${dir?.name ?? "—"} v${dir?.version ?? "?"} · закупка ${calc.procurementId} · ${
+          locked ? "оригинал (immutable)" : "ресурсный черновик"
+        }`}
         actions={
           <>
             <StatusBadge status={calc.status} />
-            <Button
-              variant="secondary"
-              onClick={async () => {
-                await recalcCalculation(calc.id, calc.scenario);
-                toast.success("Ставки обновлены из текущих справочников");
-              }}
-            >
-              Обновить из справочников
-            </Button>
+            {!locked ? (
+              <Button
+                variant="secondary"
+                onClick={async () => {
+                  try {
+                    await recalcCalculation(calc.id, calc.scenario);
+                    toast.success("Ставки обновлены из текущих справочников");
+                  } catch (e) {
+                    toast.error(
+                      e instanceof Error ? e.message : "Ошибка пересчёта"
+                    );
+                  }
+                }}
+              >
+                Обновить из справочников
+              </Button>
+            ) : null}
             <Button
               variant="outline"
               data-testid="calc-export-xlsx"
@@ -141,6 +168,19 @@ export default function RaschetDetailPage() {
           </>
         }
       />
+
+      {locked ? (
+        <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+          Исходная смета заказчика неизменяема. Собственные ресурсы добавляйте
+          только в ресурсный черновик.
+        </div>
+      ) : (
+        <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
+          Редактируемый черновик. Арифметика детерминированная; причины
+          отклонений только из сравнения полей — без выдуманных LLM-причин. Не
+          обещаем 97% точности.
+        </div>
+      )}
 
       <div className="mb-4 flex flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-end">
         <div>
@@ -245,9 +285,10 @@ export default function RaschetDetailPage() {
         </Table>
       </div>
 
+      {!locked ? (
       <section className="mt-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
         <h2 className="font-[family-name:var(--font-display)] text-base">
-          Добавить из справочника
+          Добавить из справочника (только в черновик)
         </h2>
         <p className="mt-1 text-sm text-[var(--tk-muted)]">
           Текущая версия: {currentDir?.name ?? "—"} · строк{" "}
@@ -394,14 +435,79 @@ export default function RaschetDetailPage() {
           )}
         </div>
       </section>
+      ) : null}
 
       <section className="mt-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
         <h2 className="font-[family-name:var(--font-display)] text-base">
-          Допущения
+          Сравнение со сметой заказчика
+        </h2>
+        <p className="mt-1 text-sm text-[var(--tk-muted)]">
+          Отклонения только по измеримым полям. Если причина не установлена —
+          так и пишем.
+        </p>
+        {compare.notes.length ? (
+          <ul className="mt-2 list-disc pl-5 text-sm text-amber-900">
+            {compare.notes.map((n) => (
+              <li key={n}>{n}</li>
+            ))}
+          </ul>
+        ) : null}
+        <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
+          <div>
+            Работы заказчика:{" "}
+            {compare.totals.originalWorks != null
+              ? formatMoney(compare.totals.originalWorks)
+              : "нет данных"}
+          </div>
+          <div>
+            Работы черновика:{" "}
+            {compare.totals.draftWorks != null
+              ? formatMoney(compare.totals.draftWorks)
+              : "нет данных"}
+          </div>
+          <div>
+            Δ итого:{" "}
+            {compare.totals.deltaTotal != null
+              ? formatMoney(compare.totals.deltaTotal)
+              : "нет данных"}
+          </div>
+        </div>
+        <div className="mt-4 max-h-72 overflow-auto rounded-lg border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Код</TableHead>
+                <TableHead>Статус</TableHead>
+                <TableHead>Причина</TableHead>
+                <TableHead className="text-right">Δ</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {compare.rows.slice(0, 40).map((r) => (
+                <TableRow key={`${r.code}-${r.unit}-${r.status}`}>
+                  <TableCell className="font-mono text-xs">{r.code}</TableCell>
+                  <TableCell>{r.status}</TableCell>
+                  <TableCell className="text-xs">{r.reason}</TableCell>
+                  <TableCell className="text-right">
+                    {r.deltaSum != null ? formatMoney(r.deltaSum) : "—"}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+      </section>
+
+      <section className="mt-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
+        <h2 className="font-[family-name:var(--font-display)] text-base">
+          Допущения и флаги
         </h2>
         <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-[var(--tk-ink-soft)]">
           {calc.assumptions.map((a) => (
             <li key={a}>{a}</li>
+          ))}
+          {(calc.dataFlags ?? []).map((f) => (
+            <li key={f}>флаг: {f}</li>
           ))}
         </ul>
       </section>

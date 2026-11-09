@@ -1,11 +1,14 @@
 import { readAppData } from "@/server/db";
 import { readUpload } from "@/server/uploads";
-import { withSection, json } from "@/server/http";
+import { withAnySection, json } from "@/server/http";
 import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
-  return withSection(req, "dokumenty", async (user) => {
-    const id = new URL(req.url).searchParams.get("id");
+  return withAnySection(req, ["dokumenty", "zakupki", "riski"], async (user) => {
+    const url = new URL(req.url);
+    const id = url.searchParams.get("id");
+    const disposition =
+      url.searchParams.get("disposition") === "inline" ? "inline" : "attachment";
     if (!id) return json({ error: "Не указан id" }, 400);
     const data = readAppData();
     const doc = data.documents.find((d) => d.id === id);
@@ -22,7 +25,7 @@ export async function GET(req: Request) {
         status: 200,
         headers: {
           "Content-Type": "text/plain; charset=utf-8",
-          "Content-Disposition": `attachment; filename="${doc.fileName}.txt"`,
+          "Content-Disposition": `${disposition}; filename="${doc.fileName}.txt"`,
           "Cache-Control": "no-store",
         },
       });
@@ -34,12 +37,16 @@ export async function GET(req: Request) {
         ? "application/pdf"
         : doc.fileType === "xlsx"
           ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+          : doc.fileType === "docx"
+            ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            : doc.fileType === "zip"
+              ? "application/zip"
+              : "application/octet-stream";
     return new NextResponse(new Uint8Array(buf), {
       status: 200,
       headers: {
         "Content-Type": type,
-        "Content-Disposition": `attachment; filename="${doc.fileName}"`,
+        "Content-Disposition": `${disposition}; filename="${doc.fileName}"`,
         "Cache-Control": "no-store",
       },
     });
