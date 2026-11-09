@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, Suspense } from "react";
+import { useEffect, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
@@ -23,6 +23,10 @@ import {
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import type { DailyFact, DailyResourceLine } from "@/lib/types";
 import { useStore } from "@/lib/store";
+
+function createDailyFactId() {
+  return `df-${crypto.randomUUID()}`;
+}
 
 function ResourceRows({
   lines,
@@ -106,6 +110,9 @@ function DayDetailsInner() {
   const router = useRouter();
   const { data, user, refresh } = useStore();
   const photoRef = useRef<HTMLInputElement>(null);
+  const savingRef = useRef(false);
+  const pendingFactIdRef = useRef<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const planFactId = sp.get("planFactId") ?? "";
   const [date, setDate] = useState(
@@ -136,33 +143,18 @@ function DayDetailsInner() {
     ? entryDisplayFact(entry, plan?.dailyFacts ?? [])
     : 0;
 
-  const linkedStages = useMemo(
-    () => stagesForWork(schedule?.stages ?? [], selectedWork, date),
-    [schedule?.stages, selectedWork, date]
-  );
-  const linkedAnyDate = useMemo(
-    () => stagesForWork(schedule?.stages ?? [], selectedWork),
-    [schedule?.stages, selectedWork]
-  );
+  const linkedStages = stagesForWork(schedule?.stages ?? [], selectedWork, date);
+  const linkedAnyDate = stagesForWork(schedule?.stages ?? [], selectedWork);
 
-  const dayPlan = useMemo(() => {
-    if (!entry || !linkedStages.length) return 0;
-    return allocatePlanForSlice(
-      entry.plan,
-      linkedStages,
-      "day",
-      date
-    ).plan;
-  }, [entry, linkedStages, date]);
+  const dayPlan =
+    entry && linkedStages.length
+      ? allocatePlanForSlice(entry.plan, linkedStages, "day", date).plan
+      : 0;
 
-  const baselineLines = useMemo(
-    () =>
-      planResourceLinesForDay(
-        schedule?.stages ?? [],
-        date,
-        selectedWork
-      ),
-    [schedule?.stages, date, selectedWork]
+  const baselineLines = planResourceLinesForDay(
+    schedule?.stages ?? [],
+    date,
+    selectedWork
   );
 
   const existingLines = dayFacts.reduce<DailyFact | undefined>(
@@ -176,6 +168,8 @@ function DayDetailsInner() {
   const [caption, setCaption] = useState("");
 
   useEffect(() => {
+    // Reset the local daily draft when its work/date context changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLines(null);
     setQty(dayQty ? String(dayQty) : "");
   }, [date, selectedWork, dayQty]);
@@ -199,6 +193,11 @@ function DayDetailsInner() {
   const dateMiss = !linkMissing && linkedStages.length === 0;
 
   async function save(withPhoto: boolean) {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    const factId = pendingFactIdRef.current ?? createDailyFactId();
+    pendingFactIdRef.current = factId;
     try {
       const resourceLines = displayLines.map((l) => ({
         ...l,
@@ -206,6 +205,7 @@ function DayDetailsInner() {
       }));
       if (withPhoto && photoRef.current?.files?.[0]) {
         const form = new FormData();
+        form.append("factId", factId);
         form.append("planFactId", plan!.id);
         form.append("date", date);
         form.append("workName", selectedWork);
@@ -222,6 +222,7 @@ function DayDetailsInner() {
             action: "dailyFact",
             planFactId: plan!.id,
             fact: {
+              factId,
               date,
               workName: selectedWork,
               unit: entry?.unit ?? "%",
@@ -233,12 +234,16 @@ function DayDetailsInner() {
         });
       }
       await refresh();
+      pendingFactIdRef.current = null;
       setLines(null);
       if (photoRef.current) photoRef.current.value = "";
       setCaption("");
       toast.success("Сохранено");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка сохранения");
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   }
 
@@ -453,11 +458,12 @@ function DayDetailsInner() {
             ref={photoRef}
             data-testid="day-upload-input"
           />
-          <Button data-testid="day-save" onClick={() => void save(false)}>
-            Сохранить
+          <Button disabled={saving} data-testid="day-save" onClick={() => void save(false)}>
+            {saving ? "Сохранение…" : "Сохранить"}
           </Button>
           <Button
             variant="outline"
+            disabled={saving}
             data-testid="day-save-photo"
             onClick={() => void save(true)}
           >

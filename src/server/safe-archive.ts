@@ -334,7 +334,7 @@ export function extractArchiveSafely(
       files: [],
       errors: [
         format === "rar"
-          ? `Для распаковки «${fileName}» вызовите RAR-распаковщик.`
+          ? `Формат RAR «${fileName}» не поддерживается ZIP-распаковщиком; вызовите RAR-распаковщик.`
           : `Формат архива «${fileName}» не поддерживается безопасным извлечением (ZIP/RAR).`,
       ],
       skipped: [],

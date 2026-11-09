@@ -2181,6 +2181,7 @@ export function addDailyProductionFact(
   planFactId: string,
   fact: Omit<DailyFact, "id" | "authorId" | "at" | "photos"> & {
     photos?: DailyFact["photos"];
+    factId?: string;
   }
 ) {
   return mutateAppData((data) => {
@@ -2193,40 +2194,34 @@ export function addDailyProductionFact(
     const row = pf.entries.find((e) => e.workName === workName);
     const unit = row?.unit ?? fact.unit;
     const currentFacts = pf.dailyFacts ?? [];
-    const sameDay = currentFacts.filter(
-      (item) => item.date === fact.date && item.workName === workName
-    );
-    const latest = sameDay.reduce<DailyFact | undefined>(
-      (best, item) => (!best || item.at > best.at ? item : best),
-      undefined
-    );
+    const existing = fact.factId
+      ? currentFacts.find((item) => item.id === fact.factId)
+      : undefined;
     const incomingPhotos = fact.photos ?? [];
-    const photos = [...sameDay.flatMap((item) => item.photos ?? [])];
+    const photos = [...(existing?.photos ?? [])];
     for (const photo of incomingPhotos) {
       if (!photos.some((existing) => existing.id === photo.id)) photos.push(photo);
     }
     const entry: DailyFact = {
-      id: latest?.id ?? `df-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: existing?.id ?? fact.factId ?? `df-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       date: fact.date,
       workName,
       unit,
       quantity: fact.quantity,
-      people: fact.people ?? latest?.people,
-      equipment: fact.equipment ?? latest?.equipment,
-      materialsNote: fact.materialsNote ?? latest?.materialsNote,
-      resourceLines: fact.resourceLines ?? latest?.resourceLines,
-      comment: fact.comment ?? latest?.comment,
-      // Saving a day edits its current record. Previously attached photos stay
-      // with that day; a newly uploaded photo is appended once.
+      people: fact.people ?? existing?.people,
+      equipment: fact.equipment ?? existing?.equipment,
+      materialsNote: fact.materialsNote ?? existing?.materialsNote,
+      resourceLines: fact.resourceLines ?? existing?.resourceLines,
+      comment: fact.comment ?? existing?.comment,
       photos,
       authorId: actorId,
       at: new Date().toISOString(),
     };
-    // Older versions could create duplicate rows for the same day/work. Fold
-    // those rows into this one so another save cannot inflate physical volume.
+    // New submissions are ledger entries, so several updates of one work/day
+    // add up. An explicit factId edits that entry without double-counting it.
     pf.dailyFacts = [
       ...currentFacts.filter(
-        (item) => item.date !== fact.date || item.workName !== workName
+        (item) => item.id !== entry.id
       ),
       entry,
     ];

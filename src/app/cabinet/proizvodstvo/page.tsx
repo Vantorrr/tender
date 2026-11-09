@@ -37,12 +37,19 @@ import { useStore } from "@/lib/store";
 
 type PeriodMode = "day" | "month" | "period" | "cum";
 
+function createDailyFactId() {
+  return `df-${crypto.randomUUID()}`;
+}
+
 export default function ProizvodstvoPage() {
   const { data, user, updatePlanFact, refresh, orgProcurements } = useStore();
   const [pfId, setPfId] = useState("");
   const [period, setPeriod] = useState<PeriodMode>("cum");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [qty, setQty] = useState("1");
+  const [savingDaily, setSavingDaily] = useState(false);
+  const savingDailyRef = useRef(false);
+  const pendingFactIdRef = useRef<string | null>(null);
   const photoRef = useRef<HTMLInputElement>(null);
 
   const objects = useMemo(
@@ -118,10 +125,15 @@ export default function ProizvodstvoPage() {
   const sliceVariance = periodFact - periodPlan;
 
   async function submitDaily(withPhoto: boolean) {
-    if (!plan) return;
+    if (!plan || savingDailyRef.current) return;
+    savingDailyRef.current = true;
+    setSavingDaily(true);
+    const factId = pendingFactIdRef.current ?? createDailyFactId();
+    pendingFactIdRef.current = factId;
     try {
       if (withPhoto && photoRef.current?.files?.[0]) {
         const form = new FormData();
+        form.append("factId", factId);
         form.append("planFactId", plan.id);
         form.append("date", date);
         form.append("workName", selectedWork);
@@ -136,6 +148,7 @@ export default function ProizvodstvoPage() {
             action: "dailyFact",
             planFactId: plan.id,
             fact: {
+              factId,
               date,
               workName: selectedWork,
               unit: selectedUnit,
@@ -145,10 +158,14 @@ export default function ProizvodstvoPage() {
         });
       }
       await refresh();
+      pendingFactIdRef.current = null;
       toast.success("Дневной факт сохранён (это не платёж)");
       if (photoRef.current) photoRef.current.value = "";
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка факта");
+    } finally {
+      savingDailyRef.current = false;
+      setSavingDaily(false);
     }
   }
 
@@ -561,13 +578,15 @@ export default function ProizvodstvoPage() {
                   />
                   <Button
                     data-testid="daily-fact-save"
+                    disabled={savingDaily}
                     onClick={() => submitDaily(false)}
                   >
-                    Сохранить факт
+                    {savingDaily ? "Сохранение…" : "Сохранить факт"}
                   </Button>
                   <Button
                     variant="outline"
                     data-testid="daily-fact-photo"
+                    disabled={savingDaily}
                     onClick={() => submitDaily(true)}
                   >
                     Факт + фото

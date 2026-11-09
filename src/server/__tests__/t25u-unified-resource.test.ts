@@ -25,7 +25,6 @@ import {
 import {
   isResourceLinkedDraft,
   stagesToResourceLines,
-  syncDraftFromStages,
 } from "@/lib/unified-resource-sync";
 import type { CalcPosition, GprStage } from "@/lib/types";
 import {
@@ -80,6 +79,14 @@ function pdfExtractText(buf: Buffer): string {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+function expectPdfAmount(text: string, label: string, amount: number) {
+  const compact = text.replace(/\s/g, "");
+  const formatted = (Math.round(amount * 100) / 100)
+    .toLocaleString("ru-RU", { maximumFractionDigits: 2 })
+    .replace(/\s/g, "");
+  expect(compact).toContain(`${label.replace(/\s/g, "")}${formatted}`);
 }
 
 /** Hand-computed COMPLETE fixture: one labor + one bus, no missing rates. */
@@ -487,11 +494,11 @@ describe("t25u shared dimensions (P1 #1)", () => {
     expect(cell("Z_total")).toBe(Z);
 
     const pdfText = pdfExtractText(await buildCalculationPdf(T25U_TEST.calculationId));
-    expect(pdfText).toMatch(new RegExp(`V direct:\\s*${Math.round(V)}`));
-    expect(pdfText).toMatch(new RegExp(`W OH43%:\\s*${Math.round(W)}`));
-    expect(pdfText).toMatch(new RegExp(`X cost\\+OH:\\s*${Math.round(X)}`));
-    expect(pdfText).toMatch(new RegExp(`Y markup40%:\\s*${Math.round(Y)}`));
-    expect(pdfText).toMatch(new RegExp(`Z TOTAL:\\s*${Math.round(Z)}`));
+    expectPdfAmount(pdfText, "Прямые затраты V:", V);
+    expectPdfAmount(pdfText, "Накладные W:", W);
+    expectPdfAmount(pdfText, "Себестоимость с накладными X:", X);
+    expectPdfAmount(pdfText, "Прибыль Y:", Y);
+    expectPdfAmount(pdfText, "Итого ресурсного черновика Z:", Z);
 
     const gpr = await loadXlsx(await buildGprXlsx(T25U_TEST.scheduleId));
     const res = gpr.getWorksheet("Ресурсы")!;
@@ -560,16 +567,12 @@ describe("t25u export PARTIAL + numerics (P1 #3 + evidence)", () => {
     )!.costSummary!.resourceSlices!;
     const pdf = await buildCalculationPdf(T25U_TEST.calculationId);
     const text = pdfExtractText(pdf);
-    expect(text).toMatch(new RegExp(`V direct:\\s*${Math.round(slices.direct)}`));
-    expect(text).toMatch(new RegExp(`W OH43%:\\s*${Math.round(slices.overhead)}`));
-    expect(text).toMatch(
-      new RegExp(`X cost\\+OH:\\s*${Math.round(slices.costWithOh)}`)
-    );
-    expect(text).toMatch(
-      new RegExp(`Y markup40%:\\s*${Math.round(slices.profit)}`)
-    );
-    expect(text).toMatch(new RegExp(`Z TOTAL:\\s*${Math.round(slices.total)}`));
-    expect(text).toMatch(/PARTIAL/);
+    expectPdfAmount(text, "Прямые затраты V:", slices.direct);
+    expectPdfAmount(text, "Накладные W:", slices.overhead);
+    expectPdfAmount(text, "Себестоимость с накладными X:", slices.costWithOh);
+    expectPdfAmount(text, "Прибыль Y:", slices.profit);
+    expectPdfAmount(text, "Итого ресурсного черновика Z:", slices.total);
+    expect(text).toMatch(/неполный расчёт/i);
   });
 
   it("GPR export marks PARTIAL on Итого Z and Цена без НДС rows", async () => {
@@ -695,11 +698,11 @@ describe("t25u export PARTIAL + numerics (P1 #3 + evidence)", () => {
     const pdfText = pdfExtractText(
       await buildCalculationPdf(T25U_TEST.calculationId)
     );
-    expect(pdfText).toMatch(new RegExp(`V direct:\\s*${Math.round(V)}`));
-    expect(pdfText).toMatch(new RegExp(`W OH43%:\\s*${Math.round(W)}`));
-    expect(pdfText).toMatch(new RegExp(`X cost\\+OH:\\s*${Math.round(X)}`));
-    expect(pdfText).toMatch(new RegExp(`Y markup40%:\\s*${Math.round(Y)}`));
-    expect(pdfText).toMatch(new RegExp(`Z TOTAL:\\s*${Math.round(Z)}`));
+    expectPdfAmount(pdfText, "Прямые затраты V:", V);
+    expectPdfAmount(pdfText, "Накладные W:", W);
+    expectPdfAmount(pdfText, "Себестоимость с накладными X:", X);
+    expectPdfAmount(pdfText, "Прибыль Y:", Y);
+    expectPdfAmount(pdfText, "Итого ресурсного черновика Z:", Z);
 
     const gpr = await loadXlsx(await buildGprXlsx(T25U_TEST.scheduleId));
     const res = gpr.getWorksheet("Ресурсы")!;

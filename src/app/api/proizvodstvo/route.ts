@@ -77,6 +77,7 @@ export async function POST(req: Request) {
       const workName = String(form.get("workName") ?? "");
       const unit = String(form.get("unit") ?? "ед");
       const quantity = Number(form.get("quantity") ?? 0);
+      const factId = String(form.get("factId") ?? "") || undefined;
       if (!planFactId || !date || !workName) {
         return json({ error: "Нужны planFactId, date, workName" }, 400);
       }
@@ -105,6 +106,7 @@ export async function POST(req: Request) {
         workName,
         unit,
         quantity,
+        factId,
         people: form.get("people") ? Number(form.get("people")) : undefined,
         equipment: String(form.get("equipment") ?? "") || undefined,
         materialsNote: String(form.get("materialsNote") ?? "") || undefined,
@@ -131,6 +133,7 @@ export async function POST(req: Request) {
         materialsNote?: string;
         resourceLines?: DailyResourceLine[];
         comment?: string;
+        factId?: string;
       };
     };
     if (body.action === "transferToProduction" && body.procurementId) {
