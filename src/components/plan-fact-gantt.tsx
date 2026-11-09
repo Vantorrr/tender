@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { diffDays } from "@/lib/cost-engine";
 import { formatDate, formatDateRangeShort } from "@/lib/format";
@@ -52,7 +52,6 @@ export function PlanFactGantt({
   planFactId,
   onShift,
 }: Props) {
-  const trackRef = useRef<HTMLDivElement>(null);
   const [drag, setDrag] = useState<{
     stageId: string;
     startX: number;
@@ -160,7 +159,6 @@ export function PlanFactGantt({
 
       <div
         className="overflow-x-auto rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
-        ref={trackRef}
       >
         <div className="relative mb-2 h-6 border-b border-[var(--tk-line)]">
           {ticks.map((t) => (
@@ -202,6 +200,43 @@ export function PlanFactGantt({
                   <div className="text-xs text-[var(--tk-muted)]">
                     {formatDate(stage.start)} — {formatDate(stage.end)}
                   </div>
+                  <div className="mt-2 grid max-w-[240px] grid-cols-2 gap-2">
+                    <label className="grid gap-1 text-[10px] text-[var(--tk-muted)]">
+                      Начало
+                      <input
+                        aria-label={`Начало этапа ${stage.name}`}
+                        className="h-8 min-w-0 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                        data-testid={`gantt-start-${stage.id}`}
+                        type="date"
+                        value={stage.start}
+                        onChange={(event) => {
+                          const next = event.currentTarget.value;
+                          if (!next) return;
+                          const delta = diffDays(stage.start, next);
+                          if (delta !== 0) onShift(stage.id, delta);
+                        }}
+                      />
+                    </label>
+                    <label className="grid gap-1 text-[10px] text-[var(--tk-muted)]">
+                      Окончание
+                      <input
+                        aria-label={`Окончание этапа ${stage.name}`}
+                        className="h-8 min-w-0 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                        data-testid={`gantt-end-${stage.id}`}
+                        type="date"
+                        min={stage.start}
+                        value={stage.end}
+                        onChange={(event) => {
+                          const next = event.currentTarget.value;
+                          if (!next || next < stage.start) return;
+                          const duration = Math.max(1, diffDays(stage.start, next));
+                          if (duration !== daysBetween(stage.start, stage.end)) {
+                            onShift(stage.id, 0, duration);
+                          }
+                        }}
+                      />
+                    </label>
+                  </div>
                   <div className="text-xs font-medium text-teal-800">
                     Прогресс {Math.round(pct * 100)}%
                   </div>
@@ -226,7 +261,35 @@ export function PlanFactGantt({
                   ) : null}
                   {/* Plan bar */}
                   <div
-                    className="absolute top-2 h-4 rounded-sm bg-stone-300/90"
+                    className="absolute top-2 h-4 cursor-grab rounded-sm bg-stone-300/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring active:cursor-grabbing"
+                    role="button"
+                    aria-label={`Сдвинуть план этапа ${stage.name}`}
+                    tabIndex={0}
+                    draggable
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", stage.id);
+                      setDrag({ stageId: stage.id, startX: event.clientX });
+                    }}
+                    onDragEnd={(event) => {
+                      if (!drag || drag.stageId !== stage.id) return;
+                      const barWidth = event.currentTarget.parentElement?.clientWidth || 600;
+                      const deltaDays = Math.round(
+                        ((event.clientX - drag.startX) / barWidth) * totalDays
+                      );
+                      setDrag(null);
+                      if (deltaDays !== 0) onShift(stage.id, deltaDays);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "ArrowLeft") {
+                        event.preventDefault();
+                        onShift(stage.id, -1);
+                      } else if (event.key === "ArrowRight") {
+                        event.preventDefault();
+                        onShift(stage.id, 1);
+                      }
+                    }}
+                    data-testid={`gantt-plan-bar-${stage.id}`}
                     style={{
                       left: `${(offset / totalDays) * 100}%`,
                       width: `${Math.max((width / totalDays) * 100, 4)}%`,
@@ -235,25 +298,10 @@ export function PlanFactGantt({
                   />
                   {/* Fact/progress bar */}
                   <div
-                    role="slider"
-                    aria-label={`Факт ${stage.name}`}
+                    aria-label={`Факт ${stage.name}: ${Math.round(pct * 100)}%`}
                     data-testid={`gantt-bar-${stage.id}`}
-                    tabIndex={0}
-                    draggable
-                    onDragStart={(e) => {
-                      setDrag({ stageId: stage.id, startX: e.clientX });
-                    }}
-                    onDragEnd={(e) => {
-                      if (!drag || drag.stageId !== stage.id) return;
-                      const w = trackRef.current?.clientWidth || 600;
-                      const pxPerDay = w / totalDays;
-                      const deltaDays = Math.round(
-                        (e.clientX - drag.startX) / pxPerDay
-                      );
-                      setDrag(null);
-                      if (deltaDays !== 0) onShift(stage.id, deltaDays);
-                    }}
-                    className="absolute top-7 flex h-5 cursor-grab items-center rounded-sm bg-teal-700 px-1 text-[10px] text-white active:cursor-grabbing"
+                    role="img"
+                    className="absolute top-7 flex h-5 items-center rounded-sm bg-teal-700 px-1 text-[10px] text-white"
                     style={{
                       left: `${(offset / totalDays) * 100}%`,
                       width: `${Math.max((factWidth / totalDays) * 100, pct > 0 ? 3 : 0)}%`,

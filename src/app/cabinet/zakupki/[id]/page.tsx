@@ -229,14 +229,7 @@ export default function ZakupkaDetailPage() {
             <TabsTrigger value="money" data-testid="tab-money">
               Деньги
             </TabsTrigger>
-          ) : (
-            <span
-              className="px-2 text-xs text-[var(--tk-muted)]"
-              data-testid="tab-money-denied"
-            >
-              Деньги (нет ACL)
-            </span>
-          )}
+          ) : null}
           <TabsTrigger value="supply">Поставки</TabsTrigger>
           {canRisks ? <TabsTrigger value="risks">Риски</TabsTrigger> : null}
         </TabsList>

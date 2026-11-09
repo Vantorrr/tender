@@ -23,8 +23,13 @@ const notCovered = [
   "Cloud OCR vendors (local tesseract in Docker image is prepared)",
   "SMTP delivery to real human inboxes (local smtp-sink covered in vitest)",
   "Named smeta vendor beyond ГРАНД-Смета fixtures already in repo",
-  "Create-organization admin flow (still optional)",
 ];
+
+function addUtcDays(isoDate, days) {
+  const date = new Date(`${isoDate}T12:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
 
 async function json(urlPath, init = {}) {
   const res = await fetch(`${base}${urlPath}`, {
@@ -76,6 +81,46 @@ const betaLogin = await login(
 );
 const betaToken = betaLogin.body.token;
 check("login beta tenant", Boolean(betaToken), betaLogin.body.error);
+
+// Self-registration: create a new tenant and let an employee join with its code.
+const registrationSuffix = String(Date.now()).slice(-7);
+const registered = await json("/api/auth/register", {
+  method: "POST",
+  body: JSON.stringify({
+    mode: "create_org",
+    orgName: `E2E Организация ${registrationSuffix}`,
+    inn: `9${registrationSuffix}12`,
+    name: "E2E Администратор",
+    email: `e2e-admin-${registrationSuffix}@example.test`,
+    password: "E2EAdmin123!",
+  }),
+});
+const newOrgId = registered.body.user?.orgId;
+check(
+  "self-registration creates tenant admin",
+  registered.res.ok && registered.body.user?.role === "admin" && Boolean(newOrgId),
+  registered.body.error
+);
+check(
+  "self-registration returns employee join code",
+  typeof registered.body.joinCode === "string" && registered.body.joinCode.length > 8,
+  registered.body.error
+);
+const joined = await json("/api/auth/register", {
+  method: "POST",
+  body: JSON.stringify({
+    mode: "join",
+    joinCode: registered.body.joinCode,
+    name: "E2E Сотрудник",
+    email: `e2e-employee-${registrationSuffix}@example.test`,
+    password: "E2EEmployee123!",
+  }),
+});
+check(
+  "employee joins registered tenant with limited role",
+  joined.res.ok && joined.body.user?.orgId === newOrgId && joined.body.user?.role === "tender",
+  joined.body.error
+);
 
 const bootAlfa = await json("/api/bootstrap", {
   headers: { authorization: `Bearer ${tokens.tender}` },
@@ -211,6 +256,64 @@ const recalc = await json("/api/raschety", {
 });
 check("smetchik recalculate scenario", recalc.res.ok, recalc.body.error || `calcId=${calcId}`);
 
+const schedule = chain.body.data?.schedules?.find(
+  (item) => item.procurementId === proc?.id
+);
+const firstStage = schedule?.stages?.slice().sort((a, b) => a.sequence - b.sequence)[0];
+if (schedule && firstStage) {
+  const shifted = await json("/api/gpr", {
+    method: "PATCH",
+    headers: { authorization: `Bearer ${tokens.smetchik}` },
+    body: JSON.stringify({
+      id: schedule.id,
+      action: "shiftStage",
+      stageId: firstStage.id,
+      deltaDays: 1,
+      cascade: true,
+    }),
+  });
+  const shiftedSchedule = shifted.body.data?.schedules?.find((item) => item.id === schedule.id);
+  const shiftedStage = shiftedSchedule?.stages?.find((item) => item.id === firstStage.id);
+  const movedOk = shifted.res.ok && shiftedStage?.start === addUtcDays(firstStage.start, 1);
+  check("GPR date edit cascades and persists", movedOk, shifted.body.error);
+
+  if (shifted.res.ok && shiftedStage) {
+    const oldSpan = Math.max(
+      1,
+      Math.round(
+        (new Date(`${shiftedStage.end}T12:00:00Z`).getTime() -
+          new Date(`${shiftedStage.start}T12:00:00Z`).getTime()) /
+          86400000
+      )
+    );
+    const resized = await json("/api/gpr", {
+      method: "PATCH",
+      headers: { authorization: `Bearer ${tokens.smetchik}` },
+      body: JSON.stringify({
+        id: schedule.id,
+        action: "shiftStage",
+        stageId: firstStage.id,
+        deltaDays: 0,
+        resizeDays: oldSpan + 2,
+        cascade: true,
+      }),
+    });
+    const resizedStage = resized.body.data?.schedules?.find((item) => item.id === schedule.id)?.stages?.find((item) => item.id === firstStage.id);
+    check(
+      "GPR duration edit persists",
+      resized.res.ok &&
+        Boolean(resizedStage) &&
+        resizedStage.end === addUtcDays(resizedStage.start, oldSpan + 2),
+      resized.body.error
+    );
+  } else {
+    check("GPR duration edit persists", false, shifted.body.error || "stage shift failed");
+  }
+} else {
+  check("GPR date edit cascades and persists", false, "ensureChain did not create a schedule stage");
+  check("GPR duration edit persists", false, "ensureChain did not create a schedule stage");
+}
+
 // Negative export / file
 const foreignCalc = (bootAlfa.body.data?.calculations ?? []).find(
   (c) => c.orgId === "org-alfa"
@@ -317,7 +420,7 @@ for (const item of notCovered) console.log(`- ${item}`);
 
 const reportPath = path.join(
   process.cwd(),
-  "data",
+  process.env.E2E_REPORT_DIR ?? "data",
   `e2e-report-${Date.now()}.json`
 );
 fs.mkdirSync(path.dirname(reportPath), { recursive: true });

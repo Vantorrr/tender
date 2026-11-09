@@ -5,15 +5,14 @@ import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
-import { DateInputRu } from "@/components/date-input-ru";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api, downloadUrl } from "@/lib/api";
 import { PlanFactGantt } from "@/components/plan-fact-gantt";
 import { collectCalendarWarnings } from "@/lib/calendar-availability";
-import { bucketsFromPositions, diffDays } from "@/lib/cost-engine";
-import { formatDate, formatMoney } from "@/lib/format";
+import { bucketsFromPositions } from "@/lib/cost-engine";
+import { formatMoney } from "@/lib/format";
 import { buildMaterialNeeds } from "@/lib/materials-need";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { useStore } from "@/lib/store";
@@ -141,8 +140,9 @@ export default function GprDetailPage() {
           План / факт · Гант
         </h2>
         <p className="mb-3 text-xs text-[var(--tk-muted)]">
-          Приоритет — шкала дат и полосы план/факт (не таблица распределения
-          слева). Drag синей полосы = сдвиг; ←/→ = ±1 день.
+          Передвигайте серую полосу плана мышью или клавишами ←/→. Точные даты и
+          длительность этапа можно изменить в календарных полях; зависимые этапы
+          и ресурсный расчёт пересчитываются автоматически.
         </p>
         <PlanFactGantt
           stages={schedule.stages}
@@ -517,10 +517,11 @@ export default function GprDetailPage() {
           .map((stage) => (
             <div
               key={stage.id}
-              className="grid gap-2 rounded-xl border border-[var(--tk-line)] bg-white/80 p-3 sm:grid-cols-7"
+              className="grid gap-2 rounded-xl border border-[var(--tk-line)] bg-white/80 p-3 sm:grid-cols-5"
             >
               <Input
                 value={stage.name}
+                aria-label={`Название этапа ${stage.sequence}`}
                 onChange={(e) => {
                   updateSchedule(schedule.id, {
                     stages: schedule.stages.map((s) =>
@@ -529,29 +530,12 @@ export default function GprDetailPage() {
                   });
                 }}
               />
-              <div>
-                <DateInputRu
-                  value={stage.start}
-                  onChange={(iso) => {
-                    const delta = diffDays(stage.start, iso);
-                    void shiftStage(stage.id, delta);
-                  }}
-                />
-              </div>
-              <div>
-                <DateInputRu
-                  value={stage.end}
-                  onChange={(iso) => {
-                    const len = Math.max(1, diffDays(stage.start, iso));
-                    void shiftStage(stage.id, 0, len);
-                  }}
-                />
-              </div>
               <Input
                 type="number"
                 min={1}
                 value={stage.crewSize ?? 4}
                 title="Численность"
+                aria-label={`Численность бригады · ${stage.name}`}
                 onChange={(e) => {
                   const crew = Number(e.target.value) || 1;
                   updateSchedule(schedule.id, {
@@ -583,6 +567,7 @@ export default function GprDetailPage() {
                 step="any"
                 placeholder="объём этапа"
                 title="План объёма этапа (физ.)"
+                aria-label={`План объёма этапа · ${stage.name}`}
                 data-testid={`stage-plan-volume-${stage.id}`}
                 value={
                   stage.planVolume == null ? "" : String(stage.planVolume)
@@ -609,6 +594,7 @@ export default function GprDetailPage() {
                 min={1}
                 value={stage.hoursPerShift ?? 8}
                 title="Часов в смене"
+                aria-label={`Часов в смене · ${stage.name}`}
                 onChange={(e) => {
                   updateSchedule(schedule.id, {
                     stages: schedule.stages.map((s) =>

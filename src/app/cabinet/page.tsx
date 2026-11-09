@@ -4,7 +4,6 @@ import Link from "next/link";
 import {
   ArrowRight,
   Calculator,
-  FileText,
   FolderKanban,
   ShieldAlert,
 } from "lucide-react";
@@ -18,7 +17,7 @@ import { ROLE_LABELS } from "@/lib/roles";
 import { useStore } from "@/lib/store";
 
 export default function CabinetHomePage() {
-  const { user, orgProcurements, orgDocuments, data, unreadCount } = useStore();
+  const { user, orgProcurements, data, unreadCount } = useStore();
   if (!user) return null;
 
   const calcs = data.calculations.filter((c) => c.orgId === user.orgId);
@@ -34,12 +33,6 @@ export default function CabinetHomePage() {
       value: orgProcurements.length,
       href: "/cabinet/zakupki",
       icon: FolderKanban,
-    },
-    {
-      label: "Документы",
-      value: orgDocuments.length,
-      href: "/cabinet/dokumenty",
-      icon: FileText,
     },
     {
       label: "Расчёты",
@@ -70,7 +63,7 @@ export default function CabinetHomePage() {
         }
       />
 
-      <div className="tk-stagger mb-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="tk-stagger mb-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {stats.map((s) => (
           <Link
             key={s.label}
