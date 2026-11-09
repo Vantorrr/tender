@@ -377,15 +377,21 @@ export function HierarchicalEstimatePanel({
         </Button>
       </div>
 
+      <p className="mb-2 text-xs leading-relaxed text-[var(--tk-muted)]">
+        Колонки L–R повторяют ресурсный шаблон: количество × часы в смене ×
+        смены в день × дни дают Q (часы), затем Q × ставка M = сумма R.
+        У материалов сумма считается как количество × ставка.
+      </p>
+
       <div className="overflow-x-auto rounded-2xl border border-[var(--tk-line)] bg-white/90">
         <div className="min-w-[820px]">
         <div className="grid grid-cols-[1fr_5rem_4.5rem_4.5rem_7rem_8rem] gap-2 border-b border-[var(--tk-line)] bg-stone-50 px-3 py-2 text-xs font-medium text-[var(--tk-muted)]">
-          <div>Этап / ресурс</div>
-          <div className="text-right">L кол-во</div>
-          <div className="text-right">Q часы</div>
-          <div className="text-right">N·O·P</div>
-          <div className="text-right">Ставка</div>
-          <div className="text-right">R итого</div>
+          <div>Статья / ресурс</div>
+          <div className="text-right">Кол-во <span className="block text-[10px] font-normal">L / Quantity</span></div>
+          <div className="text-right">Часы <span className="block text-[10px] font-normal">Q / Hours</span></div>
+          <div className="text-right">Формула <span className="block text-[10px] font-normal">N × O × P</span></div>
+          <div className="text-right">Ставка <span className="block text-[10px] font-normal">M / Rate</span></div>
+          <div className="text-right">Сумма <span className="block text-[10px] font-normal">R / Total</span></div>
         </div>
         {nodes.length === 0 ? (
           <p className="p-4 text-sm text-[var(--tk-muted)]">

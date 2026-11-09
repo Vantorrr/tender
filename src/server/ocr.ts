@@ -295,6 +295,12 @@ export function resolveDefaultOcrProvider(): OcrProvider {
 let provider: OcrProvider = resolveDefaultOcrProvider();
 
 export function getOcrProvider(): OcrProvider {
+  // Auto mode can recover at runtime if OCR tools are installed after server start.
+  const mode = (process.env.OCR_PROVIDER ?? "auto").toLowerCase();
+  if (provider.id === "none" && (mode === "auto" || mode === "tesseract" || mode === "")) {
+    const tools = detectLocalOcrTools();
+    if (tools.tesseract) provider = new TesseractOcrProvider();
+  }
   return provider;
 }
 
@@ -307,7 +313,7 @@ export function resetOcrProvider(): void {
 }
 
 export function ocrConfigured(): boolean {
-  return provider.id !== "none";
+  return getOcrProvider().id !== "none";
 }
 
 export async function extractDocumentText(input: {

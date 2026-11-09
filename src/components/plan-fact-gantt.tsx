@@ -1,12 +1,44 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { Button } from "@/components/ui/button";
 import { diffDays } from "@/lib/cost-engine";
 import { formatDate, formatDateRangeShort } from "@/lib/format";
 import { entryDisplayFact } from "@/lib/plan-fact-agg";
 import type { DailyFact, GprStage, PlanFactEntry } from "@/lib/types";
+
+const GANTT_FILTER_EVENT = "tma361:gantt-filter-change";
+const ganttFilterFallback = new Map<string, string>();
+
+function subscribeGanttFilter(onChange: () => void) {
+  window.addEventListener("storage", onChange);
+  window.addEventListener(GANTT_FILTER_EVENT, onChange);
+  return () => {
+    window.removeEventListener("storage", onChange);
+    window.removeEventListener(GANTT_FILTER_EVENT, onChange);
+  };
+}
+
+function readGanttFilter(key: string, validKinds: string[]) {
+  try {
+    const saved = window.localStorage.getItem(key) ?? ganttFilterFallback.get(key) ?? "all";
+    return saved === "all" || validKinds.includes(saved) ? saved : "all";
+  } catch {
+    const saved = ganttFilterFallback.get(key) ?? "all";
+    return saved === "all" || validKinds.includes(saved) ? saved : "all";
+  }
+}
+
+function saveGanttFilter(key: string, value: string) {
+  ganttFilterFallback.set(key, value);
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    // Keep the selection for this visit if browser storage is unavailable.
+  }
+  window.dispatchEvent(new Event(GANTT_FILTER_EVENT));
+}
 
 function daysBetween(a: string, b: string) {
   return Math.max(1, Math.abs(diffDays(a, b)) || 1);
@@ -38,6 +70,7 @@ type Props = {
   entries?: PlanFactEntry[];
   dailyFacts?: DailyFact[];
   planFactId?: string;
+  filterScope?: string;
   onShift: (
     stageId: string,
     deltaDays: number,
@@ -50,13 +83,15 @@ export function PlanFactGantt({
   entries = [],
   dailyFacts = [],
   planFactId,
+  filterScope,
   onShift,
 }: Props) {
   const [drag, setDrag] = useState<{
     stageId: string;
     startX: number;
   } | null>(null);
-  const [resourceFilter, setResourceFilter] = useState<string>("all");
+  const [ephemeralFilter, setEphemeralFilter] = useState<string>("all");
+  const filterStorageKey = `tma361:gantt-resource-filter:${filterScope ?? planFactId ?? "default"}`;
 
   const sorted = useMemo(
     () => stages.slice().sort((a, b) => a.sequence - b.sequence),
@@ -70,6 +105,16 @@ export function PlanFactGantt({
     }
     return [...set];
   }, [stages]);
+
+  const resourceFilter = useSyncExternalStore(
+    subscribeGanttFilter,
+    () => readGanttFilter(filterStorageKey, resourceKinds),
+    () => ephemeralFilter
+  );
+  const setResourceFilter = (value: string) => {
+    setEphemeralFilter(value);
+    saveGanttFilter(filterStorageKey, value);
+  };
 
   const visible = useMemo(() => {
     if (resourceFilter === "all") return sorted;

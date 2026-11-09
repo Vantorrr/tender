@@ -149,6 +149,7 @@ export default function GprDetailPage() {
           entries={planFact?.entries}
           dailyFacts={planFact?.dailyFacts}
           planFactId={planFact?.id}
+          filterScope={schedule.id}
           onShift={(id, d, resize) => void shiftStage(id, d, resize)}
         />
       </div>
