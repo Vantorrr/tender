@@ -344,9 +344,9 @@ export function classifyDirectCostBucket(
   if (/труд|зарплат|оплат[аы] труда|сварщик|электрогазосварщик|монтажник|рабоч(ий|ая|ие)|машинист|слесар[ьи]|чел\.?[- ]?ч/.test(hay)) {
     return "labor";
   }
-  if (/^(т|кг|л|м2|м²|м3|м³|шт|компл|комплект|тонн[аы]?)$/.test(unit)) {
-    return "materials";
-  }
+  // A unit such as шт, м² or комплект is not evidence that a line is a
+  // material: works, rental services and containers use the same units.
+  // Require an explicit MAT code or material wording below.
   if (/материал|мтр|сэндвич|бетон|арматур/.test(hay)) return "materials";
   if (/маш|техник|jcb|экскав|кран|атс|дсм|автобус|bus/.test(hay)) {
     return "equipment";
