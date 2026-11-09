@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
@@ -42,6 +42,7 @@ const SUPPLY_RU: Record<SupplyStatus, string> = {
 
 export default function ZakupkaDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const {
     data,
     user,
@@ -191,6 +192,35 @@ export default function ZakupkaDetailPage() {
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={procurement.status} />
             <ReviewBadge status={procurement.reviewStatus} />
+            {procurement.lifecycle !== "production" && user?.sections.includes("zakupki") ? (
+              <Button
+                variant="outline"
+                data-testid="procurement-won-to-production"
+                disabled={busy}
+                onClick={async () => {
+                  setBusy(true);
+                  try {
+                    await ensureChain(procurement.id);
+                    await api("/api/zakupki", {
+                      method: "POST",
+                      body: JSON.stringify({
+                        action: "transferToProduction",
+                        id: procurement.id,
+                      }),
+                    });
+                    await refresh();
+                    toast.success("Тендер отмечен выигранным и передан в производство");
+                    router.push("/cabinet/proizvodstvo");
+                  } catch (error) {
+                    toast.error(error instanceof Error ? error.message : "Не удалось передать проект");
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                {busy ? "Передача…" : "Выиграли → в производство"}
+              </Button>
+            ) : null}
             <Button
               data-testid="send-to-calc"
               disabled={busy}
