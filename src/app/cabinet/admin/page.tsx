@@ -34,19 +34,160 @@ type JobRow = {
   finishedAt: string | null;
 };
 
-function AdminJobs({ reloadKey }: { reloadKey: number }) {
-  const [jobs, setJobs] = useState<JobRow[]>([]);
+type IntegrationSnapshot = {
+  procurement: {
+    id: string;
+    status: "ok" | "not_configured" | "demo";
+    detail: string;
+    configured: boolean;
+  };
+  mail: {
+    transport: string;
+    live: boolean;
+    smtpConfigured: boolean;
+    missing: string[];
+    detail: string;
+  };
+  ocr: {
+    configured: boolean;
+    provider: string;
+    tesseract: boolean;
+    pdftoppm: boolean;
+    pdftotext: boolean;
+  };
+  llm: {
+    configured: boolean;
+    onUpload: boolean;
+    model: string;
+  };
+};
+
+function IntegrationPanel() {
+  const [integrations, setIntegrations] = useState<IntegrationSnapshot | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
   const load = useCallback(async () => {
+    setLoading(true);
     try {
-      const res = await api<{ jobs: JobRow[] }>("/api/admin");
-      setJobs(res.jobs ?? []);
-    } catch {
-      setJobs([]);
+      const result = await api<{ integrations: IntegrationSnapshot }>("/api/admin");
+      setIntegrations(result.integrations);
+      setError(null);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Не удалось получить статусы интеграций");
+    } finally {
+      setLoading(false);
     }
   }, []);
+
   useEffect(() => {
-    void load();
-  }, [load, reloadKey]);
+    let active = true;
+    void api<{ integrations: IntegrationSnapshot }>("/api/admin")
+      .then((result) => {
+        if (!active) return;
+        setIntegrations(result.integrations);
+        setError(null);
+      })
+      .catch((loadError: unknown) => {
+        if (!active) return;
+        setError(loadError instanceof Error ? loadError.message : "Не удалось получить статусы интеграций");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const cards = integrations
+    ? [
+        {
+          title: "Источник закупок",
+          ready: integrations.procurement.status === "ok",
+          status: integrations.procurement.status === "demo" ? "Демо" : integrations.procurement.status === "ok" ? "Работает" : "Не подключён",
+          detail: integrations.procurement.detail,
+          next: integrations.procurement.status === "ok"
+            ? "Открытая лента «Норникеля» подключена. Закрытые площадки настраиваются отдельно по их API."
+            : "Для реальной синхронизации укажите поддерживаемый источник и доступы площадки.",
+        },
+        {
+          title: "Распознавание документов",
+          ready: integrations.ocr.configured,
+          status: integrations.ocr.configured ? "Работает" : "Нужны системные пакеты",
+          detail: `Провайдер: ${integrations.ocr.provider}. Tesseract ${integrations.ocr.tesseract ? "есть" : "нет"}, Poppler ${integrations.ocr.pdftotext && integrations.ocr.pdftoppm ? "есть" : "нет"}.`,
+          next: integrations.ocr.configured
+            ? "Текстовые PDF и сканы доступны для распознавания."
+            : "Установите tesseract-ocr и poppler-utils; в Docker-образе они уже включены.",
+        },
+        {
+          title: "ИИ-анализ пакета",
+          ready: integrations.llm.configured,
+          status: integrations.llm.configured ? "Ключ настроен" : "Нужен ключ модели",
+          detail: `Модель: ${integrations.llm.model}. Автоанализ при загрузке ${integrations.llm.onUpload ? "включён" : "выключен"}.`,
+          next: integrations.llm.configured
+            ? "Ручной анализ пакета доступен в карточке закупки. Автоанализ управляется OPENROUTER_ON_UPLOAD."
+            : "Добавьте OPENROUTER_API_KEY в окружение сервера; после этого ручной анализ станет доступен в карточке закупки.",
+        },
+        {
+          title: "Отправка писем",
+          ready: integrations.mail.live,
+          status: integrations.mail.live ? "SMTP работает" : "SMTP не настроен",
+          detail: integrations.mail.detail,
+          next: integrations.mail.live
+            ? "Письма восстановления пароля отправляются через настроенный SMTP."
+            : `Для доставки писем настройте MAIL_TRANSPORT=smtp и SMTP_*${integrations.mail.missing.length ? `: ${integrations.mail.missing.join(", ")}` : ""}.`,
+        },
+      ]
+    : [];
+
+  return (
+    <section className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 className="font-[family-name:var(--font-display)] text-base">Состояние подключений</h2>
+          <p className="mt-1 text-sm text-[var(--tk-muted)]">Статусы без отображения секретных ключей и паролей.</p>
+        </div>
+        <Button size="sm" variant="outline" disabled={loading} onClick={() => void load()}>
+          {loading ? "Проверяем…" : "Проверить снова"}
+        </Button>
+      </div>
+      {error ? <p role="alert" className="mt-3 text-sm text-rose-800">{error}</p> : null}
+      {integrations ? (
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {cards.map((card) => (
+            <article key={card.title} className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold">{card.title}</h3>
+                <Badge variant={card.ready ? "secondary" : "outline"}>{card.status}</Badge>
+              </div>
+              <p className="mt-3 text-xs leading-relaxed text-[var(--tk-muted)]">{card.detail}</p>
+              <p className="mt-2 text-xs leading-relaxed">{card.next}</p>
+            </article>
+          ))}
+        </div>
+      ) : loading ? (
+        <p className="mt-3 text-sm text-[var(--tk-muted)]">Загружаем статусы…</p>
+      ) : null}
+    </section>
+  );
+}
+
+function AdminJobs({ reloadKey }: { reloadKey: number }) {
+  const [jobs, setJobs] = useState<JobRow[]>([]);
+  useEffect(() => {
+    let active = true;
+    void api<{ jobs: JobRow[] }>("/api/admin")
+      .then((res) => {
+        if (active) setJobs(res.jobs ?? []);
+      })
+      .catch(() => {
+        if (active) setJobs([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [reloadKey]);
   if (jobs.length === 0) {
     return (
       <p className="mt-3 text-sm text-[var(--tk-muted)]">Заданий пока нет</p>
@@ -191,6 +332,8 @@ export default function AdminPage() {
           );
         })}
       </section>
+
+      <IntegrationPanel />
 
       <section className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
         <div className="flex items-center justify-between gap-2">

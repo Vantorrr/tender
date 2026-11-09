@@ -17,34 +17,67 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { getClientToken } from "@/lib/api";
+import { DateInputRu } from "@/components/date-input-ru";
+import { api } from "@/lib/api";
+import { DocumentWebPreview } from "@/components/document-web-preview";
 import { cleanLabel } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney } from "@/lib/format";
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
 import { WORK_TYPES } from "@/lib/pipeline";
+import { userHasSection } from "@/lib/acl";
 import { REVIEW_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
-import type { DocumentCategory, ReviewStatus } from "@/lib/types";
+import type { DocumentCategory, ReviewStatus, SupplyStatus } from "@/lib/types";
 import { useStore } from "@/lib/store";
+import { Input } from "@/components/ui/input";
+
+const SUPPLY_RU: Record<SupplyStatus, string> = {
+  need: "Потребность",
+  quoted_draft: "Черновик КП",
+  ordered: "Заказано",
+  in_transit: "В пути",
+  delivered: "Поставлено",
+  accepted: "Принято",
+  cancelled: "Отменено",
+};
 
 export default function ZakupkaDetailPage() {
   const params = useParams<{ id: string }>();
   const {
     data,
+    user,
     orgProcurements,
     setProcurementReview,
     ensureChain,
     sendToCalculation,
     refreshAnalytics,
+    analyzeProjectWithAI,
     createDocumentUpload,
     updateRisk,
     parseRiskContract,
+    refresh,
   } = useStore();
   const procurement = orgProcurements.find((p) => p.id === params.id);
+  const canMoney = user ? userHasSection(user, "dengi") : false;
+  const canGpr = user ? userHasSection(user, "gpr") : false;
+  const canRisks = user ? userHasSection(user, "riski") : false;
+  const canDocs = user ? userHasSection(user, "dokumenty") : false;
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadCategory, setUploadCategory] =
     useState<DocumentCategory>("general");
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [aiAnalyzing, setAiAnalyzing] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [payTitle, setPayTitle] = useState("Аванс");
+  const [payAmount, setPayAmount] = useState("0");
+  const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
+  const [matName, setMatName] = useState("");
+  const [matQty, setMatQty] = useState("1");
+  const [matUnit, setMatUnit] = useState("шт");
+  const [matNeedBy, setMatNeedBy] = useState(
+    new Date().toISOString().slice(0, 10)
+  );
+  const [matQuote, setMatQuote] = useState("");
 
   const docs = useMemo(
     () =>
@@ -68,6 +101,9 @@ export default function ZakupkaDetailPage() {
   const risk = procurement
     ? data.risks.find((r) => r.procurementId === procurement.id)
     : undefined;
+  const supplies = (data.supplyRequests ?? []).filter(
+    (s) => s.procurementId === params.id
+  );
 
   if (!procurement) {
     return (
@@ -82,12 +118,10 @@ export default function ZakupkaDetailPage() {
   const previewDoc = previewId
     ? docs.find((d) => d.id === previewId)
     : null;
-  const previewUrl = previewDoc
-    ? `/api/dokumenty/file?id=${previewDoc.id}&disposition=inline`
-    : null;
 
   async function onUpload(file: File) {
     setBusy(true);
+    setUploadError(null);
     try {
       await createDocumentUpload({
         procurementId: procurement!.id,
@@ -96,8 +130,53 @@ export default function ZakupkaDetailPage() {
         category: uploadCategory,
       });
       toast.success(`Файл «${file.name}» добавлен в закупку`);
+      await refresh();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Ошибка загрузки");
+      const msg =
+        e instanceof Error
+          ? e.message
+          : "Ошибка загрузки (неподдерживаемый или повреждённый файл)";
+      setUploadError(msg);
+      toast.error(msg);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onImportSourceAttachment(attachment: { id: string; name: string }) {
+    setBusy(true);
+    setUploadError(null);
+    try {
+      const response = await fetch("/api/zakupki/source-file", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ procurementId: procurement!.id, attachmentId: attachment.id }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.error ?? "Не удалось скачать файл источника");
+      }
+      const file = new File([await response.blob()], attachment.name, {
+        type: response.headers.get("content-type") ?? "application/octet-stream",
+      });
+      await createDocumentUpload({
+        procurementId: procurement!.id,
+        title: attachment.name,
+        file,
+        category: /смет|smeta/i.test(attachment.name)
+          ? "estimate"
+          : /договор|контракт|dogovor/i.test(attachment.name)
+            ? "contract"
+            : /\.(zip|rar|7z)$/i.test(attachment.name)
+              ? "archive"
+              : "general",
+      });
+      toast.success(`Файл «${attachment.name}» загружен в карточку`);
+      await refresh();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Ошибка загрузки файла";
+      setUploadError(message);
+      toast.error(message);
     } finally {
       setBusy(false);
     }
@@ -140,12 +219,19 @@ export default function ZakupkaDetailPage() {
       <Tabs defaultValue="overview" className="mt-2">
         <TabsList className="mb-4 flex h-auto flex-wrap gap-1">
           <TabsTrigger value="overview">Карточка</TabsTrigger>
-          <TabsTrigger value="docs">Документы ({docs.length})</TabsTrigger>
+          {canDocs ? (
+            <TabsTrigger value="docs">Документы ({docs.length})</TabsTrigger>
+          ) : null}
           <TabsTrigger value="analytics">Аналитика</TabsTrigger>
           <TabsTrigger value="calc">Расчёт</TabsTrigger>
-          <TabsTrigger value="gpr">ГПР</TabsTrigger>
-          <TabsTrigger value="money">Деньги</TabsTrigger>
-          <TabsTrigger value="risks">Риски</TabsTrigger>
+          {canGpr ? <TabsTrigger value="gpr">ГПР</TabsTrigger> : null}
+          {canMoney ? (
+            <TabsTrigger value="money" data-testid="tab-money">
+              Деньги
+            </TabsTrigger>
+          ) : null}
+          <TabsTrigger value="supply">Поставки</TabsTrigger>
+          {canRisks ? <TabsTrigger value="risks">Риски</TabsTrigger> : null}
         </TabsList>
 
         <TabsContent value="overview">
@@ -296,6 +382,33 @@ export default function ZakupkaDetailPage() {
         </TabsContent>
 
         <TabsContent value="docs">
+          {uploadError ? (
+            <Alert
+              className="mb-4 border-rose-200 bg-rose-50 text-rose-950"
+              data-testid="upload-error"
+            >
+              <AlertTitle>Загрузка не принята</AlertTitle>
+              <AlertDescription>{uploadError}</AlertDescription>
+            </Alert>
+          ) : null}
+          {procurement.attachments.some((attachment) => attachment.sourceUrl) ? (
+            <section className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4">
+              <h2 className="font-medium">Файлы с площадки</h2>
+              <p className="mt-1 text-xs text-[var(--tk-muted)]">
+                Скачайте пакет в карточку: PDF, DOC, DOCX, XLSX, ZIP и RAR будут разобраны автоматически.
+              </p>
+              <ul className="mt-3 space-y-2">
+                {procurement.attachments.filter((attachment) => attachment.sourceUrl).map((attachment) => (
+                  <li key={attachment.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 text-sm">
+                    <span>{attachment.name} · {attachment.size}</span>
+                    <Button size="sm" variant="outline" disabled={busy} onClick={() => void onImportSourceAttachment(attachment)}>
+                      Скачать и разобрать
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
           <div className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4">
             <div>
               <p className="mb-1 text-xs text-[var(--tk-muted)]">Категория</p>
@@ -317,7 +430,7 @@ export default function ZakupkaDetailPage() {
               ref={fileRef}
               type="file"
               className="hidden"
-              accept=".pdf,.docx,.xlsx,.zip"
+              accept=".pdf,.doc,.docx,.xlsx,.zip,.rar"
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (f) void onUpload(f);
@@ -332,7 +445,7 @@ export default function ZakupkaDetailPage() {
               Добавить файл вручную
             </Button>
             <p className="text-xs text-[var(--tk-muted)]">
-              PDF / DOCX / XLSX / ZIP. Ошибки распаковки архива показываются явно.
+              PDF / DOC / DOCX / XLSX / ZIP / RAR. Ошибки распаковки показываются в карточке.
             </p>
           </div>
           <ul className="space-y-2">
@@ -387,7 +500,7 @@ export default function ZakupkaDetailPage() {
               ))
             )}
           </ul>
-          {previewUrl && previewDoc ? (
+          {previewDoc ? (
             <div className="mt-4 rounded-xl border border-[var(--tk-line)] bg-white p-3">
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-sm font-medium">
@@ -401,40 +514,7 @@ export default function ZakupkaDetailPage() {
                   Закрыть
                 </Button>
               </div>
-              {previewDoc.fileType === "pdf" ? (
-                <iframe
-                  title={previewDoc.fileName}
-                  src={previewUrl}
-                  className="h-[70vh] w-full rounded-lg border"
-                />
-              ) : (
-                <p className="text-sm text-[var(--tk-muted)]">
-                  Встроенный просмотр для {previewDoc.fileType.toUpperCase()} —
-                  скачайте или откройте ссылку:{" "}
-                  <a
-                    className="underline"
-                    href={previewUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={(e) => {
-                      const token = getClientToken();
-                      if (token) {
-                        e.preventDefault();
-                        void fetch(previewUrl, {
-                          headers: { Authorization: `Bearer ${token}` },
-                          credentials: "include",
-                        }).then(async (r) => {
-                          const blob = await r.blob();
-                          window.open(URL.createObjectURL(blob), "_blank");
-                        });
-                      }
-                    }}
-                  >
-                    открыть файл
-                  </a>
-                  .
-                </p>
-              )}
+              <DocumentWebPreview key={previewDoc.id} document={previewDoc} />
             </div>
           ) : null}
         </TabsContent>
@@ -445,17 +525,40 @@ export default function ZakupkaDetailPage() {
               <h2 className="font-[family-name:var(--font-display)] text-base">
                 Аналитическая сводка проекта
               </h2>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={async () => {
-                  await refreshAnalytics(procurement.id);
-                  toast.success("Сводка пересчитана");
-                }}
-              >
-                Обновить сводку
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    await refreshAnalytics(procurement.id);
+                    toast.success("Сводка пересчитана");
+                  }}
+                >
+                  Обновить сводку
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={aiAnalyzing || docs.length === 0}
+                  title="Отправит выдержки и метаданные документов в настроенную ИИ-модель"
+                  onClick={async () => {
+                    setAiAnalyzing(true);
+                    try {
+                      await analyzeProjectWithAI(procurement.id);
+                      toast.success("ИИ подготовил сводный анализ всего пакета");
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : "Не удалось проанализировать пакет");
+                    } finally {
+                      setAiAnalyzing(false);
+                    }
+                  }}
+                >
+                  {aiAnalyzing ? "ИИ анализирует пакет…" : "ИИ-анализ всего пакета"}
+                </Button>
+              </div>
             </div>
+            <p className="mb-3 text-xs text-[var(--tk-muted)]">
+              Сводный запрос отправляет выдержки и метаданные пакета в настроенную OpenRouter-модель; вызов может тарифицироваться.
+            </p>
             {analytics ? (
               <>
                 <p className="mb-2 text-sm font-semibold">
@@ -558,8 +661,7 @@ export default function ZakupkaDetailPage() {
                   ))}
                 </ul>
                 <p className="mt-3 text-xs text-[var(--tk-muted)]">
-                  Drag-редактор Ганта — этап 2 (partial). Даты читаемы; полный
-                  перенос полос позже.
+                  Полный Гант с перетаскиванием и сводкой — в карточке ГПР.
                 </p>
                 <Link
                   className="mt-3 inline-flex h-9 items-center rounded-lg border px-3 text-sm"
@@ -577,28 +679,297 @@ export default function ZakupkaDetailPage() {
         </TabsContent>
 
         <TabsContent value="money">
-          <div className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5 text-sm">
-            {money ? (
+          <div
+            className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5 text-sm"
+            data-testid="project-money-tab"
+          >
+            {!canMoney ? (
+              <ErrorState
+                title="Нет доступа к разделу «dengi»"
+                description="Вкладка денег в карточке закупки требует право dengi (вложенный ACL)."
+              />
+            ) : !money ? (
+              <div className="space-y-3">
+                <p className="text-[var(--tk-muted)]">
+                  Денежный план ещё не создан для этой закупки.
+                </p>
+                <Button
+                  data-testid="ensure-money"
+                  onClick={async () => {
+                    try {
+                      await api("/api/zakupki", {
+                        method: "POST",
+                        body: JSON.stringify({
+                          action: "ensureMoney",
+                          id: procurement.id,
+                        }),
+                      });
+                      await refresh();
+                      toast.success("Денежный план создан в карточке проекта");
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : "Ошибка");
+                    }
+                  }}
+                >
+                  Создать план денег
+                </Button>
+              </div>
+            ) : (
               <>
                 <p className="font-medium">{money.title}</p>
-                <ul className="mt-3 space-y-1">
+                <ul className="mt-3 space-y-2">
                   {money.payments.map((pay) => (
-                    <li key={pay.id}>
-                      {pay.title}: {formatMoney(pay.amount)} · {pay.date}
+                    <li
+                      key={pay.id}
+                      className="flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2"
+                    >
+                      <Input
+                        className="w-40"
+                        value={pay.title}
+                        onChange={async (e) => {
+                          const title = e.target.value;
+                          await api("/api/zakupki", {
+                            method: "POST",
+                            body: JSON.stringify({
+                              action: "saveMoney",
+                              moneyId: money.id,
+                              patch: {
+                                payments: money.payments.map((x) =>
+                                  x.id === pay.id ? { ...x, title } : x
+                                ),
+                              },
+                            }),
+                          });
+                          await refresh();
+                        }}
+                      />
+                      <Input
+                        className="w-32"
+                        value={String(pay.amount)}
+                        onChange={async (e) => {
+                          const amount = Number(e.target.value) || 0;
+                          await api("/api/zakupki", {
+                            method: "POST",
+                            body: JSON.stringify({
+                              action: "saveMoney",
+                              moneyId: money.id,
+                              patch: {
+                                payments: money.payments.map((x) =>
+                                  x.id === pay.id ? { ...x, amount } : x
+                                ),
+                              },
+                            }),
+                          });
+                          await refresh();
+                        }}
+                      />
+                      <span className="text-xs text-[var(--tk-muted)]">
+                        {formatDate(pay.date)} · {formatMoney(pay.amount)}
+                      </span>
                     </li>
                   ))}
                 </ul>
+                <div className="mt-4 flex flex-wrap items-end gap-2 border-t pt-4">
+                  <Input
+                    placeholder="Название"
+                    value={payTitle}
+                    onChange={(e) => setPayTitle(e.target.value)}
+                  />
+                  <Input
+                    className="w-28"
+                    value={payAmount}
+                    onChange={(e) => setPayAmount(e.target.value)}
+                  />
+                  <DateInputRu
+                    value={payDate}
+                    onChange={setPayDate}
+                    className="w-[140px]"
+                  />
+                  <Button
+                    data-testid="add-money-payment"
+                    onClick={async () => {
+                      try {
+                        await api("/api/zakupki", {
+                          method: "POST",
+                          body: JSON.stringify({
+                            action: "addMoneyPayment",
+                            moneyId: money.id,
+                            payment: {
+                              type: "avans",
+                              title: payTitle || "Платёж",
+                              amount: Number(payAmount) || 0,
+                              date: payDate,
+                              week: 1,
+                              month: Number(payDate.slice(5, 7)) || 1,
+                            },
+                          }),
+                        });
+                        await refresh();
+                        toast.success("Платёж сохранён");
+                      } catch (e) {
+                        toast.error(
+                          e instanceof Error ? e.message : "Ошибка сохранения"
+                        );
+                      }
+                    }}
+                  >
+                    Добавить и сохранить
+                  </Button>
+                </div>
                 <p className="mt-3 text-xs text-[var(--tk-muted)]">
-                  Отдельный пункт сайдбара «Деньги» убран — план в контексте
-                  проекта. Полный PnL производства — этап 3.
+                  Деньги ведутся в карточке проекта (не в сайдбаре). Это касса /
+                  график платежей — не путать с физ. фактом производства.
                 </p>
               </>
-            ) : (
-              <p className="text-[var(--tk-muted)]">
-                Денежный план ещё не создан (кнопка артефактов на вкладке
-                «Карточка»).
-              </p>
             )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="supply">
+          <div
+            className="space-y-4 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5 text-sm"
+            data-testid="supply-tab"
+          >
+            <h3 className="font-medium">
+              Потребность → черновик КП → поставка
+            </h3>
+            <p className="text-xs text-[var(--tk-muted)]">
+              Отправка писем поставщикам не выполняется. Можно подготовить текст
+              запроса КП и вести статусы вручную.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Input
+                placeholder="Материал"
+                value={matName}
+                onChange={(e) => setMatName(e.target.value)}
+              />
+              <Input
+                className="w-24"
+                value={matQty}
+                onChange={(e) => setMatQty(e.target.value)}
+              />
+              <Input
+                className="w-20"
+                value={matUnit}
+                onChange={(e) => setMatUnit(e.target.value)}
+              />
+              <DateInputRu
+                value={matNeedBy}
+                onChange={setMatNeedBy}
+                className="w-[140px]"
+              />
+              <Input
+                className="min-w-[220px] flex-1"
+                placeholder="Черновик текста КП (не отправка)"
+                value={matQuote}
+                onChange={(e) => setMatQuote(e.target.value)}
+              />
+              <Button
+                data-testid="supply-create"
+                onClick={async () => {
+                  if (!matName.trim()) {
+                    toast.error("Укажите материал");
+                    return;
+                  }
+                  try {
+                    await api("/api/supply", {
+                      method: "POST",
+                      body: JSON.stringify({
+                        procurementId: procurement.id,
+                        materialName: matName.trim(),
+                        unit: matUnit || "шт",
+                        qtyNeed: Number(matQty) || 0,
+                        needBy: matNeedBy,
+                        status: matQuote.trim() ? "quoted_draft" : "need",
+                        quoteDraftText: matQuote.trim() || undefined,
+                      }),
+                    });
+                    await refresh();
+                    toast.success("Потребность сохранена");
+                    setMatName("");
+                    setMatQuote("");
+                  } catch (e) {
+                    toast.error(e instanceof Error ? e.message : "Ошибка");
+                  }
+                }}
+              >
+                Сохранить потребность
+              </Button>
+            </div>
+            <ul className="space-y-2">
+              {supplies.length === 0 ? (
+                <li className="text-[var(--tk-muted)]">Пока нет потребностей</li>
+              ) : (
+                supplies.map((s) => (
+                  <li
+                    key={s.id}
+                    className="rounded-lg border px-3 py-2"
+                    data-testid={`supply-${s.id}`}
+                  >
+                    <div className="font-medium">
+                      {s.materialName} · {s.qtyNeed} {s.unit} · к{" "}
+                      {formatDate(s.needBy)}
+                    </div>
+                    <div className="text-xs text-[var(--tk-muted)]">
+                      {SUPPLY_RU[s.status]} · заказано {s.qtyOrdered} ·
+                      поставлено {s.qtyDelivered}
+                    </div>
+                    {s.quoteDraftText ? (
+                      <pre className="mt-2 whitespace-pre-wrap rounded bg-stone-50 p-2 text-xs">
+                        {s.quoteDraftText}
+                      </pre>
+                    ) : null}
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {(
+                        [
+                          "need",
+                          "quoted_draft",
+                          "ordered",
+                          "in_transit",
+                          "delivered",
+                          "accepted",
+                        ] as SupplyStatus[]
+                      ).map((st) => (
+                        <Button
+                          key={st}
+                          size="sm"
+                          variant={s.status === st ? "default" : "outline"}
+                          onClick={async () => {
+                            await api("/api/supply", {
+                              method: "POST",
+                              body: JSON.stringify({
+                                id: s.id,
+                                procurementId: procurement.id,
+                                materialName: s.materialName,
+                                unit: s.unit,
+                                qtyNeed: s.qtyNeed,
+                                needBy: s.needBy,
+                                status: st,
+                                qtyDelivered:
+                                  st === "delivered" || st === "accepted"
+                                    ? s.qtyNeed
+                                    : s.qtyDelivered,
+                                qtyOrdered:
+                                  st === "ordered" ||
+                                  st === "in_transit" ||
+                                  st === "delivered" ||
+                                  st === "accepted"
+                                    ? Math.max(s.qtyOrdered, s.qtyNeed)
+                                    : s.qtyOrdered,
+                                quoteDraftText: s.quoteDraftText,
+                              }),
+                            });
+                            await refresh();
+                          }}
+                        >
+                          {SUPPLY_RU[st]}
+                        </Button>
+                      ))}
+                    </div>
+                  </li>
+                ))
+              )}
+            </ul>
           </div>
         </TabsContent>
 

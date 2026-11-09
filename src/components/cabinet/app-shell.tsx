@@ -108,10 +108,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     .slice(0, 2);
 
   return (
-    <div className="flex min-h-screen bg-transparent">
+    <div className="flex h-dvh max-h-dvh overflow-hidden bg-transparent">
+      {/*
+        Product layout: sidebar + header are in a fixed viewport shell;
+        only <main> scrolls. Avoid position:sticky here — sticky chrome
+        duplicates mid-page in long captures and can cover content.
+      */}
       <aside
         className={cn(
-          "tk-glass-dark relative sticky top-0 hidden h-screen shrink-0 flex-col border-r text-white transition-[width] duration-300 lg:flex",
+          "tk-glass-dark relative hidden h-full shrink-0 flex-col overflow-y-auto border-r text-white transition-[width] duration-300 lg:flex",
           collapsed ? "w-[76px]" : "w-[248px]"
         )}
       >
@@ -130,7 +135,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             className={cn(
               "text-white/50 hover:bg-white/8 hover:text-white",
               collapsed &&
-                "tk-glass-dark absolute top-5 -right-3 z-20 size-6 border shadow-sm"
+                "tk-glass-dark absolute top-5 right-2 z-20 size-6 border shadow-sm"
             )}
             onClick={() => setCollapsed((v) => !v)}
             aria-label={collapsed ? "Развернуть меню" : "Свернуть меню"}
@@ -147,8 +152,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </aside>
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="tk-glass-bar sticky top-0 z-30 flex h-[68px] items-center justify-between gap-3 border-b px-4 sm:px-6">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="tk-glass-bar z-30 flex h-[68px] shrink-0 items-center justify-between gap-3 border-b px-4 sm:px-6">
           <div className="flex items-center gap-2">
             <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
               <SheetTrigger
@@ -272,7 +277,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </header>
 
-        <main className="relative min-w-0 flex-1 overflow-x-clip px-4 py-6 pb-[max(6.75rem,calc(5.75rem+env(safe-area-inset-bottom)))] sm:px-7 sm:py-8 lg:px-10 lg:pb-8">
+        <main
+          className="relative min-h-0 min-w-0 flex-1 overflow-x-clip overflow-y-auto px-4 py-6 pb-[max(6.75rem,calc(5.75rem+env(safe-area-inset-bottom)))] sm:px-7 sm:py-8 lg:px-10 lg:pb-8"
+          data-testid="cabinet-main-scroll"
+        >
           <div key={pathname} className="tk-page relative mx-auto w-full max-w-[1180px]">
             {children}
           </div>

@@ -23,9 +23,10 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { downloadUrl } from "@/lib/api";
-import { formatDate, formatMoney } from "@/lib/format";
+import { formatMoney } from "@/lib/format";
 import { PERIOD_LABELS } from "@/lib/roles";
 import { useStore } from "@/lib/store";
+import { DateInputRu } from "@/components/date-input-ru";
 
 const typeLabel = {
   avans: "Аванс",
@@ -76,6 +77,25 @@ export default function DengiPage() {
     },
     { total: 0, avans: 0, postuplenie: 0, klyuchevoy: 0 }
   );
+
+  function patchPayment(paymentId: string, patch: Partial<(typeof payments)[number]>) {
+    if (!plan) return;
+    updateMoney(plan.id, {
+      payments: plan.payments.map((payment) => {
+        if (payment.id !== paymentId) return payment;
+        const next = { ...payment, ...patch };
+        if (patch.date) {
+          const date = new Date(`${patch.date}T00:00:00`);
+          if (Number.isFinite(date.getTime())) {
+            const start = new Date(date.getFullYear(), 0, 1);
+            next.week = Math.max(1, Math.ceil((date.getTime() - start.getTime()) / 604800000));
+            next.month = date.getMonth() + 1;
+          }
+        }
+        return next;
+      }),
+    });
+  }
 
   if (!user) return null;
 
@@ -181,26 +201,37 @@ export default function DengiPage() {
                   {payments.map((p) => (
                     <TableRow key={p.id}>
                       <TableCell>{typeLabel[p.type]}</TableCell>
-                      <TableCell>
+                      <TableCell className="min-w-48">
                         <Input
+                          aria-label={`Название платежа ${p.title}`}
                           value={p.title}
-                          onChange={(e) => {
-                            updateMoney(plan.id, {
-                              payments: plan.payments.map((x) =>
-                                x.id === p.id
-                                  ? { ...x, title: e.target.value }
-                                  : x
-                              ),
-                            });
-                          }}
+                          onChange={(e) => patchPayment(p.id, { title: e.target.value })}
                         />
                       </TableCell>
-                      <TableCell>{formatDate(p.date)}</TableCell>
-                      <TableCell className="text-right font-medium">
-                        {formatMoney(p.amount)}
+                      <TableCell className="min-w-40">
+                        <DateInputRu
+                          value={p.date}
+                          onChange={(date) => patchPayment(p.id, { date })}
+                        />
                       </TableCell>
-                      <TableCell className="text-sm text-[var(--tk-muted)]">
-                        {p.note ?? "—"}
+                      <TableCell className="text-right font-medium">
+                        <Input
+                          aria-label={`Сумма платежа ${p.title}`}
+                          className="ml-auto w-36 text-right"
+                          type="number"
+                          min={0}
+                          step="0.01"
+                          value={String(p.amount)}
+                          onChange={(e) => patchPayment(p.id, { amount: Number(e.target.value) || 0 })}
+                        />
+                      </TableCell>
+                      <TableCell className="min-w-56 text-sm text-[var(--tk-muted)]">
+                        <Input
+                          aria-label={`Комментарий платежа ${p.title}`}
+                          value={p.note ?? ""}
+                          placeholder="Комментарий"
+                          onChange={(e) => patchPayment(p.id, { note: e.target.value })}
+                        />
                       </TableCell>
                     </TableRow>
                   ))}

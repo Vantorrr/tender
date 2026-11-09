@@ -8,7 +8,7 @@ const POINTS = [
   {
     icon: FileSearch,
     title: "Разбор документов",
-    text: "PDF, DOCX, XLSX с аналитической запиской и цитатами из источника.",
+    text: "PDF, DOC, DOCX, XLSX и документы из ZIP/RAR с аналитической запиской и ссылками на фрагменты источника.",
   },
   {
     icon: Workflow,

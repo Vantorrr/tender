@@ -2,6 +2,7 @@ import {
   addCalcPositionFromDirectory,
   getBootstrap,
   recalcCalculation,
+  recomputeCalculationCost,
   updateCalculation,
 } from "@/server/repo";
 import { withSection, json } from "@/server/http";
@@ -19,6 +20,8 @@ export async function PATCH(req: Request) {
       id?: string;
       patch?: Partial<Calculation>;
       recalcScenario?: Calculation["scenario"];
+      recomputeCost?: boolean;
+      costPatch?: Parameters<typeof recomputeCalculationCost>[2];
       addFromDirectory?: {
         type: "rascenki" | "ceny" | "park";
         code: string;
@@ -30,6 +33,8 @@ export async function PATCH(req: Request) {
     try {
       if (body.recalcScenario) {
         recalcCalculation(user.id, body.id, body.recalcScenario);
+      } else if (body.recomputeCost) {
+        recomputeCalculationCost(user.id, body.id, body.costPatch);
       } else if (body.addFromDirectory) {
         addCalcPositionFromDirectory(user.id, body.id, body.addFromDirectory);
       } else if (body.patch) {

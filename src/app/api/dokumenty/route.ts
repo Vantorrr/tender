@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import {
   createDocument,
   getBootstrap,
@@ -9,13 +10,91 @@ import { config } from "@/server/config";
 import {
   archiveExtractDir,
   detectArchiveFormat,
+  extractRarArchiveSafely,
   extractArchiveSafely,
 } from "@/server/safe-archive";
 import { saveUpload } from "@/server/uploads";
 import { withAnySection, json } from "@/server/http";
 import type { DocumentCategory, DocumentItem } from "@/lib/types";
+import type { ArchiveExtractResult } from "@/server/safe-archive";
 
 const DOC_SECTIONS = ["dokumenty", "zakupki", "riski"] as const;
+
+type ExtractedFile = ArchiveExtractResult["files"][number];
+
+async function processArchiveFiles(
+  userId: string,
+  orgId: string,
+  procurementId: string,
+  files: ExtractedFile[],
+  useLlm: boolean,
+  depth: number
+): Promise<{ analyzedFiles: Array<{ name: string; documentId: string; status: string }>; errors: string[] }> {
+  const analyzedFiles: Array<{ name: string; documentId: string; status: string }> = [];
+  const errors: string[] = [];
+  for (const extractedFile of files) {
+    const childExt = extractedFile.name.split(".").pop()?.toLowerCase() ?? "";
+    const childBytes = fs.readFileSync(extractedFile.absolutePath);
+    const childId = `d-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    if (childExt === "zip" || childExt === "rar") {
+      const childStored = await saveUpload(childId, extractedFile.name, childBytes);
+      const childExtracted = depth < 1
+        ? childExt === "rar"
+          ? await extractRarArchiveSafely(extractedFile.name, childBytes, archiveExtractDir(childId))
+          : extractArchiveSafely(extractedFile.name, childBytes, archiveExtractDir(childId))
+        : { ok: false, format: childExt as "zip" | "rar", files: [], errors: ["Превышена максимальная глубина вложенных архивов (2)"], skipped: [] };
+      const archive = createDocument(userId, {
+        orgId, procurementId, title: extractedFile.name, fileName: extractedFile.name,
+        fileType: childExt === "zip" ? "zip" : "other", category: "archive",
+        storedPath: childStored.storedPath, fileSize: childStored.fileSize,
+        extractionErrors: childExtracted.errors,
+        extractedFiles: childExtracted.files.map((f) => ({ name: f.name, size: f.size, relativePath: f.relativePath })),
+      });
+      analyzedFiles.push({ name: extractedFile.relativePath, documentId: archive.documentId, status: childExtracted.ok ? "archive_extracted" : "archive_partial" });
+      if (childExtracted.files.length) {
+        const nested = await processArchiveFiles(userId, orgId, procurementId, childExtracted.files, useLlm, depth + 1);
+        analyzedFiles.push(...nested.analyzedFiles);
+        errors.push(...nested.errors);
+      }
+      if (childExtracted.errors.length) {
+        errors.push(...childExtracted.errors.map((message) => `${extractedFile.relativePath}: ${message}`));
+        updateDocument(userId, archive.documentId, { status: "trebuet_proverki" });
+      }
+      continue;
+    }
+    if (childExt !== "pdf" && childExt !== "doc" && childExt !== "docx" && childExt !== "xlsx") {
+      const childStored = await saveUpload(childId, extractedFile.name, childBytes);
+      const reason = "Файл сохранён из архива; формат пока нельзя автоматически разобрать";
+      const child = createDocument(userId, {
+        orgId, procurementId, title: extractedFile.name, fileName: extractedFile.name,
+        fileType: "other", category: "general", storedPath: childStored.storedPath,
+        fileSize: childStored.fileSize, extractionErrors: [reason],
+      });
+      errors.push(`${extractedFile.relativePath}: формат не анализируется автоматически`);
+      analyzedFiles.push({ name: extractedFile.relativePath, documentId: child.documentId, status: "saved_without_analysis" });
+      continue;
+    }
+    try {
+      const prepared = await analyzeUpload(extractedFile.name, childExt, childBytes, { useLlm });
+      const childStored = await saveUpload(childId, extractedFile.name, childBytes);
+      const child = createDocument(userId, {
+        orgId, procurementId, title: prepared.title, fileName: extractedFile.name,
+        fileType: childExt, category: inferCategory(null, extractedFile.name),
+        storedPath: childStored.storedPath, fileSize: childStored.fileSize, prepared,
+      });
+      analyzedFiles.push({ name: extractedFile.relativePath, documentId: child.documentId, status: "analyzed" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message.slice(0, 160) : "ошибка анализа";
+      errors.push(`${extractedFile.relativePath}: ${message}`);
+      createDocument(userId, {
+        orgId, procurementId, title: extractedFile.name, fileName: extractedFile.name,
+        fileType: childExt as DocumentItem["fileType"], category: inferCategory(null, extractedFile.name),
+        extractionErrors: [message],
+      });
+    }
+  }
+  return { analyzedFiles, errors };
+}
 
 function inferCategory(
   raw: string | null,
@@ -74,12 +153,10 @@ export async function POST(req: Request) {
       if (archiveFormat !== "none") {
         const tempId = `d-${Date.now()}`;
         const stored = await saveUpload(tempId, file.name, buf);
-        const extracted = extractArchiveSafely(
-          file.name,
-          buf,
-          archiveExtractDir(tempId)
-        );
-        createDocument(user.id, {
+        const extracted = archiveFormat === "rar"
+          ? await extractRarArchiveSafely(file.name, buf, archiveExtractDir(tempId))
+          : extractArchiveSafely(file.name, buf, archiveExtractDir(tempId));
+        const archiveDoc = createDocument(user.id, {
           orgId: user.orgId,
           procurementId,
           title: String(form.get("title") ?? "").trim() || file.name,
@@ -95,20 +172,33 @@ export async function POST(req: Request) {
             relativePath: f.relativePath,
           })),
         });
+
+        // Also unpack a single nested ZIP/RAR level and process its documents.
+        const { analyzedFiles, errors: childErrors } = await processArchiveFiles(
+          user.id, user.orgId, procurementId, extracted.files, useLlm, 0
+        );
+        if (childErrors.length) {
+          updateDocument(user.id, archiveDoc.documentId, {
+            extractionErrors: [...extracted.errors, ...childErrors],
+            status: "trebuet_proverki",
+          });
+        }
         refreshProcurementAnalytics(user.id, procurementId);
         return json({
           ...getBootstrap(user),
           archive: {
-            ok: extracted.ok,
+            ok: extracted.ok && childErrors.length === 0,
             format: extracted.format,
-            errors: extracted.errors,
+            errors: [...extracted.errors, ...childErrors],
             files: extracted.files.map((f) => f.name),
+            analyzedFiles,
+            documentId: archiveDoc.documentId,
           },
         });
       }
 
       const fileType =
-        ext === "docx" || ext === "xlsx" || ext === "pdf" ? ext : "pdf";
+        ext === "doc" || ext === "docx" || ext === "xlsx" || ext === "pdf" ? ext : "pdf";
       let prepared;
       try {
         let timer: ReturnType<typeof setTimeout> | undefined;

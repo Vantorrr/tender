@@ -87,6 +87,15 @@ interface StoreContextValue {
     category?: string;
   }) => Promise<void>;
   updateSchedule: (id: string, patch: Partial<GprSchedule>) => Promise<void>;
+  patchScheduleResource: (
+    scheduleId: string,
+    input: {
+      resourceId: string;
+      stageId?: string;
+      quantity?: number;
+      rate?: number | null;
+    }
+  ) => Promise<void>;
   updateMoney: (id: string, patch: Partial<MoneyPlan>) => Promise<void>;
   updateRisk: (id: string, patch: Partial<RiskRegistry>) => Promise<void>;
   parseRiskContract: (id: string) => Promise<void>;
@@ -106,6 +115,7 @@ interface StoreContextValue {
   ensureChain: (procurementId: string) => Promise<void>;
   sendToCalculation: (procurementId: string) => Promise<void>;
   refreshAnalytics: (procurementId: string) => Promise<void>;
+  analyzeProjectWithAI: (procurementId: string) => Promise<void>;
   markAllNotificationsRead: () => Promise<void>;
   setOrganizationActive: (orgId: string, active: boolean) => Promise<void>;
   importClientXlsx: () => Promise<{
@@ -476,6 +486,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [applyBoot]
   );
 
+  const patchScheduleResource = useCallback(
+    async (
+      scheduleId: string,
+      input: {
+        resourceId: string;
+        stageId?: string;
+        quantity?: number;
+        rate?: number | null;
+      }
+    ) => {
+      const boot = await api<BootstrapResponse>("/api/gpr", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id: scheduleId,
+          action: "patchResource",
+          resourceId: input.resourceId,
+          stageId: input.stageId,
+          quantity: input.quantity,
+          rate: input.rate,
+        }),
+      });
+      applyBoot(boot);
+    },
+    [applyBoot]
+  );
+
   const updateMoney = useCallback(
     async (id: string, patch: Partial<MoneyPlan>) => {
       const boot = await api<BootstrapResponse>("/api/dengi", {
@@ -631,6 +667,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [applyBoot]
   );
 
+  const analyzeProjectWithAI = useCallback(
+    async (procurementId: string) => {
+      const boot = await api<BootstrapResponse>("/api/zakupki", {
+        method: "POST",
+        body: JSON.stringify({ action: "analyzeProject", id: procurementId }),
+      });
+      applyBoot(boot);
+    },
+    [applyBoot]
+  );
+
   const addAudit = useCallback(() => {
     /* audit is server-side now */
   }, []);
@@ -673,6 +720,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     reanalyzeDocument,
     createDocumentUpload,
     updateSchedule,
+    patchScheduleResource,
     updateMoney,
     updateRisk,
     parseRiskContract,
@@ -686,6 +734,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     ensureChain,
     sendToCalculation,
     refreshAnalytics,
+    analyzeProjectWithAI,
     addAudit,
     orgProcurements,
     orgDocuments,
