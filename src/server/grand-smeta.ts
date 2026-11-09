@@ -794,6 +794,35 @@ export async function analyzeUpload(
       useLlm
     );
   }
+  if (fileType === "doc" || fileName.toLowerCase().endsWith(".doc")) {
+    const { analysisFromDocx, parseLegacyWordBuffer } = await import(
+      "@/server/docx-parse"
+    );
+    const legacyDoc = await parseLegacyWordBuffer(buf);
+    if (!legacyDoc) {
+      return unrecognized(fileName, "Не удалось прочитать двоичный Word .doc.");
+    }
+    const analysis = analysisFromDocx(fileName, legacyDoc);
+    return maybeRefineNote(
+      analysis,
+      {
+        kind: "doc",
+        fileName,
+        paragraphCount: legacyDoc.paragraphs.length,
+        zone: analysis.analysis.zone,
+        costThousand: analysis.analysis.costThousand,
+        sourceVersion: legacyDoc.sourceVersion,
+      },
+      [
+        analysis.analysis.zone || null,
+        analysis.analysis.workName || null,
+        analysis.analysis.costThousand != null
+          ? String(Math.trunc(analysis.analysis.costThousand))
+          : null,
+      ],
+      useLlm
+    );
+  }
   if (fileType === "pdf" || fileName.toLowerCase().endsWith(".pdf")) {
     const ocr = await extractDocumentText({
       fileName,

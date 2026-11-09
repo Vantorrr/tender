@@ -402,7 +402,7 @@ export default function ZakupkaDetailPage() {
             <section className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4">
               <h2 className="font-medium">Файлы с площадки</h2>
               <p className="mt-1 text-xs text-[var(--tk-muted)]">
-                Скачайте пакет в карточку: PDF, DOCX, XLSX, ZIP и RAR будут разобраны автоматически.
+                Скачайте пакет в карточку: PDF, DOC, DOCX, XLSX, ZIP и RAR будут разобраны автоматически.
               </p>
               <ul className="mt-3 space-y-2">
                 {procurement.attachments.filter((attachment) => attachment.sourceUrl).map((attachment) => (
@@ -437,7 +437,7 @@ export default function ZakupkaDetailPage() {
               ref={fileRef}
               type="file"
               className="hidden"
-              accept=".pdf,.docx,.xlsx,.zip,.rar"
+              accept=".pdf,.doc,.docx,.xlsx,.zip,.rar"
               onChange={(e) => {
                 const f = e.target.files?.[0];
                 if (f) void onUpload(f);
@@ -452,7 +452,7 @@ export default function ZakupkaDetailPage() {
               Добавить файл вручную
             </Button>
             <p className="text-xs text-[var(--tk-muted)]">
-              PDF / DOCX / XLSX / ZIP / RAR. Ошибки распаковки показываются в карточке.
+              PDF / DOC / DOCX / XLSX / ZIP / RAR. Ошибки распаковки показываются в карточке.
             </p>
           </div>
           <ul className="space-y-2">

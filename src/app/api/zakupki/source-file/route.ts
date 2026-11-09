@@ -29,11 +29,11 @@ export async function POST(req: Request) {
     } catch {
       return json({ error: "Некорректная ссылка на файл источника" }, 400);
     }
-    if (
-      source.protocol !== "https:" ||
-      source.hostname !== "nornickel.ru" ||
-      !source.pathname.startsWith("/upload/")
-    ) {
+    const allowedSource = source.protocol === "https:" && (
+      (source.hostname === "nornickel.ru" && source.pathname.startsWith("/upload/")) ||
+      (source.hostname === "nornik-upload.storage.yandexcloud.net" && source.pathname.startsWith("/iblock/"))
+    );
+    if (!allowedSource) {
       return json({ error: "Разрешены только файлы с публичного сайта «Норникеля»" }, 400);
     }
 

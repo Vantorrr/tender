@@ -5,6 +5,7 @@
  */
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import zlib from "node:zlib";
 import { createExtractorFromData } from "node-unrar-js";
@@ -24,12 +25,51 @@ export type ArchiveExtractResult = {
 };
 
 const MAX_FILES = 40;
-const MAX_UNCOMPRESSED = 40 * 1024 * 1024;
-const MAX_SINGLE = 12 * 1024 * 1024;
+const MAX_UNCOMPRESSED = 64 * 1024 * 1024;
+const MAX_SINGLE = 32 * 1024 * 1024;
+const MAX_SINGLE_ARCHIVE = 60 * 1024 * 1024;
 const MAX_NESTING_NAME = 180;
+const nodeRequire = createRequire(path.join(process.cwd(), "package.json"));
+let unrarWasm: ArrayBuffer | undefined;
+
+function loadUnrarWasm(): ArrayBuffer {
+  if (!unrarWasm) {
+    const wasmPath = nodeRequire.resolve("node-unrar-js/dist/js/unrar.wasm");
+    const buffer = fs.readFileSync(wasmPath);
+    unrarWasm = buffer.buffer.slice(
+      buffer.byteOffset,
+      buffer.byteOffset + buffer.byteLength
+    ) as ArrayBuffer;
+  }
+  return unrarWasm;
+}
 
 function isZip(buf: Buffer): boolean {
   return buf.length >= 4 && buf[0] === 0x50 && buf[1] === 0x4b;
+}
+
+function decodeZipName(rawName: Buffer, flags: number, extra: Buffer): string {
+  if (flags & 0x800) return rawName.toString("utf8");
+  let cursor = 0;
+  while (cursor + 4 <= extra.length) {
+    const tag = extra.readUInt16LE(cursor);
+    const size = extra.readUInt16LE(cursor + 2);
+    const end = cursor + 4 + size;
+    if (end > extra.length) break;
+    if (tag === 0x7075 && size >= 5 && extra[cursor + 4] === 1) {
+      const unicodeName = extra.slice(cursor + 9, end).toString("utf8");
+      if (unicodeName && !unicodeName.includes("\uFFFD")) return unicodeName;
+    }
+    cursor = end;
+  }
+  const utf8Name = rawName.toString("utf8");
+  if (!utf8Name.includes("\uFFFD")) return utf8Name;
+  // Legacy Russian ZIP tools commonly write DOS code page 866 without the UTF-8 flag.
+  return new TextDecoder("ibm866").decode(rawName);
+}
+
+function isNestedArchive(name: string): boolean {
+  return /\.(zip|rar)$/i.test(name);
 }
 
 function unsafeName(name: string): string | null {
@@ -106,7 +146,9 @@ function extractZipEntries(
         entries.push({ name: "?", error: "truncated central directory entry" });
         break;
       }
-      const name = buf.slice(cursor + 46, cursor + 46 + nameLen).toString("utf8");
+      const rawName = buf.slice(cursor + 46, cursor + 46 + nameLen);
+      const extra = buf.slice(cursor + 46 + nameLen, cursor + 46 + nameLen + extraLen);
+      const name = decodeZipName(rawName, flags, extra);
       cursor = entryEnd;
       if (name.endsWith("/")) continue;
       if (entries.length >= MAX_FILES) {
@@ -121,8 +163,9 @@ function extractZipEntries(
         entries.push({ name, error: "ZIP64 entry is not supported" });
         continue;
       }
-      if (uncompSize > MAX_SINGLE) {
-        entries.push({ name, error: `single file > ${MAX_SINGLE} bytes` });
+      const singleLimit = isNestedArchive(name) ? MAX_SINGLE_ARCHIVE : MAX_SINGLE;
+      if (uncompSize > singleLimit) {
+        entries.push({ name, error: `single file > ${singleLimit} bytes` });
         continue;
       }
       if (totalUncompressed + uncompSize > MAX_UNCOMPRESSED) {
@@ -151,13 +194,13 @@ function extractZipEntries(
         const data = method === 0
           ? compressed
           : method === 8
-            ? zlib.inflateRawSync(compressed, { maxOutputLength: MAX_SINGLE })
+            ? zlib.inflateRawSync(compressed, { maxOutputLength: singleLimit })
             : null;
         if (!data) {
           entries.push({ name, error: `unsupported compression method ${method}` });
           continue;
         }
-        if (data.length !== uncompSize || data.length > MAX_SINGLE) {
+        if (data.length !== uncompSize || data.length > singleLimit) {
           entries.push({ name, error: "inflated size does not match archive metadata" });
           continue;
         }
@@ -190,7 +233,9 @@ function extractZipEntries(
       out.push({ name: "?", error: "truncated local header" });
       break;
     }
-    const name = buf.slice(nameStart, nameEnd).toString("utf8");
+    const rawName = buf.slice(nameStart, nameEnd);
+    const extra = buf.slice(nameEnd, nameEnd + extraLen);
+    const name = decodeZipName(rawName, flags, extra);
     const dataStart = nameEnd + extraLen;
     // Data descriptor (bit 3) — sizes may be zero in header; refuse for safety.
     if (flags & 0x8) {
@@ -220,8 +265,9 @@ function extractZipEntries(
       out.push({ name, error: `file limit ${MAX_FILES} exceeded` });
       break;
     }
-    if (uncompSize > MAX_SINGLE) {
-      out.push({ name, error: `single file > ${MAX_SINGLE} bytes` });
+    const singleLimit = isNestedArchive(name) ? MAX_SINGLE_ARCHIVE : MAX_SINGLE;
+    if (uncompSize > singleLimit) {
+      out.push({ name, error: `single file > ${singleLimit} bytes` });
       offset = dataEnd;
       continue;
     }
@@ -236,14 +282,14 @@ function extractZipEntries(
         data = compressed;
       } else if (method === 8) {
         data = zlib.inflateRawSync(compressed, {
-          maxOutputLength: MAX_SINGLE,
+          maxOutputLength: singleLimit,
         });
       } else {
         out.push({ name, error: `unsupported compression method ${method}` });
         offset = dataEnd;
         continue;
       }
-      if (data.length > MAX_SINGLE) {
+      if (data.length > singleLimit) {
         out.push({ name, error: "inflated size over limit" });
         offset = dataEnd;
         continue;
@@ -348,7 +394,10 @@ export async function extractRarArchiveSafely(
   const skipped: string[] = [];
   try {
     const archiveBytes = Uint8Array.from(bytes).buffer;
-    const extractor = await createExtractorFromData({ data: archiveBytes });
+    const extractor = await createExtractorFromData({
+      data: archiveBytes,
+      wasmBinary: loadUnrarWasm(),
+    });
     const listing = extractor.getFileList();
     const headers = [...listing.fileHeaders];
     if (listing.arcHeader.flags.volume) {
@@ -376,8 +425,9 @@ export async function extractRarArchiveSafely(
         skipped.push(header.name);
         continue;
       }
-      if (header.unpSize > MAX_SINGLE) {
-        errors.push(`${header.name}: файл больше лимита ${MAX_SINGLE} байт`);
+      const singleLimit = isNestedArchive(header.name) ? MAX_SINGLE_ARCHIVE : MAX_SINGLE;
+      if (header.unpSize > singleLimit) {
+        errors.push(`${header.name}: файл больше лимита ${singleLimit} байт`);
         skipped.push(header.name);
         continue;
       }
@@ -407,7 +457,8 @@ export async function extractRarArchiveSafely(
         skipped.push(rel);
         continue;
       }
-      if (data.length > MAX_SINGLE || data.length !== entry.fileHeader.unpSize) {
+      const singleLimit = isNestedArchive(rel) ? MAX_SINGLE_ARCHIVE : MAX_SINGLE;
+      if (data.length > singleLimit || data.length !== entry.fileHeader.unpSize) {
         errors.push(`${rel}: размер результата не совпадает с безопасным лимитом`);
         skipped.push(rel);
         continue;

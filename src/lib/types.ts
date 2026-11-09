@@ -245,7 +245,7 @@ export interface DocumentItem {
   procurementId: string;
   title: string;
   fileName: string;
-  fileType: "pdf" | "docx" | "xlsx" | "zip" | "other";
+  fileType: "pdf" | "doc" | "docx" | "xlsx" | "zip" | "other";
   category?: DocumentCategory;
   status: CardStatus;
   versions: DocVersion[];

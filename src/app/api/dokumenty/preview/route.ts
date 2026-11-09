@@ -1,7 +1,7 @@
 import ExcelJS from "exceljs";
 import { readAppData } from "@/server/db";
 import { readUpload } from "@/server/uploads";
-import { parseDocxBuffer } from "@/server/docx-parse";
+import { parseDocxBuffer, parseLegacyWordBuffer } from "@/server/docx-parse";
 import { withAnySection, json } from "@/server/http";
 
 const SECTIONS = ["dokumenty", "zakupki", "riski"] as const;
@@ -37,9 +37,11 @@ export async function GET(req: Request) {
     const bytes = readUpload(doc.storedPath);
     if (!bytes) return json({ error: "Файл не найден на диске" }, 404);
 
-    if (doc.fileType === "docx") {
-      const parsed = await parseDocxBuffer(bytes);
-      if (!parsed) return json({ error: "Не удалось прочитать DOCX" }, 422);
+    if (doc.fileType === "docx" || doc.fileType === "doc") {
+      const parsed = doc.fileType === "doc"
+        ? await parseLegacyWordBuffer(bytes)
+        : await parseDocxBuffer(bytes);
+      if (!parsed) return json({ error: "Не удалось прочитать Word-документ" }, 422);
       return json({ kind: "docx", paragraphs: parsed.paragraphs.slice(0, 1000) });
     }
 

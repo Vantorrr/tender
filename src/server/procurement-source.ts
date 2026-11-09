@@ -155,26 +155,66 @@ export class NornickelLocalProcurementSource implements ProcurementSource {
 
   async fetchNotices(_orgId: string): Promise<ProcurementFetchResult> {
     try {
-      const response = await fetch(NORILSK_TENDERS_URL, {
-        headers: { "user-agent": "TMA361 procurement feed/1.0" },
-        signal: AbortSignal.timeout(15_000),
-        cache: "no-store",
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const html = await response.text();
-      const component = componentJson(html, "local-tenders") as
-        | { items?: unknown[] }
-        | null;
+      const fetchPage = async (page: number) => {
+        const url = new URL(NORILSK_TENDERS_URL);
+        if (page > 1) url.searchParams.set("page", String(page));
+        const response = await fetch(url, {
+          headers: { "user-agent": "TMA361 procurement feed/1.0" },
+          signal: AbortSignal.timeout(12_000),
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error(`страница ${page}: HTTP ${response.status}`);
+        return componentJson(await response.text(), "local-tenders") as
+          | { items?: unknown[]; nav?: { total?: number; current?: number } }
+          | null;
+      };
+      const component = await fetchPage(1);
       if (!component || !Array.isArray(component.items)) {
         throw new Error("Не удалось распознать формат публичной страницы закупок");
       }
-      const notices = component.items.flatMap((raw): ProcurementNoticeDraft[] => {
+      const pageCount = Math.max(1, Math.min(50, Number(component.nav?.total) || 1));
+      const allItems = [...component.items];
+      const pageErrors: string[] = [];
+      for (let firstPage = 2; firstPage <= pageCount; firstPage += 4) {
+        const pages = Array.from(
+          { length: Math.min(4, pageCount - firstPage + 1) },
+          (_, index) => firstPage + index
+        );
+        const results = await Promise.all(
+          pages.map(async (page) => {
+            try {
+              return { page, result: await fetchPage(page), error: "" };
+            } catch (error) {
+              return {
+                page,
+                result: null,
+                error: error instanceof Error ? error.message : `страница ${page}: ошибка источника`,
+              };
+            }
+          })
+        );
+        for (const result of results) {
+          if (result.result && Array.isArray(result.result.items)) {
+            allItems.push(...result.result.items);
+          } else {
+            pageErrors.push(result.error || `страница ${result.page}: неверный формат`);
+          }
+        }
+      }
+      const notices = allItems.flatMap((raw): ProcurementNoticeDraft[] => {
         if (!raw || typeof raw !== "object") return [];
         const item = raw as Record<string, unknown>;
         const name = fieldValue(item.name);
-        const match = /^(\S+)\s+([\s\S]+)$/.exec(name);
-        const number = match?.[1]?.trim() ?? "";
-        const title = match?.[2]?.trim() ?? name;
+        // Depending on the procurement method, the public page labels an item
+        // either "174734 Title" or "20061113/2: 174734 Title". Keep the
+        // stable procedure number in number and retain a second lot id in title.
+        const match = /^(\d[\d/.-]*):?\s+([\s\S]+)$/.exec(name);
+        const number = match?.[1]?.replace(/[:.]$/, "").trim() ?? "";
+        const titleSource = match?.[2]?.trim() ?? name;
+        const nestedNumber = /^(\d{4,}):?\s+([\s\S]+)$/.exec(titleSource);
+        const title = nestedNumber
+          ? `${nestedNumber[1]} — ${nestedNumber[2].trim()}`
+          : titleSource;
         const activeTo = Number(item.activeTo);
         const deadline = Number.isFinite(activeTo) && activeTo > 0
           ? new Date(activeTo * 1000).toISOString()
@@ -186,6 +226,16 @@ export class NornickelLocalProcurementSource implements ProcurementSource {
           : {};
         const path = typeof documentation.link === "string" ? documentation.link : "";
         const fileName = typeof documentation.origName === "string" ? documentation.origName : "";
+        let attachmentUrl: string | undefined;
+        try {
+          const candidate = new URL(path, "https://nornickel.ru");
+          if (
+            (candidate.hostname === "nornickel.ru" && candidate.pathname.startsWith("/upload/")) ||
+            (candidate.hostname === "nornik-upload.storage.yandexcloud.net" && candidate.pathname.startsWith("/iblock/"))
+          ) attachmentUrl = candidate.toString();
+        } catch {
+          // Invalid or untrusted links are omitted from the card.
+        }
         return [{
           number,
           title,
@@ -199,9 +249,7 @@ export class NornickelLocalProcurementSource implements ProcurementSource {
           attachmentName: fileName || undefined,
           attachmentType: typeof documentation.type === "string" ? documentation.type : undefined,
           attachmentSize: typeof documentation.size === "string" ? documentation.size : undefined,
-          attachmentUrl: path.startsWith("/upload/")
-            ? new URL(path, "https://nornickel.ru").toString()
-            : undefined,
+          attachmentUrl,
           tags: ["Норникель", "публичная закупка"],
         }];
       });
@@ -209,7 +257,7 @@ export class NornickelLocalProcurementSource implements ProcurementSource {
         ok: true,
         stub: false,
         status: "ok",
-        detail: `Публичная лента «Норникеля»: получено ${notices.length} актуальных карточек. НМЦК не опубликована в ленте и не подменяется оценкой.`,
+        detail: `Публичная лента «Норникеля»: обработано ${allItems.length} карточек на ${pageCount} страницах, найдено ${notices.length} актуальных. ${pageErrors.length ? `Не получены страницы: ${pageErrors.join("; ")}. ` : ""}НМЦК не опубликована в ленте и не подменяется оценкой.`,
         notices,
       };
     } catch (error) {
