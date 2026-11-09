@@ -21,7 +21,7 @@ import {
   sumDailyQty,
 } from "@/lib/plan-fact-agg";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
-import type { DailyResourceLine } from "@/lib/types";
+import type { DailyFact, DailyResourceLine } from "@/lib/types";
 import { useStore } from "@/lib/store";
 
 function ResourceRows({
@@ -165,7 +165,10 @@ function DayDetailsInner() {
     [schedule?.stages, date, selectedWork]
   );
 
-  const existingLines = dayFacts[0]?.resourceLines;
+  const existingLines = dayFacts.reduce<DailyFact | undefined>(
+    (latest, item) => (!latest || item.at > latest.at ? item : latest),
+    undefined
+  )?.resourceLines;
   const [lines, setLines] = useState<DailyResourceLine[] | null>(null);
   const displayLines = lines ?? existingLines ?? baselineLines;
 
@@ -240,7 +243,9 @@ function DayDetailsInner() {
   }
 
   const photos = dayFacts.flatMap((d) => d.photos ?? []);
-  const factVal = Number(qty) || dayQty;
+  // The input value is exactly what save() sends. An explicitly cleared or
+  // zero quantity must not silently fall back to the previous total.
+  const factVal = qty.trim() === "" ? 0 : Number(qty) || 0;
   const delta = factVal - dayPlan;
   const isTest =
     isT25uTestId(plan.id) ||

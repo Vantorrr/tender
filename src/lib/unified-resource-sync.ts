@@ -184,11 +184,13 @@ export function positionsFromStages(
   previous: CalcPosition[] = [],
   params: ResourceScheduleParams = EXCEL_RESOURCE_SCHEDULE_DEFAULTS
 ): CalcPosition[] {
-  const prevByName = new Map(
-    previous
-      .filter((p) => p.code !== "НР" && p.code !== "СП")
-      .map((p) => [p.name.toLowerCase(), p])
-  );
+  const prevByName = new Map<string, CalcPosition[]>();
+  for (const position of previous) {
+    if (position.code === "НР" || position.code === "СП") continue;
+    const key = position.name.trim().toLowerCase();
+    prevByName.set(key, [...(prevByName.get(key) ?? []), position]);
+  }
+  const usedPreviousIds = new Set<string>();
   const out: CalcPosition[] = [];
   let i = 0;
   for (const st of stages.slice().sort((a, b) => a.sequence - b.sequence)) {
@@ -196,7 +198,15 @@ export function positionsFromStages(
       if (!categoryOf(r.kind)) continue;
       i += 1;
       const resolved = resolveResourceDimensions(r, st, params);
-      const prev = prevByName.get(r.name.toLowerCase());
+      const candidates = prevByName.get(r.name.trim().toLowerCase()) ?? [];
+      const prev =
+        candidates.find(
+          (p) => p.sourceResourceId === r.id && !usedPreviousIds.has(p.id)
+        ) ??
+        candidates.find(
+          (p) => !p.sourceResourceId && !usedPreviousIds.has(p.id)
+        );
+      if (prev) usedPreviousIds.add(prev.id);
       const rateMissing = resolved.rate == null;
 
       let quantity = resolved.sourceQty;
@@ -213,6 +223,7 @@ export function positionsFromStages(
 
       out.push({
         id: prev?.id ?? `urp-${r.id}`,
+        sourceResourceId: r.id,
         code: prev?.code ?? codeForResource(r, i),
         name: r.name,
         unit,
@@ -224,7 +235,18 @@ export function positionsFromStages(
       });
     }
   }
-  return out;
+  // Keep cost-draft positions that are not linked to a GPR resource. The
+  // customer's immutable estimate is a separate Calculation and never enters
+  // this sync. Old generated positions are recognized by their legacy id.
+  const manual = previous.filter(
+    (position) =>
+      position.code !== "НР" &&
+      position.code !== "СП" &&
+      !position.sourceResourceId &&
+      !position.id.startsWith("urp-") &&
+      !usedPreviousIds.has(position.id)
+  );
+  return [...out, ...manual];
 }
 
 export function applyRollupToCostSummary(

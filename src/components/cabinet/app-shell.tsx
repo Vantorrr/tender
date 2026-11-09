@@ -135,7 +135,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             className={cn(
               "text-white/50 hover:bg-white/8 hover:text-white",
               collapsed &&
-                "tk-glass-dark absolute top-5 -right-3 z-20 size-6 border shadow-sm"
+                "tk-glass-dark absolute top-5 right-2 z-20 size-6 border shadow-sm"
             )}
             onClick={() => setCollapsed((v) => !v)}
             aria-label={collapsed ? "Развернуть меню" : "Свернуть меню"}

@@ -247,6 +247,8 @@ export function estimateBudgetCards(nodes: EstimateStageNode[]): {
   /** Прочие — never silently folded into materials. */
   other: number | null;
   totalKnown: number | null;
+  /** V direct (S+T+U); excludes any separate "other" rows. */
+  directKnown: number | null;
   incomplete: boolean;
 } {
   let labor = 0;
@@ -284,12 +286,21 @@ export function estimateBudgetCards(nodes: EstimateStageNode[]): {
     anyMat ? materials : null,
     anyOther ? other : null,
   ].filter((n): n is number => n != null);
+  const directParts = [
+    anyLabor ? labor : null,
+    anyEq ? equipment : null,
+    anyMat ? materials : null,
+  ].filter((n): n is number => n != null);
   return {
     labor: anyLabor ? roundMoney(labor) : null,
     equipment: anyEq ? roundMoney(equipment) : null,
     materials: anyMat ? roundMoney(materials) : null,
     other: anyOther ? roundMoney(other) : null,
     totalKnown: parts.length ? roundMoney(parts.reduce((s, n) => s + n, 0)) : null,
+    directKnown:
+      directParts.length > 0
+        ? roundMoney(directParts.reduce((s, n) => s + n, 0))
+        : null,
     incomplete,
   };
 }

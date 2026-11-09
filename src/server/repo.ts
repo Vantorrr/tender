@@ -20,6 +20,7 @@ import type {
 } from "@/lib/types";
 import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
+import { analyzeProjectPackageWithModel } from "@/server/project-analysis-ai";
 import {
   bucketsFromPositions,
   busCost,
@@ -671,7 +672,7 @@ export function createDocument(
     const proc = data.procurements.find((p) => p.id === input.procurementId);
     if (!proc) throw new Error("Закупка не найдена");
     assertOrgAccess(actor, proc.orgId, "закупки");
-    const id = `d-${Date.now()}`;
+    const id = `d-${Date.now()}-${randomBytes(4).toString("hex")}`;
     documentId = id;
     const hasExtractErrors = (input.extractionErrors?.length ?? 0) > 0;
     const doc: DocumentItem = {
@@ -708,9 +709,20 @@ export function createDocument(
       citations: stampCitationSourceVersion(
         input.prepared?.citations ?? [],
         "doc-v1"
-      ),
+      ).map((citation, index) => ({
+        ...citation,
+        id: `${id}-${citation.id || index}`,
+      })),
       highlights: input.prepared?.highlights ?? [],
       analysis: input.prepared?.analysis,
+      estimatePositions: input.prepared?.positions.map((position, index) => ({
+        id: `source-${id}-${index + 1}`,
+        code: position.code,
+        name: position.name,
+        unit: position.unit,
+        quantity: position.quantity,
+        rate: position.rate,
+      })),
       uploadedBy: actorId,
       uploadedAt: new Date().toISOString(),
       storedPath: input.storedPath,
@@ -1307,6 +1319,29 @@ export function refreshProcurementAnalytics(
   });
 }
 
+export async function analyzeProcurementPackageWithAI(
+  actorId: string,
+  procurementId: string
+) {
+  const snapshot = readAppData();
+  const actor = actorUser(snapshot, actorId);
+  const procurement = snapshot.procurements.find((item) => item.id === procurementId);
+  if (!procurement) throw new Error("Закупка не найдена");
+  assertOrgAccess(actor, procurement.orgId, "закупки");
+  const documents = snapshot.documents.filter((document) => document.procurementId === procurement.id);
+  const deterministic = buildProjectAnalytics(procurement, documents);
+  const generated = await analyzeProjectPackageWithModel(procurement, documents, deterministic);
+  mutateAppData((data) => {
+    const currentActor = actorUser(data, actorId);
+    const current = data.procurements.find((item) => item.id === procurementId);
+    if (!current) throw new Error("Закупка не найдена");
+    assertOrgAccess(currentActor, current.orgId, "закупки");
+    current.analytics = generated;
+    audit(data, actorId, "analyze_ai", "procurement", procurementId, "ИИ-анализ полного пакета документов");
+    return data;
+  });
+}
+
 /**
  * «Отправить в расчёт»: resource draft + GPR, preserve docs,
  * freeze customer estimate as immutable original when present.
@@ -1349,6 +1384,7 @@ export function sendProcurementToCalculation(
     );
     if (!p.originalCalculationId && estimateDoc?.analysis?.positionCount) {
       const oid = `c-orig-${Date.now()}`;
+      const extractedPositions = estimateDoc.estimatePositions ?? [];
       const qty = Math.max(1, estimateDoc.analysis.positionCount);
       const rate =
         estimateDoc.analysis.costThousand != null
@@ -1360,21 +1396,32 @@ export function sendProcurementToCalculation(
         procurementId: p.id,
         title: `Смета заказчика (оригинал) — ${p.title.slice(0, 40)}`,
         status: "gotovo",
-        positions: [
-          {
-            id: `cp-orig-${Date.now()}`,
-            code: "CUST-TOTAL",
-            name: estimateDoc.analysis.workName || "Итог сметы заказчика",
-            unit: "компл",
-            quantity: 1,
-            rate:
-              estimateDoc.analysis.costThousand != null
-                ? Math.round(estimateDoc.analysis.costThousand * 1000)
-                : rate,
-          },
-        ],
+        positions: extractedPositions.length
+          ? extractedPositions.map((position) => ({
+              id: position.id,
+              code: position.code,
+              name: position.name,
+              unit: position.unit,
+              quantity: position.quantity,
+              rate: position.rate,
+            }))
+          : [
+              {
+                id: `cp-orig-${Date.now()}`,
+                code: "CUST-TOTAL",
+                name: estimateDoc.analysis.workName || "Итог сметы заказчика",
+                unit: "компл",
+                quantity: 1,
+                rate:
+                  estimateDoc.analysis.costThousand != null
+                    ? Math.round(estimateDoc.analysis.costThousand * 1000)
+                    : rate,
+              },
+            ],
         assumptions: [
-          "Неизменяемый снимок сметы заказчика",
+          extractedPositions.length
+            ? `Неизменяемый снимок сметы заказчика: ${extractedPositions.length} распознанных позиций`
+            : "Неизменяемый снимок сметы заказчика; построчная выгрузка недоступна, показан только итог",
           `Источник: ${estimateDoc.fileName}`,
           "Собственные ресурсы сюда не добавляются",
         ],
@@ -1687,19 +1734,54 @@ export function shiftGprStage(
     const item = data.schedules.find((s) => s.id === scheduleId);
     if (!item) throw new Error("ГПР не найден");
     assertOrgAccess(actor, item.orgId, "ГПР");
+    const previousStages = item.stages;
     const result = shiftStages(item.stages, stageId, deltaDays, opts);
-    item.stages = result.stages;
+    const oldStageById = new Map(previousStages.map((stage) => [stage.id, stage]));
+    item.stages = result.stages.map((stage) => {
+      const previous = oldStageById.get(stage.id);
+      if (!previous) return stage;
+      const oldDays = Math.max(1, totalStageCalendarDays([previous]));
+      const newDays = Math.max(1, totalStageCalendarDays([stage]));
+      if (oldDays === newDays) return stage;
+      return {
+        ...stage,
+        resources: (stage.resources ?? []).map((resource) => {
+          if (resource.kind === "material") return resource;
+          // Resource duration follows its GPR stage until the user gives it a
+          // different P value. Explicitly shortened/extended resource windows
+          // therefore stay independent from the stage calendar.
+          return resource.days == null || resource.days === oldDays
+            ? { ...resource, days: newDays }
+            : resource;
+        }),
+      };
+    });
     item.conflicts = result.conflicts;
     item.updatedAt = new Date().toISOString();
     item.version = (item.version ?? 1) + 1;
     // Recalc dependent calendar costs on linked draft (bus days ← stage lengths)
     const calc = data.calculations.find((c) => c.id === item.calculationId);
+    const syncedResourceDraft = Boolean(
+      calc &&
+        calc.kind !== "customer_original" &&
+        isResourceLinkedDraft(calc) &&
+        calc.resourceScheduleParams
+    );
+    if (calc && syncedResourceDraft) {
+      const reserve = calc.costSummary?.reserve ?? 0;
+      Object.assign(
+        calc,
+        syncDraftFromStages(calc, item.stages, { replacePositions: true }).calc
+      );
+      if (calc.costSummary) calc.costSummary.reserve = reserve;
+      applyResourceDraftAdjustments(calc);
+    }
     if (calc && calc.kind !== "customer_original") {
       const days = totalStageCalendarDays(item.stages);
       if (calc.busRoutes?.length) {
         calc.busRoutes = calc.busRoutes.map((r) => ({ ...r, days }));
       }
-      if (calc.costSummary || (calc.busRoutes?.length ?? 0) > 0) {
+      if (!syncedResourceDraft && (calc.costSummary || (calc.busRoutes?.length ?? 0) > 0)) {
         const buckets = bucketsFromPositions(
           calc.positions,
           calc.scenarioFactor || 1
@@ -1773,6 +1855,48 @@ export function shiftGprStage(
   });
 }
 
+function applyResourceDraftAdjustments(calc: Calculation) {
+  const current = calc.costSummary;
+  const slices = current?.resourceSlices;
+  const params = calc.resourceScheduleParams;
+  if (!current || !slices || !params) return;
+  const engine = runCostEngine({
+    directLabor: slices.labor,
+    directMaterials: slices.materials,
+    directEquipment: slices.equipment,
+    directSubcontract: 0,
+    logisticsIncludingBus: 0,
+    siteOverhead: slices.overhead,
+    officeOverhead: Math.max(0, calc.officeOverhead ?? 0),
+    reserve: Math.max(0, current.reserve ?? 0),
+    profitMethod: "markup",
+    profitRate: params.profitMarkupOnCostWithOh,
+    // Preserve the Excel formula: contingency is separate from the markup base.
+    includeReserveInPriceBase: false,
+    vatPercent: null,
+    northern: calc.northern ?? {
+      applicable: false,
+      confirmedItems: [],
+      notes: [],
+    },
+  });
+  const incomplete = [...new Set([...current.incomplete, ...engine.incomplete])];
+  calc.costSummary = {
+    ...current,
+    C0: engine.C0,
+    C: engine.C,
+    reserve: engine.reserve,
+    profit: engine.profit,
+    priceExVat: engine.priceExVat,
+    vatAmount: engine.vatAmount,
+    priceIncVat: engine.priceIncVat,
+    method: `${current.method}+office-reserve-separate`,
+    incomplete,
+    totalsIncomplete: incomplete.length > 0,
+    at: new Date().toISOString(),
+  };
+}
+
 export function recomputeCalculationCost(
   actorId: string,
   calcId: string,
@@ -1802,6 +1926,9 @@ export function recomputeCalculationCost(
     if (patch?.resourceScheduleParams) {
       item.resourceScheduleParams = patch.resourceScheduleParams;
     }
+    if (patch?.officeOverhead != null) {
+      item.officeOverhead = Math.max(0, patch.officeOverhead);
+    }
 
     const linkedSchedule = data.schedules.find(
       (s) => s.calculationId === item.id
@@ -1818,10 +1945,16 @@ export function recomputeCalculationCost(
       linkedSchedule?.stages?.length &&
       isResourceLinkedDraft(item)
     ) {
+      const reserve = Math.max(
+        0,
+        patch?.reserve ?? item.costSummary?.reserve ?? 0
+      );
       const synced = syncDraftFromStages(item, linkedSchedule.stages, {
         replacePositions: true,
       });
       Object.assign(item, synced.calc);
+      if (item.costSummary) item.costSummary.reserve = reserve;
+      applyResourceDraftAdjustments(item);
       const matNeeds = buildMaterialNeeds({
         positions: item.positions,
         stages: linkedSchedule.stages,
@@ -1871,7 +2004,7 @@ export function recomputeCalculationCost(
         Math.round(Dapprox * (rs?.overheadRate ?? 0.43) * 100) / 100
       : patch?.siteOverhead ??
         overheadsFromWorks(buckets.labor + buckets.equipment).nr;
-    const office = patch?.officeOverhead ?? 0;
+    const office = patch?.officeOverhead ?? item.officeOverhead ?? 0;
     // Contingency reserve ≠ vacation reserve; Excel sheet has no project contingency.
     const reserve = patch?.reserve ?? item.costSummary?.reserve ?? 0;
     const profitRate = useRs
@@ -2046,24 +2179,46 @@ export function addDailyProductionFact(
     assertOrgAccess(actor, pf.orgId, "план/факт");
     const workName = fact.workName.trim();
     // Match by workName only — unit from the plan row wins (UI may send «ед»).
-    let row = pf.entries.find((e) => e.workName === workName);
+    const row = pf.entries.find((e) => e.workName === workName);
     const unit = row?.unit ?? fact.unit;
+    const currentFacts = pf.dailyFacts ?? [];
+    const sameDay = currentFacts.filter(
+      (item) => item.date === fact.date && item.workName === workName
+    );
+    const latest = sameDay.reduce<DailyFact | undefined>(
+      (best, item) => (!best || item.at > best.at ? item : best),
+      undefined
+    );
+    const incomingPhotos = fact.photos ?? [];
+    const photos = [...sameDay.flatMap((item) => item.photos ?? [])];
+    for (const photo of incomingPhotos) {
+      if (!photos.some((existing) => existing.id === photo.id)) photos.push(photo);
+    }
     const entry: DailyFact = {
-      id: `df-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: latest?.id ?? `df-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       date: fact.date,
       workName,
       unit,
       quantity: fact.quantity,
-      people: fact.people,
-      equipment: fact.equipment,
-      materialsNote: fact.materialsNote,
-      resourceLines: fact.resourceLines,
-      comment: fact.comment,
-      photos: fact.photos ?? [],
+      people: fact.people ?? latest?.people,
+      equipment: fact.equipment ?? latest?.equipment,
+      materialsNote: fact.materialsNote ?? latest?.materialsNote,
+      resourceLines: fact.resourceLines ?? latest?.resourceLines,
+      comment: fact.comment ?? latest?.comment,
+      // Saving a day edits its current record. Previously attached photos stay
+      // with that day; a newly uploaded photo is appended once.
+      photos,
       authorId: actorId,
       at: new Date().toISOString(),
     };
-    pf.dailyFacts = [...(pf.dailyFacts ?? []), entry];
+    // Older versions could create duplicate rows for the same day/work. Fold
+    // those rows into this one so another save cannot inflate physical volume.
+    pf.dailyFacts = [
+      ...currentFacts.filter(
+        (item) => item.date !== fact.date || item.workName !== workName
+      ),
+      entry,
+    ];
     // Daily records are source of truth for works that have them
     recomputeEntriesFromDaily(pf);
     // Physical index ≠ money; economics only from confirmed rates
@@ -2116,7 +2271,7 @@ export function addDailyProductionFact(
       "daily_fact",
       "planfact",
       planFactId,
-      `${fact.date} ${workName} +${fact.quantity}`
+      `${fact.date} ${workName} = ${fact.quantity} ${unit}`
     );
     return data;
   });

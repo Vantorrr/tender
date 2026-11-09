@@ -335,8 +335,15 @@ export function classifyDirectCostBucket(
   if (/^MAT([-\s]|$)/i.test(code)) return "materials";
   if (/^(EQ|BUS)([-\s]|$)/i.test(code)) return "equipment";
   const hay = `${p.code} ${p.name} ${p.unit}`.toLowerCase();
-  if (/н-ч|чел|труд|зарп|свар|монтажн/.test(hay)) return "labor";
-  if (/матер|м²|м2|т\b|сэндвич|бетон|арматур/.test(hay)) return "materials";
+  const unit = p.unit.trim().toLowerCase().replace(/\s+/g, " ");
+  if (/^(н-ч|чел(?:\.?[- ]?ч)?|чел\.?дн)$/.test(unit)) return "labor";
+  if (/труд|зарплат|оплат[аы] труда|сварщик|электрогазосварщик|монтажник|рабоч(ий|ая|ие)|машинист|слесар[ьи]|чел\.?[- ]?ч/.test(hay)) {
+    return "labor";
+  }
+  if (/^(т|кг|л|м2|м²|м3|м³|шт|компл|комплект|тонн[аы]?)$/.test(unit)) {
+    return "materials";
+  }
+  if (/материал|мтр|сэндвич|бетон|арматур/.test(hay)) return "materials";
   if (/маш|техник|jcb|экскав|кран|атс|дсм|автобус|bus/.test(hay)) {
     return "equipment";
   }

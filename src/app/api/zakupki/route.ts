@@ -1,5 +1,6 @@
 import {
   addMoneyPayment,
+  analyzeProcurementPackageWithAI,
   ensureMoneyPlan,
   ensureProcurementChain,
   getBootstrap,
@@ -58,6 +59,7 @@ export async function POST(req: Request) {
         | "ensureChain"
         | "sendToCalculation"
         | "refreshAnalytics"
+        | "analyzeProject"
         | "transferToProduction"
         | "ensureMoney"
         | "saveMoney"
@@ -80,6 +82,10 @@ export async function POST(req: Request) {
     }
     if (body.action === "refreshAnalytics") {
       refreshProcurementAnalytics(user.id, body.id!);
+      return json(getBootstrap(user));
+    }
+    if (body.action === "analyzeProject") {
+      await analyzeProcurementPackageWithAI(user.id, body.id!);
       return json(getBootstrap(user));
     }
     if (body.action === "transferToProduction") {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
@@ -30,6 +31,7 @@ import { bucketsFromPositions } from "@/lib/cost-engine";
 import { formatMoney, formatNumber } from "@/lib/format";
 import type { Calculation } from "@/lib/types";
 import type { EstimateLeaf } from "@/lib/hierarchical-estimate";
+import type { ResourceScheduleParams } from "@/lib/resource-schedule-model";
 import { useStore } from "@/lib/store";
 import {
   calculationTotals,
@@ -60,6 +62,27 @@ export default function RaschetDetailPage() {
   const calc = user
     ? data.calculations.find(
         (c) => c.id === params.id && c.orgId === user.orgId
+      )
+    : undefined;
+  const procurement = calc
+    ? data.procurements.find(
+        (item) => item.id === calc.procurementId && item.orgId === user?.orgId
+      )
+    : undefined;
+  const projectDocuments = calc
+    ? data.documents.filter((item) => item.procurementId === calc.procurementId)
+    : [];
+  const projectRisk = calc
+    ? data.risks.find((item) => item.procurementId === calc.procurementId)
+    : undefined;
+  const projectMoney = calc
+    ? data.moneyPlans.find((item) => item.procurementId === calc.procurementId)
+    : undefined;
+  const linkedSchedule = calc
+    ? data.schedules.find(
+        (item) =>
+          item.procurementId === calc.procurementId &&
+          item.calculationId === calc.id
       )
     : undefined;
   const dir = calc
@@ -121,10 +144,6 @@ export default function RaschetDetailPage() {
     const hay = `${p.code} ${p.name} ${p.unit}`.toLowerCase();
     return /матер|м²|м2|т\b|сэндвич|бетон|арматур|компл/.test(hay);
   });
-  const linkedSchedule = data.schedules.find(
-    (s) => s.calculationId === calc.id && s.orgId === user.orgId
-  );
-
   function exportExcelLike() {
     downloadUrl(`/api/export?kind=calc-xlsx&id=${calc!.id}`);
     toast.success("Скачивание XLSX…");
@@ -145,7 +164,7 @@ export default function RaschetDetailPage() {
         return;
       }
       if (leaf.source === "calc_position" && leaf.positionId) {
-        const rateMissing = patch.rate === null;
+        const rateMissing = patch.rate == null;
         await updateCalculation(calc!.id, {
           positions: calc!.positions.map((p) =>
             p.id !== leaf.positionId
@@ -194,6 +213,14 @@ export default function RaschetDetailPage() {
   }
 
   const isTest = isT25uTestId(calc.id) || isT25uTestTitle(calc.title);
+  const pathSteps: Array<{ label: string; href: string; current?: boolean }> = [
+    { label: "Заявка", href: `/cabinet/zakupki/${calc.procurementId}` },
+    { label: "Расчёт", href: `/cabinet/raschety/${calc.id}`, current: true },
+    ...(linkedSchedule
+      ? [{ label: "ГПР", href: `/cabinet/gpr/${linkedSchedule.id}` }]
+      : []),
+    { label: "Производство", href: "/cabinet/proizvodstvo" },
+  ];
 
   return (
     <div>
@@ -207,6 +234,33 @@ export default function RaschetDetailPage() {
             <StatusBadge status={calc.status} />
             {!locked ? (
               <>
+                {procurement &&
+                procurement.lifecycle !== "production" &&
+                user.sections.includes("zakupki") ? (
+                  <Button
+                    variant="outline"
+                    data-testid="won-to-production"
+                    onClick={async () => {
+                      try {
+                        await api("/api/zakupki", {
+                          method: "POST",
+                          body: JSON.stringify({
+                            action: "transferToProduction",
+                            id: procurement.id,
+                          }),
+                        });
+                        await refresh();
+                        toast.success("Тендер отмечен выигранным и передан в производство");
+                      } catch (e) {
+                        toast.error(
+                          e instanceof Error ? e.message : "Не удалось передать проект"
+                        );
+                      }
+                    }}
+                  >
+                    Выиграли → в производство
+                  </Button>
+                ) : null}
                 <Button
                   variant="secondary"
                   onClick={async () => {
@@ -292,6 +346,132 @@ export default function RaschetDetailPage() {
           приёмки t25u (не смета школы №12).
         </div>
       ) : null}
+
+      <nav
+        aria-label="Путь проекта"
+        className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--tk-line)] bg-white/80 px-3 py-2 text-sm"
+        data-testid="project-matryoshka"
+      >
+        {pathSteps.map((step, index) => (
+          <span key={step.label} className="inline-flex items-center gap-2">
+            <Link
+              href={step.href}
+              aria-current={step.current ? "step" : undefined}
+              className={
+                step.current
+                  ? "rounded-md bg-[var(--tk-ink)] px-2 py-1 font-medium text-white"
+                  : "text-[var(--tk-ink)] underline decoration-[var(--tk-line)] underline-offset-2 hover:decoration-current"
+              }
+            >
+              {step.label}
+            </Link>
+            {index < pathSteps.length - 1 ? (
+              <span aria-hidden="true" className="text-[var(--tk-muted)]">›</span>
+            ) : null}
+          </span>
+        ))}
+        <span className="ml-auto text-xs text-[var(--tk-muted)]">
+          {procurement?.number ?? `Заявка ${calc.procurementId}`}
+        </span>
+      </nav>
+
+      <section
+        aria-labelledby="calc-project-documents"
+        className="mb-5 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4"
+        data-testid="calc-project-documents"
+      >
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 id="calc-project-documents" className="font-medium">
+            Документы заявки · {projectDocuments.length}
+          </h2>
+          <Link
+            href={`/cabinet/zakupki/${calc.procurementId}`}
+            className="text-sm text-[var(--tk-copper-deep)] underline"
+          >
+            Открыть карточку заявки
+          </Link>
+        </div>
+        {projectDocuments.length ? (
+          <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+            {projectDocuments.map((document) => (
+              <li key={document.id}>
+                <a
+                  href={`/api/dokumenty/file?id=${encodeURIComponent(document.id)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block truncate rounded-lg border border-[var(--tk-line)] px-3 py-2 text-sm hover:bg-stone-50"
+                  title={document.fileName}
+                >
+                  {document.fileName}
+                </a>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-2 text-sm text-[var(--tk-muted)]">
+            Документы ещё не загружены. Загружайте их в карточку заявки — они будут доступны здесь для сравнения.
+          </p>
+        )}
+      </section>
+
+      <section
+        aria-label="График, риски и деньги по проекту"
+        className="mb-5 grid gap-3 lg:grid-cols-3"
+        data-testid="calculation-project-workspace"
+      >
+        <Link
+          href={linkedSchedule ? `/cabinet/gpr/${linkedSchedule.id}` : `/cabinet/zakupki/${calc.procurementId}`}
+          className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4 hover:border-[var(--tk-copper)]"
+        >
+          <h2 className="font-medium">График работ</h2>
+          <p className="mt-1 text-sm text-[var(--tk-muted)]">
+            {linkedSchedule
+              ? `${linkedSchedule.stages.length} этапов · ресурсный календарь и Гант`
+              : "ГПР ещё не создан — вернитесь в карточку заявки"}
+          </p>
+        </Link>
+        <Link
+          href={`/cabinet/zakupki/${calc.procurementId}`}
+          className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4 hover:border-[var(--tk-copper)]"
+        >
+          <h2 className="font-medium">Риски контракта</h2>
+          {projectRisk ? (
+            <>
+              <p className="mt-1 text-sm text-[var(--tk-muted)]">
+                Договор разобран: {projectRisk.contractParsed ? "да" : "нет"} · замечаний: {projectRisk.remarks.length}
+              </p>
+              {projectRisk.remarks.slice(0, 2).map((remark) => (
+                <p key={remark.id} className="mt-2 line-clamp-2 text-xs">
+                  <span className="font-medium">{remark.severity === "high" ? "Высокий риск · " : ""}</span>
+                  {remark.text}
+                </p>
+              ))}
+            </>
+          ) : (
+            <p className="mt-1 text-sm text-[var(--tk-muted)]">Реестр появится после загрузки договора в карточку заявки</p>
+          )}
+        </Link>
+        <Link
+          href={`/cabinet/zakupki/${calc.procurementId}`}
+          className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4 hover:border-[var(--tk-copper)]"
+        >
+          <h2 className="font-medium">Денежный план</h2>
+          {projectMoney ? (
+            <>
+              <p className="mt-1 text-sm text-[var(--tk-muted)]">
+                {projectMoney.payments.length} событий оплаты · нужно проверить кассовый разрыв
+              </p>
+              {projectMoney.payments.slice(0, 2).map((payment) => (
+                <p key={payment.id} className="mt-2 text-xs">
+                  {payment.date} · {payment.title} · {formatMoney(payment.amount)}
+                </p>
+              ))}
+            </>
+          ) : (
+            <p className="mt-1 text-sm text-[var(--tk-muted)]">Денежный план появится в карточке заявки после ввода условий оплаты</p>
+          )}
+        </Link>
+      </section>
 
       {locked ? (
         <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
@@ -399,6 +579,7 @@ export default function RaschetDetailPage() {
 
       <div className="mb-8">
         <HierarchicalEstimatePanel
+          key={`${calc.id}:${JSON.stringify(calc.resourceScheduleParams ?? null)}:${calc.officeOverhead ?? 0}:${calc.costSummary?.reserve ?? 0}`}
           stages={linkedSchedule?.stages ?? []}
           positions={calc.positions}
           locked={locked}
@@ -415,6 +596,34 @@ export default function RaschetDetailPage() {
           }
           costSummary={calc.costSummary}
           costIncomplete={Boolean(calc.costSummary?.totalsIncomplete)}
+          officeOverhead={calc.officeOverhead}
+          onSaveResourceScheduleParams={async ({
+            params,
+            officeOverhead,
+            reserve,
+          }: {
+            params: ResourceScheduleParams;
+            officeOverhead: number;
+            reserve: number;
+          }) => {
+            await api("/api/raschety", {
+              method: "PATCH",
+              body: JSON.stringify({
+                id: calc.id,
+                recomputeCost: true,
+                costPatch: {
+                  vatPercent: null,
+                  profitMethod: "markup",
+                  profitRate: params.profitMarkupOnCostWithOh,
+                  officeOverhead,
+                  reserve,
+                  useResourceScheduleEconomics: true,
+                  resourceScheduleParams: params,
+                },
+              }),
+            });
+            await refresh();
+          }}
           onPatchLeaf={(leaf, patch) => {
             void patchEstimateLeaf(leaf, patch);
           }}

@@ -17,6 +17,22 @@ function clamp01(n: number) {
   return Math.max(0, Math.min(1, n));
 }
 
+function entryForStage(stage: GprStage, entries: PlanFactEntry[]) {
+  const explicitName = stage.workName?.trim();
+  if (explicitName) {
+    const explicit = entries.find((entry) => entry.workName === explicitName);
+    if (explicit) return explicit;
+  }
+  const exact = entries.find((entry) => entry.workName === stage.name);
+  if (exact) return exact;
+  const matches = entries.filter(
+    (entry) =>
+      stage.name.includes(entry.workName) || entry.workName.includes(stage.name)
+  );
+  if (matches.length === 1) return matches[0];
+  return entries.length === 1 ? entries[0] : undefined;
+}
+
 type Props = {
   stages: GprStage[];
   entries?: PlanFactEntry[];
@@ -99,13 +115,7 @@ export function PlanFactGantt({
   }
 
   function progressFor(stage: GprStage): number {
-    const entry = entries.find(
-      (e) =>
-        e.workName === stage.workName ||
-        e.workName === stage.name ||
-        stage.name.includes(e.workName) ||
-        e.workName.includes(stage.name)
-    );
+    const entry = entryForStage(stage, entries);
     if (entry && entry.plan > 0) {
       return clamp01(entryDisplayFact(entry, dailyFacts) / entry.plan);
     }
@@ -175,9 +185,10 @@ export function PlanFactGantt({
             const width = daysBetween(stage.start, stage.end);
             const pct = progressFor(stage);
             const factWidth = Math.max(width * pct, pct > 0 ? 0.3 : 0);
+            const dayEntry = entryForStage(stage, entries);
             const dayHref =
-              planFactId != null
-                ? `/cabinet/proizvodstvo/day?planFactId=${encodeURIComponent(planFactId)}&date=${encodeURIComponent(stage.start)}&work=${encodeURIComponent(stage.workName || stage.name)}`
+              planFactId != null && dayEntry
+                ? `/cabinet/proizvodstvo/day?planFactId=${encodeURIComponent(planFactId)}&date=${encodeURIComponent(stage.start)}&work=${encodeURIComponent(dayEntry.workName)}`
                 : null;
             return (
               <div

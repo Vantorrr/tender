@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
+import { DocumentWebPreview } from "@/components/document-web-preview";
 import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -69,6 +70,7 @@ function NoteEditor({
 export default function DocumentDetailPage() {
   const params = useParams<{ id: string }>();
   const { orgDocuments, data, reanalyzeDocument } = useStore();
+  const [previewOpen, setPreviewOpen] = useState(false);
   const doc = orgDocuments.find((d) => d.id === params.id);
 
   if (!doc) {
@@ -94,6 +96,12 @@ export default function DocumentDetailPage() {
         actions={
           <>
             <StatusBadge status={doc.status} />
+            <Button
+              variant="outline"
+              onClick={() => setPreviewOpen((open) => !open)}
+            >
+              {previewOpen ? "Закрыть просмотр" : "Открыть в веб"}
+            </Button>
             <Button
               variant="outline"
               onClick={async () => {
@@ -172,6 +180,12 @@ export default function DocumentDetailPage() {
           </>
         }
       />
+
+      {previewOpen ? (
+        <section className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white p-3">
+          <DocumentWebPreview key={doc.id} document={doc} />
+        </section>
+      ) : null}
 
       {doc.analysis ? (
         <section className="mb-4 grid gap-3 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5 sm:grid-cols-2 lg:grid-cols-4">

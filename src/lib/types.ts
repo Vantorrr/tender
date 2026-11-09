@@ -251,6 +251,15 @@ export interface DocumentItem {
   storedPath?: string;
   fileSize?: number;
   analysis?: DocumentAnalysis;
+  /** Parsed customer estimate rows; kept as a read-only source snapshot. */
+  estimatePositions?: Array<{
+    id: string;
+    code: string;
+    name: string;
+    unit: string;
+    quantity: number;
+    rate: number;
+  }>;
   /** Visible archive / parse failures — never silent. */
   extractionErrors?: string[];
   extractedFiles?: Array<{ name: string; size: number; relativePath: string }>;
@@ -258,6 +267,8 @@ export interface DocumentItem {
 
 export interface CalcPosition {
   id: string;
+  /** Stable link from an editable draft position back to its GPR resource. */
+  sourceResourceId?: string;
   code: string;
   name: string;
   unit: string;
@@ -332,6 +343,8 @@ export interface Calculation {
     notes: string[];
   };
   costSummary?: CostSummarySnapshot;
+  /** Separately confirmed office overhead; not folded into Excel V/W/Z. */
+  officeOverhead?: number;
   /**
    * Excel «Ресурсный_график» B4–B9 style params when used.
    * profitMarkupOnCostWithOh is markup on (D+НР), not revenue margin.

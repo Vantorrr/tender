@@ -18,7 +18,8 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DateInputRu } from "@/components/date-input-ru";
-import { api, getClientToken } from "@/lib/api";
+import { api } from "@/lib/api";
+import { DocumentWebPreview } from "@/components/document-web-preview";
 import { cleanLabel } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney } from "@/lib/format";
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
@@ -49,6 +50,7 @@ export default function ZakupkaDetailPage() {
     ensureChain,
     sendToCalculation,
     refreshAnalytics,
+    analyzeProjectWithAI,
     createDocumentUpload,
     updateRisk,
     parseRiskContract,
@@ -64,6 +66,7 @@ export default function ZakupkaDetailPage() {
     useState<DocumentCategory>("general");
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [aiAnalyzing, setAiAnalyzing] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [payTitle, setPayTitle] = useState("Аванс");
   const [payAmount, setPayAmount] = useState("0");
@@ -98,6 +101,9 @@ export default function ZakupkaDetailPage() {
   const risk = procurement
     ? data.risks.find((r) => r.procurementId === procurement.id)
     : undefined;
+  const supplies = (data.supplyRequests ?? []).filter(
+    (s) => s.procurementId === params.id
+  );
 
   if (!procurement) {
     return (
@@ -112,17 +118,6 @@ export default function ZakupkaDetailPage() {
   const previewDoc = previewId
     ? docs.find((d) => d.id === previewId)
     : null;
-  const previewUrl = previewDoc
-    ? `/api/dokumenty/file?id=${previewDoc.id}&disposition=inline`
-    : null;
-
-  const supplies = useMemo(
-    () =>
-      (data.supplyRequests ?? []).filter(
-        (s) => s.procurementId === procurement?.id
-      ),
-    [data.supplyRequests, procurement?.id]
-  );
 
   async function onUpload(file: File) {
     setBusy(true);
@@ -455,7 +450,7 @@ export default function ZakupkaDetailPage() {
               ))
             )}
           </ul>
-          {previewUrl && previewDoc ? (
+          {previewDoc ? (
             <div className="mt-4 rounded-xl border border-[var(--tk-line)] bg-white p-3">
               <div className="mb-2 flex items-center justify-between">
                 <span className="text-sm font-medium">
@@ -469,40 +464,7 @@ export default function ZakupkaDetailPage() {
                   Закрыть
                 </Button>
               </div>
-              {previewDoc.fileType === "pdf" ? (
-                <iframe
-                  title={previewDoc.fileName}
-                  src={previewUrl}
-                  className="h-[70vh] w-full rounded-lg border"
-                />
-              ) : (
-                <p className="text-sm text-[var(--tk-muted)]">
-                  Встроенный просмотр для {previewDoc.fileType.toUpperCase()} —
-                  скачайте или откройте ссылку:{" "}
-                  <a
-                    className="underline"
-                    href={previewUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    onClick={(e) => {
-                      const token = getClientToken();
-                      if (token) {
-                        e.preventDefault();
-                        void fetch(previewUrl, {
-                          headers: { Authorization: `Bearer ${token}` },
-                          credentials: "include",
-                        }).then(async (r) => {
-                          const blob = await r.blob();
-                          window.open(URL.createObjectURL(blob), "_blank");
-                        });
-                      }
-                    }}
-                  >
-                    открыть файл
-                  </a>
-                  .
-                </p>
-              )}
+              <DocumentWebPreview key={previewDoc.id} document={previewDoc} />
             </div>
           ) : null}
         </TabsContent>
@@ -513,17 +475,40 @@ export default function ZakupkaDetailPage() {
               <h2 className="font-[family-name:var(--font-display)] text-base">
                 Аналитическая сводка проекта
               </h2>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={async () => {
-                  await refreshAnalytics(procurement.id);
-                  toast.success("Сводка пересчитана");
-                }}
-              >
-                Обновить сводку
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    await refreshAnalytics(procurement.id);
+                    toast.success("Сводка пересчитана");
+                  }}
+                >
+                  Обновить сводку
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={aiAnalyzing || docs.length === 0}
+                  title="Отправит выдержки и метаданные документов в настроенную ИИ-модель"
+                  onClick={async () => {
+                    setAiAnalyzing(true);
+                    try {
+                      await analyzeProjectWithAI(procurement.id);
+                      toast.success("ИИ подготовил сводный анализ всего пакета");
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : "Не удалось проанализировать пакет");
+                    } finally {
+                      setAiAnalyzing(false);
+                    }
+                  }}
+                >
+                  {aiAnalyzing ? "ИИ анализирует пакет…" : "ИИ-анализ всего пакета"}
+                </Button>
+              </div>
             </div>
+            <p className="mb-3 text-xs text-[var(--tk-muted)]">
+              Сводный запрос отправляет выдержки и метаданные пакета в настроенную OpenRouter-модель; вызов может тарифицироваться.
+            </p>
             {analytics ? (
               <>
                 <p className="mb-2 text-sm font-semibold">

@@ -48,6 +48,127 @@ function unsafeName(name: string): string | null {
 function extractZipEntries(
   buf: Buffer
 ): Array<{ name: string; data: Buffer } | { name: string; error: string }> {
+  // Most desktop ZIP writers set general-purpose bit 3 and place sizes in the
+  // central directory (with a data descriptor after the payload). Read that
+  // directory first; the local-header fallback below remains for tiny legacy
+  // archives that omit an EOCD record.
+  const eocdMin = Math.max(0, buf.length - 22 - 65_535);
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= eocdMin; i -= 1) {
+    if (buf.readUInt32LE(i) === 0x06054b50) {
+      const commentLength = buf.readUInt16LE(i + 20);
+      if (i + 22 + commentLength === buf.length) {
+        eocd = i;
+        break;
+      }
+    }
+  }
+  if (eocd >= 0) {
+    const disk = buf.readUInt16LE(eocd + 4);
+    const centralDisk = buf.readUInt16LE(eocd + 6);
+    const diskEntries = buf.readUInt16LE(eocd + 8);
+    const totalEntries = buf.readUInt16LE(eocd + 10);
+    const centralSize = buf.readUInt32LE(eocd + 12);
+    const centralOffset = buf.readUInt32LE(eocd + 16);
+    if (disk !== 0 || centralDisk !== 0 || diskEntries !== totalEntries) {
+      return [{ name: "?", error: "multi-disk ZIP is not supported" }];
+    }
+    if (
+      totalEntries === 0xffff ||
+      centralSize === 0xffffffff ||
+      centralOffset === 0xffffffff
+    ) {
+      return [{ name: "?", error: "ZIP64 archive is not supported" }];
+    }
+    if (centralOffset + centralSize > eocd || centralOffset > buf.length) {
+      return [{ name: "?", error: "invalid central directory bounds" }];
+    }
+
+    const entries: Array<{ name: string; data: Buffer } | { name: string; error: string }> = [];
+    let cursor = centralOffset;
+    let totalUncompressed = 0;
+    for (let index = 0; index < totalEntries; index += 1) {
+      if (cursor + 46 > buf.length || buf.readUInt32LE(cursor) !== 0x02014b50) {
+        entries.push({ name: "?", error: "invalid central directory entry" });
+        break;
+      }
+      const flags = buf.readUInt16LE(cursor + 8);
+      const method = buf.readUInt16LE(cursor + 10);
+      const compSize = buf.readUInt32LE(cursor + 20);
+      const uncompSize = buf.readUInt32LE(cursor + 24);
+      const nameLen = buf.readUInt16LE(cursor + 28);
+      const extraLen = buf.readUInt16LE(cursor + 30);
+      const commentLen = buf.readUInt16LE(cursor + 32);
+      const localOffset = buf.readUInt32LE(cursor + 42);
+      const entryEnd = cursor + 46 + nameLen + extraLen + commentLen;
+      if (entryEnd > buf.length || localOffset + 30 > buf.length) {
+        entries.push({ name: "?", error: "truncated central directory entry" });
+        break;
+      }
+      const name = buf.slice(cursor + 46, cursor + 46 + nameLen).toString("utf8");
+      cursor = entryEnd;
+      if (name.endsWith("/")) continue;
+      if (entries.length >= MAX_FILES) {
+        entries.push({ name, error: `file limit ${MAX_FILES} exceeded` });
+        break;
+      }
+      if (flags & 0x1) {
+        entries.push({ name, error: "encrypted zip entry rejected" });
+        continue;
+      }
+      if (compSize === 0xffffffff || uncompSize === 0xffffffff || localOffset === 0xffffffff) {
+        entries.push({ name, error: "ZIP64 entry is not supported" });
+        continue;
+      }
+      if (uncompSize > MAX_SINGLE) {
+        entries.push({ name, error: `single file > ${MAX_SINGLE} bytes` });
+        continue;
+      }
+      if (totalUncompressed + uncompSize > MAX_UNCOMPRESSED) {
+        entries.push({ name, error: "archive uncompressed size limit exceeded" });
+        break;
+      }
+      const unsafe = unsafeName(name);
+      if (unsafe) {
+        entries.push({ name, error: unsafe });
+        continue;
+      }
+      if (buf.readUInt32LE(localOffset) !== 0x04034b50) {
+        entries.push({ name, error: "invalid local file header" });
+        continue;
+      }
+      const localNameLen = buf.readUInt16LE(localOffset + 26);
+      const localExtraLen = buf.readUInt16LE(localOffset + 28);
+      const dataStart = localOffset + 30 + localNameLen + localExtraLen;
+      const dataEnd = dataStart + compSize;
+      if (dataEnd > buf.length) {
+        entries.push({ name, error: "truncated compressed data" });
+        continue;
+      }
+      try {
+        const compressed = buf.slice(dataStart, dataEnd);
+        const data = method === 0
+          ? compressed
+          : method === 8
+            ? zlib.inflateRawSync(compressed, { maxOutputLength: MAX_SINGLE })
+            : null;
+        if (!data) {
+          entries.push({ name, error: `unsupported compression method ${method}` });
+          continue;
+        }
+        if (data.length !== uncompSize || data.length > MAX_SINGLE) {
+          entries.push({ name, error: "inflated size does not match archive metadata" });
+          continue;
+        }
+        totalUncompressed += data.length;
+        entries.push({ name, data });
+      } catch (error) {
+        entries.push({ name, error: error instanceof Error ? error.message : "inflate failed" });
+      }
+    }
+    return entries;
+  }
+
   const out: Array<
     { name: string; data: Buffer } | { name: string; error: string }
   > = [];

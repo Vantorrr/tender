@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,10 @@ import {
   estimateBudgetCards,
   type EstimateLeaf,
 } from "@/lib/hierarchical-estimate";
-import type { ResourceScheduleParams } from "@/lib/resource-schedule-model";
+import {
+  EXCEL_RESOURCE_SCHEDULE_DEFAULTS,
+  type ResourceScheduleParams,
+} from "@/lib/resource-schedule-model";
 import type { CalcPosition, CostSummarySnapshot, GprStage } from "@/lib/types";
 
 type Props = {
@@ -24,6 +27,12 @@ type Props = {
   originalLabel?: string;
   costSummary?: CostSummarySnapshot | null;
   costIncomplete?: boolean;
+  officeOverhead?: number;
+  onSaveResourceScheduleParams?: (input: {
+    params: ResourceScheduleParams;
+    officeOverhead: number;
+    reserve: number;
+  }) => Promise<void>;
   onPatchLeaf: (leaf: EstimateLeaf, patch: { quantity?: number; rate?: number | null }) => void;
   onExport?: () => void;
   onAddClick?: () => void;
@@ -38,6 +47,8 @@ export function HierarchicalEstimatePanel({
   originalLabel,
   costSummary,
   costIncomplete,
+  officeOverhead = 0,
+  onSaveResourceScheduleParams,
   onPatchLeaf,
   onExport,
   onAddClick,
@@ -46,7 +57,12 @@ export function HierarchicalEstimatePanel({
   // PDF cue: stages collapsed by default; one stage expanded for overview+detail
   const [expandAll, setExpandAll] = useState(false);
   const [open, setOpen] = useState<Record<string, boolean>>({});
-  const [seededOpen, setSeededOpen] = useState(false);
+  const [paramsDraft, setParamsDraft] = useState<ResourceScheduleParams>(
+    resourceScheduleParams ?? EXCEL_RESOURCE_SCHEDULE_DEFAULTS
+  );
+  const [savingParams, setSavingParams] = useState(false);
+  const [officeDraft, setOfficeDraft] = useState(officeOverhead);
+  const [reserveDraft, setReserveDraft] = useState(costSummary?.reserve ?? 0);
 
   const nodes = useMemo(
     () =>
@@ -66,16 +82,11 @@ export function HierarchicalEstimatePanel({
     Boolean(costSummary?.totalsIncomplete) ||
     (costSummary?.incomplete?.length ?? 0) > 0;
 
-  useEffect(() => {
-    if (seededOpen || nodes.length === 0) return;
-    const first = nodes.find((n) => n.id !== "_unbound") ?? nodes[0];
-    setSeededOpen(true);
-    setOpen({ [first.id]: true });
-  }, [nodes, seededOpen]);
+  const firstNodeId = (nodes.find((n) => n.id !== "_unbound") ?? nodes[0])?.id;
 
   function isOpen(id: string) {
     if (open[id] != null) return open[id];
-    return expandAll;
+    return expandAll || id === firstNodeId;
   }
 
   return (
@@ -124,8 +135,8 @@ export function HierarchicalEstimatePanel({
           <p className="mt-1 font-[family-name:var(--font-display)] text-2xl">
             {slices
               ? formatMoney(slices.direct)
-              : cards.totalKnown != null
-                ? formatMoney(cards.totalKnown)
+              : cards.directKnown != null
+                ? formatMoney(cards.directKnown)
                 : "нет данных"}
           </p>
           {incomplete ? (
@@ -252,6 +263,99 @@ export function HierarchicalEstimatePanel({
         </div>
       )}
 
+      {costSummary && (officeOverhead > 0 || costSummary.reserve > 0) ? (
+        <div className="mb-4 grid gap-2 rounded-xl border border-amber-200 bg-amber-50/70 p-3 text-sm sm:grid-cols-3">
+          <div>Офисные накладные: {formatMoney(officeOverhead)}</div>
+          <div>Резерв непредвиденных: {formatMoney(costSummary.reserve)}</div>
+          <div className="font-semibold">Итог проекта с дополнительными расходами: {formatMoney(costSummary.priceExVat)}</div>
+          <p className="text-xs text-[var(--tk-muted)] sm:col-span-3">
+            Excel Z показывает ресурсную модель. Офисные расходы и резерв вынесены отдельно, чтобы не менять формулы исходного шаблона.
+          </p>
+        </div>
+      ) : null}
+
+      {!locked && onSaveResourceScheduleParams ? (
+        <details className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4">
+          <summary className="cursor-pointer text-sm font-medium">
+            Параметры ресурсного шаблона · менять для этого проекта
+          </summary>
+          <p className="mt-2 max-w-3xl text-xs leading-relaxed text-[var(--tk-muted)]">
+            Начальные значения взяты из загруженного примера Excel. Уточните их перед расчётом;
+            после сохранения ресурсные суммы, сводка и экспорт пересчитываются по тем же формулам.
+          </p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {([
+              ["Чел.-час, ₽", "personHourRate", 0.01],
+              ["Смен людей в день", "personnelShiftsPerDay", 1],
+              ["Часов в смене", "hoursPerShift", 0.5],
+              ["Смен техники в день", "equipmentShiftsPerDay", 1],
+              ["Накладные, % от прямых", "overheadRate", 0.01],
+              ["Наценка, % на с/с с НР", "profitMarkupOnCostWithOh", 0.01],
+            ] as const).map(([label, key, step]) => (
+              <label key={key} className="text-xs text-[var(--tk-muted)]">
+                {label}
+                <Input
+                  className="mt-1 h-9 text-sm text-[var(--tk-ink)]"
+                  type="number"
+                  min={0}
+                  step={step}
+                  value={key === "overheadRate" || key === "profitMarkupOnCostWithOh"
+                    ? String(Math.round(paramsDraft[key] * 10000) / 100)
+                    : String(paramsDraft[key])}
+                  onChange={(event) => {
+                    const raw = Number(event.target.value);
+                    const value = Number.isFinite(raw) ? Math.max(0, raw) : 0;
+                    setParamsDraft((current) => ({
+                      ...current,
+                      [key]: key === "overheadRate" || key === "profitMarkupOnCostWithOh"
+                        ? value / 100
+                        : value,
+                    }));
+                  }}
+                />
+              </label>
+            ))}
+            {([
+              ["Офисные накладные, ₽", officeDraft, setOfficeDraft],
+              ["Непредвиденные расходы, ₽", reserveDraft, setReserveDraft],
+            ] as const).map(([label, value, setValue]) => (
+              <label key={label} className="text-xs text-[var(--tk-muted)]">
+                {label}
+                <Input
+                  className="mt-1 h-9 text-sm text-[var(--tk-ink)]"
+                  type="number"
+                  min={0}
+                  step="1000"
+                  value={String(value)}
+                  onChange={(event) => setValue(Math.max(0, Number(event.target.value) || 0))}
+                />
+              </label>
+            ))}
+          </div>
+          <Button
+            className="mt-3"
+            disabled={savingParams}
+            onClick={async () => {
+              setSavingParams(true);
+              try {
+                await onSaveResourceScheduleParams({
+                  params: paramsDraft,
+                  officeOverhead: officeDraft,
+                  reserve: reserveDraft,
+                });
+                toast.success("Параметры сохранены, расчёт обновлён");
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : "Не удалось пересчитать");
+              } finally {
+                setSavingParams(false);
+              }
+            }}
+          >
+            {savingParams ? "Пересчёт…" : "Сохранить и пересчитать"}
+          </Button>
+        </details>
+      ) : null}
+
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Input
           className="max-w-sm"
@@ -273,7 +377,8 @@ export function HierarchicalEstimatePanel({
         </Button>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-[var(--tk-line)] bg-white/90">
+      <div className="overflow-x-auto rounded-2xl border border-[var(--tk-line)] bg-white/90">
+        <div className="min-w-[820px]">
         <div className="grid grid-cols-[1fr_5rem_4.5rem_4.5rem_7rem_8rem] gap-2 border-b border-[var(--tk-line)] bg-stone-50 px-3 py-2 text-xs font-medium text-[var(--tk-muted)]">
           <div>Этап / ресурс</div>
           <div className="text-right">L кол-во</div>
@@ -420,6 +525,7 @@ export function HierarchicalEstimatePanel({
             </div>
           ))
         )}
+        </div>
       </div>
     </div>
   );

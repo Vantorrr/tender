@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import {
   createDocument,
   getBootstrap,
@@ -79,7 +80,7 @@ export async function POST(req: Request) {
           buf,
           archiveExtractDir(tempId)
         );
-        createDocument(user.id, {
+        const archiveDoc = createDocument(user.id, {
           orgId: user.orgId,
           procurementId,
           title: String(form.get("title") ?? "").trim() || file.name,
@@ -95,14 +96,96 @@ export async function POST(req: Request) {
             relativePath: f.relativePath,
           })),
         });
+
+        // Keep every supported file from the package as its own child card and
+        // run the same local parser used for a directly uploaded file. This
+        // makes archive contents openable and searchable from the procurement.
+        const analyzedFiles: Array<{ name: string; documentId: string; status: string }> = [];
+        const childErrors: string[] = [];
+        for (const extractedFile of extracted.files) {
+          const childExt = extractedFile.name.split(".").pop()?.toLowerCase();
+          if (childExt !== "pdf" && childExt !== "docx" && childExt !== "xlsx") {
+            const childBytes = fs.readFileSync(extractedFile.absolutePath);
+            const childStored = await saveUpload(
+              `d-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              extractedFile.name,
+              childBytes
+            );
+            const reason = "Файл сохранён из архива; формат пока нельзя автоматически разобрать";
+            const child = createDocument(user.id, {
+              orgId: user.orgId,
+              procurementId,
+              title: extractedFile.name,
+              fileName: extractedFile.name,
+              fileType: "other",
+              category: "general",
+              storedPath: childStored.storedPath,
+              fileSize: childStored.fileSize,
+              extractionErrors: [reason],
+            });
+            childErrors.push(`${extractedFile.relativePath}: формат не анализируется автоматически`);
+            analyzedFiles.push({ name: extractedFile.relativePath, documentId: child.documentId, status: "saved_without_analysis" });
+            continue;
+          }
+          try {
+            const childBytes = fs.readFileSync(extractedFile.absolutePath);
+            const preparedChild = await analyzeUpload(
+              extractedFile.name,
+              childExt,
+              childBytes,
+              { useLlm }
+            );
+            const childStored = await saveUpload(
+              `d-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              extractedFile.name,
+              childBytes
+            );
+            const child = createDocument(user.id, {
+              orgId: user.orgId,
+              procurementId,
+              title: preparedChild.title,
+              fileName: extractedFile.name,
+              fileType: childExt,
+              category: inferCategory(null, extractedFile.name),
+              storedPath: childStored.storedPath,
+              fileSize: childStored.fileSize,
+              prepared: preparedChild,
+            });
+            analyzedFiles.push({
+              name: extractedFile.relativePath,
+              documentId: child.documentId,
+              status: "analyzed",
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message.slice(0, 160) : "ошибка анализа";
+            childErrors.push(`${extractedFile.relativePath}: ${message}`);
+            createDocument(user.id, {
+              orgId: user.orgId,
+              procurementId,
+              title: extractedFile.name,
+              fileName: extractedFile.name,
+              fileType: childExt,
+              category: inferCategory(null, extractedFile.name),
+              extractionErrors: [message],
+            });
+          }
+        }
+        if (childErrors.length) {
+          updateDocument(user.id, archiveDoc.documentId, {
+            extractionErrors: [...extracted.errors, ...childErrors],
+            status: "trebuet_proverki",
+          });
+        }
         refreshProcurementAnalytics(user.id, procurementId);
         return json({
           ...getBootstrap(user),
           archive: {
-            ok: extracted.ok,
+            ok: extracted.ok && childErrors.length === 0,
             format: extracted.format,
-            errors: extracted.errors,
+            errors: [...extracted.errors, ...childErrors],
             files: extracted.files.map((f) => f.name),
+            analyzedFiles,
+            documentId: archiveDoc.documentId,
           },
         });
       }

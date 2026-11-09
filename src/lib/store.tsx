@@ -115,6 +115,7 @@ interface StoreContextValue {
   ensureChain: (procurementId: string) => Promise<void>;
   sendToCalculation: (procurementId: string) => Promise<void>;
   refreshAnalytics: (procurementId: string) => Promise<void>;
+  analyzeProjectWithAI: (procurementId: string) => Promise<void>;
   markAllNotificationsRead: () => Promise<void>;
   setOrganizationActive: (orgId: string, active: boolean) => Promise<void>;
   importClientXlsx: () => Promise<{
@@ -666,6 +667,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [applyBoot]
   );
 
+  const analyzeProjectWithAI = useCallback(
+    async (procurementId: string) => {
+      const boot = await api<BootstrapResponse>("/api/zakupki", {
+        method: "POST",
+        body: JSON.stringify({ action: "analyzeProject", id: procurementId }),
+      });
+      applyBoot(boot);
+    },
+    [applyBoot]
+  );
+
   const addAudit = useCallback(() => {
     /* audit is server-side now */
   }, []);
@@ -722,6 +734,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     ensureChain,
     sendToCalculation,
     refreshAnalytics,
+    analyzeProjectWithAI,
     addAudit,
     orgProcurements,
     orgDocuments,
