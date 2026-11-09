@@ -4,6 +4,7 @@
  */
 
 import JSZip from "jszip";
+import WordExtractor from "word-extractor";
 import type {
   CardStatus,
   Citation,
@@ -75,6 +76,26 @@ export async function parseDocxBuffer(buf: Buffer): Promise<DocxParse | null> {
       paragraphs,
       plainText: paragraphs.map((p) => p.text).join("\n"),
       sourceVersion: "docx-body",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Extract paragraphs from legacy binary Word .doc files (OLE format). */
+export async function parseLegacyWordBuffer(buf: Buffer): Promise<DocxParse | null> {
+  try {
+    const document = await new WordExtractor().extract(buf);
+    const plainText = document.getBody().replace(/\u0000/g, "").trim();
+    const paragraphs = plainText
+      .split(/\r\n?|\n|\u000b|\u000c/)
+      .map((text) => text.replace(/\s+/g, " ").trim())
+      .filter(Boolean)
+      .map((text, index) => ({ index: index + 1, text }));
+    return {
+      paragraphs,
+      plainText: paragraphs.map((paragraph) => paragraph.text).join("\n"),
+      sourceVersion: "Microsoft Word .doc (OLE)",
     };
   } catch {
     return null;

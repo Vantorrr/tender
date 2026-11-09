@@ -1,4 +1,5 @@
-export function formatMoney(value: number): string {
+export function formatMoney(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "Не указано";
   return new Intl.NumberFormat("ru-RU", {
     style: "currency",
     currency: "RUB",

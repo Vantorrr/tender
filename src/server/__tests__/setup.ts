@@ -12,6 +12,8 @@ process.env.OPENROUTER_API_KEY = "";
 // Prefer real local tesseract when installed; tests that need absence set OCR_PROVIDER=none.
 process.env.OCR_PROVIDER = process.env.OCR_PROVIDER || "auto";
 process.env.RECOVER_EXPOSE_CODE = "";
+// Isolated [TEST] contour for t25u — opt-in, never a silent prod migrate.
+process.env.T25U_TEST_FIXTURE = "1";
 
 fs.mkdirSync(dataDir, { recursive: true });
 for (const name of fs.readdirSync(dataDir)) {

@@ -10,6 +10,7 @@ import { DEMO_SECRET_KEYS } from "@/lib/demo-accounts";
 import { ensureStageResources } from "@/lib/gpr-resources";
 import { recomputeEntriesFromDaily } from "@/lib/plan-fact-agg";
 import { createSeedData } from "@/lib/seed";
+import { ensureT25uTestFixture } from "@/lib/t25u-test-fixture";
 import type { AppData } from "@/lib/types";
 import { config, dbPath } from "@/server/config";
 import { installGrandReference } from "@/server/grand-package";
@@ -23,8 +24,11 @@ import { modelConfigured } from "@/server/openrouter";
 import { hashPassword } from "@/server/passwords";
 import { procurementSourceStatus } from "@/server/procurement-source";
 
-/** 12: stage-named resources + enrich empty runtime GPRs; keep custom complete sets. */
-const SCHEMA_VERSION = "12";
+/**
+ * 16: Q dimensions + draft export V/W/X/Y/Z; non-destructive schedule sync;
+ * TEST fixture OPT-IN; buses summed across stages.
+ */
+const SCHEMA_VERSION = "16";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -301,6 +305,8 @@ function applySchema10Extras(data: AppData): AppData {
     ...s,
     stages: (s.stages ?? []).map((st) => ensureStageResources(st)),
   }));
+  // Additive TEST fixture (never patches school g-1)
+  ensureT25uTestFixture(data);
   return data;
 }
 
@@ -310,9 +316,11 @@ function migrate(db: DatabaseSync) {
     | undefined;
 
   if (!row) {
-    const seed = applySchema10Extras(
-      applySchema8Extras(
-        installGrandReference(hashSeedUsers(createSeedData()))
+    const seed = ensureT25uTestFixture(
+      applySchema10Extras(
+        applySchema8Extras(
+          installGrandReference(hashSeedUsers(createSeedData()))
+        )
       )
     );
     const now = new Date().toISOString();
@@ -391,6 +399,8 @@ function migrate(db: DatabaseSync) {
     installGrandReference(data);
     applySchema8Extras(data);
     applySchema10Extras(data);
+    // Additive only: insert [TEST] fixture if missing. Never rewrite g-1/c-1/pf-1.
+    ensureT25uTestFixture(data);
 
     db.prepare(
       "UPDATE app_blob SET payload = ?, updated_at = ? WHERE id = 1"

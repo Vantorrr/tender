@@ -69,7 +69,7 @@ export default function DokumentyPage() {
               id="doc-file-input"
               data-testid="doc-file-input"
               type="file"
-              accept=".pdf,.docx,.xlsx,.txt"
+              accept=".pdf,.doc,.docx,.xlsx,.txt"
               className="sr-only"
               onChange={async (e) => {
                 const file = e.target.files?.[0];
@@ -111,7 +111,7 @@ export default function DokumentyPage() {
       {filtered.length === 0 ? (
         <EmptyState
           title="Документов пока нет"
-          description="Выберите закупку и загрузите PDF, DOCX или XLSX."
+          description="Выберите закупку и загрузите PDF, DOC, DOCX, XLSX или архив ZIP/RAR."
           actionLabel="Загрузить"
           onAction={() => inputRef.current?.click()}
         />

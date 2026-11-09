@@ -119,7 +119,7 @@ export interface Procurement {
   title: string;
   customer: string;
   region: string;
-  nmck: number;
+  nmck: number | null;
   deadline: string;
   source: string;
   status: CardStatus;
@@ -127,7 +127,13 @@ export interface Procurement {
   syncStatus: "aktualno" | "ustarelo" | "oshibka_sinhronizacii";
   syncAt: string;
   duplicateOf?: string;
-  attachments: { id: string; name: string; type: string; size: string }[];
+  attachments: {
+    id: string;
+    name: string;
+    type: string;
+    size: string;
+    sourceUrl?: string;
+  }[];
   objectId?: string;
   documentIds: string[];
   calculationId?: string;
@@ -239,7 +245,7 @@ export interface DocumentItem {
   procurementId: string;
   title: string;
   fileName: string;
-  fileType: "pdf" | "docx" | "xlsx" | "zip" | "other";
+  fileType: "pdf" | "doc" | "docx" | "xlsx" | "zip" | "other";
   category?: DocumentCategory;
   status: CardStatus;
   versions: DocVersion[];
@@ -251,6 +257,15 @@ export interface DocumentItem {
   storedPath?: string;
   fileSize?: number;
   analysis?: DocumentAnalysis;
+  /** Parsed customer estimate rows; kept as a read-only source snapshot. */
+  estimatePositions?: Array<{
+    id: string;
+    code: string;
+    name: string;
+    unit: string;
+    quantity: number;
+    rate: number;
+  }>;
   /** Visible archive / parse failures — never silent. */
   extractionErrors?: string[];
   extractedFiles?: Array<{ name: string; size: number; relativePath: string }>;
@@ -258,11 +273,18 @@ export interface DocumentItem {
 
 export interface CalcPosition {
   id: string;
+  /** Stable link from an editable draft position back to its GPR resource. */
+  sourceResourceId?: string;
   code: string;
   name: string;
   unit: string;
   quantity: number;
   rate: number;
+  /**
+   * When true, `rate` is a non-authoritative placeholder (often 0).
+   * Confirmed totals must exclude this line — missing rate ≠ 0 ₽.
+   */
+  rateMissing?: boolean;
   normId?: string;
   priceId?: string;
 }
@@ -327,6 +349,8 @@ export interface Calculation {
     notes: string[];
   };
   costSummary?: CostSummarySnapshot;
+  /** Separately confirmed office overhead; not folded into Excel V/W/Z. */
+  officeOverhead?: number;
   /**
    * Excel «Ресурсный_график» B4–B9 style params when used.
    * profitMarkupOnCostWithOh is markup on (D+НР), not revenue margin.
@@ -364,6 +388,19 @@ export interface Calculation {
 
 export type GprDependencyType = "FS" | "SS" | "FF" | "SF";
 
+/**
+ * How `quantity` is interpreted for Excel Q = L×N×O×P.
+ * - count_per_shift: L = headcount/machines; need hours/shifts/days
+ * - total_hours: L already = hours (маш-ч / н-ч); N=O=P identity 1
+ * - material_qty: materials — R=qty×rate, never contributes to Q-hours
+ * - uncertain: unit basis unknown — do not invent N/O/P or zero the line
+ */
+export type ResourceQuantityBasis =
+  | "count_per_shift"
+  | "total_hours"
+  | "material_qty"
+  | "uncertain";
+
 export interface GprStageResource {
   id: string;
   kind: "labor" | "equipment" | "material" | "bus" | "other";
@@ -372,6 +409,14 @@ export interface GprStageResource {
   unit: string;
   /** Confirmed unit rate; null/undefined = нет данных (не считать как 0 ₽). */
   rate?: number | null;
+  /** Optional explicit basis; otherwise inferred from unit/kind. */
+  quantityBasis?: ResourceQuantityBasis;
+  /** N — hours per shift (count_per_shift). */
+  hoursPerShift?: number | null;
+  /** O — shifts per day. */
+  shiftsPerDay?: number | null;
+  /** P — participation days. */
+  days?: number | null;
 }
 
 export interface GprStage {
@@ -479,6 +524,16 @@ export interface DailyFactPhoto {
   caption?: string;
 }
 
+export interface DailyResourceLine {
+  kind: "labor" | "material" | "equipment" | "bus" | "other";
+  name: string;
+  unit: string;
+  /** Plan qty from GPR/resources for the day (sourced). */
+  planQty: number;
+  /** Fact qty entered on site; null = нет данных. */
+  factQty: number | null;
+}
+
 export interface DailyFact {
   id: string;
   date: string;
@@ -488,6 +543,8 @@ export interface DailyFact {
   people?: number;
   equipment?: string;
   materialsNote?: string;
+  /** Plan/fact lines for people & materials on the day (t25u day details). */
+  resourceLines?: DailyResourceLine[];
   comment?: string;
   photos: DailyFactPhoto[];
   authorId: string;
@@ -548,6 +605,31 @@ export interface CostSummarySnapshot {
   /** When true, C0/price must not be presented as a complete confirmed total. */
   totalsIncomplete?: boolean;
   at: string;
+  /**
+   * Excel Ресурсный_график slices (S/T/U → V/W/X/Y/Z) from the unified tree.
+   * Present when method includes resource-schedule / unified-tree.
+   */
+  resourceSlices?: {
+    materials: number;
+    labor: number;
+    equipment: number;
+    /** V = S+T+U */
+    direct: number;
+    /** W = V × OH */
+    overhead: number;
+    /** X = V+W */
+    costWithOh: number;
+    /** Y = X × markup */
+    profit: number;
+    /** Z = X+Y */
+    total: number;
+    /** Q-hours from labor/equipment/bus only — never materials. */
+    hours: number;
+    knownAmount: number;
+    /** True when V is incomplete → W/X/Y/Z are also partial. */
+    partial?: boolean;
+    skipped?: string[];
+  };
 }
 
 export interface ProjectObject {

@@ -13,7 +13,8 @@ export function normalizeProcurementNumber(number: string): string {
   return number
     .trim()
     .toUpperCase()
-    .replace(/-(DUP|AUTO)(\d*)?$/i, "");
+    .replace(/-(DUP|AUTO)(\d*)?$/i, "")
+    .replace(/[:.]$/, "");
 }
 
 function applyDedup(data: ReturnType<typeof readAppData>): number {
@@ -62,6 +63,33 @@ function insertNotice(
   notice: ProcurementNoticeDraft,
   now: string
 ) {
+  const sourceAttachment = {
+    id: `a-auto-${Date.now()}`,
+    name: notice.attachmentName ?? "Документы не приложены",
+    type: notice.attachmentType ?? "—",
+    size: notice.attachmentSize ?? "—",
+    ...(notice.attachmentUrl ? { sourceUrl: notice.attachmentUrl } : {}),
+  };
+  const imported = data.procurements.find(
+    (p) =>
+      p.orgId === orgId &&
+      p.source === notice.source &&
+      normalizeProcurementNumber(p.number) === normalizeProcurementNumber(notice.number)
+  );
+  if (imported) {
+    imported.number = notice.number;
+    imported.title = notice.title;
+    imported.customer = notice.customer;
+    imported.region = notice.region;
+    imported.deadline = notice.deadline;
+    if (imported.nmck == null) imported.nmck = notice.nmck;
+    imported.attachments = [
+      ...imported.attachments.filter((attachment) => !attachment.id.startsWith("a-auto-")),
+      sourceAttachment,
+    ];
+    imported.tags = [...new Set([...imported.tags, ...(notice.tags ?? [])])];
+    return false;
+  }
   const exists = data.procurements.some(
     (p) => p.orgId === orgId && p.number === notice.number
   );
@@ -80,14 +108,7 @@ function insertNotice(
     reviewStatus: "novaya",
     syncStatus: "aktualno",
     syncAt: now,
-    attachments: [
-      {
-        id: `a-auto-${Date.now()}`,
-        name: notice.attachmentName ?? "izveshchenie.pdf",
-        type: "pdf",
-        size: "640 КБ",
-      },
-    ],
+    attachments: [sourceAttachment],
     documentIds: [],
     tags: notice.tags ?? ["автосинхронизация"],
     createdAt: now,

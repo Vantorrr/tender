@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   // API + SQLite session routes need request-time rendering
   cacheComponents: false,
-  serverExternalPackages: ["exceljs"],
+  serverExternalPackages: ["exceljs", "node-unrar-js"],
   // Cursor preview / proxies hit the app via alternate Host headers
   allowedDevOrigins: [
     "127.0.0.1",

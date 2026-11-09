@@ -114,9 +114,9 @@ export default function ZakupkiPage() {
         <RefreshCw className="h-4 w-4" />
         <AlertTitle>Источник закупок</AlertTitle>
         <AlertDescription>
-          Реальный API площадки не подключён (kickoff). Автосинхронизация не
-          создаёт фиктивные заявки. Фильтры Норильск / Ямал / вид работ —
-          по карточке.
+          Сервис получает открытую ленту закупок «Норникеля» при настройке
+          PROCUREMENT_SOURCE=nornickel. Неопубликованные суммы и характеристики
+          не подменяются оценками; закрытые ЭТП подключаются отдельно по API.
         </AlertDescription>
       </Alert>
 

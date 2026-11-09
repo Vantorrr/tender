@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
@@ -24,7 +25,8 @@ import {
 } from "@/components/ui/table";
 import { DateInputRu } from "@/components/date-input-ru";
 import { api, downloadUrl } from "@/lib/api";
-import { formatDate, formatNumber } from "@/lib/format";
+import { formatDate, formatMoney, formatNumber } from "@/lib/format";
+import { userHasSection } from "@/lib/acl";
 import {
   entryDisplayFact,
   entryDisplayRemain,
@@ -55,6 +57,10 @@ export default function ProizvodstvoPage() {
   const plan = plans.find((p) => p.id === activeId);
   const object = objects.find((o) => o.id === plan?.objectId);
   const procurement = orgProcurements.find((p) => p.id === plan?.procurementId);
+  const canViewMoney = user ? userHasSection(user, "dengi") : false;
+  const moneyPlan = procurement?.moneyId
+    ? data.moneyPlans.find((m) => m.id === procurement.moneyId && m.orgId === user?.orgId)
+    : undefined;
   const gpr = data.schedules.find(
     (s) => s.id === procurement?.gprId && s.orgId === user?.orgId
   );
@@ -146,10 +152,6 @@ export default function ProizvodstvoPage() {
     }
   }
 
-  const candidates = orgProcurements.filter(
-    (p) => p.lifecycle !== "production"
-  );
-
   return (
     <div>
       <PageHeader
@@ -175,42 +177,6 @@ export default function ProizvodstvoPage() {
         подтверждённые затраты ≠ поступления/списания кассы. Признанная выручка
         — отдельно («нет данных», пока не подтверждено).
       </div>
-
-      {candidates.length > 0 ? (
-        <div className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4">
-          <h3 className="mb-2 text-sm font-medium">Перевести в производство</h3>
-          <div className="flex flex-wrap gap-2">
-            {candidates.slice(0, 8).map((p) => (
-              <Button
-                key={p.id}
-                size="sm"
-                variant="outline"
-                data-testid={`win-to-prod-${p.id}`}
-                onClick={async () => {
-                  try {
-                    await api("/api/zakupki", {
-                      method: "POST",
-                      body: JSON.stringify({
-                        action: "transferToProduction",
-                        id: p.id,
-                      }),
-                    });
-                    await refresh();
-                    toast.success(
-                      `«${p.title.slice(0, 40)}» в производстве (без дубля)`
-                    );
-                  } catch (e) {
-                    toast.error(e instanceof Error ? e.message : "Ошибка");
-                  }
-                }}
-              >
-                {p.title.slice(0, 36)}
-                {p.title.length > 36 ? "…" : ""}
-              </Button>
-            ))}
-          </div>
-        </div>
-      ) : null}
 
       <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {objects.map((o) => (
@@ -264,6 +230,15 @@ export default function ProizvodstvoPage() {
                   ? ` · базовый план от ${formatDate(plan.baselineAt)}`
                   : ""}
               </p>
+            ) : null}
+            {plan ? (
+              <Link
+                href={`/cabinet/proizvodstvo/day?planFactId=${encodeURIComponent(plan.id)}&date=${encodeURIComponent(date)}&work=${encodeURIComponent(selectedWork)}`}
+                className="inline-flex h-8 items-center rounded-lg border border-border bg-background px-2.5 text-sm hover:bg-muted"
+                data-testid="open-day-details"
+              >
+                Детали дня →
+              </Link>
             ) : null}
             <div>
               <p className="mb-1 text-xs text-[var(--tk-muted)]">Срез</p>
@@ -492,6 +467,44 @@ export default function ProizvodstvoPage() {
                     ))}
                   </ul>
                 </div>
+              ) : null}
+
+              {canViewMoney && moneyPlan ? (
+                <section
+                  className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4"
+                  aria-label="Деньги проекта"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h3 className="font-medium">Деньги по контракту</h3>
+                      <p className="mt-1 text-xs text-[var(--tk-muted)]">
+                        План платежей связан с этой закупкой; фактические затраты и касса — выше.
+                      </p>
+                    </div>
+                    <Link
+                      href={`/cabinet/zakupki/${procurement!.id}`}
+                      className="text-sm text-[var(--tk-copper-deep)] underline underline-offset-2"
+                    >
+                      Платежи и условия →
+                    </Link>
+                  </div>
+                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                    {([
+                      ["Авансы", "avans"],
+                      ["Поступления", "postuplenie"],
+                      ["Ключевые платежи", "klyuchevoy"],
+                    ] as const).map(([label, type]) => (
+                      <div key={type} className="rounded-lg bg-stone-50 px-3 py-2 text-sm">
+                        <span className="text-[var(--tk-muted)]">{label}</span>
+                        <span className="ml-2 font-semibold">
+                          {formatMoney(moneyPlan.payments
+                            .filter((payment) => payment.type === type)
+                            .reduce((sum, payment) => sum + payment.amount, 0))}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
               ) : null}
 
               <div className="mb-6 rounded-xl border bg-white/80 p-4">

@@ -21,9 +21,10 @@ export function roundMoney(value: number): number {
 }
 
 export function positionSum(
-  position: Pick<CalcPosition, "quantity" | "rate">,
+  position: Pick<CalcPosition, "quantity" | "rate" | "rateMissing">,
   factor = 1
 ): number {
+  if (position.rateMissing) return 0;
   return roundMoney(position.quantity * position.rate * factor);
 }
 
@@ -33,7 +34,7 @@ export function worksSubtotal(
 ): number {
   return roundMoney(
     positions
-      .filter((p) => p.code !== "НР" && p.code !== "СП")
+      .filter((p) => p.code !== "НР" && p.code !== "СП" && !p.rateMissing)
       .reduce((s, p) => s + p.quantity * p.rate * factor, 0)
   );
 }
