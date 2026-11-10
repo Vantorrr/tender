@@ -219,7 +219,7 @@ export async function POST(req: Request) {
       const factQuantity = period === "cum"
         ? entryDisplayFact(entry, daily)
         : sumDailyQty(factsForPeriod, { workName: entry.workName });
-      const periodPlan = allocatePlanForSlice(entry.plan, workStages, period, body.date);
+      const periodPlan = allocatePlanForSlice(entry.plan, workStages, period, body.date, gpr?.calendar);
       const report = await analyzeProductionVarianceWithAI({
         plan,
         supplies: (data.supplyRequests ?? []).filter((supply) =>

@@ -182,7 +182,8 @@ export default function ProizvodstvoPage() {
     totals.plan,
     gprStages,
     period,
-    date
+    date,
+    gpr?.calendar
   );
   const periodPlan = planSlice.plan;
   const sliceVariance = periodFact - periodPlan;
@@ -911,7 +912,7 @@ export default function ProizvodstvoPage() {
                       const fact = entryDisplayFact(e, daily);
                       const remain = entryDisplayRemain(e, daily);
                       const workStages = stagesForWork(plan.entries.map((entry) => entry.workName), gprStages, e.workName);
-                      const workPlanSlice = allocatePlanForSlice(e.plan, workStages, period, date);
+                      const workPlanSlice = allocatePlanForSlice(e.plan, workStages, period, date, gpr?.calendar);
                       const workFactsInSlice = period === "day"
                         ? qtyForWork(e.workName, dayFacts)
                         : period === "month"

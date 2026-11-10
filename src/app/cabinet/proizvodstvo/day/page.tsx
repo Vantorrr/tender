@@ -148,7 +148,7 @@ function DayDetailsInner() {
 
   const dayPlan =
     entry && linkedStages.length
-      ? allocatePlanForSlice(entry.plan, linkedStages, "day", date).plan
+      ? allocatePlanForSlice(entry.plan, linkedStages, "day", date, schedule?.calendar).plan
       : 0;
 
   const baselineLines = planResourceLinesForDay(

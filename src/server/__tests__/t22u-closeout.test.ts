@@ -16,7 +16,7 @@ import {
   upsertSupplyRequest,
 } from "@/server/repo";
 import { validateDirectoryImport } from "@/lib/directory-import";
-import { allocatePlanForSlice, stagesForWork } from "@/lib/plan-from-gpr";
+import { allocatePlanForSlice, stageDayList, stagesForWork } from "@/lib/plan-from-gpr";
 import { economicsFromVolumes } from "@/lib/economics-from-rates";
 import { collectCalendarWarnings } from "@/lib/calendar-availability";
 import ExcelJS from "exceljs";
@@ -100,6 +100,25 @@ describe("t22u closeout remediable", () => {
     expect(a.source).toBe("stage_volumes");
     expect(a.plan).toBe(45);
     expect(b.plan).toBe(5);
+  });
+
+  it("distributes GPR volume across working days from the project calendar", () => {
+    const calendar = { weekendDays: [0, 6], hoursPerShift: 8, shiftsPerDay: 1, timezone: "Asia/Krasnoyarsk" };
+    const stage = {
+      id: "weekend-stage",
+      name: "Устройство покрытия",
+      start: "2026-11-06",
+      end: "2026-11-08",
+      sequence: 1,
+      planVolume: 40,
+    };
+    expect(stageDayList(stage, calendar)).toEqual(["2026-11-06"]);
+    expect(allocatePlanForSlice(40, [stage], "day", "2026-11-06", calendar).plan).toBe(40);
+    expect(allocatePlanForSlice(40, [stage], "day", "2026-11-07", calendar).plan).toBe(0);
+    expect(allocatePlanForSlice(40, [stage], "period", "2026-11-07", calendar).plan).toBe(40);
+
+    const weekendOnly = { ...stage, start: "2026-11-07", end: "2026-11-08" };
+    expect(allocatePlanForSlice(40, [weekendOnly], "period", "2026-11-08", calendar)).toMatchObject({ plan: 0, source: "none" });
   });
 
   it("links each production work only to its named GPR stages", () => {

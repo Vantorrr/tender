@@ -44,7 +44,7 @@ export default function GprDetailPage() {
   const supplies = (data.supplyRequests ?? []).filter(
     (s) => s.procurementId === schedule.procurementId
   );
-  const calWarnings = collectCalendarWarnings(schedule.stages, supplies);
+  const calWarnings = collectCalendarWarnings(schedule.stages, supplies, 40, schedule.calendar);
   const planFact = data.planFacts.find(
     (p) => p.procurementId === schedule.procurementId
   );

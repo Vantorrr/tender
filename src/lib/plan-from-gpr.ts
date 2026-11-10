@@ -2,7 +2,7 @@
  * Allocate contract / stage plan volumes across GPR calendar for period slices.
  * Prefer per-stage planVolume when present; uniform fallback only when no stage volumes.
  */
-import type { GprStage } from "@/lib/types";
+import type { GprStage, WorkCalendar } from "@/lib/types";
 import { addDaysIso, diffDays } from "@/lib/cost-engine";
 
 export type PlanSliceMode = "day" | "month" | "period" | "cum";
@@ -25,18 +25,29 @@ export function stagesForWork(
 
 const round = (n: number) => Math.round(n * 1000) / 1000;
 
-export function stageDayList(st: GprStage): string[] {
+type CalendarWorkdays = Pick<WorkCalendar, "weekendDays">;
+
+function isWorkingDay(day: string, calendar?: CalendarWorkdays): boolean {
+  if (!calendar) return true;
+  const weekday = new Date(`${day}T00:00:00Z`).getUTCDay();
+  return !calendar.weekendDays.includes(weekday);
+}
+
+export function stageDayList(st: GprStage, calendar?: CalendarWorkdays): string[] {
   if (!st.start || !st.end) return [];
   const len = Math.max(0, diffDays(st.start, st.end));
   const out: string[] = [];
-  for (let i = 0; i <= len; i++) out.push(addDaysIso(st.start, i));
+  for (let i = 0; i <= len; i++) {
+    const day = addDaysIso(st.start, i);
+    if (isWorkingDay(day, calendar)) out.push(day);
+  }
   return out;
 }
 
-export function gprCoveredDays(stages: GprStage[]): string[] {
+export function gprCoveredDays(stages: GprStage[], calendar?: CalendarWorkdays): string[] {
   const set = new Set<string>();
   for (const st of stages) {
-    for (const d of stageDayList(st)) set.add(d);
+    for (const d of stageDayList(st, calendar)) set.add(d);
   }
   return [...set].sort();
 }
@@ -55,13 +66,14 @@ export function stagesWithVolumes(stages: GprStage[]): GprStage[] {
  */
 export function dailyPlanMap(
   stages: GprStage[],
-  contractPlan: number
+  contractPlan: number,
+  calendar?: CalendarWorkdays
 ): Map<string, number> {
   const map = new Map<string, number>();
   const withVol = stagesWithVolumes(stages);
   if (withVol.length > 0) {
     for (const st of withVol) {
-      const days = stageDayList(st);
+      const days = stageDayList(st, calendar);
       if (days.length === 0) continue;
       const per = (st.planVolume as number) / days.length;
       for (const d of days) {
@@ -70,7 +82,7 @@ export function dailyPlanMap(
     }
     return map;
   }
-  const days = gprCoveredDays(stages);
+  const days = gprCoveredDays(stages, calendar);
   if (days.length === 0 || !Number.isFinite(contractPlan) || contractPlan === 0) {
     return map;
   }
@@ -83,25 +95,26 @@ export function allocatePlanForSlice(
   contractPlan: number,
   stages: GprStage[],
   mode: PlanSliceMode,
-  asOfDate: string
+  asOfDate: string,
+  calendar?: CalendarWorkdays
 ): { plan: number; source: "stage_volumes" | "uniform_fallback" | "none" } {
   const withVol = stagesWithVolumes(stages);
-  const source =
-    withVol.length > 0
+  const hasWorkingDays = gprCoveredDays(stages, calendar).length > 0;
+  const source = !hasWorkingDays
+    ? "none"
+    : withVol.length > 0
       ? "stage_volumes"
-      : gprCoveredDays(stages).length > 0
-        ? "uniform_fallback"
-        : "none";
+      : "uniform_fallback";
 
   if (source === "none") {
-    if (mode === "day" || mode === "month") return { plan: 0, source };
+    if (calendar || mode === "day" || mode === "month") return { plan: 0, source };
     return {
       plan: Number.isFinite(contractPlan) ? contractPlan : 0,
       source,
     };
   }
 
-  const daily = dailyPlanMap(stages, contractPlan);
+  const daily = dailyPlanMap(stages, contractPlan, calendar);
   const sumDays = (pred: (d: string) => boolean) => {
     let s = 0;
     for (const [d, v] of daily) {
