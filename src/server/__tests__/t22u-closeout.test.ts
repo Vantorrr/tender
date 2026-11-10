@@ -174,6 +174,35 @@ describe("t22u closeout remediable", () => {
     expect(ambiguous.incomplete).toContain("rate:Монтаж оборудования");
   });
 
+  it("values completed and remaining quantities from the customer estimate separately from revenue", () => {
+    const input = {
+      entries: [{ id: "e1", workName: "Монтаж труб", unit: "м", plan: 10, fact: 2 }],
+      daily: [{
+        id: "d1", date: "2026-11-08", workName: "Монтаж труб", unit: "м",
+        quantity: 2, photos: [], authorId: "u", at: "",
+      }],
+      positions: [{ id: "cost", code: "C", name: "Монтаж труб", unit: "м", quantity: 10, rate: 500 }],
+      customerEstimatePositions: [{ id: "customer", code: "O", name: "Монтаж труб", unit: "м", quantity: 10, rate: 800 }],
+      directories: [],
+    };
+    const complete = economicsFromVolumes(input);
+    expect(complete.autoIncurred).toBe(1000);
+    expect(complete.customerEstimateValue).toBe(1600);
+    expect(complete.customerEstimateRemainingValue).toBe(6400);
+    expect(complete.customerEstimateIncomplete).toEqual([]);
+
+    const incomplete = economicsFromVolumes({
+      ...input,
+      customerEstimatePositions: [
+        input.customerEstimatePositions[0],
+        { ...input.customerEstimatePositions[0], id: "customer-2", rate: 900 },
+      ],
+    });
+    expect(incomplete.customerEstimateValue).toBeNull();
+    expect(incomplete.customerEstimateRemainingValue).toBeNull();
+    expect(incomplete.customerEstimateIncomplete).toContain("customer_rate:Монтаж труб");
+  });
+
   it("calendar warnings surface crew peaks and supply timing", () => {
     const stages = [
       {

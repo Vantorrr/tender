@@ -33,6 +33,7 @@ import {
   sumDailyQty,
 } from "@/lib/plan-fact-agg";
 import { allocatePlanForSlice } from "@/lib/plan-from-gpr";
+import { economicsFromVolumes } from "@/lib/economics-from-rates";
 import { useStore } from "@/lib/store";
 import type { ProductionVarianceReport } from "@/server/production-variance-ai";
 
@@ -91,6 +92,28 @@ export default function ProizvodstvoPage() {
   const dayFacts = daily.filter((d) => d.date === date);
   const monthKey = date.slice(0, 7);
   const monthFacts = daily.filter((d) => d.date.startsWith(monthKey));
+  const draftCalculation = data.calculations.find(
+    (calculation) => calculation.id === procurement?.calculationId && calculation.kind !== "customer_original"
+  ) ?? data.calculations.find(
+    (calculation) => calculation.procurementId === plan?.procurementId && calculation.kind === "resource_draft"
+  );
+  const customerEstimate = data.calculations.find(
+    (calculation) => calculation.id === procurement?.originalCalculationId && calculation.kind === "customer_original"
+  ) ?? data.calculations.find(
+    (calculation) => calculation.procurementId === plan?.procurementId && calculation.kind === "customer_original"
+  );
+  const productionEconomics = plan
+    ? economicsFromVolumes({
+        entries: plan.entries,
+        daily,
+        positions: draftCalculation?.positions ?? [],
+        customerEstimatePositions: customerEstimate?.positions ?? null,
+        directories: data.directories ?? [],
+      })
+    : null;
+  const customerEstimateMissingSource = productionEconomics?.customerEstimateIncomplete.includes(
+    "customer_estimate_missing"
+  ) ?? false;
 
   function qtyForWork(name: string, list: typeof daily) {
     return sumDailyQty(list, { workName: name });
@@ -365,14 +388,33 @@ export default function ProizvodstvoPage() {
                 </div>
                 <div className="rounded-xl border bg-white/80 p-3 text-sm">
                   Экономика авто (объём×ставки):{" "}
-                  {plan.pnl?.economicsAuto == null
+                  {productionEconomics == null || productionEconomics.incomplete.length > 0
                     ? "нет данных"
-                    : formatNumber(plan.pnl.economicsAuto)}
-                  {(plan.pnl?.incomplete?.length ?? 0) > 0 ? (
+                    : formatMoney(productionEconomics.autoIncurred)}
+                  {(productionEconomics?.incomplete.length ?? 0) > 0 ? (
                     <span className="mt-1 block text-[11px] text-amber-800">
-                      не хватает: {(plan.pnl?.incomplete ?? []).slice(0, 4).join(", ")}
+                      не хватает: {(productionEconomics?.incomplete ?? []).slice(0, 4).join(", ")}
                     </span>
                   ) : null}
+                </div>
+                <div className="rounded-xl border bg-white/80 p-3 text-sm">
+                  Оценка выполненного по исходной смете (₽, не выручка):{" "}
+                  {productionEconomics?.customerEstimateValue == null
+                    ? "нет данных"
+                    : formatMoney(productionEconomics.customerEstimateValue)}
+                  {(productionEconomics?.customerEstimateIncomplete.length ?? 0) > 0 ? (
+                    <span className="mt-1 block text-[11px] text-amber-800">
+                      {customerEstimateMissingSource
+                        ? "Исходная смета заказчика не загружена"
+                        : `нет точной ставки: ${productionEconomics?.customerEstimateIncomplete.slice(0, 3).join(", ")}`}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="rounded-xl border bg-white/80 p-3 text-sm">
+                  Оценка остатка по исходной смете (₽, не прогноз оплаты):{" "}
+                  {productionEconomics?.customerEstimateRemainingValue == null
+                    ? "нет данных"
+                    : formatMoney(productionEconomics.customerEstimateRemainingValue)}
                 </div>
               </div>
 
@@ -459,6 +501,9 @@ export default function ProizvodstvoPage() {
                         pnl: {
                           earnedValue: plan.pnl?.earnedValue ?? 0,
                           economicsAuto: plan.pnl?.economicsAuto ?? null,
+                          valueOfFactByCustomerEstimate: plan.pnl?.valueOfFactByCustomerEstimate ?? null,
+                          remainingValueByCustomerEstimate: plan.pnl?.remainingValueByCustomerEstimate ?? null,
+                          customerEstimateIncomplete: plan.pnl?.customerEstimateIncomplete,
                           incurredCosts: v,
                           incurredManual: true,
                           cashIn: plan.pnl?.cashIn ?? 0,

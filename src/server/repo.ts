@@ -2230,12 +2230,20 @@ export function addDailyProductionFact(
     // Physical index ≠ money; economics only from confirmed rates
     const proc = data.procurements.find((x) => x.id === pf.procurementId);
     const calc = data.calculations.find(
-      (c) => c.id === proc?.calculationId || c.procurementId === pf.procurementId
+      (c) => c.id === proc?.calculationId && c.kind !== "customer_original"
+    ) ?? data.calculations.find(
+      (c) => c.procurementId === pf.procurementId && c.kind === "resource_draft"
+    );
+    const customerEstimate = data.calculations.find(
+      (c) => c.id === proc?.originalCalculationId && c.kind === "customer_original"
+    ) ?? data.calculations.find(
+      (c) => c.procurementId === pf.procurementId && c.kind === "customer_original"
     );
     const eco = economicsFromVolumes({
       entries: pf.entries,
       daily: pf.dailyFacts,
       positions: calc?.positions ?? [],
+      customerEstimatePositions: customerEstimate?.positions ?? null,
       directories: data.directories ?? [],
     });
     const prev = pf.pnl ?? {
@@ -2256,17 +2264,22 @@ export function addDailyProductionFact(
       ...prev,
       earnedValue: eco.physicalIndex,
       economicsAuto: eco.incomplete.length ? null : eco.autoIncurred,
+      valueOfFactByCustomerEstimate: eco.customerEstimateValue,
+      remainingValueByCustomerEstimate: eco.customerEstimateRemainingValue,
+      customerEstimateIncomplete: eco.customerEstimateIncomplete,
       incurredCosts: incurred,
       incomplete: eco.incomplete,
       notes: [
         "earnedValue = физ. индекс объёма (не ₽)",
         "economicsAuto = объём×подтверждённые расценки (иначе null)",
+        "valueOfFactByCustomerEstimate = физический объём×ставки исходной сметы (не акт/не оплата)",
         "касса / признанная выручка — отдельные ручные поля",
         ...(prev.notes ?? []).filter(
           (n) =>
             !n.startsWith("earnedValue") &&
             !n.startsWith("Нормативная") &&
-            !n.startsWith("economicsAuto")
+            !n.startsWith("economicsAuto") &&
+            !n.startsWith("valueOfFactByCustomerEstimate")
         ),
       ],
     };

@@ -572,6 +572,11 @@ export interface ContractPnl {
   earnedValue: number;
   /** Auto economics from volumes×confirmed rates (null if incomplete). */
   economicsAuto?: number | null;
+  /** Value of physical fact using customer estimate rates; not an act or recognized revenue. */
+  valueOfFactByCustomerEstimate?: number | null;
+  /** Estimated remaining value using customer estimate rates; not a cash forecast. */
+  remainingValueByCustomerEstimate?: number | null;
+  customerEstimateIncomplete?: string[];
   /** Confirmed incurred costs (₽); may follow auto unless manual. */
   incurredCosts: number;
   /** True when user manually overrode incurredCosts. */

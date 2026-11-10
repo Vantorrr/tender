@@ -15,6 +15,7 @@ import {
   shiftsNeeded,
 } from "@/lib/cost-engine";
 import { parseDateRu, formatDate } from "@/lib/format";
+import { T25U_TEST } from "@/lib/t25u-test-fixture";
 import {
   entryDisplayFact,
   entryDisplayRemain,
@@ -351,6 +352,44 @@ describe("stage3 won→production + daily fact + baseline", () => {
     );
     // baseline unchanged
     expect(after.baselineEntries).toEqual(before.baselineEntries);
+  });
+
+  it("values completed and remaining production by the immutable customer estimate", () => {
+    const before = readAppData();
+    const original = before.calculations.find(
+      (item) => item.id === T25U_TEST.originalCalculationId
+    )!;
+    mutateAppData((data) => {
+      const estimate = data.calculations.find((item) => item.id === original.id)!;
+      estimate.positions.push({
+        id: "t25u-estimate-work-value",
+        code: "WORK-1",
+        name: T25U_TEST.workName,
+        unit: "м²",
+        quantity: 420,
+        rate: 800,
+      });
+      return data;
+    });
+    const cashBefore = readAppData().planFacts.find(
+      (item) => item.id === T25U_TEST.planFactId
+    )!.pnl?.cashIn ?? 0;
+
+    addDailyProductionFact("u-obj", T25U_TEST.planFactId, {
+      date: "2026-11-08",
+      workName: T25U_TEST.workName,
+      unit: "м²",
+      quantity: 2,
+      photos: [],
+    });
+
+    const after = readAppData().planFacts.find(
+      (item) => item.id === T25U_TEST.planFactId
+    )!;
+    expect(after.pnl?.valueOfFactByCustomerEstimate).toBe(1600);
+    expect(after.pnl?.remainingValueByCustomerEstimate).toBe(334400);
+    expect(after.pnl?.recognizedRevenue).toBeNull();
+    expect(after.pnl?.cashIn).toBe(cashBefore);
   });
 
   it("daily fact matches by workName when unit mismatches (UI bug regression)", () => {

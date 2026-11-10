@@ -14,12 +14,20 @@ export type EconomicsResult = {
   autoIncurred: number;
   /** Physical quantity index (not money). */
   physicalIndex: number;
+  /** Estimated value of fact from immutable customer estimate, not recognized revenue. */
+  customerEstimateValue: number | null;
+  /** Estimated value of remaining plan from immutable customer estimate. */
+  customerEstimateRemainingValue: number | null;
+  customerEstimateIncomplete: string[];
   incomplete: string[];
   lines: Array<{
     workName: string;
     quantity: number;
     rate: number | null;
     amount: number | null;
+    customerEstimateRate: number | null;
+    customerEstimateAmount: number | null;
+    customerEstimateRemainingAmount: number | null;
   }>;
 };
 
@@ -44,7 +52,8 @@ function rateForWork(
   const positionRates = positions
     .filter((position) =>
       normalized(position.name) === normalizedName &&
-      normalized(position.unit) === normalizedUnit
+      normalized(position.unit) === normalizedUnit &&
+      !position.rateMissing
     )
     .map((position) => position.rate);
   const distinctPositionRates = [...new Set(positionRates.filter((rate) => Number.isFinite(rate) && rate > 0))];
@@ -86,12 +95,17 @@ export function economicsFromVolumes(opts: {
   entries: PlanFactEntry[];
   daily?: DailyFact[];
   positions: CalcPosition[];
+  customerEstimatePositions?: CalcPosition[] | null;
   directories: DirectoryVersion[];
 }): EconomicsResult {
   const incomplete: string[] = [];
+  const customerEstimateIncomplete: string[] = [];
   const lines: EconomicsResult["lines"] = [];
   let autoIncurred = 0;
   let physicalIndex = 0;
+  let customerEstimateValue = 0;
+  let customerEstimateRemainingValue = 0;
+  const hasCustomerEstimate = Boolean(opts.customerEstimatePositions?.length);
 
   for (const e of opts.entries) {
     const fromDaily = (opts.daily ?? [])
@@ -103,19 +117,59 @@ export function economicsFromVolumes(opts: {
         : e.fact;
     physicalIndex += qty;
     const rate = rateForWork(e.workName, e.unit, opts.positions, opts.directories);
+    const customerEstimateRate = hasCustomerEstimate
+      ? rateForWork(e.workName, e.unit, opts.customerEstimatePositions!, [])
+      : null;
+    const remainingQty = Math.max(0, e.plan - qty);
+    const customerEstimateAmount = customerEstimateRate == null
+      ? null
+      : Math.round(qty * customerEstimateRate * 100) / 100;
+    const customerEstimateRemainingAmount = customerEstimateRate == null
+      ? null
+      : Math.round(remainingQty * customerEstimateRate * 100) / 100;
+    if (hasCustomerEstimate) {
+      if (customerEstimateRate == null) {
+        if (qty > 0 || remainingQty > 0) customerEstimateIncomplete.push(`customer_rate:${e.workName}`);
+      } else {
+        customerEstimateValue += customerEstimateAmount ?? 0;
+        customerEstimateRemainingValue += customerEstimateRemainingAmount ?? 0;
+      }
+    }
     if (rate == null) {
       if (qty > 0) incomplete.push(`rate:${e.workName}`);
-      lines.push({ workName: e.workName, quantity: qty, rate: null, amount: null });
+      lines.push({
+        workName: e.workName,
+        quantity: qty,
+        rate: null,
+        amount: null,
+        customerEstimateRate,
+        customerEstimateAmount,
+        customerEstimateRemainingAmount,
+      });
     } else {
       const amount = Math.round(qty * rate * 100) / 100;
       autoIncurred += amount;
-      lines.push({ workName: e.workName, quantity: qty, rate, amount });
+      lines.push({
+        workName: e.workName,
+        quantity: qty,
+        rate,
+        amount,
+        customerEstimateRate,
+        customerEstimateAmount,
+        customerEstimateRemainingAmount,
+      });
     }
   }
+
+  if (!hasCustomerEstimate) customerEstimateIncomplete.push("customer_estimate_missing");
+  const customerEstimateComplete = hasCustomerEstimate && customerEstimateIncomplete.length === 0;
 
   return {
     autoIncurred: Math.round(autoIncurred * 100) / 100,
     physicalIndex: Math.round(physicalIndex * 1000) / 1000,
+    customerEstimateValue: customerEstimateComplete ? Math.round(customerEstimateValue * 100) / 100 : null,
+    customerEstimateRemainingValue: customerEstimateComplete ? Math.round(customerEstimateRemainingValue * 100) / 100 : null,
+    customerEstimateIncomplete,
     incomplete,
     lines,
   };
