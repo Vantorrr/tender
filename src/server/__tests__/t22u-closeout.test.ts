@@ -174,6 +174,49 @@ describe("t22u closeout remediable", () => {
     expect(ambiguous.incomplete).toContain("rate:Монтаж оборудования");
   });
 
+  it("calculates production cost from actual GPR resource quantities without double counting work rates", () => {
+    const eco = economicsFromVolumes({
+      entries: [{ id: "e1", workName: "Монтаж труб", unit: "м", plan: 10, fact: 2 }],
+      daily: [{
+        id: "d1", date: "2026-11-08", workName: "Монтаж труб", unit: "м",
+        quantity: 2, photos: [], authorId: "u", at: "",
+        resourceLines: [
+          { kind: "labor", sourceResourceId: "labor-1", name: "Монтажник", unit: "чел.-ч", planQty: 4, factQty: 3 },
+          { kind: "material", sourceResourceId: "mat-1", name: "Труба", unit: "м", planQty: 2, factQty: 2 },
+        ],
+      }],
+      positions: [
+        { id: "work", code: "W", name: "Монтаж труб", unit: "м", quantity: 10, rate: 1000 },
+        { id: "labor-pos", sourceResourceId: "labor-1", code: "L", name: "Монтажник", unit: "чел.-ч", quantity: 40, rate: 500 },
+        { id: "mat-pos", sourceResourceId: "mat-1", code: "M", name: "Труба", unit: "м", quantity: 20, rate: 200 },
+      ],
+      directories: [],
+    });
+
+    expect(eco.autoIncurred).toBe(1900);
+    expect(eco.incomplete).toEqual([]);
+    expect(eco.lines[0].amount).toBe(1900);
+  });
+
+  it("keeps resource-based production cost incomplete if a fact quantity or confirmed rate is missing", () => {
+    const eco = economicsFromVolumes({
+      entries: [{ id: "e1", workName: "Монтаж труб", unit: "м", plan: 10, fact: 2 }],
+      daily: [{
+        id: "d1", date: "2026-11-08", workName: "Монтаж труб", unit: "м",
+        quantity: 2, photos: [], authorId: "u", at: "",
+        resourceLines: [
+          { kind: "material", sourceResourceId: "mat-1", name: "Труба", unit: "м", planQty: 2, factQty: null },
+        ],
+      }],
+      positions: [{ id: "mat-pos", sourceResourceId: "mat-1", code: "M", name: "Труба", unit: "м", quantity: 20, rate: 0, rateMissing: true }],
+      directories: [],
+    });
+
+    expect(eco.autoIncurred).toBe(0);
+    expect(eco.incomplete).toContain("resource_facts:Монтаж труб");
+    expect(eco.lines[0].amount).toBeNull();
+  });
+
   it("values completed and remaining quantities from the customer estimate separately from revenue", () => {
     const input = {
       entries: [{ id: "e1", workName: "Монтаж труб", unit: "м", plan: 10, fact: 2 }],

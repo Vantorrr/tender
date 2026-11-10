@@ -108,15 +108,56 @@ export function economicsFromVolumes(opts: {
   const hasCustomerEstimate = Boolean(opts.customerEstimatePositions?.length);
 
   for (const e of opts.entries) {
-    const fromDaily = (opts.daily ?? [])
-      .filter((d) => d.workName === e.workName)
+    const workDaily = (opts.daily ?? []).filter((d) => d.workName === e.workName);
+    const fromDaily = workDaily
       .reduce((s, d) => s + d.quantity, 0);
     const qty =
       (opts.daily ?? []).some((d) => d.workName === e.workName)
         ? fromDaily
         : e.fact;
     physicalIndex += qty;
-    const rate = rateForWork(e.workName, e.unit, opts.positions, opts.directories);
+    const hasResourceFacts = workDaily.some((d) => (d.resourceLines?.length ?? 0) > 0);
+    let rate = rateForWork(e.workName, e.unit, opts.positions, opts.directories);
+    let amount: number | null = null;
+    if (hasResourceFacts) {
+      // Resource actuals are counted only when every daily entry has complete,
+      // stable GPR links and a confirmed draft rate. Never mix them with a
+      // work-unit rate: that could double-count labor/materials.
+      let resourceAmount = 0;
+      let resourceFactsComplete = workDaily.length > 0;
+      for (const day of workDaily) {
+        const lines = day.resourceLines ?? [];
+        if (!lines.length) {
+          resourceFactsComplete = false;
+          break;
+        }
+        for (const line of lines) {
+          const position = line.sourceResourceId
+            ? opts.positions.find((p) => p.sourceResourceId === line.sourceResourceId)
+            : undefined;
+          if (
+            line.factQty == null ||
+            !Number.isFinite(line.factQty) ||
+            line.factQty < 0 ||
+            !position ||
+            position.rateMissing ||
+            !Number.isFinite(position.rate) ||
+            position.rate <= 0
+          ) {
+            resourceFactsComplete = false;
+            continue;
+          }
+          resourceAmount += line.factQty * position.rate;
+        }
+      }
+      if (resourceFactsComplete) {
+        amount = Math.round(resourceAmount * 100) / 100;
+        rate = null; // Rate is represented by the linked resource lines.
+      } else {
+        incomplete.push(`resource_facts:${e.workName}`);
+        rate = null;
+      }
+    }
     const customerEstimateRate = hasCustomerEstimate
       ? rateForWork(e.workName, e.unit, opts.customerEstimatePositions!, [])
       : null;
@@ -135,8 +176,8 @@ export function economicsFromVolumes(opts: {
         customerEstimateRemainingValue += customerEstimateRemainingAmount ?? 0;
       }
     }
-    if (rate == null) {
-      if (qty > 0) incomplete.push(`rate:${e.workName}`);
+    if (rate == null && amount == null) {
+      if (qty > 0 && !hasResourceFacts) incomplete.push(`rate:${e.workName}`);
       lines.push({
         workName: e.workName,
         quantity: qty,
@@ -147,13 +188,13 @@ export function economicsFromVolumes(opts: {
         customerEstimateRemainingAmount,
       });
     } else {
-      const amount = Math.round(qty * rate * 100) / 100;
-      autoIncurred += amount;
+      const resolvedAmount = amount ?? Math.round(qty * rate! * 100) / 100;
+      autoIncurred += resolvedAmount;
       lines.push({
         workName: e.workName,
         quantity: qty,
         rate,
-        amount,
+        amount: resolvedAmount,
         customerEstimateRate,
         customerEstimateAmount,
         customerEstimateRemainingAmount,

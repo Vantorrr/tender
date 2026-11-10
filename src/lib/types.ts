@@ -539,6 +539,8 @@ export interface DailyFactPhoto {
 
 export interface DailyResourceLine {
   kind: "labor" | "material" | "equipment" | "bus" | "other";
+  /** Stable link to the GPR resource and editable draft position, when sourced from GPR. */
+  sourceResourceId?: string;
   name: string;
   unit: string;
   /** Plan qty from GPR/resources for the day (sourced). */

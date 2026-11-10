@@ -47,6 +47,7 @@ export function planResourceLinesForDay(
       seen.add(key);
       lines.push({
         kind: r.kind,
+        sourceResourceId: r.id,
         name: r.name,
         unit:
           r.unit ||
