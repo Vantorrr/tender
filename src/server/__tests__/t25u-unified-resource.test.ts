@@ -285,6 +285,7 @@ describe("t25u shared dimensions (P1 #1)", () => {
     const sheet = wb.getWorksheet("Клиентский ресурсный график")!;
     expect(sheet.getRow(12).getCell(1).value).toBe("№");
     expect(sheet.getRow(12).getCell(26).value).toBe("Итого Z");
+    expect(sheet.getRow(12).getCell(28).value).toBe(1);
     const rows: ExcelJS.Row[] = [];
     sheet.eachRow((row) => rows.push(row));
     const work = rows.findIndex((row) => String(row.getCell(3).value) === "Мобилизация [TEST]");
@@ -292,6 +293,8 @@ describe("t25u shared dimensions (P1 #1)", () => {
     expect(String(rows[work].getCell(9).value)).toMatch(/^РАБОТА/);
     expect(rows[work + 1].getCell(9).value).toBe("ГРУППА");
     expect(rows[work + 1].getCell(10).value).toBe("Люди");
+    expect(rows[work].getCell(28).value).toBe("■");
+    expect(rows[work + 2].getCell(28).value).toBe(4);
     expect(sheet.views[0]).toMatchObject({ state: "frozen", ySplit: 12 });
   });
 

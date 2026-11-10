@@ -573,6 +573,17 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
   const clientLabel: Record<string, string> = { labor: "Люди", equipment: "Техника", bus: "Транспорт", material: "Материалы", other: "Прочее" };
   const stages = g.stages.slice().sort((a, b) => a.sequence - b.sequence);
   const firstStart = stages.map((stage) => stage.start).filter(Boolean).sort()[0];
+  const dayOffset = (date: string) => firstStart && date
+    ? Math.floor((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${firstStart}T00:00:00Z`)) / 86400000) + 1
+    : null;
+  const timelineDays = stages.reduce((max, stage) => Math.max(max, dayOffset(stage.end) ?? 0), 0);
+  for (let day = 1; day <= timelineDays; day += 1) {
+    const cell = clientHeader.getCell(27 + day);
+    cell.value = day;
+    cell.alignment = { horizontal: "center", vertical: "middle" };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEAF0F4" } };
+    cell.font = { bold: true, size: 9, color: { argb: "FF183A57" } };
+  }
   for (const stage of stages) {
     const resources = stage.resources ?? [];
     const resolved = resources.map((resource) => ({ resource, dim: resolveResourceDimensions(resource, stage, rsParams) }));
@@ -600,6 +611,17 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
     ]);
     work.font = { bold: true, color: { argb: "FFFFFFFF" } };
     work.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF183A57" } };
+    const startOffset = dayOffset(stage.start);
+    const endOffset = dayOffset(stage.end);
+    if (startOffset != null && endOffset != null) {
+      for (let day = startOffset; day <= endOffset; day += 1) {
+        const cell = work.getCell(27 + day);
+        cell.value = "■";
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF183A57" } };
+      }
+    }
     for (const kind of buckets) {
       const items = resolved.filter((item) => item.resource.kind === kind);
       if (!items.length) continue;
@@ -612,10 +634,20 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
         const row = clientSheet.addRow(["", "", resource.name, resource.unit, "", "", "", "", "РЕСУРС", clientLabel[kind], resource.sourceKey ?? "", dim.sourceQty, dim.rate ?? "", dim.hoursPerShift ?? "", dim.shiftsPerDay ?? "", dim.days ?? "", dim.hours ?? "", dim.amount ?? "нет ставки"]);
         row.outlineLevel = 2;
         row.getCell(3).alignment = { indent: 2, vertical: "middle", wrapText: true };
+        if (dim.days != null && startOffset != null && endOffset != null) {
+          for (let day = startOffset; day <= endOffset; day += 1) {
+            const cell = row.getCell(27 + day);
+            cell.value = dim.sourceQty;
+            cell.alignment = { horizontal: "center", vertical: "middle" };
+            cell.numFmt = "#,##0.###";
+          }
+        }
       }
     }
   }
   clientSheet.columns = [7, 18, 48, 12, 15, 16, 12, 12, 22, 18, 30, 13, 19, 14, 13, 14, 13, 18, 18, 18, 18, 18, 18, 18, 18, 18].map((width) => ({ width }));
+  clientSheet.getColumn(27).width = 3;
+  for (let column = 28; column < 28 + timelineDays; column += 1) clientSheet.getColumn(column).width = 4;
   for (let index = 13; index <= clientSheet.rowCount; index += 1) {
     const row = clientSheet.getRow(index);
     row.height = 21;
@@ -623,7 +655,7 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
     row.border = { bottom: { style: "hair", color: { argb: "FFD9E1E7" } } };
   }
   for (const column of [13, 18, 19, 20, 21, 22, 23, 24, 25, 26]) clientSheet.getColumn(column).numFmt = '#,##0.00;[Red]-#,##0.00;–';
-  for (const column of [5, 6, 12, 14, 15, 16, 17]) clientSheet.getColumn(column).numFmt = '#,##0.###;[Red]-#,##0.###;–';
+  for (const column of [5, 6, 12, 14, 15, 16, 17, ...Array.from({ length: timelineDays }, (_, index) => 28 + index)]) clientSheet.getColumn(column).numFmt = '#,##0.###;[Red]-#,##0.###;–';
 
   const cs = calc?.costSummary;
   const totalsPartial = Boolean(
