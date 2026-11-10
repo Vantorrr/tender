@@ -34,6 +34,7 @@ import {
 } from "@/lib/plan-fact-agg";
 import { allocatePlanForSlice } from "@/lib/plan-from-gpr";
 import { useStore } from "@/lib/store";
+import type { ProductionVarianceReport } from "@/server/production-variance-ai";
 
 type PeriodMode = "day" | "month" | "period" | "cum";
 
@@ -48,6 +49,11 @@ export default function ProizvodstvoPage() {
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [qty, setQty] = useState("1");
   const [savingDaily, setSavingDaily] = useState(false);
+  const [varianceLoading, setVarianceLoading] = useState(false);
+  const [varianceReport, setVarianceReport] = useState<{
+    key: string;
+    report: ProductionVarianceReport;
+  } | null>(null);
   const savingDailyRef = useRef(false);
   const pendingFactIdRef = useRef<string | null>(null);
   const photoRef = useRef<HTMLInputElement>(null);
@@ -123,6 +129,7 @@ export default function ProizvodstvoPage() {
   );
   const periodPlan = planSlice.plan;
   const sliceVariance = periodFact - periodPlan;
+  const varianceKey = `${plan?.id ?? ""}:${period}:${date}:${periodPlan}:${periodFact}`;
 
   async function submitDaily(withPhoto: boolean) {
     if (!plan || savingDailyRef.current) return;
@@ -357,6 +364,74 @@ export default function ProizvodstvoPage() {
                     </span>
                   ) : null}
                 </div>
+              </div>
+
+              <div className="mb-4 space-y-3">
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    variant="outline"
+                    disabled={varianceLoading}
+                    onClick={async () => {
+                      setVarianceLoading(true);
+                      try {
+                        const response = await api<{ report: ProductionVarianceReport }>(
+                          "/api/proizvodstvo",
+                          {
+                            method: "POST",
+                            body: JSON.stringify({
+                              action: "analyzeVariance",
+                              planFactId: plan.id,
+                              period,
+                              date,
+                            }),
+                          }
+                        );
+                        setVarianceReport({ key: varianceKey, report: response.report });
+                      } catch (error) {
+                        toast.error(error instanceof Error ? error.message : "Не удалось разобрать отклонение");
+                      } finally {
+                        setVarianceLoading(false);
+                      }
+                    }}
+                  >
+                    {varianceLoading ? "ИИ проверяет записи…" : "Разобрать отклонение с ИИ"}
+                  </Button>
+                  <span className="text-xs text-[var(--tk-muted)]">
+                    Платный запрос. Используются только дневные комментарии и статусы поставок.
+                  </span>
+                </div>
+                {varianceReport?.key === varianceKey ? (
+                  <div className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4" data-testid="production-variance-ai">
+                    <h3 className="font-medium">
+                      {varianceReport.report.status === "behind"
+                        ? "Отставание от плана"
+                        : varianceReport.report.status === "ahead"
+                          ? "Опережение плана"
+                          : varianceReport.report.status === "on_track"
+                            ? "Отклонения по объёму нет"
+                            : "Причина не установлена"}
+                    </h3>
+                    <p className="mt-1 text-sm">{varianceReport.report.summary}</p>
+                    {varianceReport.report.observations.length ? (
+                      <ul className="mt-3 space-y-2 text-sm">
+                        {varianceReport.report.observations.map((observation) => (
+                          <li key={observation.sourceId}>
+                            <span className="font-medium">
+                              {observation.kind === "documented_reason" ? "Записано в дневном отчёте: " : "Возможный фактор: "}
+                            </span>
+                            {observation.text}
+                            <span className="mt-1 block text-xs text-[var(--tk-muted)]">
+                              Основание: «{observation.sourceQuote}»
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    <p className="mt-3 text-xs text-[var(--tk-muted)]">
+                      {varianceReport.report.disclaimer}
+                    </p>
+                  </div>
+                ) : null}
               </div>
 
               <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">

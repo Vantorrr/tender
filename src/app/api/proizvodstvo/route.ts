@@ -7,6 +7,9 @@ import {
 import { withAnySection, json } from "@/server/http";
 import type { DailyResourceLine, PlanFact } from "@/lib/types";
 import { saveUpload } from "@/server/uploads";
+import { analyzeProductionVarianceWithAI } from "@/server/production-variance-ai";
+import { allocatePlanForSlice, type PlanSliceMode } from "@/lib/plan-from-gpr";
+import { entryDisplayFact, sumDailyQty } from "@/lib/plan-fact-agg";
 
 const SECTIONS = ["proizvodstvo", "zakupki"] as const;
 
@@ -120,9 +123,11 @@ export async function POST(req: Request) {
     }
 
     const body = (await req.json()) as {
-      action?: "transferToProduction" | "dailyFact";
+      action?: "transferToProduction" | "dailyFact" | "analyzeVariance";
       procurementId?: string;
       planFactId?: string;
+      period?: PlanSliceMode;
+      date?: string;
       fact?: {
         date: string;
         workName: string;
@@ -136,6 +141,44 @@ export async function POST(req: Request) {
         factId?: string;
       };
     };
+    if (body.action === "analyzeVariance") {
+      if (!user.sections.includes("proizvodstvo")) {
+        return json({ error: "Недостаточно прав для производства" }, 403);
+      }
+      if (!body.planFactId || !body.date || !/^\d{4}-\d{2}-\d{2}$/.test(body.date)) {
+        return json({ error: "Нужны план/факт и корректная дата" }, 400);
+      }
+      const data = getBootstrap(user).data;
+      const plan = data.planFacts.find((item) => item.id === body.planFactId && item.orgId === user.orgId);
+      if (!plan) return json({ error: "План/факт не найден" }, 404);
+      const period: PlanSliceMode = ["day", "month", "period", "cum"].includes(body.period ?? "")
+        ? body.period!
+        : "day";
+      const daily = plan.dailyFacts ?? [];
+      const factsForPeriod = period === "day"
+        ? daily.filter((fact) => fact.date === body.date)
+        : period === "month"
+          ? daily.filter((fact) => fact.date.startsWith(body.date!.slice(0, 7)))
+          : period === "period"
+            ? daily
+            : daily.filter((fact) => fact.date <= body.date!);
+      const planQuantity = plan.entries.reduce((sum, entry) => sum + entry.plan, 0);
+      const factQuantity = period === "cum"
+        ? plan.entries.reduce((sum, entry) => sum + entryDisplayFact(entry, daily), 0)
+        : sumDailyQty(factsForPeriod);
+      const gpr = data.schedules.find((schedule) => schedule.procurementId === plan.procurementId);
+      const periodPlan = allocatePlanForSlice(planQuantity, gpr?.stages ?? [], period, body.date);
+      const report = await analyzeProductionVarianceWithAI({
+        plan,
+        supplies: (data.supplyRequests ?? []).filter((supply) => supply.procurementId === plan.procurementId),
+        asOfDate: body.date,
+        periodLabel: period,
+        planQuantity: periodPlan.plan,
+        factQuantity,
+        planSource: periodPlan.source,
+      });
+      return json({ report });
+    }
     if (body.action === "transferToProduction" && body.procurementId) {
       transferProcurementToProduction(user.id, body.procurementId);
       return json(getBootstrap(user));
