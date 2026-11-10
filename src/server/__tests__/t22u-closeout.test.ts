@@ -288,6 +288,49 @@ describe("t22u closeout remediable", () => {
     });
   });
 
+  it("production can update receipt on its own linked supply, but procurement users cannot", async () => {
+    const productionUser = readAppData().users.find((user) => user.role === "otvetstvennyy");
+    expect(productionUser?.sections).toContain("proizvodstvo");
+    const plan = readAppData().planFacts.find((item) => item.procurementId === "p-1");
+    expect(plan).toBeTruthy();
+    upsertSupplyRequest("u-ruk", {
+      procurementId: "p-1",
+      materialName: "Кабель силовой",
+      unit: "м",
+      qtyNeed: 100,
+      needBy: "2026-12-15",
+      status: "in_transit",
+    });
+    const supply = readAppData().supplyRequests!.find((item) => item.materialName === "Кабель силовой")!;
+
+    const { POST } = await import("@/app/api/proizvodstvo/route");
+    const request = (userId: string, qtyDelivered: number, supplyStatus: string) => POST(new Request("http://local/api/proizvodstvo", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${createSession(userId)}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        action: "updateSupplyReceipt",
+        planFactId: plan!.id,
+        supplyId: supply.id,
+        qtyDelivered,
+        supplyStatus,
+      }),
+    }));
+    const allowed = await request(productionUser!.id, 35, "in_transit");
+    expect(allowed.status).toBe(200);
+    expect(readAppData().supplyRequests!.find((item) => item.id === supply.id)).toMatchObject({ qtyDelivered: 35, status: "in_transit" });
+
+    const invalid = await request(productionUser!.id, -1, "delivered");
+    expect(invalid.status).toBe(400);
+    expect(readAppData().supplyRequests!.find((item) => item.id === supply.id)?.qtyDelivered).toBe(35);
+
+    const response = await request("u-tender", 80, "delivered");
+    expect(response.status).toBe(403);
+    expect(readAppData().supplyRequests!.find((item) => item.id === supply.id)?.qtyDelivered).toBe(35);
+  });
+
   it("GPR and planfact xlsx reopen with formulas + incompleteness sheet", async () => {
     recomputeCalculationCost("u-smet", "c-1");
     const g = readAppData().schedules[0];

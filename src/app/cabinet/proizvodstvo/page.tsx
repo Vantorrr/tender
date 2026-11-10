@@ -36,8 +36,19 @@ import { allocatePlanForSlice } from "@/lib/plan-from-gpr";
 import { economicsFromVolumes } from "@/lib/economics-from-rates";
 import { useStore } from "@/lib/store";
 import type { ProductionVarianceReport } from "@/server/production-variance-ai";
+import type { SupplyStatus } from "@/lib/types";
 
 type PeriodMode = "day" | "month" | "period" | "cum";
+
+const SUPPLY_STATUS_LABELS: Record<SupplyStatus, string> = {
+  need: "Потребность",
+  quoted_draft: "Запрос КП",
+  ordered: "Заказано",
+  in_transit: "В пути",
+  delivered: "Поставлено",
+  accepted: "Принято",
+  cancelled: "Отменено",
+};
 
 function createDailyFactId() {
   return `df-${crypto.randomUUID()}`;
@@ -51,6 +62,7 @@ export default function ProizvodstvoPage() {
   const [qty, setQty] = useState("1");
   const [savingDaily, setSavingDaily] = useState(false);
   const [varianceLoading, setVarianceLoading] = useState(false);
+  const [supplySavingId, setSupplySavingId] = useState<string | null>(null);
   const [varianceReport, setVarianceReport] = useState<{
     key: string;
     report: ProductionVarianceReport;
@@ -72,11 +84,19 @@ export default function ProizvodstvoPage() {
   const object = objects.find((o) => o.id === plan?.objectId);
   const procurement = orgProcurements.find((p) => p.id === plan?.procurementId);
   const canViewMoney = user ? userHasSection(user, "dengi") : false;
+  const canViewProcurement = user ? userHasSection(user, "zakupki") : false;
   const moneyPlan = procurement?.moneyId
     ? data.moneyPlans.find((m) => m.id === procurement.moneyId && m.orgId === user?.orgId)
     : undefined;
   const gpr = data.schedules.find(
     (s) => s.id === procurement?.gprId && s.orgId === user?.orgId
+  );
+  const projectSupplies = useMemo(
+    () => (data.supplyRequests ?? [])
+      .filter((item) => item.procurementId === plan?.procurementId && item.orgId === user?.orgId && item.status !== "cancelled")
+      .slice()
+      .sort((a, b) => a.needBy.localeCompare(b.needBy)),
+    [data.supplyRequests, plan?.procurementId, user?.orgId]
   );
 
   const workOptions = plan?.entries.map((e) => e.workName) ?? [];
@@ -163,6 +183,34 @@ export default function ProizvodstvoPage() {
       .filter((supply) => supply.procurementId === plan?.procurementId)
       .map((supply) => [supply.id, supply.needBy, supply.status, supply.materialName, supply.workName]),
   });
+
+  async function updateSupplyReceipt(
+    supplyId: string,
+    patch: { qtyDelivered?: number; status?: SupplyStatus }
+  ) {
+    if (!plan) return;
+    const supply = projectSupplies.find((item) => item.id === supplyId);
+    if (!supply) return;
+    setSupplySavingId(supplyId);
+    try {
+      await api("/api/proizvodstvo", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "updateSupplyReceipt",
+          planFactId: plan.id,
+          supplyId,
+          qtyDelivered: patch.qtyDelivered ?? supply.qtyDelivered,
+          supplyStatus: patch.status ?? supply.status,
+        }),
+      });
+      await refresh();
+      toast.success("Факт поставки обновлён");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось обновить поставку");
+    } finally {
+      setSupplySavingId(null);
+    }
+  }
 
   async function submitDaily(withPhoto: boolean) {
     if (!plan || savingDailyRef.current) return;
@@ -615,6 +663,98 @@ export default function ProizvodstvoPage() {
                   </ul>
                 </div>
               ) : null}
+
+              <section
+                className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4"
+                aria-label="Материалы и поставки"
+                data-testid="production-supplies"
+              >
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-medium">Материалы и поставки</h3>
+                    <p className="mt-1 text-xs text-[var(--tk-muted)]">
+                      Потребность, заказанное и полученное количество с привязкой к работе и сроку.
+                    </p>
+                  </div>
+                  {canViewProcurement && procurement ? (
+                    <Link
+                      href={`/cabinet/zakupki/${procurement.id}`}
+                      className="text-sm text-[var(--tk-copper-deep)] underline underline-offset-2"
+                    >
+                      Поставщики и запрос КП →
+                    </Link>
+                  ) : null}
+                </div>
+                {projectSupplies.length === 0 ? (
+                  <p className="rounded-lg bg-stone-50 px-3 py-4 text-sm text-[var(--tk-muted)]">
+                    Для этого проекта пока не добавлены материальные потребности.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {projectSupplies.map((supply) => {
+                      const remaining = Math.max(0, supply.qtyNeed - supply.qtyDelivered);
+                      const overdue = supply.needBy < date && remaining > 0;
+                      return (
+                        <div
+                          key={supply.id}
+                          className="grid gap-3 rounded-lg border border-[var(--tk-line)] p-3 lg:grid-cols-[minmax(180px,1.4fr)_minmax(140px,1fr)_minmax(150px,1fr)_130px_130px] lg:items-center"
+                          data-testid={`production-supply-${supply.id}`}
+                        >
+                          <div>
+                            <p className="font-medium">{supply.materialName}</p>
+                            <p className="mt-1 text-xs text-[var(--tk-muted)]">
+                              {supply.workName ? `Работа: ${supply.workName} · ` : ""}
+                              {supply.supplierName ? `Поставщик: ${supply.supplierName}` : "Поставщик не указан"}
+                            </p>
+                          </div>
+                          <div className="text-sm">
+                            <p>Нужно: {formatNumber(supply.qtyNeed)} {supply.unit}</p>
+                            <p className="text-xs text-[var(--tk-muted)]">Заказано: {formatNumber(supply.qtyOrdered)} {supply.unit}</p>
+                          </div>
+                          <div>
+                            <label className="text-xs text-[var(--tk-muted)]" htmlFor={`supply-status-${supply.id}`}>
+                              Статус · срок {formatDate(supply.needBy)}
+                            </label>
+                            <select
+                              id={`supply-status-${supply.id}`}
+                              className="mt-1 h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                              value={supply.status}
+                              disabled={supplySavingId === supply.id}
+                              onChange={(event) => void updateSupplyReceipt(supply.id, { status: event.currentTarget.value as SupplyStatus })}
+                            >
+                              {(Object.keys(SUPPLY_STATUS_LABELS) as SupplyStatus[]).map((status) => (
+                                <option key={status} value={status}>{SUPPLY_STATUS_LABELS[status]}</option>
+                              ))}
+                            </select>
+                            {overdue ? <p className="mt-1 text-xs font-medium text-rose-700">Срок просрочен на {formatDate(date)}</p> : null}
+                          </div>
+                          <label className="text-xs text-[var(--tk-muted)]">
+                            Получено ({supply.unit})
+                            <Input
+                              className="mt-1 h-9"
+                              type="number"
+                              min="0"
+                              step="any"
+                              defaultValue={supply.qtyDelivered}
+                              disabled={supplySavingId === supply.id}
+                              aria-label={`Получено ${supply.materialName}`}
+                              onBlur={(event) => {
+                                const amount = Number(event.currentTarget.value);
+                                if (Number.isFinite(amount) && amount >= 0 && amount !== supply.qtyDelivered) {
+                                  void updateSupplyReceipt(supply.id, { qtyDelivered: amount });
+                                }
+                              }}
+                            />
+                          </label>
+                          <div className={`text-sm ${remaining > 0 ? "text-amber-800" : "text-emerald-800"}`}>
+                            Осталось: {formatNumber(remaining)} {supply.unit}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </section>
 
               {canViewMoney && moneyPlan ? (
                 <section

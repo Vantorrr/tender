@@ -2,10 +2,12 @@ import {
   addDailyProductionFact,
   getBootstrap,
   transferProcurementToProduction,
+  updateProductionSupplyReceipt,
   updatePlanFact,
 } from "@/server/repo";
 import { withAnySection, json } from "@/server/http";
 import type { DailyResourceLine, PlanFact } from "@/lib/types";
+import type { SupplyStatus } from "@/lib/types";
 import { saveUpload } from "@/server/uploads";
 import { analyzeProductionVarianceWithAI } from "@/server/production-variance-ai";
 import { allocatePlanForSlice, type PlanSliceMode } from "@/lib/plan-from-gpr";
@@ -123,9 +125,12 @@ export async function POST(req: Request) {
     }
 
     const body = (await req.json()) as {
-      action?: "transferToProduction" | "dailyFact" | "analyzeVariance";
+      action?: "transferToProduction" | "dailyFact" | "analyzeVariance" | "updateSupplyReceipt";
       procurementId?: string;
       planFactId?: string;
+      supplyId?: string;
+      qtyDelivered?: number;
+      supplyStatus?: SupplyStatus;
       period?: PlanSliceMode;
       date?: string;
       fact?: {
@@ -141,6 +146,29 @@ export async function POST(req: Request) {
         factId?: string;
       };
     };
+    if (body.action === "updateSupplyReceipt") {
+      if (!user.sections.includes("proizvodstvo") && user.role !== "superadmin") {
+        return json({ error: "Недостаточно прав для производства" }, 403);
+      }
+      if (!body.planFactId || !body.supplyId || body.qtyDelivered == null) {
+        return json({ error: "Нужны план/факт, материал и количество поставки" }, 400);
+      }
+      const qtyDelivered = Number(body.qtyDelivered);
+      if (!Number.isFinite(qtyDelivered) || qtyDelivered < 0) {
+        return json({ error: "Количество поставки должно быть неотрицательным числом" }, 400);
+      }
+      const allowedStatuses: SupplyStatus[] = ["need", "quoted_draft", "ordered", "in_transit", "delivered", "accepted", "cancelled"];
+      if (body.supplyStatus && !allowedStatuses.includes(body.supplyStatus)) {
+        return json({ error: "Неизвестный статус поставки" }, 400);
+      }
+      updateProductionSupplyReceipt(user.id, {
+        planFactId: body.planFactId,
+        supplyId: body.supplyId,
+        qtyDelivered,
+        status: body.supplyStatus,
+      });
+      return json(getBootstrap(user));
+    }
     if (body.action === "analyzeVariance") {
       if (!user.sections.includes("proizvodstvo")) {
         return json({ error: "Недостаточно прав для производства" }, 403);

@@ -2389,6 +2389,37 @@ export function upsertSupplyRequest(
   });
 }
 
+/** Production updates receipt facts for materials linked to its own project. */
+export function updateProductionSupplyReceipt(
+  actorId: string,
+  input: {
+    planFactId: string;
+    supplyId: string;
+    qtyDelivered: number;
+    status?: SupplyStatus;
+  }
+) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const plan = data.planFacts.find((item) => item.id === input.planFactId);
+    if (!plan) throw new Error("План/факт не найден");
+    assertOrgAccess(actor, plan.orgId, "производства");
+    if (!Number.isFinite(input.qtyDelivered) || input.qtyDelivered < 0) {
+      throw new Error("Количество поставки должно быть неотрицательным числом");
+    }
+    data.supplyRequests = data.supplyRequests ?? [];
+    const supply = data.supplyRequests.find(
+      (item) => item.id === input.supplyId && item.procurementId === plan.procurementId
+    );
+    if (!supply) throw new Error("Потребность материала не найдена в этом проекте");
+    supply.qtyDelivered = input.qtyDelivered;
+    if (input.status) supply.status = input.status;
+    supply.updatedAt = new Date().toISOString();
+    audit(data, actorId, "update", "supply", supply.id, `Факт поставки: ${supply.qtyDelivered} ${supply.unit}; ${supply.status}`);
+    return data;
+  });
+}
+
 export function addMoneyPayment(
   actorId: string,
   moneyId: string,
