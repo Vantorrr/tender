@@ -114,11 +114,6 @@ function assertMatch(name, text, re) {
 function digits(s) {
   return String(s ?? "").replace(/[^\d]/g, "");
 }
-function requireCount(name, locatorPromiseCount, min = 1) {
-  // sync helper unused — keep asserts explicit
-  return min;
-}
-
 async function login(page, email, password) {
   await page.goto(`${base}/login`);
   await page.getByLabel(/email/i).fill(email);

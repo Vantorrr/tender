@@ -25,7 +25,6 @@ import {
 } from "@/components/cabinet/nav";
 import zlib from "node:zlib";
 import fs from "node:fs";
-import path from "node:path";
 import "./setup";
 
 function zipStore(name: string, data: Buffer): Buffer {

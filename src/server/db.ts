@@ -1,6 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
-import path from "node:path";
 import {
   CLIENT_BUNDLE,
   clientSchoolPositions,
@@ -31,9 +30,7 @@ import { procurementSourceStatus } from "@/server/procurement-source";
 const SCHEMA_VERSION = "16";
 
 declare global {
-  // eslint-disable-next-line no-var
   var __tkDb: DatabaseSync | undefined;
-  // eslint-disable-next-line no-var
   var __tkWriteLock: boolean | undefined;
 }
 

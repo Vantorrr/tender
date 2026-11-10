@@ -3,7 +3,6 @@ import { createSession } from "@/server/auth";
 import {
   closeDb,
   ensureReady,
-  mutateAppData,
   readAppData,
 } from "@/server/db";
 import { buildGprXlsx, buildPlanFactXlsx } from "@/server/export";
@@ -153,6 +152,25 @@ describe("t22u closeout remediable", () => {
     });
     expect(missing.autoIncurred).toBe(0);
     expect(missing.incomplete.length).toBeGreaterThan(0);
+
+    const ambiguous = economicsFromVolumes({
+      entries: [
+        {
+          id: "e-ambiguous",
+          workName: "Монтаж оборудования",
+          unit: "шт",
+          plan: 1,
+          fact: 1,
+        },
+      ],
+      positions: [
+        { id: "p-a", code: "A", name: "Монтаж оборудования", unit: "шт", quantity: 1, rate: 100 },
+        { id: "p-b", code: "B", name: "Монтаж оборудования", unit: "шт", quantity: 1, rate: 250 },
+      ],
+      directories: [],
+    });
+    expect(ambiguous.autoIncurred).toBe(0);
+    expect(ambiguous.incomplete).toContain("rate:Монтаж оборудования");
   });
 
   it("calendar warnings surface crew peaks and supply timing", () => {

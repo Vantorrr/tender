@@ -179,6 +179,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // ready is set after the initial auth/bootstrap request settles.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     refresh().finally(() => setReady(true));
   }, [refresh]);
 

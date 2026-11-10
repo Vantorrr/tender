@@ -7,7 +7,6 @@ import { DEFAULT_SECTIONS } from "@/lib/roles";
 import {
   setUserSections,
   updateUser,
-  getBootstrap,
 } from "@/server/repo";
 import { createSession, getUserIdByToken } from "@/server/auth";
 import type { User } from "@/lib/types";

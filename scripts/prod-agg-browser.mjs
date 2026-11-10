@@ -65,8 +65,6 @@ try {
     else fail("date-ddmm-format", `placeholder=${ph} value=${val}`);
   }
 
-  // Select work Общий объём if available
-  const workTrigger = page.locator("text=Вид работ").locator("..").locator("button").first();
   // Fill qty=1 and save twice
   const qty = page.getByTestId("daily-fact-qty");
   await qty.fill("1");

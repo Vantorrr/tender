@@ -29,34 +29,54 @@ function rateForWork(
   positions: CalcPosition[],
   directories: DirectoryVersion[]
 ): number | null {
-  const pos = positions.find(
-    (p) =>
-      p.name === workName ||
-      p.name.includes(workName) ||
-      workName.includes(p.name)
-  );
-  if (pos && Number.isFinite(pos.rate) && pos.rate > 0) return pos.rate;
+  const normalized = (text: string) =>
+    text.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/[^\p{L}\p{N}]+/gu, "");
+  const normalizedName = normalized(workName);
+  const normalizedUnit = normalized(unit);
+  const resolveUniqueRate = (rates: number[]) => {
+    const confirmed = [...new Set(rates.filter((rate) => Number.isFinite(rate) && rate > 0))];
+    return confirmed.length === 1 ? confirmed[0] : null;
+  };
+
+  // A substring can match an unrelated estimate line (for example, "Монтаж"
+  // may occur in several scopes). Only apply a rate when both work and unit
+  // identify one unambiguous value; otherwise keep the money figure incomplete.
+  const positionRates = positions
+    .filter((position) =>
+      normalized(position.name) === normalizedName &&
+      normalized(position.unit) === normalizedUnit
+    )
+    .map((position) => position.rate);
+  const distinctPositionRates = [...new Set(positionRates.filter((rate) => Number.isFinite(rate) && rate > 0))];
+  if (distinctPositionRates.length > 1) return null;
+  const positionRate = resolveUniqueRate(positionRates);
+  if (positionRate != null) return positionRate;
 
   const rasc = directories.find((d) => d.type === "rascenki" && d.current);
   if (rasc) {
+    const rates: number[] = [];
     for (const row of rasc.rows) {
       const name = String(row.work ?? row.name ?? "");
-      if (!name) continue;
-      if (name === workName || name.includes(workName) || workName.includes(name)) {
-        const rate = Number(row.rate ?? row.price ?? 0);
-        if (Number.isFinite(rate) && rate > 0) return rate;
-      }
+      const rowUnit = String(row.unit ?? row.ed ?? "");
+      if (!name || normalized(name) !== normalizedName) continue;
+      if (rowUnit && normalized(rowUnit) !== normalizedUnit) continue;
+      rates.push(Number(row.rate ?? row.price ?? 0));
     }
+    const rate = resolveUniqueRate(rates);
+    if (rate != null) return rate;
   }
   const ceny = directories.find((d) => d.type === "ceny" && d.current);
   if (ceny && /матер|м²|м2|т\b/i.test(unit + workName)) {
+    const rates: number[] = [];
     for (const row of ceny.rows) {
       const name = String(row.name ?? "");
-      if (name && (name.includes(workName) || workName.includes(name))) {
-        const rate = Number(row.price ?? row.rate_1s_kpi10 ?? 0);
-        if (Number.isFinite(rate) && rate > 0) return rate;
-      }
+      const rowUnit = String(row.unit ?? row.ed ?? "");
+      if (!name || normalized(name) !== normalizedName) continue;
+      if (rowUnit && normalized(rowUnit) !== normalizedUnit) continue;
+      rates.push(Number(row.price ?? row.rate_1s_kpi10 ?? 0));
     }
+    const rate = resolveUniqueRate(rates);
+    if (rate != null) return rate;
   }
   return null;
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
@@ -24,17 +24,16 @@ export default function RiskiPage() {
   const { data, user, updateRisk, parseRiskContract } = useStore();
   const [riskId, setRiskId] = useState("");
 
-  const risks = useMemo(() => {
-    if (!user) return [];
-    return data.risks
-      .filter((r) => r.orgId === user.orgId)
-      .slice()
-      .sort((a, b) => {
-        const score = (r: (typeof data.risks)[0]) =>
-          (r.remarks.length > 0 ? 2 : 0) + (r.contractParsed ? 1 : 0);
-        return score(b) - score(a);
-      });
-  }, [data.risks, user]);
+  const risks = user
+    ? data.risks
+        .filter((r) => r.orgId === user.orgId)
+        .slice()
+        .sort((a, b) => {
+          const score = (r: (typeof data.risks)[0]) =>
+            (r.remarks.length > 0 ? 2 : 0) + (r.contractParsed ? 1 : 0);
+          return score(b) - score(a);
+        })
+    : [];
   // Prefer a registry that already has remarks (seed / parsed) over empty
   // auto-created chain stubs that were unshifted to the front.
   const preferredId = risks[0]?.id || "";
