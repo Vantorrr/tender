@@ -16,6 +16,7 @@ import type {
   Role,
   SectionKey,
   SupplyRequest,
+  SupplierQuote,
   SupplyStatus,
   User,
 } from "@/lib/types";
@@ -2385,6 +2386,61 @@ export function upsertSupplyRequest(
     data.supplyRequests.unshift(row);
     p.supplyRequestIds = [...(p.supplyRequestIds ?? []), id];
     audit(data, actorId, "create", "supply", id, row.materialName);
+    return data;
+  });
+}
+
+export function recordSupplierQuote(
+  actorId: string,
+  supplyId: string,
+  quote: Omit<SupplierQuote, "id" | "receivedAt"> & { id?: string }
+) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const supply = data.supplyRequests?.find((item) => item.id === supplyId);
+    if (!supply) throw new Error("Потребность не найдена");
+    assertOrgAccess(actor, supply.orgId, "поставок");
+    if (!quote.supplierName.trim()) throw new Error("Укажите поставщика в КП");
+    if (!Number.isFinite(quote.unitPrice) || quote.unitPrice < 0) {
+      throw new Error("Цена КП должна быть неотрицательным числом");
+    }
+    if (quote.deliveryDays != null && (!Number.isFinite(quote.deliveryDays) || quote.deliveryDays < 0)) {
+      throw new Error("Срок поставки должен быть неотрицательным числом");
+    }
+    const now = new Date().toISOString();
+    const row: SupplierQuote = {
+      id: quote.id ?? `quote-${Date.now()}-${randomBytes(3).toString("hex")}`,
+      supplierName: quote.supplierName.trim(),
+      supplierEmail: quote.supplierEmail?.trim() || undefined,
+      unitPrice: quote.unitPrice,
+      deliveryDays: quote.deliveryDays ?? null,
+      note: quote.note?.trim() || undefined,
+      receivedAt: now,
+    };
+    supply.quotes = supply.quotes ?? [];
+    const existing = supply.quotes.findIndex((item) => item.id === row.id);
+    if (existing >= 0) supply.quotes[existing] = { ...supply.quotes[existing], ...row };
+    else supply.quotes.unshift(row);
+    supply.updatedAt = now;
+    audit(data, actorId, existing >= 0 ? "update" : "create", "supplier_quote", row.id, `${supply.materialName} · ${row.supplierName}`);
+    return data;
+  });
+}
+
+export function selectSupplierQuote(actorId: string, supplyId: string, quoteId: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const supply = data.supplyRequests?.find((item) => item.id === supplyId);
+    if (!supply) throw new Error("Потребность не найдена");
+    assertOrgAccess(actor, supply.orgId, "поставок");
+    const quote = supply.quotes?.find((item) => item.id === quoteId);
+    if (!quote) throw new Error("КП не найдено в этой потребности");
+    supply.selectedQuoteId = quote.id;
+    supply.supplierName = quote.supplierName;
+    supply.supplierEmail = quote.supplierEmail;
+    supply.unitPrice = quote.unitPrice;
+    supply.updatedAt = new Date().toISOString();
+    audit(data, actorId, "select", "supplier_quote", quote.id, `${supply.materialName} · ${quote.supplierName} · ${quote.unitPrice}`);
     return data;
   });
 }

@@ -8,7 +8,9 @@ import {
 import { buildGprXlsx, buildPlanFactXlsx } from "@/server/export";
 import {
   addDailyProductionFact,
+  recordSupplierQuote,
   recomputeCalculationCost,
+  selectSupplierQuote,
   transferProcurementToProduction,
   upsertSupplyRequest,
 } from "@/server/repo";
@@ -328,6 +330,78 @@ describe("t22u closeout remediable", () => {
       supplierName: "СеверСнаб",
       supplierEmail: "sales@example.test",
       unitPrice: 1250,
+    });
+  });
+
+  it("compares multiple supplier quotes and applies only the explicitly selected offer", () => {
+    upsertSupplyRequest("u-ruk", {
+      procurementId: "p-1",
+      materialName: "Кабель для сравнения",
+      unit: "м",
+      qtyNeed: 100,
+      needBy: "2026-12-20",
+    });
+    const supply = readAppData().supplyRequests!.find((item) => item.materialName === "Кабель для сравнения")!;
+    recordSupplierQuote("u-ruk", supply.id, {
+      supplierName: "СеверЭлектро",
+      supplierEmail: "sales@sever.example",
+      unitPrice: 245,
+      deliveryDays: 8,
+      note: "Доставка включена",
+    });
+    recordSupplierQuote("u-ruk", supply.id, {
+      supplierName: "ПромКабель",
+      unitPrice: 220,
+      deliveryDays: 14,
+      note: "Самовывоз",
+    });
+    const offers = readAppData().supplyRequests!.find((item) => item.id === supply.id)!;
+    expect(offers.quotes).toHaveLength(2);
+    expect(offers.unitPrice).toBeNull();
+
+    const selected = offers.quotes!.find((quote) => quote.supplierName === "СеверЭлектро")!;
+    selectSupplierQuote("u-ruk", supply.id, selected.id);
+    const after = readAppData().supplyRequests!.find((item) => item.id === supply.id)!;
+    expect(after).toMatchObject({
+      selectedQuoteId: selected.id,
+      supplierName: "СеверЭлектро",
+      supplierEmail: "sales@sever.example",
+      unitPrice: 245,
+    });
+    expect(() => selectSupplierQuote("u-ruk", supply.id, "quote-from-another-material")).toThrow(/КП/);
+    expect(() => recordSupplierQuote("u-ruk", supply.id, { supplierName: "Ошибка", unitPrice: -1 })).toThrow(/неотрицательным/);
+  });
+
+  it("supplier quote API validates price and stores a selected offer on its material request", async () => {
+    upsertSupplyRequest("u-ruk", {
+      procurementId: "p-1",
+      materialName: "КП через API",
+      unit: "шт",
+      qtyNeed: 5,
+      needBy: "2026-12-22",
+    });
+    const supply = readAppData().supplyRequests!.find((item) => item.materialName === "КП через API")!;
+    const { POST } = await import("@/app/api/supply/route");
+    const post = (body: unknown) => POST(new Request("http://local/api/supply", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${createSession("u-ruk")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }));
+    const invalid = await post({ action: "recordQuote", id: supply.id, quote: { supplierName: "Поставщик", unitPrice: -5 } });
+    expect(invalid.status).toBe(400);
+
+    const recorded = await post({ action: "recordQuote", id: supply.id, quote: { supplierName: "РесурсПоставка", unitPrice: 125, deliveryDays: 6 } });
+    expect(recorded.status).toBe(200);
+    const quote = readAppData().supplyRequests!.find((item) => item.id === supply.id)!.quotes![0];
+    const selected = await post({ action: "selectQuote", id: supply.id, quoteId: quote.id });
+    expect(selected.status).toBe(200);
+    expect(readAppData().supplyRequests!.find((item) => item.id === supply.id)).toMatchObject({
+      selectedQuoteId: quote.id,
+      supplierName: "РесурсПоставка",
+      unitPrice: 125,
     });
   });
 

@@ -26,7 +26,7 @@ import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
 import { WORK_TYPES } from "@/lib/pipeline";
 import { userHasSection } from "@/lib/acl";
 import { REVIEW_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
-import type { Citation, DocumentCategory, ReviewStatus, SupplyStatus } from "@/lib/types";
+import type { Citation, DocumentCategory, ReviewStatus, SupplyRequest, SupplyStatus } from "@/lib/types";
 import { useStore } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 
@@ -42,6 +42,117 @@ const SUPPLY_RU: Record<SupplyStatus, string> = {
 
 function citationsMatching(citations: Citation[], pattern: RegExp) {
   return citations.filter((citation) => pattern.test(citation.text));
+}
+
+function SupplierQuotesEditor({
+  supply,
+  onUpdated,
+}: {
+  supply: SupplyRequest;
+  onUpdated: () => Promise<void>;
+}) {
+  const [supplierName, setSupplierName] = useState("");
+  const [supplierEmail, setSupplierEmail] = useState("");
+  const [unitPrice, setUnitPrice] = useState("");
+  const [deliveryDays, setDeliveryDays] = useState("");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const quotes = supply.quotes ?? [];
+
+  async function recordQuote() {
+    const price = Number(unitPrice);
+    const leadDays = deliveryDays.trim() ? Number(deliveryDays) : null;
+    if (!supplierName.trim() || !unitPrice.trim() || !Number.isFinite(price) || price < 0) {
+      toast.error("Укажите поставщика и корректную цену КП");
+      return;
+    }
+    if (leadDays != null && (!Number.isFinite(leadDays) || leadDays < 0)) {
+      toast.error("Срок поставки должен быть неотрицательным числом");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api("/api/supply", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "recordQuote",
+          id: supply.id,
+          quote: {
+            supplierName: supplierName.trim(),
+            supplierEmail: supplierEmail.trim() || undefined,
+            unitPrice: price,
+            deliveryDays: leadDays,
+            note: note.trim() || undefined,
+          },
+        }),
+      });
+      await onUpdated();
+      setSupplierName("");
+      setSupplierEmail("");
+      setUnitPrice("");
+      setDeliveryDays("");
+      setNote("");
+      toast.success("КП добавлено к сравнению");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось сохранить КП");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function chooseQuote(quoteId: string) {
+    try {
+      await api("/api/supply", {
+        method: "POST",
+        body: JSON.stringify({ action: "selectQuote", id: supply.id, quoteId }),
+      });
+      await onUpdated();
+      toast.success("Поставщик и цена выбранного КП привязаны к потребности");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось выбрать КП");
+    }
+  }
+
+  return (
+    <section className="mt-3 rounded-lg border border-[var(--tk-line)] bg-stone-50/70 p-3" aria-label={`Коммерческие предложения · ${supply.materialName}`}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h3 className="text-sm font-medium">Сравнение КП · {quotes.length}</h3>
+        {supply.selectedQuoteId ? <span className="text-xs text-emerald-800">Выбранное КП учитывается в потребности</span> : null}
+      </div>
+      {quotes.length ? (
+        <div className="mt-2 max-h-64 overflow-auto rounded-md border border-[var(--tk-line)] bg-white">
+          <table className="w-full table-fixed text-left text-xs">
+            <thead className="bg-stone-100 text-[var(--tk-muted)]">
+              <tr><th className="w-[24%] p-2">Поставщик</th><th className="w-[20%] p-2">Цена / {supply.unit}</th><th className="w-[14%] p-2">Срок</th><th className="w-[26%] p-2">Условия</th><th className="w-[16%] p-2">Выбор</th></tr>
+            </thead>
+            <tbody>
+              {quotes.slice().sort((a, b) => a.unitPrice - b.unitPrice).map((quote) => (
+                <tr key={quote.id} className="border-t border-[var(--tk-line)] align-top">
+                  <td className="break-words p-2"><span className="font-medium">{quote.supplierName}</span>{quote.supplierEmail ? <span className="block break-all text-[var(--tk-muted)]">{quote.supplierEmail}</span> : null}</td>
+                  <td className="break-words p-2 font-medium tabular-nums">{formatMoney(quote.unitPrice)}</td>
+                  <td className="break-words p-2">{quote.deliveryDays == null ? "не указан" : `${quote.deliveryDays} дн.`}</td>
+                  <td className="break-words p-2">{quote.note || "—"}</td>
+                  <td className="break-words p-2">{supply.selectedQuoteId === quote.id ? <span className="font-medium text-emerald-800">Выбрано</span> : <Button size="sm" variant="outline" onClick={() => void chooseQuote(quote.id)}>Выбрать</Button>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : <p className="mt-2 text-xs text-[var(--tk-muted)]">Добавьте полученные предложения, чтобы сравнить цену и срок поставки.</p>}
+      <details className="mt-3">
+        <summary className="cursor-pointer text-xs font-medium text-[var(--tk-copper-deep)]">Добавить полученное КП</summary>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+          <Input aria-label="Поставщик в КП" placeholder="Поставщик" value={supplierName} onChange={(event) => setSupplierName(event.target.value)} />
+          <Input aria-label="Email поставщика в КП" type="email" placeholder="Email" value={supplierEmail} onChange={(event) => setSupplierEmail(event.target.value)} />
+          <Input aria-label="Цена КП за единицу" type="number" min={0} step="any" placeholder={`Цена за ${supply.unit}`} value={unitPrice} onChange={(event) => setUnitPrice(event.target.value)} />
+          <Input aria-label="Срок поставки в днях" type="number" min={0} step="1" placeholder="Срок, дней" value={deliveryDays} onChange={(event) => setDeliveryDays(event.target.value)} />
+          <Input aria-label="Условия КП" placeholder="Условия / примечание" value={note} onChange={(event) => setNote(event.target.value)} />
+          <p className="text-xs text-[var(--tk-muted)] sm:col-span-2 lg:col-span-4">Предложения заносятся вручную после получения. Для отправки запроса используйте черновик письма выше.</p>
+          <Button size="sm" disabled={saving} onClick={() => void recordQuote()}>{saving ? "Сохраняю…" : "Добавить КП"}</Button>
+        </div>
+      </details>
+    </section>
+  );
 }
 
 export default function ZakupkaDetailPage() {
@@ -1151,6 +1262,7 @@ export default function ZakupkaDetailPage() {
                         />
                       </div>
                     </details>
+                    <SupplierQuotesEditor supply={s} onUpdated={refresh} />
                     {s.quoteDraftText ? (
                       <pre className="mt-2 whitespace-pre-wrap rounded bg-stone-50 p-2 text-xs">
                         {s.quoteDraftText}

@@ -171,6 +171,16 @@ export type SupplyStatus =
   | "cancelled";
 
 /** Потребность → КП-черновик (не отправка) → поставка/факт. */
+export interface SupplierQuote {
+  id: string;
+  supplierName: string;
+  supplierEmail?: string;
+  unitPrice: number;
+  deliveryDays?: number | null;
+  note?: string;
+  receivedAt: string;
+}
+
 export interface SupplyRequest {
   id: string;
   orgId: string;
@@ -189,6 +199,9 @@ export interface SupplyRequest {
   supplierEmail?: string;
   supplierNote?: string;
   unitPrice?: number | null;
+  /** Several supplier offers for comparison; legacy supplier fields mirror the selected quote. */
+  quotes?: SupplierQuote[];
+  selectedQuoteId?: string;
   updatedAt: string;
   createdAt: string;
 }
