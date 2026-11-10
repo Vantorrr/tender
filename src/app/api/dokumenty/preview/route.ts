@@ -26,7 +26,9 @@ export async function GET(req: Request) {
       return json({ error: "Нет доступа к данным другой организации" }, 403);
     }
     if (doc.fileType === "pdf") return json({ kind: "pdf" });
-    if (doc.fileType === "zip") {
+    // RAR uploads are stored as `other` (the document type union intentionally
+    // stays compatible with older rows), so detect archives by category too.
+    if (doc.fileType === "zip" || doc.category === "archive") {
       return json({
         kind: "archive",
         files: doc.extractedFiles ?? [],
