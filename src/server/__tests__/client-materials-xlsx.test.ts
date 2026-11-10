@@ -62,12 +62,30 @@ describe("client materials workbook import", () => {
       "Материал / конструкция", "Кол-во по ВОР", "Ед. ВОР", "Кол-во для цены",
       "Ед. цены", "Цена за ед., руб.", "Стоимость МТР, руб.", "Новая стоимость материалов",
     ];
-    sheet.getRow(15).values = [stage.name, "АД", "АД-02", "", "", "Щебень", 5, "м³", 7, "т", 1200, 8400, 9240];
+    const workbookWorkName = `${stage.name} клиентская работа`;
+    sheet.getRow(15).values = [workbookWorkName, "АД", "АД-02", "", "", "Щебень", 5, "м³", 7, "т", 1200, 8400, 9240];
     const bytes = new Uint8Array(await workbook.xlsx.writeBuffer());
+    const file = new File([bytes], "client.xlsx");
+    const { POST } = await import("@/app/api/gpr/materials/route");
+    const previewForm = new FormData();
+    previewForm.set("scheduleId", schedule.id);
+    previewForm.set("file", file);
+    previewForm.set("preview", "1");
+    const preview = await POST(new Request("http://local/api/gpr/materials", {
+      method: "POST",
+      headers: { authorization: `Bearer ${createSession("u-super")}` },
+      body: previewForm,
+    }));
+    expect(preview.status).toBe(200);
+    await expect(preview.json()).resolves.toMatchObject({
+      rows: 1,
+      works: [{ workName: workbookWorkName, matches: [] }],
+      stages: expect.arrayContaining([{ id: stage.id, name: stage.name }]),
+    });
     const form = new FormData();
     form.set("scheduleId", schedule.id);
-    form.set("file", new File([bytes], "client.xlsx"));
-    const { POST } = await import("@/app/api/gpr/materials/route");
+    form.set("file", file);
+    form.set("stageMap", JSON.stringify({ [workbookWorkName]: stage.id }));
     const response = await POST(new Request("http://local/api/gpr/materials", {
       method: "POST",
       headers: { authorization: `Bearer ${createSession("u-super")}` },

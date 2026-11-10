@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
@@ -26,9 +26,22 @@ import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { useStore } from "@/lib/store";
 import type { CalcPosition, GprStageResource } from "@/lib/types";
 
+type MaterialsPreview = {
+  file: File;
+  rows: number;
+  works: Array<{
+    workName: string;
+    matches: Array<{ id: string; name: string }>;
+    selectedStageId: string;
+  }>;
+  stages: Array<{ id: string; name: string }>;
+};
+
 export default function GprDetailPage() {
   const params = useParams<{ id: string }>();
   const materialsFileRef = useRef<HTMLInputElement>(null);
+  const [materialsPreview, setMaterialsPreview] = useState<MaterialsPreview | null>(null);
+  const [materialsImportBusy, setMaterialsImportBusy] = useState(false);
   const { data, user, updateSchedule, updateCalculation, refresh } = useStore();
 
   if (!user) return null;
@@ -103,6 +116,54 @@ export default function GprDetailPage() {
     });
   }
 
+  async function previewMaterialsFile(file: File) {
+    const form = new FormData();
+    form.set("scheduleId", schedule!.id);
+    form.set("file", file);
+    form.set("preview", "1");
+    setMaterialsImportBusy(true);
+    try {
+      const result = await api<{
+        rows: number;
+        works: Array<{ workName: string; matches: Array<{ id: string; name: string }> }>;
+        stages: Array<{ id: string; name: string }>;
+      }>("/api/gpr/materials", { method: "POST", body: form });
+      setMaterialsPreview({
+        file,
+        rows: result.rows,
+        stages: result.stages,
+        works: result.works.map((work) => ({
+          ...work,
+          selectedStageId: work.matches.length === 1 ? work.matches[0].id : "",
+        })),
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось прочитать лист «Материалы»");
+    } finally {
+      setMaterialsImportBusy(false);
+    }
+  }
+
+  async function importPreviewedMaterials() {
+    if (!materialsPreview) return;
+    const stageMap = Object.fromEntries(materialsPreview.works.map((work) => [work.workName, work.selectedStageId]));
+    const form = new FormData();
+    form.set("scheduleId", schedule!.id);
+    form.set("file", materialsPreview.file);
+    form.set("stageMap", JSON.stringify(stageMap));
+    setMaterialsImportBusy(true);
+    try {
+      const result = await api<{ imported: number; stages: number }>("/api/gpr/materials", { method: "POST", body: form });
+      await refresh();
+      setMaterialsPreview(null);
+      toast.success(`Импортировано материалов: ${result.imported} · работ: ${result.stages}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось импортировать материалы");
+    } finally {
+      setMaterialsImportBusy(false);
+    }
+  }
+
   return (
     <div>
       <PageHeader
@@ -126,19 +187,10 @@ export default function GprDetailPage() {
                 const file = event.target.files?.[0];
                 event.target.value = "";
                 if (!file) return;
-                const form = new FormData();
-                form.set("scheduleId", schedule.id);
-                form.set("file", file);
-                try {
-                  const result = await api<{ imported: number; stages: number }>("/api/gpr/materials", { method: "POST", body: form });
-                  await refresh();
-                  toast.success(`Импортировано материалов: ${result.imported} · работ: ${result.stages}`);
-                } catch (error) {
-                  toast.error(error instanceof Error ? error.message : "Не удалось импортировать материалы");
-                }
+                await previewMaterialsFile(file);
               }}
             />
-            <Button variant="outline" onClick={() => materialsFileRef.current?.click()}>
+            <Button variant="outline" disabled={materialsImportBusy} onClick={() => materialsFileRef.current?.click()}>
               Загрузить материалы XLSX
             </Button>
             <Button
@@ -163,6 +215,39 @@ export default function GprDetailPage() {
           </>
         }
       />
+
+      {materialsPreview ? (
+        <section className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white p-4" aria-label="Сопоставление материалов с работами ГПР">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="font-semibold">Материалы из {materialsPreview.file.name}</h2>
+              <p className="mt-1 text-sm text-[var(--tk-muted)]">Строк: {materialsPreview.rows}. Проверьте, к какой работе ГПР относится каждая группа. Повторный импорт заменит только ранее импортированные строки из клиентского листа.</p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" disabled={materialsImportBusy} onClick={() => setMaterialsPreview(null)}>Отмена</Button>
+              <Button disabled={materialsImportBusy || materialsPreview.works.some((work) => !work.selectedStageId)} onClick={() => void importPreviewedMaterials()}>
+                {materialsImportBusy ? "Импорт…" : "Импортировать материалы"}
+              </Button>
+            </div>
+          </div>
+          <div className="mt-4 max-h-80 space-y-2 overflow-auto">
+            {materialsPreview.works.map((work, index) => (
+              <label key={work.workName} className="grid gap-2 text-sm md:grid-cols-[minmax(0,1fr)_minmax(16rem,24rem)] md:items-center">
+                <span>{work.workName}{work.matches.length === 1 ? <span className="ml-2 text-xs text-emerald-700">совпадение найдено</span> : <span className="ml-2 text-xs text-amber-700">выберите вручную</span>}</span>
+                <select
+                  className="h-9 rounded-md border border-[var(--tk-line)] bg-white px-2"
+                  aria-label={`Работа ГПР для ${work.workName}`}
+                  value={work.selectedStageId}
+                  onChange={(event) => setMaterialsPreview((current) => current ? ({ ...current, works: current.works.map((item, i) => i === index ? { ...item, selectedStageId: event.target.value } : item) }) : current)}
+                >
+                  <option value="">Выберите этап ГПР</option>
+                  {materialsPreview.stages.map((stage) => <option key={stage.id} value={stage.id}>{stage.name}</option>)}
+                </select>
+              </label>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {isT25uTestId(schedule.id) || isT25uTestTitle(schedule.title) ? (
         <div

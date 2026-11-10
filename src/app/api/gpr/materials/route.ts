@@ -37,7 +37,34 @@ export async function POST(req: Request) {
         if (!matches.some((item) => item.id === stage.id)) stagesByName.set(key, [...matches, stage]);
       }
     }
-    const unmatched = [...new Set(rows.filter((row) => (stagesByName.get(normalize(row.workName)) ?? []).length !== 1).map((row) => row.workName))];
+    const works = [...new Set(rows.map((row) => row.workName))].map((workName) => ({
+      workName,
+      matches: (stagesByName.get(normalize(workName)) ?? []).map(({ id, name }) => ({ id, name })),
+    }));
+    if (form.get("preview") === "1") {
+      return json({ rows: rows.length, works, stages: schedule.stages.map(({ id, name }) => ({ id, name })) });
+    }
+    let requestedMap: Record<string, string> = {};
+    const rawMap = form.get("stageMap");
+    if (typeof rawMap === "string") {
+      try {
+        requestedMap = JSON.parse(rawMap) as Record<string, string>;
+      } catch {
+        return json({ error: "Не удалось прочитать сопоставление работ с ГПР" }, 400);
+      }
+    }
+    const stageById = new Map(schedule.stages.map((stage) => [stage.id, stage]));
+    const resolvedWorkMap = new Map<string, (typeof schedule.stages)[number]>();
+    for (const work of works) {
+      const requestedId = requestedMap[work.workName];
+      const selected = requestedId
+        ? stageById.get(requestedId)
+        : work.matches.length === 1
+          ? stageById.get(work.matches[0].id)
+          : undefined;
+      if (selected) resolvedWorkMap.set(work.workName, selected);
+    }
+    const unmatched = works.filter((work) => !resolvedWorkMap.has(work.workName)).map((work) => work.workName);
     if (unmatched.length) {
       return json({
         error: `Не все работы однозначно совпали с ГПР: ${unmatched.slice(0, 5).join("; ")}${unmatched.length > 5 ? ` и ещё ${unmatched.length - 5}` : ""}. Исправьте название или связь работы и повторите импорт.`,
@@ -49,7 +76,7 @@ export async function POST(req: Request) {
     const prefix = `client-material:${scheduleId}:`;
     const resourcesByStage = new Map(schedule.stages.map((stage) => [stage.id, (stage.resources ?? []).filter((r) => !r.sourceKey?.startsWith(prefix))]));
     for (const row of rows) {
-      const stage = stagesByName.get(normalize(row.workName))![0];
+      const stage = resolvedWorkMap.get(row.workName)!;
       resourcesByStage.get(stage.id)!.push({
         id: `${prefix}${row.sourceRow}`,
         sourceKey: `${prefix}${row.sourceRow}`,
@@ -64,6 +91,6 @@ export async function POST(req: Request) {
     updateSchedule(user.id, schedule.id, {
       stages: schedule.stages.map((stage) => ({ ...stage, resources: resourcesByStage.get(stage.id) ?? [] })),
     });
-    return json({ imported: rows.length, stages: new Set(rows.map((row) => stagesByName.get(normalize(row.workName))![0].id)).size });
+    return json({ imported: rows.length, stages: new Set(rows.map((row) => resolvedWorkMap.get(row.workName)!.id)).size });
   });
 }
