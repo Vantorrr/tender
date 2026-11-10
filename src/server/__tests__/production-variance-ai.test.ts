@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { validateProductionVarianceResult } from "@/server/production-variance-ai";
+import {
+  filterDailyFactsByPeriod,
+  validateProductionVarianceResult,
+} from "@/server/production-variance-ai";
 
 describe("validateProductionVarianceResult", () => {
   const sources = [
@@ -67,5 +70,21 @@ describe("validateProductionVarianceResult", () => {
     }), sources);
     expect(result.summary).toContain("не сформировал");
     expect(result.observations).toHaveLength(0);
+  });
+});
+
+describe("filterDailyFactsByPeriod", () => {
+  const facts = [
+    { id: "a", date: "2026-10-31" },
+    { id: "b", date: "2026-11-01" },
+    { id: "c", date: "2026-11-10" },
+    { id: "d", date: "2026-11-11" },
+  ] as Parameters<typeof filterDailyFactsByPeriod>[0];
+
+  it("selects comments from the same day, month, cumulative cut, or full period", () => {
+    expect(filterDailyFactsByPeriod(facts, "2026-11-10", "day").map((f) => f.id)).toEqual(["c"]);
+    expect(filterDailyFactsByPeriod(facts, "2026-11-10", "month").map((f) => f.id)).toEqual(["b", "c", "d"]);
+    expect(filterDailyFactsByPeriod(facts, "2026-11-10", "cum").map((f) => f.id)).toEqual(["a", "b", "c"]);
+    expect(filterDailyFactsByPeriod(facts, "2026-11-10", "period").map((f) => f.id)).toEqual(["a", "b", "c", "d"]);
   });
 });

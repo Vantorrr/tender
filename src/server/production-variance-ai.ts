@@ -1,4 +1,5 @@
 import type { DailyFact, PlanFact, SupplyRequest } from "@/lib/types";
+import type { PlanSliceMode } from "@/lib/plan-from-gpr";
 import { completeJson } from "@/server/openrouter";
 
 export type ProductionVarianceReport = {
@@ -38,6 +39,19 @@ function enoughLexicalSupport(text: string, quote: string): boolean {
   return overlap / claimWords.length >= 0.3;
 }
 
+export function filterDailyFactsByPeriod(
+  daily: DailyFact[],
+  asOfDate: string,
+  period: PlanSliceMode
+): DailyFact[] {
+  return daily.filter((fact) => {
+    if (period === "day") return fact.date === asOfDate;
+    if (period === "month") return fact.date.startsWith(asOfDate.slice(0, 7));
+    if (period === "cum") return fact.date <= asOfDate;
+    return true;
+  });
+}
+
 export function validateProductionVarianceResult(raw: string, sources: Source[]) {
   const parsed = parseJson(raw) as { summary?: unknown; observations?: unknown };
   const summary = typeof parsed.summary === "string" ? parsed.summary.trim() : "";
@@ -67,8 +81,14 @@ export function validateProductionVarianceResult(raw: string, sources: Source[])
   };
 }
 
-function collectSources(daily: DailyFact[], supplies: SupplyRequest[], asOfDate: string): Source[] {
-  const comments: Source[] = daily
+function collectSources(
+  daily: DailyFact[],
+  supplies: SupplyRequest[],
+  asOfDate: string,
+  period: PlanSliceMode
+): Source[] {
+  const periodFacts = filterDailyFactsByPeriod(daily, asOfDate, period);
+  const comments: Source[] = periodFacts
     .filter((fact) => fact.comment?.trim())
     .slice(-30)
     .map((fact) => ({
@@ -91,7 +111,7 @@ export async function analyzeProductionVarianceWithAI(input: {
   plan: PlanFact;
   supplies: SupplyRequest[];
   asOfDate: string;
-  periodLabel: string;
+  periodLabel: PlanSliceMode;
   planQuantity: number;
   factQuantity: number;
   planSource: "stage_volumes" | "uniform_fallback" | "none";
@@ -102,7 +122,12 @@ export async function analyzeProductionVarianceWithAI(input: {
     : gap > 0
       ? "ahead"
       : "on_track";
-  const sources = collectSources(input.plan.dailyFacts ?? [], input.supplies, input.asOfDate);
+  const sources = collectSources(
+    input.plan.dailyFacts ?? [],
+    input.supplies,
+    input.asOfDate,
+    input.periodLabel
+  );
   if (input.planSource === "none") {
     return {
       status: "reason_unknown",
