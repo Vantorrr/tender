@@ -110,7 +110,7 @@ export function allocatePlanForSlice(
 
 export function totalStageCalendarDays(stages: GprStage[]): number {
   return stages.reduce(
-    (s, st) => s + Math.max(1, diffDays(st.start, st.end)),
+    (s, st) => s + Math.max(1, diffDays(st.start, st.end) + 1),
     0
   );
 }

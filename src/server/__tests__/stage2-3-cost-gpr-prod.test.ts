@@ -16,6 +16,7 @@ import {
 } from "@/lib/cost-engine";
 import { parseDateRu, formatDate } from "@/lib/format";
 import { T25U_TEST } from "@/lib/t25u-test-fixture";
+import { totalStageCalendarDays } from "@/lib/plan-from-gpr";
 import {
   entryDisplayFact,
   entryDisplayRemain,
@@ -247,6 +248,68 @@ describe("stage2 cost engine + gantt", () => {
     );
   });
 
+  it("calendar resize treats both endpoints as work days and cascades resource days", () => {
+    const stages = [
+      {
+        id: "single",
+        name: "Однодневный этап",
+        start: "2026-12-01",
+        end: "2026-12-01",
+        sequence: 1,
+        resources: [{ id: "bus", kind: "bus" as const, name: "Автобус", quantity: 1, unit: "ед", rate: 100, days: 1 }],
+      },
+      {
+        id: "next",
+        name: "Следующий этап",
+        start: "2026-12-02",
+        end: "2026-12-02",
+        sequence: 2,
+        dependsOn: "single",
+        dependencyType: "FS" as const,
+      },
+    ];
+    expect(totalStageCalendarDays(stages)).toBe(2);
+
+    const resized = shiftStages(stages, "single", 0, { resizeDays: 3 });
+    const first = resized.stages.find((stage) => stage.id === "single")!;
+    const next = resized.stages.find((stage) => stage.id === "next")!;
+    expect(first.end).toBe("2026-12-03");
+    expect(first.resources?.[0].days).toBe(1); // pure date function leaves explicit resource input untouched
+    expect(next.start).toBe("2026-12-04");
+    expect(next.end).toBe("2026-12-04");
+    expect(totalStageCalendarDays([first])).toBe(3);
+  });
+
+  it("cascades FS, SS, FF and SF links with lag without changing child duration", () => {
+    const relations = [
+      { type: "FS" as const, lag: 1, childStart: "2026-12-03", expected: "2026-12-09" },
+      { type: "SS" as const, lag: 2, childStart: "2026-12-03", expected: "2026-12-08" },
+      { type: "FF" as const, lag: 2, childStart: "2026-12-03", expected: "2026-12-08" },
+      { type: "SF" as const, lag: 2, childStart: "2026-12-03", expected: "2026-12-07" },
+    ];
+    for (const relation of relations) {
+      const stages = [
+        { id: "parent", name: "Предшественник", start: "2026-12-01", end: "2026-12-02", sequence: 1 },
+        {
+          id: "child",
+          name: "Последователь",
+          start: relation.childStart,
+          end: "2026-12-04",
+          sequence: 2,
+          dependsOn: "parent",
+          dependencyType: relation.type,
+          lagDays: relation.lag,
+        },
+      ];
+
+      const result = shiftStages(stages, "parent", 5, { cascade: true });
+      const child = result.stages.find((stage) => stage.id === "child")!;
+      expect(child.start, relation.type).toBe(relation.expected);
+      expect(totalStageCalendarDays([child]), relation.type).toBe(2);
+      expect(result.conflicts, relation.type).toEqual([]);
+    }
+  });
+
   it("shiftGprStage persists via repo", () => {
     const g = readAppData().schedules[0];
     const stage = g.stages[0];
@@ -257,6 +320,29 @@ describe("stage2 cost engine + gantt", () => {
       true
     );
     expect(after.version).toBeGreaterThan(g.version);
+  });
+
+  it("resizing a one-day stage updates linked resource participation days", () => {
+    const schedule = readAppData().schedules[0];
+    const stage = schedule.stages[0];
+    mutateAppData((data) => {
+      const current = data.schedules.find((item) => item.id === schedule.id)!;
+      current.stages = current.stages.map((item) => item.id !== stage.id ? item : {
+        ...item,
+        start: "2026-12-01",
+        end: "2026-12-01",
+        resources: (item.resources ?? []).map((resource) => resource.kind === "material" ? resource : { ...resource, days: 1 }),
+      });
+      return data;
+    });
+
+    shiftGprStage("u-smet", schedule.id, stage.id, 0, { resizeDays: 2 });
+    const resized = readAppData().schedules.find((item) => item.id === schedule.id)!.stages.find((item) => item.id === stage.id)!;
+    expect(resized.end).toBe("2026-12-02");
+    for (const resource of resized.resources ?? []) {
+      if (resource.kind !== "material") expect(resource.days).toBe(2);
+    }
+    expect(totalStageCalendarDays([resized])).toBe(2);
   });
 
   it("recomputeCalculationCost writes summary without inventing VAT", () => {

@@ -41,7 +41,7 @@ function saveGanttFilter(key: string, value: string) {
 }
 
 function daysBetween(a: string, b: string) {
-  return Math.max(1, Math.abs(diffDays(a, b)) || 1);
+  return Math.max(1, Math.abs(diffDays(a, b)) + 1);
 }
 
 function clamp01(n: number) {
@@ -274,7 +274,7 @@ export function PlanFactGantt({
                         onChange={(event) => {
                           const next = event.currentTarget.value;
                           if (!next || next < stage.start) return;
-                          const duration = Math.max(1, diffDays(stage.start, next));
+                          const duration = daysBetween(stage.start, next);
                           if (duration !== daysBetween(stage.start, stage.end)) {
                             onShift(stage.id, 0, duration);
                           }

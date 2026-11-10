@@ -408,9 +408,40 @@ export function diffDays(a: string, b: string): number {
   return Math.round(ms / 86400000);
 }
 
+function dependencySatisfied(parent: GprStage, child: GprStage): boolean {
+  const lag = Number.isFinite(child.lagDays) ? Math.trunc(child.lagDays ?? 0) : 0;
+  switch (child.dependencyType ?? "FS") {
+    case "SS":
+      return child.start >= addDaysIso(parent.start, lag);
+    case "FF":
+      return child.end >= addDaysIso(parent.end, lag);
+    case "SF":
+      return child.end >= addDaysIso(parent.start, lag);
+    case "FS":
+    default:
+      return child.start >= addDaysIso(parent.end, lag + 1);
+  }
+}
+
+function dependencyStart(parent: GprStage, child: GprStage, duration: number): string {
+  const lag = Number.isFinite(child.lagDays) ? Math.trunc(child.lagDays ?? 0) : 0;
+  switch (child.dependencyType ?? "FS") {
+    case "SS":
+      return addDaysIso(parent.start, lag);
+    case "FF":
+      return addDaysIso(addDaysIso(parent.end, lag), -(duration - 1));
+    case "SF":
+      return addDaysIso(addDaysIso(parent.start, lag), -(duration - 1));
+    case "FS":
+    default:
+      return addDaysIso(parent.end, lag + 1);
+  }
+}
+
 /**
  * Shift a stage by deltaDays; optionally cascade dependents (FS).
- * Does not invent durations — keeps stage length unless resizeDays set.
+ * Stage start and end dates are inclusive. Does not invent durations — keeps
+ * the calendar-day count unless resizeDays is set.
  */
 export function shiftStages(
   stages: GprStage[],
@@ -424,12 +455,12 @@ export function shiftStages(
   const target = byId.get(stageId);
   if (!target) return { stages, conflicts: ["stage_not_found"] };
 
-  const len = Math.max(1, diffDays(target.start, target.end));
+  const len = Math.max(1, diffDays(target.start, target.end) + 1);
   const newStart = addDaysIso(target.start, deltaDays);
   const newEnd =
     opts?.resizeDays != null
-      ? addDaysIso(newStart, Math.max(1, opts.resizeDays))
-      : addDaysIso(newStart, len);
+      ? addDaysIso(newStart, Math.max(1, opts.resizeDays) - 1)
+      : addDaysIso(newStart, len - 1);
   target.start = newStart;
   target.end = newEnd;
   byId.set(stageId, target);
@@ -444,12 +475,11 @@ export function shiftStages(
       const parent = byId.get(id)!;
       for (const s of byId.values()) {
         if (s.dependsOn !== id) continue;
-        const childLen = Math.max(1, diffDays(s.start, s.end));
-        // FS: child starts day after parent ends
-        const desiredStart = addDaysIso(parent.end, 1);
+        const childLen = Math.max(1, diffDays(s.start, s.end) + 1);
+        const desiredStart = dependencyStart(parent, s, childLen);
         if (s.start < desiredStart) {
           s.start = desiredStart;
-          s.end = addDaysIso(desiredStart, childLen);
+          s.end = addDaysIso(desiredStart, childLen - 1);
           byId.set(s.id, s);
         }
         queue.push(s.id);
@@ -457,13 +487,13 @@ export function shiftStages(
     }
   }
 
-  // conflict: dependent starts before predecessor ends
+  // Report any violated dependency using its selected relation and lag.
   for (const s of byId.values()) {
     if (!s.dependsOn) continue;
     const pred = byId.get(s.dependsOn);
-    if (pred && s.start <= pred.end) {
+    if (pred && !dependencySatisfied(pred, s)) {
       conflicts.push(
-        `${s.id} starts ${s.start} before/on predecessor ${pred.id} end ${pred.end}`
+        `${s.id} violates ${s.dependencyType ?? "FS"} dependency on ${pred.id}`
       );
     }
   }
