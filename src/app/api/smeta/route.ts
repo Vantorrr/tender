@@ -37,7 +37,15 @@ export async function POST(req: Request) {
         );
       }
       const buf = Buffer.from(await file.arrayBuffer());
-      const mapped = await parseSmetaXlsx(buf);
+      let mapped;
+      try {
+        mapped = await parseSmetaXlsx(buf);
+      } catch {
+        return json(
+          { error: "Не удалось прочитать файл как XLSX. Пересохраните смету в формате .xlsx и загрузите снова." },
+          422
+        );
+      }
       if (mapped.length === 0) {
         return json(
           { error: "В книге не найдены сметные позиции. Нужна выгрузка XLSX с шифрами расценок и количествами." },

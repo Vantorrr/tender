@@ -53,6 +53,15 @@ describe("estimate software exchange import", () => {
     expect(readAppData().smetaExchanges.map((item) => item.id)).toEqual(existingIds);
   });
 
+  it("shows a useful error and saves no exchange for a broken XLSX file", async () => {
+    const existingIds = readAppData().smetaExchanges.map((item) => item.id);
+    const response = await postFile(new File(["not an xlsx workbook"], "broken.xlsx"));
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({ error: expect.stringMatching(/не удалось прочитать файл как XLSX/i) });
+    expect(readAppData().smetaExchanges.map((item) => item.id)).toEqual(existingIds);
+  });
+
   it("imports recognized positions and returns the updated exchange history", async () => {
     const existingCount = readAppData().smetaExchanges.length;
     const response = await postFile(await workbookFile(true, "estimate.xlsx"));
