@@ -129,7 +129,17 @@ export default function ProizvodstvoPage() {
   );
   const periodPlan = planSlice.plan;
   const sliceVariance = periodFact - periodPlan;
-  const varianceKey = `${plan?.id ?? ""}:${period}:${date}:${periodPlan}:${periodFact}`;
+  const varianceKey = JSON.stringify({
+    planId: plan?.id,
+    period,
+    date,
+    periodPlan,
+    periodFact,
+    daily: daily.map((fact) => [fact.id, fact.date, fact.workName, fact.quantity, fact.comment]),
+    supplies: (data.supplyRequests ?? [])
+      .filter((supply) => supply.procurementId === plan?.procurementId)
+      .map((supply) => [supply.id, supply.needBy, supply.status, supply.materialName, supply.workName]),
+  });
 
   async function submitDaily(withPhoto: boolean) {
     if (!plan || savingDailyRef.current) return;
@@ -397,7 +407,7 @@ export default function ProizvodstvoPage() {
                     {varianceLoading ? "ИИ проверяет записи…" : "Разобрать отклонение с ИИ"}
                   </Button>
                   <span className="text-xs text-[var(--tk-muted)]">
-                    Платный запрос. Используются только дневные комментарии и статусы поставок.
+                    Платный запрос в настроенную модель. Используются только дневные комментарии и статусы поставок.
                   </span>
                 </div>
                 {varianceReport?.key === varianceKey ? (

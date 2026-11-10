@@ -74,7 +74,7 @@ function collectSources(daily: DailyFact[], supplies: SupplyRequest[], asOfDate:
     .map((fact) => ({
       id: `fact-${fact.id}`,
       kind: "daily_comment",
-      text: `Дата: ${fact.date}; работа: ${fact.workName}; комментарий: ${fact.comment!.trim()}`,
+      text: `Дата: ${fact.date}; работа: ${fact.workName.slice(0, 120)}; комментарий: ${fact.comment!.trim().slice(0, 700)}`,
     }));
   const delayed: Source[] = supplies
     .filter((supply) => supply.needBy < asOfDate && !["delivered", "accepted", "cancelled"].includes(supply.status))
@@ -82,7 +82,7 @@ function collectSources(daily: DailyFact[], supplies: SupplyRequest[], asOfDate:
     .map((supply) => ({
       id: `supply-${supply.id}`,
       kind: "supplier_delay",
-      text: `Материал: ${supply.materialName}; требуется к ${supply.needBy}; статус: ${supply.status}; работа: ${supply.workName ?? "не связана"}`,
+      text: `Материал: ${supply.materialName.slice(0, 120)}; требуется к ${supply.needBy}; статус: ${supply.status}; работа: ${(supply.workName ?? "не связана").slice(0, 120)}`,
     }));
   return [...comments, ...delayed];
 }
