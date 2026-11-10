@@ -374,6 +374,50 @@ describe("t22u closeout remediable", () => {
     expect(readAppData().supplyRequests!.find((item) => item.id === supply.id)?.qtyDelivered).toBe(35);
   });
 
+  it("daily production API preserves GPR resource links and rejects invalid fact quantities", async () => {
+    const { POST } = await import("@/app/api/proizvodstvo/route");
+    const postFact = (resourceLines: unknown[]) => POST(new Request("http://local/api/proizvodstvo", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${createSession("u-obj")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        action: "dailyFact",
+        planFactId: "pf-1",
+        fact: {
+          factId: "df-api-resource-link",
+          date: "2026-11-10",
+          workName: "Демонтаж перегородок",
+          unit: "м²",
+          quantity: 1,
+          resourceLines: [
+            { kind: "material", sourceResourceId: "gpr-material-1", name: "Щебень", unit: "т", planQty: 2, factQty: 1 },
+            ...resourceLines,
+          ],
+        },
+      }),
+    }));
+
+    const accepted = await postFact([]);
+    expect(accepted.status).toBe(200);
+    const saved = readAppData().planFacts.find((item) => item.id === "pf-1")!
+      .dailyFacts?.find((item) => item.id === "df-api-resource-link");
+    expect(saved?.resourceLines?.[0]).toMatchObject({
+      sourceResourceId: "gpr-material-1",
+      kind: "material",
+      factQty: 1,
+    });
+
+    const rejected = await postFact([
+      { kind: "material", sourceResourceId: "gpr-material-2", name: "Песок", unit: "т", planQty: 2, factQty: -1 },
+    ]);
+    expect(rejected.status).toBe(400);
+    expect(readAppData().planFacts.find((item) => item.id === "pf-1")!
+      .dailyFacts?.find((item) => item.id === "df-api-resource-link")?.resourceLines)
+      .toEqual(saved?.resourceLines);
+  });
+
   it("GPR and planfact xlsx reopen with formulas + incompleteness sheet", async () => {
     recomputeCalculationCost("u-smet", "c-1");
     const g = readAppData().schedules[0];

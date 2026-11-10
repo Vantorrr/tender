@@ -15,41 +15,48 @@ import { entryDisplayFact, sumDailyQty } from "@/lib/plan-fact-agg";
 
 const SECTIONS = ["proizvodstvo", "zakupki"] as const;
 
-function parseResourceLines(raw: unknown): DailyResourceLine[] | undefined {
+function parseResourceLines(raw: unknown): DailyResourceLine[] | undefined | null {
   if (raw == null || raw === "") return undefined;
   let parsed: unknown = raw;
   if (typeof raw === "string") {
     try {
       parsed = JSON.parse(raw);
     } catch {
-      return undefined;
+      return null;
     }
   }
-  if (!Array.isArray(parsed)) return undefined;
-  return parsed
-    .map((row) => {
-      if (!row || typeof row !== "object") return null;
-      const r = row as Record<string, unknown>;
-      const kind = String(r.kind ?? "other") as DailyResourceLine["kind"];
-      return {
-        kind:
-          kind === "labor" ||
-          kind === "material" ||
-          kind === "equipment" ||
-          kind === "bus" ||
-          kind === "other"
-            ? kind
-            : "other",
-        name: String(r.name ?? ""),
-        unit: String(r.unit ?? ""),
-        planQty: Number(r.planQty) || 0,
-        factQty:
-          r.factQty == null || r.factQty === ""
-            ? null
-            : Number(r.factQty) || 0,
-      } satisfies DailyResourceLine;
-    })
-    .filter((x): x is DailyResourceLine => Boolean(x && x.name));
+  if (!Array.isArray(parsed)) return null;
+  const lines: DailyResourceLine[] = [];
+  const kinds = new Set(["labor", "material", "equipment", "bus", "other"]);
+  for (const row of parsed) {
+    if (!row || typeof row !== "object") return null;
+    const r = row as Record<string, unknown>;
+    const kind = String(r.kind ?? "other");
+    const name = String(r.name ?? "").trim();
+    const unit = String(r.unit ?? "").trim();
+    const planQty = Number(r.planQty);
+    const factQty = r.factQty == null || r.factQty === "" ? null : Number(r.factQty);
+    const sourceResourceId = r.sourceResourceId == null || r.sourceResourceId === ""
+      ? undefined
+      : String(r.sourceResourceId);
+    if (
+      !kinds.has(kind) ||
+      !name ||
+      !unit ||
+      !Number.isFinite(planQty) ||
+      planQty < 0 ||
+      (factQty != null && (!Number.isFinite(factQty) || factQty < 0))
+    ) return null;
+    lines.push({
+      kind: kind as DailyResourceLine["kind"],
+      sourceResourceId,
+      name,
+      unit,
+      planQty,
+      factQty,
+    });
+  }
+  return lines;
 }
 
 export async function GET(req: Request) {
@@ -86,6 +93,10 @@ export async function POST(req: Request) {
       if (!planFactId || !date || !workName) {
         return json({ error: "Нужны planFactId, date, workName" }, 400);
       }
+      const resourceLines = parseResourceLines(form.get("resourceLines"));
+      if (resourceLines === null) {
+        return json({ error: "Проверьте фактические количества ресурсов: значения должны быть неотрицательными числами" }, 400);
+      }
       const photos: Array<{
         id: string;
         fileName: string;
@@ -115,7 +126,7 @@ export async function POST(req: Request) {
         people: form.get("people") ? Number(form.get("people")) : undefined,
         equipment: String(form.get("equipment") ?? "") || undefined,
         materialsNote: String(form.get("materialsNote") ?? "") || undefined,
-        resourceLines: parseResourceLines(form.get("resourceLines")),
+        resourceLines,
         comment:
           String(form.get("comment") ?? form.get("caption") ?? "") ||
           undefined,
@@ -212,7 +223,16 @@ export async function POST(req: Request) {
       return json(getBootstrap(user));
     }
     if (body.action === "dailyFact" && body.planFactId && body.fact) {
-      addDailyProductionFact(user.id, body.planFactId, body.fact);
+      const resourceLines = body.fact.resourceLines == null
+        ? undefined
+        : parseResourceLines(body.fact.resourceLines);
+      if (resourceLines === null) {
+        return json({ error: "Проверьте фактические количества ресурсов: значения должны быть неотрицательными числами" }, 400);
+      }
+      addDailyProductionFact(user.id, body.planFactId, {
+        ...body.fact,
+        resourceLines,
+      });
       return json(getBootstrap(user));
     }
     return json({ error: "Некорректный запрос" }, 400);
