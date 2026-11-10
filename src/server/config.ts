@@ -24,7 +24,7 @@ export const config = {
   contract: "TMA361",
   openRouterKey: process.env.OPENROUTER_API_KEY ?? "",
   openRouterModel: process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini",
-  /** Paid LLM on plain upload — off by default; only explicit analysis action. */
+  /** Paid full-package LLM analysis after an upload — off by default. */
   openRouterOnUpload:
     process.env.OPENROUTER_ON_UPLOAD === "1" ||
     process.env.OPENROUTER_ON_UPLOAD === "true",

@@ -5,6 +5,7 @@ import {
   refreshProcurementAnalytics,
   updateDocument,
 } from "@/server/repo";
+import { refreshAndMaybeAnalyzePackage } from "@/server/upload-package-analysis";
 import { analyzeUpload } from "@/server/grand-smeta";
 import { config } from "@/server/config";
 import {
@@ -183,7 +184,7 @@ export async function POST(req: Request) {
             status: "trebuet_proverki",
           });
         }
-        refreshProcurementAnalytics(user.id, procurementId);
+        await refreshAndMaybeAnalyzePackage(user.id, procurementId);
         return json({
           ...getBootstrap(user),
           archive: {
@@ -237,7 +238,7 @@ export async function POST(req: Request) {
         fileSize: stored.fileSize,
         prepared,
       });
-      refreshProcurementAnalytics(user.id, procurementId);
+      await refreshAndMaybeAnalyzePackage(user.id, procurementId);
       return json(getBootstrap(user));
     }
 
