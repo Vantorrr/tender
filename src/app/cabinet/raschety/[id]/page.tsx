@@ -39,6 +39,7 @@ import {
 } from "@/lib/calc-math";
 import { compareCalculations } from "@/lib/calc-compare";
 import type { NorthernInputs } from "@/lib/cost-engine";
+import type { CalcCompareAiReport } from "@/server/calc-compare-ai";
 
 function NorthernCostEditor({
   calculationId,
@@ -149,6 +150,11 @@ export default function RaschetDetailPage() {
   const [rateKey, setRateKey] = useState<string>("price");
   const [filter, setFilter] = useState("");
   const [showDirAdd, setShowDirAdd] = useState(false);
+  const [aiCompare, setAiCompare] = useState<{
+    signature: string;
+    report: CalcCompareAiReport;
+  } | null>(null);
+  const [aiCompareLoading, setAiCompareLoading] = useState(false);
 
   const calc = user
     ? data.calculations.find(
@@ -215,6 +221,7 @@ export default function RaschetDetailPage() {
     calc.kind === "resource_draft"
       ? compareCalculations(paired, calc)
       : compareCalculations(calc, paired);
+  const compareSignature = JSON.stringify(compare);
 
   const totals = calculationTotals(calc);
   const originalTotals = paired ? calculationTotals(paired) : null;
@@ -1158,6 +1165,71 @@ export default function RaschetDetailPage() {
               : "нет данных"}
           </div>
         </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Button
+            variant="outline"
+            disabled={!paired || aiCompareLoading}
+            title="Отправляет только строки сравнения в платную модель; расчётные суммы модель не меняет"
+            onClick={async () => {
+              setAiCompareLoading(true);
+              try {
+                const response = await api<{ report: CalcCompareAiReport }>(
+                  "/api/raschety",
+                  {
+                    method: "POST",
+                    body: JSON.stringify({ action: "analyzeCompare", calculationId: calc!.id }),
+                  }
+                );
+                setAiCompare({ signature: compareSignature, report: response.report });
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : "Не удалось проанализировать сравнение");
+              } finally {
+                setAiCompareLoading(false);
+              }
+            }}
+          >
+            {aiCompareLoading ? "ИИ проверяет расхождения…" : "Получить комментарий ИИ"}
+          </Button>
+          <span className="text-xs text-[var(--tk-muted)]">
+            Платный запрос. AI поясняет только строки сравнения; суммы считает система.
+          </span>
+        </div>
+        {aiCompare?.signature === compareSignature ? (
+          <div className="mt-4 rounded-lg border border-[var(--tk-line)] bg-stone-50 p-4" data-testid="calc-compare-ai">
+            <div className="font-medium">
+              {aiCompare.report.overall === "no_material_differences"
+                ? "Существенных различий по имеющимся полям нет"
+                : aiCompare.report.overall === "insufficient_data"
+                  ? "Недостаточно данных для вывода"
+                  : "Требуется проверка расхождений"}
+            </div>
+            <p className="mt-1 text-sm">{aiCompare.report.summary}</p>
+            {aiCompare.report.findings.length ? (
+              <ul className="mt-3 space-y-2 text-sm">
+                {aiCompare.report.findings.map((finding) => {
+                  const rowIndex = Number(finding.rowId.replace("row-", "")) - 1;
+                  const row = compare.rows[rowIndex];
+                  return (
+                    <li key={finding.rowId}>
+                      <span className="font-medium">{row?.code} · {row?.name}: </span>
+                      {finding.text}
+                      <span className="mt-1 block text-xs text-[var(--tk-muted)]">
+                        Основание: «{finding.sourceExcerpt}»
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="mt-2 text-sm text-[var(--tk-muted)]">
+                Нет замечаний с проверяемой цитатой из строк сравнения.
+              </p>
+            )}
+            <p className="mt-3 text-xs text-[var(--tk-muted)]">
+              {aiCompare.report.disclaimer}
+            </p>
+          </div>
+        ) : null}
         <div className="mt-4 max-h-72 overflow-auto rounded-lg border">
           <Table>
             <TableHeader>
