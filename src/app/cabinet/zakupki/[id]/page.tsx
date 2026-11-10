@@ -21,12 +21,12 @@ import { DateInputRu } from "@/components/date-input-ru";
 import { api } from "@/lib/api";
 import { DocumentWebPreview } from "@/components/document-web-preview";
 import { cleanLabel } from "@/lib/display";
-import { formatDate, formatDateTime, formatMoney } from "@/lib/format";
+import { formatDate, formatDateTime, formatMoney, formatNumber } from "@/lib/format";
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
 import { WORK_TYPES } from "@/lib/pipeline";
 import { userHasSection } from "@/lib/acl";
 import { REVIEW_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
-import type { DocumentCategory, ReviewStatus, SupplyStatus } from "@/lib/types";
+import type { Citation, DocumentCategory, ReviewStatus, SupplyStatus } from "@/lib/types";
 import { useStore } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 
@@ -39,6 +39,10 @@ const SUPPLY_RU: Record<SupplyStatus, string> = {
   accepted: "Принято",
   cancelled: "Отменено",
 };
+
+function citationsMatching(citations: Citation[], pattern: RegExp) {
+  return citations.filter((citation) => pattern.test(citation.text));
+}
 
 export default function ZakupkaDetailPage() {
   const params = useParams<{ id: string }>();
@@ -89,6 +93,15 @@ export default function ZakupkaDetailPage() {
         ? data.documents.filter((d) => d.procurementId === procurement.id)
         : [],
     [data.documents, procurement]
+  );
+  const estimateRows = useMemo(
+    () => docs
+      .filter((document) => document.category === "estimate" || /smeta|смет/i.test(document.fileName))
+      .flatMap((document) => (document.estimatePositions ?? []).map((position) => ({
+        ...position,
+        sourceFile: document.fileName,
+      }))),
+    [docs]
   );
   const calc = procurement?.calculationId
     ? data.calculations.find((c) => c.id === procurement.calculationId)
@@ -638,6 +651,73 @@ export default function ZakupkaDetailPage() {
             </p>
             {analytics ? (
               <>
+                <section className="mb-4 space-y-3" aria-label="Ключевые условия закупки">
+                  <h3 className="text-sm font-semibold">Ключевые условия</h3>
+                  <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                    <div className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3">
+                      <dt className="text-xs text-[var(--tk-muted)]">Заказчик</dt>
+                      <dd className="mt-1 text-sm font-medium">{procurement.customer || "Нет данных"}</dd>
+                    </div>
+                    <div className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3">
+                      <dt className="text-xs text-[var(--tk-muted)]">Срок подачи</dt>
+                      <dd className="mt-1 text-sm font-medium">{formatDateTime(procurement.deadline)}</dd>
+                    </div>
+                    <div className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3 sm:col-span-2">
+                      <dt className="text-xs text-[var(--tk-muted)]">Предмет закупки</dt>
+                      <dd className="mt-1 text-sm font-medium">{procurement.title}</dd>
+                      {procurement.workType ? <dd className="mt-1 text-xs text-[var(--tk-muted)]">Вид работ: {procurement.workType}</dd> : null}
+                    </div>
+                  </dl>
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    {([
+                      { label: "Оплата и аванс", citations: citationsMatching(analytics.citations, /оплат|аванс|отсроч|расч[её]т[а-яё]* по контракту/i) },
+                      { label: "Штрафы и неустойки", citations: citationsMatching(analytics.citations, /штраф|пени|неустойк|санкци/i) },
+                    ] as const).map((group) => (
+                      <div key={group.label} className="rounded-lg border border-[var(--tk-line)] p-3">
+                        <h4 className="text-sm font-medium">{group.label}</h4>
+                        {group.citations.length ? (
+                          <ul className="mt-2 space-y-2">
+                            {group.citations.slice(0, 4).map((citation) => (
+                              <li key={citation.id} className="text-sm leading-relaxed">
+                                <blockquote>«{citation.text}»</blockquote>
+                                <p className="mt-1 text-xs text-[var(--tk-muted)]">
+                                  {citation.sourceFile}{citation.page ? `, стр. ${citation.page}` : ""}{citation.paragraph ? `, абз. ${citation.paragraph}` : ""}{citation.sheet ? `, лист ${citation.sheet}` : ""}{citation.cell ? `, ${citation.cell}` : ""}
+                                </p>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : <p className="mt-2 text-sm text-[var(--tk-muted)]">В извлечённых цитатах не найдено. Проверьте оригинал договора.</p>}
+                        {group.citations.length > 4 ? <p className="mt-2 text-xs text-[var(--tk-muted)]">Показаны первые 4 из {group.citations.length} цитат; полный список ниже.</p> : null}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="rounded-lg border border-[var(--tk-line)] p-3">
+                    <h4 className="text-sm font-medium">Объём работ из загруженной сметы</h4>
+                    {estimateRows.length ? (
+                      <>
+                        <p className="mt-1 text-xs text-[var(--tk-muted)]">Распознано позиций: {estimateRows.length}. Значения приведены из файла; суммы по разным единицам не складываются.</p>
+                        <div className="mt-2 max-h-80 overflow-auto rounded-md border border-[var(--tk-line)]">
+                          <table className="w-full table-fixed text-left text-xs">
+                            <thead className="sticky top-0 bg-stone-100 text-[var(--tk-muted)]">
+                              <tr><th className="w-[42%] p-2">Работа / ресурс</th><th className="w-[13%] p-2">Количество</th><th className="w-[8%] p-2">Ед.</th><th className="w-[17%] p-2">Цена</th><th className="w-[20%] p-2">Смета</th></tr>
+                            </thead>
+                            <tbody>
+                              {estimateRows.map((position) => (
+                                <tr key={`${position.id}-${position.sourceFile}`} className="border-t border-[var(--tk-line)]">
+                                  <td className="break-words p-2"><span className="font-medium">{position.name}</span>{position.code ? <span className="ml-2 text-[var(--tk-muted)]">{position.code}</span> : null}</td>
+                                  <td className="break-words p-2 tabular-nums">{formatNumber(position.quantity)}</td>
+                                  <td className="p-2">{position.unit}</td>
+                                  <td className="p-2 tabular-nums">{formatMoney(position.rate)}</td>
+                                  <td className="break-words p-2 text-[var(--tk-muted)]">{position.sourceFile}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </>
+                    ) : <p className="mt-2 text-sm text-[var(--tk-muted)]">Сметные объёмы не распознаны. Прикрепите смету или проверьте исходный файл.</p>}
+                  </div>
+                </section>
                 {analytics.quality ? (
                   <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 rounded-lg border border-[var(--tk-line)] bg-stone-50 px-3 py-2 text-xs" data-testid="analytics-quality">
                     <span>{analytics.quality.status === "evidence_backed" ? "Источники разобраны" : analytics.quality.status === "needs_review" ? "Нужна проверка источников" : "Недостаточно источников"}</span>
