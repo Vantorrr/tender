@@ -57,6 +57,11 @@ function createDailyFactId() {
 export default function ProizvodstvoPage() {
   const { data, user, updatePlanFact, refresh, orgProcurements } = useStore();
   const [pfId, setPfId] = useState("");
+  const [requestedPlanId] = useState(() =>
+    typeof window === "undefined"
+      ? ""
+      : new URLSearchParams(window.location.search).get("planFactId") ?? ""
+  );
   const [period, setPeriod] = useState<PeriodMode>("cum");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [qty, setQty] = useState("1");
@@ -79,7 +84,9 @@ export default function ProizvodstvoPage() {
     () => (user ? data.planFacts.filter((p) => p.orgId === user.orgId) : []),
     [data.planFacts, user]
   );
-  const activeId = pfId || plans[0]?.id || "";
+  const activeId = pfId || (plans.some((item) => item.id === requestedPlanId)
+    ? requestedPlanId
+    : plans[0]?.id || "");
   const plan = plans.find((p) => p.id === activeId);
   const object = objects.find((o) => o.id === plan?.objectId);
   const procurement = orgProcurements.find((p) => p.id === plan?.procurementId);

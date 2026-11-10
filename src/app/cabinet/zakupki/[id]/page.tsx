@@ -64,6 +64,7 @@ export default function ZakupkaDetailPage() {
   const procurement = orgProcurements.find((p) => p.id === params.id);
   const canMoney = user ? userHasSection(user, "dengi") : false;
   const canGpr = user ? userHasSection(user, "gpr") : false;
+  const canProduction = user ? userHasSection(user, "proizvodstvo") : false;
   const canRisks = user ? userHasSection(user, "riski") : false;
   const canDocs = user ? userHasSection(user, "dokumenty") : false;
   const fileRef = useRef<HTMLInputElement>(null);
@@ -418,38 +419,30 @@ export default function ZakupkaDetailPage() {
                 <h2 className="font-[family-name:var(--font-display)] text-base">
                   Цепочка проекта
                 </h2>
-                <ul className="mt-3 space-y-1 text-sm">
-                  <li>Документы: {docs.length}</li>
-                  <li>
-                    Черновик:{" "}
-                    {calc ? (
-                      <Link
-                        className="underline text-[var(--tk-copper-deep)]"
-                        href={`/cabinet/raschety/${calc.id}`}
-                      >
-                        {calc.title}
-                      </Link>
-                    ) : (
-                      "нет"
-                    )}
-                  </li>
-                  <li>
-                    Оригинал сметы:{" "}
-                    {original ? (
-                      <Link
-                        className="underline text-[var(--tk-copper-deep)]"
-                        href={`/cabinet/raschety/${original.id}`}
-                      >
-                        immutable
-                      </Link>
-                    ) : (
-                      "нет"
-                    )}
-                  </li>
-                  <li>ГПР: {gpr ? "есть" : "нет"}</li>
-                  <li>Деньги: {money ? "есть" : "нет"}</li>
-                  <li>Риски: {risk ? "есть" : "нет"}</li>
-                </ul>
+                <ol className="mt-3 space-y-2" aria-label="Этапы проекта">
+                  {[
+                    { label: "Заявка", detail: `${procurement.number} · ${docs.length} док.`, ready: true, href: `/cabinet/zakupki/${procurement.id}` },
+                    { label: "Расчёт", detail: calc?.title ?? "Черновик ещё не создан", ready: Boolean(calc), href: calc ? `/cabinet/raschety/${calc.id}` : undefined },
+                    { label: "ГПР", detail: gpr ? `${gpr.stages.length} этапов · версия ${gpr.version}` : "График ещё не создан", ready: Boolean(gpr), href: gpr && canGpr ? `/cabinet/gpr/${gpr.id}` : undefined },
+                    { label: "Производство", detail: procurement.lifecycle === "production" ? "Контракт передан в производство" : "Ожидает отметки о победе", ready: procurement.lifecycle === "production", href: procurement.planFactId && canProduction ? `/cabinet/proizvodstvo?planFactId=${encodeURIComponent(procurement.planFactId)}` : undefined },
+                  ].map((step, index) => (
+                    <li key={step.label} className="flex items-start gap-3 rounded-lg border border-[var(--tk-line)] px-3 py-2">
+                      <span className={`mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold ${step.ready ? "bg-emerald-100 text-emerald-800" : "bg-stone-100 text-[var(--tk-muted)]"}`} aria-label={step.ready ? "Готово" : "Не создано"}>
+                        {step.ready ? "✓" : index + 1}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm font-medium">{step.href ? <Link className="underline decoration-[var(--tk-copper-deep)] underline-offset-2" href={step.href}>{step.label}</Link> : step.label}</span>
+                        <span className="block break-words text-xs text-[var(--tk-muted)]">{step.detail}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ol>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                  <div className="rounded-md bg-stone-50 px-2 py-1.5">Оригинал сметы: {original ? <Link className="underline" href={`/cabinet/raschety/${original.id}`}>открыть</Link> : "нет"}</div>
+                  <div className="rounded-md bg-stone-50 px-2 py-1.5">Деньги: {money ? "связаны" : "не заведены"}</div>
+                  <div className="rounded-md bg-stone-50 px-2 py-1.5">Риски: {risk ? "карточка есть" : "не заведены"}</div>
+                  <div className="rounded-md bg-stone-50 px-2 py-1.5">Поставки: {supplies.length}</div>
+                </div>
                 <Button
                   className="mt-4 w-full"
                   variant="outline"
