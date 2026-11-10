@@ -6,12 +6,14 @@ import { PDFDocument, rgb } from "pdf-lib";
 import {
   calculationTotals,
   positionLineSum,
+  roundMoney,
 } from "@/lib/calc-math";
 import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
 import { resolveResourceDimensions } from "@/lib/resource-dimensions";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
 import { readAppData } from "@/server/db";
 import { estimateKey, parseGrandBuffer } from "@/server/grand-smeta";
+import { stageDayList } from "@/lib/plan-from-gpr";
 
 function columnLetter(column: number): string {
   let n = column;
@@ -542,6 +544,86 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
     }
     row.border = { bottom: { style: "hair", color: { argb: "FFD9E1E7" } } };
   }
+
+  // Spreadsheet closer to the client's familiar A:Z resource calculation grid.
+  const clientSheet = wb.addWorksheet("Клиентский ресурсный график");
+  const clientHeaders = [
+    "№", "Раздел", "Наименование работ / ресурс", "Ед.", "Объём", "Длит., раб.дн.", "Начало", "Окончание", "Тип строки", "Категория", "Тарифная позиция / модель", "Кол-во", "Тариф БЕЗ НР 40%, руб.", "Часов/смена", "Смен/сутки", "Дни участия", "Часы Q", "Сумма R, руб.", "Материалы S", "Люди T", "Техника U", "Прямые V", "НР W", "С/с X", "Прибыль Y", "Итого Z",
+  ];
+  clientSheet.addRow(["Ресурсный график и калькуляция стоимости работ"]);
+  clientSheet.addRow([]);
+  clientSheet.addRow(["ПАРАМЕТР", "ЗНАЧЕНИЕ", "", "РАСЧЁТ", "ЗНАЧЕНИЕ", "", "ИТОГОВАЯ ФОРМУЛА", "ЗНАЧЕНИЕ"]);
+  clientSheet.addRow(["Стоимость 1 чел.-часа, руб.", rsParams.personHourRate, "", "Прямые затраты", calc?.costSummary?.resourceSlices?.direct ?? "неполные данные", "", "НР", rsParams.overheadRate]);
+  clientSheet.addRow(["Смен персонала в сутки", rsParams.personnelShiftsPerDay, "", "Стоимость МТР", calc?.costSummary?.resourceSlices?.materials ?? "неполные данные", "", "Прибыль", rsParams.profitMarkupOnCostWithOh]);
+  clientSheet.addRow(["Продолжительность смены, ч", rsParams.hoursPerShift, "", "Затраты на людей", calc?.costSummary?.resourceSlices?.labor ?? "неполные данные", "", "ИТОГО", "X + Y"]);
+  clientSheet.addRow(["Смен техники в сутки", rsParams.equipmentShiftsPerDay, "", "Затраты на технику", calc?.costSummary?.resourceSlices?.equipment ?? "неполные данные"]);
+  clientSheet.addRow(["Накладные расходы", rsParams.overheadRate]);
+  clientSheet.addRow(["Прибыль", rsParams.profitMarkupOnCostWithOh]);
+  clientSheet.addRow([]);
+  clientSheet.addRow([]);
+  const clientHeader = clientSheet.addRow(clientHeaders);
+  clientHeader.height = 36;
+  clientHeader.font = { bold: true, color: { argb: "FFFFFFFF" } };
+  clientHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF183A57" } };
+  clientHeader.alignment = { vertical: "middle", wrapText: true };
+  clientSheet.views = [{ state: "frozen", ySplit: 12 }];
+  clientSheet.autoFilter = { from: "A12", to: "Z12" };
+  clientSheet.properties.outlineLevelRow = 2;
+  clientSheet.properties.outlineProperties = { summaryBelow: true, summaryRight: true };
+  const clientLabel: Record<string, string> = { labor: "Люди", equipment: "Техника", bus: "Транспорт", material: "Материалы", other: "Прочее" };
+  const stages = g.stages.slice().sort((a, b) => a.sequence - b.sequence);
+  const firstStart = stages.map((stage) => stage.start).filter(Boolean).sort()[0];
+  for (const stage of stages) {
+    const resources = stage.resources ?? [];
+    const resolved = resources.map((resource) => ({ resource, dim: resolveResourceDimensions(resource, stage, rsParams) }));
+    const buckets = ["labor", "equipment", "bus", "material", "other"] as const;
+    const bucketAmount = (kind: typeof buckets[number]) => {
+      const items = resolved.filter((item) => item.resource.kind === kind);
+      return items.some((item) => item.dim.amount == null) ? null : roundMoney(items.reduce((sum, item) => sum + (item.dim.amount ?? 0), 0));
+    };
+    const materials = bucketAmount("material");
+    const labor = bucketAmount("labor");
+    const equipmentItems = [...resolved.filter((item) => item.resource.kind === "equipment"), ...resolved.filter((item) => item.resource.kind === "bus")];
+    const equipment = equipmentItems.some((item) => item.dim.amount == null) ? null : roundMoney(equipmentItems.reduce((sum, item) => sum + (item.dim.amount ?? 0), 0));
+    const complete = resources.length > 0 && resolved.every((item) => item.dim.amount != null);
+    const direct = complete ? roundMoney((materials ?? 0) + (labor ?? 0) + (equipment ?? 0)) : null;
+    const overhead = direct == null ? null : roundMoney(direct * rsParams.overheadRate);
+    const cost = direct == null ? null : roundMoney(direct + (overhead ?? 0));
+    const profit = cost == null ? null : roundMoney(cost * rsParams.profitMarkupOnCostWithOh);
+    const total = cost == null ? null : roundMoney(cost + (profit ?? 0));
+    const work = clientSheet.addRow([
+      stage.sequence, "", stage.name, "", stage.planVolume ?? "", stageDayList(stage, g.calendar).length,
+      firstStart && stage.start ? String(Math.round((Date.parse(`${stage.start}T00:00:00Z`) - Date.parse(`${firstStart}T00:00:00Z`)) / 86400000) + 1) : "",
+      firstStart && stage.end ? String(Math.round((Date.parse(`${stage.end}T00:00:00Z`) - Date.parse(`${firstStart}T00:00:00Z`)) / 86400000) + 1) : "",
+      complete ? "РАБОТА" : "РАБОТА · ЧАСТИЧНО", "", "", "", "", "", "", "", "", "",
+      materials ?? "", labor ?? "", equipment ?? "", direct ?? "", overhead ?? "", cost ?? "", profit ?? "", total ?? "",
+    ]);
+    work.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    work.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF183A57" } };
+    for (const kind of buckets) {
+      const items = resolved.filter((item) => item.resource.kind === kind);
+      if (!items.length) continue;
+      const group = clientSheet.addRow(["", "", `↳ ${clientLabel[kind]}`, "", `${items.length} поз.`, "", "", "", "ГРУППА", clientLabel[kind]]);
+      group.outlineLevel = 1;
+      group.font = { bold: true, color: { argb: "FF405466" } };
+      group.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEAF0F4" } };
+      for (const item of items) {
+        const { resource, dim } = item;
+        const row = clientSheet.addRow(["", "", resource.name, resource.unit, "", "", "", "", "РЕСУРС", clientLabel[kind], resource.sourceKey ?? "", dim.sourceQty, dim.rate ?? "", dim.hoursPerShift ?? "", dim.shiftsPerDay ?? "", dim.days ?? "", dim.hours ?? "", dim.amount ?? "нет ставки"]);
+        row.outlineLevel = 2;
+        row.getCell(3).alignment = { indent: 2, vertical: "middle", wrapText: true };
+      }
+    }
+  }
+  clientSheet.columns = [7, 18, 48, 12, 15, 16, 12, 12, 22, 18, 30, 13, 19, 14, 13, 14, 13, 18, 18, 18, 18, 18, 18, 18, 18, 18].map((width) => ({ width }));
+  for (let index = 13; index <= clientSheet.rowCount; index += 1) {
+    const row = clientSheet.getRow(index);
+    row.height = 21;
+    row.alignment = { vertical: "middle", wrapText: true };
+    row.border = { bottom: { style: "hair", color: { argb: "FFD9E1E7" } } };
+  }
+  for (const column of [13, 18, 19, 20, 21, 22, 23, 24, 25, 26]) clientSheet.getColumn(column).numFmt = '#,##0.00;[Red]-#,##0.00;–';
+  for (const column of [5, 6, 12, 14, 15, 16, 17]) clientSheet.getColumn(column).numFmt = '#,##0.###;[Red]-#,##0.###;–';
 
   const cs = calc?.costSummary;
   const totalsPartial = Boolean(

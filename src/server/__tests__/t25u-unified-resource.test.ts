@@ -279,6 +279,22 @@ describe("t25u shared dimensions (P1 #1)", () => {
     expect(tree.views[0]).toMatchObject({ state: "frozen", ySplit: 1 });
   });
 
+  it("exports the client A:Z resource grid with nested material rows", async () => {
+    const buf = await buildGprXlsx(T25U_TEST.scheduleId);
+    const wb = await loadXlsx(buf);
+    const sheet = wb.getWorksheet("Клиентский ресурсный график")!;
+    expect(sheet.getRow(12).getCell(1).value).toBe("№");
+    expect(sheet.getRow(12).getCell(26).value).toBe("Итого Z");
+    const rows: ExcelJS.Row[] = [];
+    sheet.eachRow((row) => rows.push(row));
+    const work = rows.findIndex((row) => String(row.getCell(3).value) === "Мобилизация [TEST]");
+    expect(work).toBeGreaterThanOrEqual(0);
+    expect(String(rows[work].getCell(9).value)).toMatch(/^РАБОТА/);
+    expect(rows[work + 1].getCell(9).value).toBe("ГРУППА");
+    expect(rows[work + 1].getCell(10).value).toBe("Люди");
+    expect(sheet.views[0]).toMatchObject({ state: "frozen", ySplit: 12 });
+  });
+
   it("materials never enter Q-hours", () => {
     const stages = completeFixtureStages();
     const build = stagesToResourceLines(stages);
