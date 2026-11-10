@@ -3,6 +3,7 @@ import { createSession } from "@/server/auth";
 import {
   closeDb,
   ensureReady,
+  mutateAppData,
   readAppData,
 } from "@/server/db";
 import { buildGprXlsx, buildPlanFactXlsx } from "@/server/export";
@@ -493,6 +494,28 @@ describe("t22u closeout remediable", () => {
     expect(readAppData().planFacts.find((item) => item.id === "pf-1")!
       .dailyFacts?.find((item) => item.id === "df-api-resource-link")?.resourceLines)
       .toEqual(saved?.resourceLines);
+  });
+
+  it("production variance API refuses to compare mixed physical units as one total", async () => {
+    mutateAppData((data) => {
+      const plan = data.planFacts.find((item) => item.id === "pf-1")!;
+      plan.entries = [
+        { id: "entry-m", workName: "Трубопровод", unit: "м", plan: 10, fact: 2, contractRemaining: 8 },
+        { id: "entry-pc", workName: "Опоры", unit: "шт", plan: 5, fact: 1, contractRemaining: 4 },
+      ];
+      return data;
+    });
+    const { POST } = await import("@/app/api/proizvodstvo/route");
+    const res = await POST(new Request("http://local/api/proizvodstvo", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${createSession("u-obj")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ action: "analyzeVariance", planFactId: "pf-1", period: "cum", date: "2026-11-10" }),
+    }));
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toMatch(/разных единиц/);
   });
 
   it("GPR and planfact xlsx reopen with formulas + incompleteness sheet", async () => {

@@ -193,6 +193,12 @@ export async function POST(req: Request) {
       const data = getBootstrap(user).data;
       const plan = data.planFacts.find((item) => item.id === body.planFactId && item.orgId === user.orgId);
       if (!plan) return json({ error: "План/факт не найден" }, 404);
+      const planUnits = new Set(plan.entries.map((entry) => entry.unit.trim()).filter(Boolean));
+      if (planUnits.size > 1 || plan.entries.some((entry) => !entry.unit.trim())) {
+        return json({
+          error: "Общий план/факт нельзя свести: работы заданы в разных единицах. Сравнивайте позиции по строкам.",
+        }, 422);
+      }
       const period: PlanSliceMode = ["day", "month", "period", "cum"].includes(body.period ?? "")
         ? body.period!
         : "day";

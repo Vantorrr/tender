@@ -159,6 +159,10 @@ export default function ProizvodstvoPage() {
         { plan: 0, fact: 0, remain: 0 }
       )
     : { plan: 0, fact: 0, remain: 0 };
+  const planUnits = [...new Set((plan?.entries ?? []).map((entry) => entry.unit.trim()).filter(Boolean))];
+  const hasMixedPlanUnits = Boolean(plan?.entries.length) && (
+    planUnits.length > 1 || plan!.entries.some((entry) => !entry.unit.trim())
+  );
 
   const periodFact =
     period === "day"
@@ -383,64 +387,71 @@ export default function ProizvodstvoPage() {
           {plan ? (
             <>
               <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  План договора (всего): {formatNumber(totals.plan)}
-                </div>
-                <div
-                  className="rounded-xl border bg-white/80 p-3 text-sm"
-                  data-testid="period-plan-from-gpr"
-                >
-                  План (
-                  {
-                    {
-                      day: "день",
-                      month: "месяц",
-                      period: "период",
-                      cum: "накоплено",
-                    }[period]
-                  }{" "}
-                  из ГПР): {formatNumber(periodPlan)}
-                  <span className="mt-1 block text-[11px] text-[var(--tk-muted)]">
-                    {planSlice.source === "stage_volumes"
-                      ? "по объёмам этапов"
-                      : planSlice.source === "uniform_fallback"
-                        ? "равномерно (объёмы этапов не заданы)"
-                        : "нет ГПР — срез ограничен"}
-                  </span>
-                </div>
-                <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  Факт (
-                  {
-                    {
-                      day: "день",
-                      month: "месяц",
-                      period: "период",
-                      cum: "накоплено",
-                    }[period]
-                  }
-                  ): {formatNumber(periodFact)}
-                </div>
-                <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  Отклонение среза (факт−план ГПР):{" "}
-                  <span
-                    className={
-                      sliceVariance < 0
-                        ? "text-rose-700"
-                        : sliceVariance > 0
-                          ? "text-emerald-700"
-                          : ""
-                    }
+                {hasMixedPlanUnits ? (
+                  <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 sm:col-span-2 lg:col-span-3">
+                    Общий объём не суммируется: в проекте разные единицы или часть единиц не указана ({planUnits.join(", ") || "не указаны"}).
+                    Сверяйте план, факт и остаток в таблице по каждому виду работ отдельно.
+                  </div>
+                ) : <>
+                  <div className="rounded-xl border bg-white/80 p-3 text-sm">
+                    План договора (всего): {formatNumber(totals.plan)} {planUnits[0] ?? ""}
+                  </div>
+                  <div
+                    className="rounded-xl border bg-white/80 p-3 text-sm"
+                    data-testid="period-plan-from-gpr"
                   >
-                    {formatNumber(sliceVariance)}
-                  </span>
-                </div>
-                <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  Остаток договора: {formatNumber(totals.remain)}
-                </div>
-                <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  Индекс физ. объёма (не ₽):{" "}
-                  {formatNumber(plan.pnl?.earnedValue ?? 0)}
-                </div>
+                    План (
+                  {
+                    {
+                      day: "день",
+                      month: "месяц",
+                      period: "период",
+                      cum: "накоплено",
+                    }[period]
+                    }{" "}
+                    из ГПР): {formatNumber(periodPlan)} {planUnits[0] ?? ""}
+                    <span className="mt-1 block text-[11px] text-[var(--tk-muted)]">
+                      {planSlice.source === "stage_volumes"
+                        ? "по объёмам этапов"
+                        : planSlice.source === "uniform_fallback"
+                          ? "равномерно (объёмы этапов не заданы)"
+                          : "нет ГПР — срез ограничен"}
+                    </span>
+                  </div>
+                  <div className="rounded-xl border bg-white/80 p-3 text-sm">
+                    Факт (
+                  {
+                    {
+                      day: "день",
+                      month: "месяц",
+                      period: "период",
+                      cum: "накоплено",
+                    }[period]
+                    }
+                    ): {formatNumber(periodFact)} {planUnits[0] ?? ""}
+                  </div>
+                  <div className="rounded-xl border bg-white/80 p-3 text-sm">
+                    Отклонение среза (факт−план ГПР):{" "}
+                    <span
+                      className={
+                        sliceVariance < 0
+                          ? "text-rose-700"
+                          : sliceVariance > 0
+                            ? "text-emerald-700"
+                            : ""
+                      }
+                    >
+                      {formatNumber(sliceVariance)} {planUnits[0] ?? ""}
+                    </span>
+                  </div>
+                  <div className="rounded-xl border bg-white/80 p-3 text-sm">
+                    Остаток договора: {formatNumber(totals.remain)} {planUnits[0] ?? ""}
+                  </div>
+                  <div className="rounded-xl border bg-white/80 p-3 text-sm">
+                    Индекс физ. объёма (не ₽):{" "}
+                    {formatNumber(plan.pnl?.earnedValue ?? 0)} {planUnits[0] ?? ""}
+                  </div>
+                </>}
                 <div className="rounded-xl border bg-white/80 p-3 text-sm">
                   Экономика авто (объём×ставки):{" "}
                   {productionEconomics == null || productionEconomics.incomplete.length > 0
@@ -477,7 +488,7 @@ export default function ProizvodstvoPage() {
                 <div className="flex flex-wrap items-center gap-3">
                   <Button
                     variant="outline"
-                    disabled={varianceLoading}
+                    disabled={varianceLoading || hasMixedPlanUnits}
                     onClick={async () => {
                       setVarianceLoading(true);
                       try {
@@ -504,7 +515,9 @@ export default function ProizvodstvoPage() {
                     {varianceLoading ? "ИИ проверяет записи…" : "Разобрать отклонение с ИИ"}
                   </Button>
                   <span className="text-xs text-[var(--tk-muted)]">
-                    Платный запрос в настроенную модель. Используются только дневные комментарии и статусы поставок.
+                    {hasMixedPlanUnits
+                      ? "AI-сверка общего итога отключена: объёмы разных единиц нельзя складывать. Сравните работы по строкам ниже."
+                      : "Платный запрос в настроенную модель. Используются только дневные комментарии и статусы поставок."}
                   </span>
                 </div>
                 {varianceReport?.key === varianceKey ? (
