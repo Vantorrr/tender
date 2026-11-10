@@ -1165,6 +1165,9 @@ export default function RaschetDetailPage() {
               : "нет данных"}
           </div>
         </div>
+        <p className="mt-2 text-xs text-[var(--tk-muted)]">
+          Строк: {compare.rows.length} · требуют проверки: {compare.rows.filter((row) => row.status === "diff" || row.status === "only_original" || row.status === "only_draft").length} · неполные данные: {compare.rows.filter((row) => row.status === "incomplete").length}
+        </p>
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <Button
             variant="outline"
@@ -1192,6 +1195,7 @@ export default function RaschetDetailPage() {
           </Button>
           <span className="text-xs text-[var(--tk-muted)]">
             Платный запрос. AI поясняет только строки сравнения; суммы считает система.
+            {compare.rows.length > 80 ? " ИИ анализирует первые 80 строк; полная таблица показана ниже." : ""}
           </span>
         </div>
         {aiCompare?.signature === compareSignature ? (
@@ -1241,10 +1245,15 @@ export default function RaschetDetailPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {compare.rows.slice(0, 40).map((r) => (
-                <TableRow key={`${r.code}-${r.unit}-${r.status}`}>
+              {compare.rows.map((r, index) => (
+                <TableRow key={`compare-row-${index}`}>
                   <TableCell className="font-mono text-xs">{r.code}</TableCell>
-                  <TableCell>{r.status}</TableCell>
+                  <TableCell>{
+                    r.status === "matched" ? "Совпадает" :
+                      r.status === "diff" ? "Отклонение" :
+                        r.status === "incomplete" ? "Неполные данные" :
+                          r.status === "only_original" ? "Только у заказчика" : "Только в черновике"
+                  }</TableCell>
                   <TableCell className="text-xs">{r.reason}</TableCell>
                   <TableCell className="text-right">
                     {r.deltaSum != null ? formatMoney(r.deltaSum) : "—"}

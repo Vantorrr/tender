@@ -271,6 +271,117 @@ describe("client corrections stage 1", () => {
     expect(JSON.stringify(cmp)).not.toMatch(/97%/);
   });
 
+  it("matches resource-draft positions to customer lines by exact normalized name and unit when codes differ", () => {
+    const original = {
+      id: "original",
+      orgId: "org-alfa",
+      procurementId: "p-1",
+      title: "Исходная смета",
+      status: "gotovo" as const,
+      positions: [{ id: "o1", code: "CUST-17", name: "Доставка автобуса", unit: "рейс", quantity: 10, rate: 100 }],
+      assumptions: [],
+      scenario: "bazovyy" as const,
+      scenarioFactor: 1,
+      participateDecision: null,
+      directoryVersionId: "d",
+      version: 1,
+      authorId: "u",
+      updatedAt: "",
+      kind: "customer_original" as const,
+      immutable: true,
+    };
+    const draft = {
+      ...original,
+      id: "draft",
+      kind: "resource_draft" as const,
+      immutable: false,
+      positions: [{ id: "d1", code: "BUS-1", name: "  Доставка автобуса ", unit: "рейс", quantity: 12, rate: 110 }],
+    };
+
+    const comparison = compareCalculations(original, draft);
+    expect(comparison.rows).toHaveLength(1);
+    expect(comparison.rows[0]).toMatchObject({ status: "diff", originalQty: 10, draftQty: 12, originalRate: 100, draftRate: 110 });
+    expect(comparison.rows[0].reason).toContain("Объём");
+    expect(comparison.rows[0].reason).toContain("Ставка");
+  });
+
+  it("does not pair ambiguous repeated names by array order", () => {
+    const base = {
+      orgId: "org-alfa",
+      procurementId: "p-1",
+      title: "Смета",
+      status: "gotovo" as const,
+      assumptions: [],
+      scenario: "bazovyy" as const,
+      scenarioFactor: 1,
+      participateDecision: null,
+      directoryVersionId: "d",
+      version: 1,
+      authorId: "u",
+      updatedAt: "",
+    };
+    const original = {
+      ...base,
+      id: "o",
+      kind: "customer_original" as const,
+      immutable: true,
+      positions: [
+        { id: "o1", code: "O-1", name: "Монтаж", unit: "шт", quantity: 1, rate: 10 },
+        { id: "o2", code: "O-2", name: "Монтаж", unit: "шт", quantity: 2, rate: 20 },
+      ],
+    };
+    const draft = {
+      ...base,
+      id: "d",
+      kind: "resource_draft" as const,
+      immutable: false,
+      positions: [
+        { id: "d1", code: "D-1", name: "Монтаж", unit: "шт", quantity: 1, rate: 10 },
+        { id: "d2", code: "D-2", name: "Монтаж", unit: "шт", quantity: 2, rate: 20 },
+      ],
+    };
+
+    const comparison = compareCalculations(original, draft);
+    expect(comparison.rows.filter((row) => row.status === "only_original")).toHaveLength(2);
+    expect(comparison.rows.filter((row) => row.status === "only_draft")).toHaveLength(2);
+  });
+
+  it("marks unconfirmed rates as incomplete and withholds misleading totals", () => {
+    const base = {
+      orgId: "org-alfa",
+      procurementId: "p-1",
+      title: "Смета",
+      status: "gotovo" as const,
+      assumptions: [],
+      scenario: "bazovyy" as const,
+      scenarioFactor: 1,
+      participateDecision: null,
+      directoryVersionId: "d",
+      version: 1,
+      authorId: "u",
+      updatedAt: "",
+    };
+    const original = {
+      ...base,
+      id: "o",
+      kind: "customer_original" as const,
+      immutable: true,
+      positions: [{ id: "o1", code: "A-1", name: "Работа", unit: "шт", quantity: 2, rate: 100 }],
+    };
+    const draft = {
+      ...base,
+      id: "d",
+      kind: "resource_draft" as const,
+      immutable: false,
+      positions: [{ id: "d1", code: "A-1", name: "Работа", unit: "шт", quantity: 2, rate: 0, rateMissing: true }],
+    };
+
+    const comparison = compareCalculations(original, draft);
+    expect(comparison.rows[0]).toMatchObject({ status: "incomplete", draftRate: null, draftSum: null, deltaSum: null });
+    expect(comparison.totals).toMatchObject({ draftWorks: null, draftTotal: null, deltaTotal: null });
+    expect(comparison.notes.join(" ")).toContain("неподтверждённые ставки");
+  });
+
   it("project analytics recommends insufficient_data without accuracy claims", () => {
     const data = readAppData();
     const p = data.procurements.find((x) => x.id === "p-norilsk-1")!;

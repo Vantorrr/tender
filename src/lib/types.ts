@@ -333,7 +333,7 @@ export interface CalcCompareRow {
   originalSum: number | null;
   draftSum: number | null;
   deltaSum: number | null;
-  status: "matched" | "diff" | "only_original" | "only_draft";
+  status: "matched" | "diff" | "incomplete" | "only_original" | "only_draft";
   reason: string;
   source: "customer_original" | "resource_draft" | "both";
 }

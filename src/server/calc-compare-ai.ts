@@ -100,8 +100,10 @@ export async function analyzeCalculationComparisonWithAI(
     rows.slice(0, 80)
   );
   const hasBoth = Boolean(original && draft);
+  const hasIncompleteRates = comparison.rows.some((row) => row.status === "incomplete") ||
+    comparison.notes.some((note) => note.includes("неподтверждённые ставки"));
   const overall: CalcCompareAiReport["overall"] =
-    !hasBoth || !comparison.rows.length || !original?.positions.length || !draft?.positions.length
+    !hasBoth || !comparison.rows.length || !original?.positions.length || !draft?.positions.length || hasIncompleteRates
     ? "insufficient_data"
     : comparison.rows.every((row) => row.status === "matched") && comparison.totals.deltaTotal === 0
       ? "no_material_differences"
