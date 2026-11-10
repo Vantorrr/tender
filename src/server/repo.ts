@@ -2310,6 +2310,8 @@ export function upsertSupplyRequest(
     workName?: string;
     status?: SupplyStatus;
     quoteDraftText?: string;
+    supplierName?: string;
+    supplierEmail?: string;
     supplierNote?: string;
     qtyOrdered?: number;
     qtyDelivered?: number;
@@ -2334,6 +2336,8 @@ export function upsertSupplyRequest(
         workName: input.workName,
         status: input.status ?? row.status,
         quoteDraftText: input.quoteDraftText ?? row.quoteDraftText,
+        supplierName: input.supplierName ?? row.supplierName,
+        supplierEmail: input.supplierEmail ?? row.supplierEmail,
         supplierNote: input.supplierNote ?? row.supplierNote,
         qtyOrdered: input.qtyOrdered ?? row.qtyOrdered,
         qtyDelivered: input.qtyDelivered ?? row.qtyDelivered,
@@ -2357,6 +2361,8 @@ export function upsertSupplyRequest(
       needBy: input.needBy,
       status: input.status ?? "need",
       quoteDraftText: input.quoteDraftText,
+      supplierName: input.supplierName,
+      supplierEmail: input.supplierEmail,
       supplierNote: input.supplierNote,
       unitPrice: input.unitPrice ?? null,
       workName: input.workName,

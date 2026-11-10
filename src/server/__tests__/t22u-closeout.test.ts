@@ -10,6 +10,7 @@ import {
   addDailyProductionFact,
   recomputeCalculationCost,
   transferProcurementToProduction,
+  upsertSupplyRequest,
 } from "@/server/repo";
 import { validateDirectoryImport } from "@/lib/directory-import";
 import { allocatePlanForSlice } from "@/lib/plan-from-gpr";
@@ -214,6 +215,48 @@ describe("t22u closeout remediable", () => {
     );
     expect(w.some((x) => x.kind === "crew_peak")).toBe(true);
     expect(w.some((x) => x.kind === "supply_late")).toBe(true);
+  });
+
+  it("supply workflow persists vendor contact, RFQ draft, and unit price", () => {
+    upsertSupplyRequest("u-ruk", {
+      procurementId: "p-1",
+      workName: "Монтаж трубопровода",
+      materialName: "Труба стальная",
+      unit: "м",
+      qtyNeed: 120,
+      needBy: "2026-12-15",
+      status: "quoted_draft",
+      quoteDraftText: "Просим направить КП на трубу 120 м",
+      supplierName: "СеверСнаб",
+      supplierEmail: "sales@example.test",
+      unitPrice: 1250,
+    });
+    const created = readAppData().supplyRequests?.find(
+      (item) => item.materialName === "Труба стальная"
+    );
+    expect(created).toMatchObject({
+      workName: "Монтаж трубопровода",
+      supplierName: "СеверСнаб",
+      supplierEmail: "sales@example.test",
+      quoteDraftText: "Просим направить КП на трубу 120 м",
+      unitPrice: 1250,
+    });
+
+    upsertSupplyRequest("u-ruk", {
+      id: created!.id,
+      procurementId: "p-1",
+      materialName: created!.materialName,
+      unit: created!.unit,
+      qtyNeed: created!.qtyNeed,
+      needBy: created!.needBy,
+      status: "ordered",
+    });
+    expect(readAppData().supplyRequests?.find((item) => item.id === created!.id)).toMatchObject({
+      status: "ordered",
+      supplierName: "СеверСнаб",
+      supplierEmail: "sales@example.test",
+      unitPrice: 1250,
+    });
   });
 
   it("GPR and planfact xlsx reopen with formulas + incompleteness sheet", async () => {

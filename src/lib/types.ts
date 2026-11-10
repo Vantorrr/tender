@@ -185,6 +185,8 @@ export interface SupplyRequest {
   status: SupplyStatus;
   /** Текст запроса КП — только черновик, без send. */
   quoteDraftText?: string;
+  supplierName?: string;
+  supplierEmail?: string;
   supplierNote?: string;
   unitPrice?: number | null;
   updatedAt: string;

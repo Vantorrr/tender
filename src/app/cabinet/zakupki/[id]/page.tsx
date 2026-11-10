@@ -79,6 +79,9 @@ export default function ZakupkaDetailPage() {
     new Date().toISOString().slice(0, 10)
   );
   const [matQuote, setMatQuote] = useState("");
+  const [matWork, setMatWork] = useState("");
+  const [matSupplierName, setMatSupplierName] = useState("");
+  const [matSupplierEmail, setMatSupplierEmail] = useState("");
 
   const docs = useMemo(
     () =>
@@ -119,6 +122,50 @@ export default function ZakupkaDetailPage() {
   const previewDoc = previewId
     ? docs.find((d) => d.id === previewId)
     : null;
+
+  async function updateSupply(
+    supply: (typeof supplies)[number],
+    patch: Partial<(typeof supplies)[number]>
+  ) {
+    try {
+      await api("/api/supply", {
+        method: "POST",
+        body: JSON.stringify({
+          id: supply.id,
+          procurementId: procurement!.id,
+          materialName: supply.materialName,
+          unit: supply.unit,
+          qtyNeed: supply.qtyNeed,
+          needBy: supply.needBy,
+          workName: supply.workName,
+          status: supply.status,
+          quoteDraftText: supply.quoteDraftText,
+          supplierName: supply.supplierName,
+          supplierEmail: supply.supplierEmail,
+          supplierNote: supply.supplierNote,
+          qtyOrdered: supply.qtyOrdered,
+          qtyDelivered: supply.qtyDelivered,
+          unitPrice: supply.unitPrice,
+          ...patch,
+        }),
+      });
+      await refresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось сохранить поставку");
+    }
+  }
+
+  function quoteText() {
+    return [
+      "Здравствуйте! Просим предоставить коммерческое предложение.",
+      `Объект: ${procurement!.title}`,
+      matWork.trim() ? `Вид работ: ${matWork.trim()}` : null,
+      `Материал: ${matName.trim() || "укажите материал"}`,
+      `Количество: ${matQty || "0"} ${matUnit || "шт"}`,
+      `Желаемый срок поставки: ${formatDate(matNeedBy)}`,
+      "Просим указать цену, срок действия предложения и условия доставки.",
+    ].filter(Boolean).join("\n");
+  }
 
   async function onUpload(file: File) {
     setBusy(true);
@@ -874,10 +921,16 @@ export default function ZakupkaDetailPage() {
               Потребность → черновик КП → поставка
             </h3>
             <p className="text-xs text-[var(--tk-muted)]">
-              Отправка писем поставщикам не выполняется. Можно подготовить текст
-              запроса КП и вести статусы вручную.
+              Запрос можно подготовить и открыть в почтовом приложении. Сервис
+              сам письмо не отправляет; заказ и приёмка фиксируются вручную.
             </p>
             <div className="flex flex-wrap gap-2">
+              <Input
+                className="min-w-[180px]"
+                placeholder="Вид работ (необязательно)"
+                value={matWork}
+                onChange={(e) => setMatWork(e.target.value)}
+              />
               <Input
                 placeholder="Материал"
                 value={matName}
@@ -899,11 +952,30 @@ export default function ZakupkaDetailPage() {
                 className="w-[140px]"
               />
               <Input
+                className="min-w-[160px]"
+                placeholder="Поставщик (необязательно)"
+                value={matSupplierName}
+                onChange={(e) => setMatSupplierName(e.target.value)}
+              />
+              <Input
+                className="min-w-[190px]"
+                type="email"
+                placeholder="Email поставщика"
+                value={matSupplierEmail}
+                onChange={(e) => setMatSupplierEmail(e.target.value)}
+              />
+              <Input
                 className="min-w-[220px] flex-1"
-                placeholder="Черновик текста КП (не отправка)"
+                placeholder="Черновик запроса КП"
                 value={matQuote}
                 onChange={(e) => setMatQuote(e.target.value)}
               />
+              <Button
+                variant="outline"
+                onClick={() => setMatQuote(quoteText())}
+              >
+                Сформировать запрос КП
+              </Button>
               <Button
                 data-testid="supply-create"
                 onClick={async () => {
@@ -920,14 +992,20 @@ export default function ZakupkaDetailPage() {
                         unit: matUnit || "шт",
                         qtyNeed: Number(matQty) || 0,
                         needBy: matNeedBy,
+                        workName: matWork.trim() || undefined,
                         status: matQuote.trim() ? "quoted_draft" : "need",
                         quoteDraftText: matQuote.trim() || undefined,
+                        supplierName: matSupplierName.trim() || undefined,
+                        supplierEmail: matSupplierEmail.trim() || undefined,
                       }),
                     });
                     await refresh();
                     toast.success("Потребность сохранена");
                     setMatName("");
+                    setMatWork("");
                     setMatQuote("");
+                    setMatSupplierName("");
+                    setMatSupplierEmail("");
                   } catch (e) {
                     toast.error(e instanceof Error ? e.message : "Ошибка");
                   }
@@ -954,11 +1032,116 @@ export default function ZakupkaDetailPage() {
                       {SUPPLY_RU[s.status]} · заказано {s.qtyOrdered} ·
                       поставлено {s.qtyDelivered}
                     </div>
+                    {s.workName || s.supplierName || s.supplierEmail ? (
+                      <div className="mt-1 text-xs text-[var(--tk-muted)]">
+                        {s.workName ? `Работа: ${s.workName}. ` : ""}
+                        {s.supplierName ? `Поставщик: ${s.supplierName}. ` : ""}
+                        {s.supplierEmail ?? ""}
+                      </div>
+                    ) : null}
+                    <details className="mt-2 text-xs">
+                      <summary className="cursor-pointer text-[var(--tk-muted)]">
+                        Контакт и запрос КП
+                      </summary>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                        <Input
+                          aria-label="Поставщик"
+                          placeholder="Поставщик"
+                          defaultValue={s.supplierName ?? ""}
+                          onBlur={(e) => {
+                            if (e.target.value !== (s.supplierName ?? "")) {
+                              void updateSupply(s, { supplierName: e.target.value.trim() });
+                            }
+                          }}
+                        />
+                        <Input
+                          aria-label="Email поставщика"
+                          type="email"
+                          placeholder="Email поставщика"
+                          defaultValue={s.supplierEmail ?? ""}
+                          onBlur={(e) => {
+                            if (e.target.value !== (s.supplierEmail ?? "")) {
+                              void updateSupply(s, { supplierEmail: e.target.value.trim() });
+                            }
+                          }}
+                        />
+                        <textarea
+                          aria-label="Текст запроса коммерческого предложения"
+                          className="min-h-24 rounded-lg border border-[var(--tk-line)] bg-white p-2 sm:col-span-2"
+                          placeholder="Текст запроса КП"
+                          defaultValue={s.quoteDraftText ?? ""}
+                          onBlur={(e) => {
+                            if (e.target.value !== (s.quoteDraftText ?? "")) {
+                              void updateSupply(s, { quoteDraftText: e.target.value });
+                            }
+                          }}
+                        />
+                      </div>
+                    </details>
                     {s.quoteDraftText ? (
                       <pre className="mt-2 whitespace-pre-wrap rounded bg-stone-50 p-2 text-xs">
                         {s.quoteDraftText}
                       </pre>
                     ) : null}
+                    <div className="mt-2 flex flex-wrap items-end gap-2">
+                      <label className="text-xs">
+                        Заказано
+                        <Input
+                          className="mt-1 w-28"
+                          type="number"
+                          min="0"
+                          step="any"
+                          defaultValue={s.qtyOrdered}
+                          onBlur={(e) => {
+                            const value = Number(e.target.value);
+                            if (Number.isFinite(value) && value !== s.qtyOrdered) {
+                              void updateSupply(s, { qtyOrdered: value });
+                            }
+                          }}
+                        />
+                      </label>
+                      <label className="text-xs">
+                        Поставлено
+                        <Input
+                          className="mt-1 w-28"
+                          type="number"
+                          min="0"
+                          step="any"
+                          defaultValue={s.qtyDelivered}
+                          onBlur={(e) => {
+                            const value = Number(e.target.value);
+                            if (Number.isFinite(value) && value !== s.qtyDelivered) {
+                              void updateSupply(s, { qtyDelivered: value });
+                            }
+                          }}
+                        />
+                      </label>
+                      <label className="text-xs">
+                        Цена за единицу, ₽
+                        <Input
+                          className="mt-1 w-36"
+                          type="number"
+                          min="0"
+                          step="any"
+                          defaultValue={s.unitPrice ?? ""}
+                          onBlur={(e) => {
+                            const raw = e.target.value.trim();
+                            const value = raw === "" ? null : Number(raw);
+                            if (value === null || (Number.isFinite(value) && value !== s.unitPrice)) {
+                              void updateSupply(s, { unitPrice: value });
+                            }
+                          }}
+                        />
+                      </label>
+                      {s.supplierEmail && s.quoteDraftText ? (
+                        <a
+                          className="inline-flex h-9 items-center rounded-lg border px-3 text-sm hover:bg-stone-50"
+                          href={`mailto:${encodeURIComponent(s.supplierEmail)}?subject=${encodeURIComponent(`Запрос КП: ${s.materialName}`)}&body=${encodeURIComponent(s.quoteDraftText)}`}
+                        >
+                          Открыть письмо
+                        </a>
+                      ) : null}
+                    </div>
                     <div className="mt-2 flex flex-wrap gap-2">
                       {(
                         [

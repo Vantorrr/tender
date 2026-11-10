@@ -24,6 +24,8 @@ export async function POST(req: Request) {
       workName?: string;
       status?: SupplyStatus;
       quoteDraftText?: string;
+      supplierName?: string;
+      supplierEmail?: string;
       supplierNote?: string;
       qtyOrdered?: number;
       qtyDelivered?: number;
@@ -45,6 +47,8 @@ export async function POST(req: Request) {
       workName: body.workName,
       status: body.status,
       quoteDraftText: body.quoteDraftText,
+      supplierName: body.supplierName,
+      supplierEmail: body.supplierEmail,
       supplierNote: body.supplierNote,
       qtyOrdered: body.qtyOrdered,
       qtyDelivered: body.qtyDelivered,
