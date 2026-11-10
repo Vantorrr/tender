@@ -10,7 +10,7 @@ import type { DailyResourceLine, PlanFact } from "@/lib/types";
 import type { SupplyStatus } from "@/lib/types";
 import { saveUpload } from "@/server/uploads";
 import { analyzeProductionVarianceWithAI } from "@/server/production-variance-ai";
-import { allocatePlanForSlice, type PlanSliceMode } from "@/lib/plan-from-gpr";
+import { allocatePlanForSlice, stagesForWork, type PlanSliceMode } from "@/lib/plan-from-gpr";
 import { entryDisplayFact, sumDailyQty } from "@/lib/plan-fact-agg";
 
 const SECTIONS = ["proizvodstvo", "zakupki"] as const;
@@ -147,6 +147,7 @@ export async function POST(req: Request) {
       supplyStatus?: SupplyStatus;
       period?: PlanSliceMode;
       date?: string;
+      workName?: string;
       fact?: {
         date: string;
         workName: string;
@@ -193,12 +194,12 @@ export async function POST(req: Request) {
       const data = getBootstrap(user).data;
       const plan = data.planFacts.find((item) => item.id === body.planFactId && item.orgId === user.orgId);
       if (!plan) return json({ error: "План/факт не найден" }, 404);
-      const planUnits = new Set(plan.entries.map((entry) => entry.unit.trim()).filter(Boolean));
-      if (planUnits.size > 1 || plan.entries.some((entry) => !entry.unit.trim())) {
-        return json({
-          error: "Общий план/факт нельзя свести: работы заданы в разных единицах. Сравнивайте позиции по строкам.",
-        }, 422);
+      if (!body.workName?.trim()) return json({ error: "Выберите вид работ для сверки с ГПР" }, 400);
+      const matchingEntries = plan.entries.filter((entry) => entry.workName.trim() === body.workName!.trim());
+      if (matchingEntries.length !== 1) {
+        return json({ error: matchingEntries.length ? "Название работы повторяется; выберите однозначную позицию" : "Вид работ не найден в плане/факте" }, 422);
       }
+      const entry = matchingEntries[0];
       const period: PlanSliceMode = ["day", "month", "period", "cum"].includes(body.period ?? "")
         ? body.period!
         : "day";
@@ -210,20 +211,26 @@ export async function POST(req: Request) {
           : period === "period"
             ? daily
             : daily.filter((fact) => fact.date <= body.date!);
-      const planQuantity = plan.entries.reduce((sum, entry) => sum + entry.plan, 0);
-      const factQuantity = period === "cum"
-        ? plan.entries.reduce((sum, entry) => sum + entryDisplayFact(entry, daily), 0)
-        : sumDailyQty(factsForPeriod);
       const gpr = data.schedules.find((schedule) => schedule.procurementId === plan.procurementId);
-      const periodPlan = allocatePlanForSlice(planQuantity, gpr?.stages ?? [], period, body.date);
+      const workStages = stagesForWork(plan.entries.map((item) => item.workName), gpr?.stages ?? [], entry.workName);
+      if (!workStages.length) {
+        return json({ error: "Для этой работы нет связанных этапов ГПР. Свяжите работу и этап в графике." }, 422);
+      }
+      const factQuantity = period === "cum"
+        ? entryDisplayFact(entry, daily)
+        : sumDailyQty(factsForPeriod, { workName: entry.workName });
+      const periodPlan = allocatePlanForSlice(entry.plan, workStages, period, body.date);
       const report = await analyzeProductionVarianceWithAI({
         plan,
-        supplies: (data.supplyRequests ?? []).filter((supply) => supply.procurementId === plan.procurementId),
+        supplies: (data.supplyRequests ?? []).filter((supply) =>
+          supply.procurementId === plan.procurementId && (!supply.workName || supply.workName === entry.workName)
+        ),
         asOfDate: body.date,
         periodLabel: period,
         planQuantity: periodPlan.plan,
         factQuantity,
         planSource: periodPlan.source,
+        workName: entry.workName,
       });
       return json({ report });
     }

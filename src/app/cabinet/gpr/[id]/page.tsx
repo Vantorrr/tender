@@ -8,6 +8,13 @@ import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { api, downloadUrl } from "@/lib/api";
 import { PlanFactGantt } from "@/components/plan-fact-gantt";
 import { GprResourceTree } from "@/components/gpr-resource-tree";
@@ -332,7 +339,7 @@ export default function GprDetailPage() {
           .map((stage) => (
             <div
               key={stage.id}
-              className="grid gap-2 rounded-xl border border-[var(--tk-line)] bg-white/80 p-3 sm:grid-cols-5"
+              className="grid gap-2 rounded-xl border border-[var(--tk-line)] bg-white/80 p-3 sm:grid-cols-2 lg:grid-cols-6"
             >
               <Input
                 value={stage.name}
@@ -345,6 +352,30 @@ export default function GprDetailPage() {
                   });
                 }}
               />
+              <Select
+                value={stage.workName ?? "__unlinked"}
+                onValueChange={(value) => {
+                  if (!value) return;
+                  updateSchedule(schedule.id, {
+                    stages: schedule.stages.map((item) => item.id === stage.id
+                      ? { ...item, workName: value === "__unlinked" ? undefined : value }
+                      : item),
+                  });
+                }}
+              >
+                <SelectTrigger aria-label={`Вид работ ГПР · ${stage.name}`} data-testid={`stage-work-link-${stage.id}`}>
+                  <SelectValue>{stage.workName ?? "Связать с видом работ"}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__unlinked">Не связана</SelectItem>
+                  {[...new Set((planFact?.entries ?? []).map((entry) => entry.workName.trim()).filter(Boolean))].map((workName) => (
+                    <SelectItem key={workName} value={workName}>{workName}</SelectItem>
+                  ))}
+                  {stage.workName && !planFact?.entries.some((entry) => entry.workName === stage.workName) ? (
+                    <SelectItem value={stage.workName}>{stage.workName} · текущая связь</SelectItem>
+                  ) : null}
+                </SelectContent>
+              </Select>
               <Input
                 type="number"
                 min={0}

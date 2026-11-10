@@ -16,7 +16,7 @@ import {
   upsertSupplyRequest,
 } from "@/server/repo";
 import { validateDirectoryImport } from "@/lib/directory-import";
-import { allocatePlanForSlice } from "@/lib/plan-from-gpr";
+import { allocatePlanForSlice, stagesForWork } from "@/lib/plan-from-gpr";
 import { economicsFromVolumes } from "@/lib/economics-from-rates";
 import { collectCalendarWarnings } from "@/lib/calendar-availability";
 import ExcelJS from "exceljs";
@@ -100,6 +100,15 @@ describe("t22u closeout remediable", () => {
     expect(a.source).toBe("stage_volumes");
     expect(a.plan).toBe(45);
     expect(b.plan).toBe(5);
+  });
+
+  it("links each production work only to its named GPR stages", () => {
+    const stages = [
+      { id: "s1", name: "Pipe", workName: "Трубопровод", start: "2026-11-01", end: "2026-11-02", sequence: 1, planVolume: 10 },
+      { id: "s2", name: "Supports", workName: "Опоры", start: "2026-11-01", end: "2026-11-02", sequence: 2, planVolume: 5 },
+    ];
+    expect(stagesForWork(["Трубопровод", "Опоры"], stages, "Трубопровод").map((stage) => stage.id)).toEqual(["s1"]);
+    expect(stagesForWork(["Трубопровод", "Опоры"], stages, "Неизвестная работа")).toEqual([]);
   });
 
   it("economics uses confirmed rates only; missing → incomplete not 0 money", () => {
@@ -496,7 +505,7 @@ describe("t22u closeout remediable", () => {
       .toEqual(saved?.resourceLines);
   });
 
-  it("production variance API refuses to compare mixed physical units as one total", async () => {
+  it("production variance API refuses a work that is not linked to a GPR stage", async () => {
     mutateAppData((data) => {
       const plan = data.planFacts.find((item) => item.id === "pf-1")!;
       plan.entries = [
@@ -512,10 +521,10 @@ describe("t22u closeout remediable", () => {
         authorization: `Bearer ${createSession("u-obj")}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify({ action: "analyzeVariance", planFactId: "pf-1", period: "cum", date: "2026-11-10" }),
+      body: JSON.stringify({ action: "analyzeVariance", planFactId: "pf-1", period: "cum", date: "2026-11-10", workName: "Трубопровод" }),
     }));
     expect(res.status).toBe(422);
-    expect((await res.json()).error).toMatch(/разных единиц/);
+    expect((await res.json()).error).toMatch(/нет связанных этапов/);
   });
 
   it("GPR and planfact xlsx reopen with formulas + incompleteness sheet", async () => {

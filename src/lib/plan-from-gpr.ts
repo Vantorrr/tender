@@ -7,6 +7,22 @@ import { addDaysIso, diffDays } from "@/lib/cost-engine";
 
 export type PlanSliceMode = "day" | "month" | "period" | "cum";
 
+/** Match production work to explicitly linked GPR stages; only a single-work plan may use unlinked stages. */
+export function stagesForWork(
+  workNames: string[],
+  stages: GprStage[],
+  workName: string
+): GprStage[] {
+  const key = workName.trim();
+  if (!key) return [];
+  const linked = stages.filter((stage) => stage.workName?.trim() === key);
+  if (linked.length) return linked;
+  const hasMultipleWorks = new Set(workNames.map((name) => name.trim()).filter(Boolean)).size > 1;
+  return !hasMultipleWorks && stages.every((stage) => !stage.workName?.trim())
+    ? stages
+    : [];
+}
+
 const round = (n: number) => Math.round(n * 1000) / 1000;
 
 export function stageDayList(st: GprStage): string[] {

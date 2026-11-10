@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   filterDailyFactsByPeriod,
+  filterDailyFactsByWork,
   validateProductionVarianceResult,
 } from "@/server/production-variance-ai";
 
@@ -86,5 +87,15 @@ describe("filterDailyFactsByPeriod", () => {
     expect(filterDailyFactsByPeriod(facts, "2026-11-10", "month").map((f) => f.id)).toEqual(["b", "c", "d"]);
     expect(filterDailyFactsByPeriod(facts, "2026-11-10", "cum").map((f) => f.id)).toEqual(["a", "b", "c"]);
     expect(filterDailyFactsByPeriod(facts, "2026-11-10", "period").map((f) => f.id)).toEqual(["a", "b", "c", "d"]);
+  });
+});
+
+describe("filterDailyFactsByWork", () => {
+  it("keeps comments for the selected production work only", () => {
+    const workFacts = [
+      { id: "a", date: "2026-11-10", workName: "Трубопровод", unit: "м", quantity: 1, photos: [], authorId: "u", at: "" },
+      { id: "b", date: "2026-11-10", workName: "Опоры", unit: "шт", quantity: 1, photos: [], authorId: "u", at: "" },
+    ];
+    expect(filterDailyFactsByWork(workFacts, "Трубопровод").map((fact) => fact.id)).toEqual(["a"]);
   });
 });

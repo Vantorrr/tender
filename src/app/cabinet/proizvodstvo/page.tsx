@@ -32,7 +32,7 @@ import {
   entryDisplayRemain,
   sumDailyQty,
 } from "@/lib/plan-fact-agg";
-import { allocatePlanForSlice } from "@/lib/plan-from-gpr";
+import { allocatePlanForSlice, stagesForWork } from "@/lib/plan-from-gpr";
 import { economicsFromVolumes } from "@/lib/economics-from-rates";
 import { useStore } from "@/lib/store";
 import type { ProductionVarianceReport } from "@/server/production-variance-ai";
@@ -175,6 +175,9 @@ export default function ProizvodstvoPage() {
 
   // Plan for selected slice: stage volumes when present, else uniform fallback
   const gprStages = gpr?.stages ?? [];
+  const selectedWorkStages = plan
+    ? stagesForWork(plan.entries.map((entry) => entry.workName), gprStages, selectedWork)
+    : [];
   const planSlice = allocatePlanForSlice(
     totals.plan,
     gprStages,
@@ -187,6 +190,7 @@ export default function ProizvodstvoPage() {
     planId: plan?.id,
     period,
     date,
+    selectedWork,
     periodPlan,
     periodFact,
     daily: daily.map((fact) => [fact.id, fact.date, fact.workName, fact.quantity, fact.comment]),
@@ -488,7 +492,7 @@ export default function ProizvodstvoPage() {
                 <div className="flex flex-wrap items-center gap-3">
                   <Button
                     variant="outline"
-                    disabled={varianceLoading || hasMixedPlanUnits}
+                    disabled={varianceLoading || !selectedEntry || !selectedWorkStages.length}
                     onClick={async () => {
                       setVarianceLoading(true);
                       try {
@@ -501,6 +505,7 @@ export default function ProizvodstvoPage() {
                               planFactId: plan.id,
                               period,
                               date,
+                              workName: selectedWork,
                             }),
                           }
                         );
@@ -515,9 +520,9 @@ export default function ProizvodstvoPage() {
                     {varianceLoading ? "ИИ проверяет записи…" : "Разобрать отклонение с ИИ"}
                   </Button>
                   <span className="text-xs text-[var(--tk-muted)]">
-                    {hasMixedPlanUnits
-                      ? "AI-сверка общего итога отключена: объёмы разных единиц нельзя складывать. Сравните работы по строкам ниже."
-                      : "Платный запрос в настроенную модель. Используются только дневные комментарии и статусы поставок."}
+                    {!selectedWorkStages.length
+                      ? "Для выбранной работы нет связанных этапов ГПР. Свяжите работу и этап в графике."
+                      : `Платный запрос в настроенную модель. Разбор относится к работе «${selectedWork}»; используются только её факт, график, комментарии и поставки.`}
                   </span>
                 </div>
                 {varianceReport?.key === varianceKey ? (
@@ -895,23 +900,28 @@ export default function ProizvodstvoPage() {
                       <TableHead className="text-right">За день</TableHead>
                       <TableHead className="text-right">За месяц</TableHead>
                       <TableHead className="text-right">Остаток</TableHead>
-                      <TableHead className="text-right">
-                        Базовый план
-                      </TableHead>
-                      <TableHead className="text-right">Отклонение</TableHead>
+                      <TableHead className="text-right">План ГПР · срез</TableHead>
+                      <TableHead className="text-right">Δ факт−ГПР</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {plan.entries.map((e) => {
-                      const base = plan.baselineEntries?.find(
-                        (b) => b.id === e.id || b.workName === e.workName
-                      );
                       const dayQ = qtyForWork(e.workName, dayFacts);
                       const monthQ = qtyForWork(e.workName, monthFacts);
                       const fact = entryDisplayFact(e, daily);
                       const remain = entryDisplayRemain(e, daily);
-                      // Table variance vs baseline contract plan (not slice)
-                      const variance = fact - (base?.plan ?? e.plan);
+                      const workStages = stagesForWork(plan.entries.map((entry) => entry.workName), gprStages, e.workName);
+                      const workPlanSlice = allocatePlanForSlice(e.plan, workStages, period, date);
+                      const workFactsInSlice = period === "day"
+                        ? qtyForWork(e.workName, dayFacts)
+                        : period === "month"
+                          ? qtyForWork(e.workName, monthFacts)
+                          : period === "period"
+                            ? qtyForWork(e.workName, daily)
+                            : fact;
+                      const workVariance = workPlanSlice.source === "none"
+                        ? null
+                        : workFactsInSlice - workPlanSlice.plan;
                       return (
                         <TableRow key={e.id}>
                           <TableCell>{e.workName}</TableCell>
@@ -952,19 +962,21 @@ export default function ProizvodstvoPage() {
                             {formatNumber(remain)}
                           </TableCell>
                           <TableCell className="text-right text-[var(--tk-muted)]">
-                            {base ? formatNumber(base.plan) : "—"}
+                            {workPlanSlice.source === "none"
+                              ? workStages.length ? "нет календарных дат" : "нет связи с ГПР"
+                              : formatNumber(workPlanSlice.plan)}
                           </TableCell>
                           <TableCell
                             className={`text-right ${
-                              variance < 0
+                              workVariance != null && workVariance < 0
                                 ? "text-rose-700"
-                                : variance > 0
+                                : workVariance != null && workVariance > 0
                                   ? "text-emerald-700"
                                   : ""
                             }`}
-                            title="Факт минус базовый план (доказательно по числам таблицы, без выдуманных причин)"
+                            title="Факт выбранного периода минус план этапов ГПР, только при явной связке работы и этапа"
                           >
-                            {formatNumber(variance)}
+                            {workVariance == null ? "—" : formatNumber(workVariance)}
                           </TableCell>
                         </TableRow>
                       );

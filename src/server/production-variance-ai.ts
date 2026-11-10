@@ -52,6 +52,11 @@ export function filterDailyFactsByPeriod(
   });
 }
 
+export function filterDailyFactsByWork(daily: DailyFact[], workName: string): DailyFact[] {
+  const key = workName.trim();
+  return key ? daily.filter((fact) => fact.workName.trim() === key) : [];
+}
+
 export function validateProductionVarianceResult(raw: string, sources: Source[]) {
   const parsed = parseJson(raw) as { summary?: unknown; observations?: unknown };
   const summary = typeof parsed.summary === "string" ? parsed.summary.trim() : "";
@@ -85,9 +90,13 @@ function collectSources(
   daily: DailyFact[],
   supplies: SupplyRequest[],
   asOfDate: string,
-  period: PlanSliceMode
+  period: PlanSliceMode,
+  workName: string
 ): Source[] {
-  const periodFacts = filterDailyFactsByPeriod(daily, asOfDate, period);
+  const periodFacts = filterDailyFactsByWork(
+    filterDailyFactsByPeriod(daily, asOfDate, period),
+    workName
+  );
   const comments: Source[] = periodFacts
     .filter((fact) => fact.comment?.trim())
     .slice(-30)
@@ -115,6 +124,7 @@ export async function analyzeProductionVarianceWithAI(input: {
   planQuantity: number;
   factQuantity: number;
   planSource: "stage_volumes" | "uniform_fallback" | "none";
+  workName: string;
 }): Promise<ProductionVarianceReport> {
   const gap = input.factQuantity - input.planQuantity;
   const status: ProductionVarianceReport["status"] = gap < 0
@@ -126,7 +136,8 @@ export async function analyzeProductionVarianceWithAI(input: {
     input.plan.dailyFacts ?? [],
     input.supplies,
     input.asOfDate,
-    input.periodLabel
+    input.periodLabel,
+    input.workName
   );
   if (input.planSource === "none") {
     return {
