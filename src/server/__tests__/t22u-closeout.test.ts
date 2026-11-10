@@ -376,7 +376,7 @@ describe("t22u closeout remediable", () => {
 
   it("daily production API preserves GPR resource links and rejects invalid fact quantities", async () => {
     const { POST } = await import("@/app/api/proizvodstvo/route");
-    const postFact = (resourceLines: unknown[]) => POST(new Request("http://local/api/proizvodstvo", {
+    const postFact = (resourceLines: unknown[], quantity = 1) => POST(new Request("http://local/api/proizvodstvo", {
       method: "POST",
       headers: {
         authorization: `Bearer ${createSession("u-obj")}`,
@@ -390,7 +390,7 @@ describe("t22u closeout remediable", () => {
           date: "2026-11-10",
           workName: "Демонтаж перегородок",
           unit: "м²",
-          quantity: 1,
+          quantity,
           resourceLines: [
             { kind: "material", sourceResourceId: "gpr-material-1", name: "Щебень", unit: "т", planQty: 2, factQty: 1 },
             ...resourceLines,
@@ -408,6 +408,9 @@ describe("t22u closeout remediable", () => {
       kind: "material",
       factQty: 1,
     });
+
+    const negativeWorkFact = await postFact([], -1);
+    expect(negativeWorkFact.status).toBe(400);
 
     const rejected = await postFact([
       { kind: "material", sourceResourceId: "gpr-material-2", name: "Песок", unit: "т", planQty: 2, factQty: -1 },

@@ -93,6 +93,9 @@ export async function POST(req: Request) {
       if (!planFactId || !date || !workName) {
         return json({ error: "Нужны planFactId, date, workName" }, 400);
       }
+      if (!Number.isFinite(quantity) || quantity < 0) {
+        return json({ error: "Факт работы должен быть неотрицательным числом" }, 400);
+      }
       const resourceLines = parseResourceLines(form.get("resourceLines"));
       if (resourceLines === null) {
         return json({ error: "Проверьте фактические количества ресурсов: значения должны быть неотрицательными числами" }, 400);
@@ -223,6 +226,9 @@ export async function POST(req: Request) {
       return json(getBootstrap(user));
     }
     if (body.action === "dailyFact" && body.planFactId && body.fact) {
+      if (!Number.isFinite(body.fact.quantity) || body.fact.quantity < 0) {
+        return json({ error: "Факт работы должен быть неотрицательным числом" }, 400);
+      }
       const resourceLines = body.fact.resourceLines == null
         ? undefined
         : parseResourceLines(body.fact.resourceLines);
