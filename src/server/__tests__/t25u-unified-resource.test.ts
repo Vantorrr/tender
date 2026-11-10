@@ -259,6 +259,26 @@ describe("t25u shared dimensions (P1 #1)", () => {
     expect(busR).toBe(174900);
   });
 
+  it("GPR workbook exports a nested work → resource groups → materials sheet", async () => {
+    const buf = await buildGprXlsx(T25U_TEST.scheduleId);
+    const wb = await loadXlsx(buf);
+    const tree = wb.getWorksheet("Ресурсный график")!;
+    const rows: Array<{ row: ExcelJS.Row; name: string }> = [];
+    tree.eachRow((row) => rows.push({ row, name: String(row.getCell(1).value ?? "") }));
+
+    const stageIndex = rows.findIndex((entry) => entry.name === "Мобилизация [TEST]");
+    expect(stageIndex).toBeGreaterThanOrEqual(0);
+    expect(rows[stageIndex + 1].name).toBe("↳ Люди");
+    expect(rows[stageIndex + 2].name).toBe("Дорожный рабочий");
+    expect(rows[stageIndex + 2].row.outlineLevel).toBe(2);
+
+    const materialGroup = rows.findIndex((entry) => entry.name === "↳ Материалы");
+    expect(materialGroup).toBeGreaterThan(stageIndex);
+    expect(rows[materialGroup + 1].name).toBe("Материалы мобилизации");
+    expect(rows[materialGroup + 1].row.outlineLevel).toBe(2);
+    expect(tree.views[0]).toMatchObject({ state: "frozen", ySplit: 1 });
+  });
+
   it("materials never enter Q-hours", () => {
     const stages = completeFixtureStages();
     const build = stagesToResourceLines(stages);

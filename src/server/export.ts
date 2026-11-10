@@ -7,6 +7,7 @@ import {
   calculationTotals,
   positionLineSum,
 } from "@/lib/calc-math";
+import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
 import { resolveResourceDimensions } from "@/lib/resource-dimensions";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
 import { readAppData } from "@/server/db";
@@ -445,6 +446,103 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
   }
   const calc = data.calculations.find((c) => c.id === g.calculationId);
   const rsParams = calc?.resourceScheduleParams ?? EXCEL_RESOURCE_SCHEDULE_DEFAULTS;
+  const treeSheet = wb.addWorksheet("Ресурсный график");
+  treeSheet.columns = [
+    { header: "Работа / ресурс", key: "name", width: 42 },
+    { header: "Ед.", key: "unit", width: 12 },
+    { header: "Количество", key: "quantity", width: 14 },
+    { header: "Часы", key: "hours", width: 14 },
+    { header: "Цена за ед., ₽", key: "rate", width: 17 },
+    { header: "Сумма, ₽", key: "amount", width: 18 },
+    { header: "Начало", key: "start", width: 14 },
+    { header: "Окончание", key: "end", width: 14 },
+    { header: "Статус", key: "status", width: 18 },
+  ];
+  const header = treeSheet.getRow(1);
+  header.height = 30;
+  header.font = { name: "Arial", size: 10, bold: true, color: { argb: "FFFFFFFF" } };
+  header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF183A57" } };
+  header.alignment = { vertical: "middle", wrapText: true };
+  header.border = { bottom: { style: "medium", color: { argb: "FFB86B2B" } } };
+  treeSheet.views = [{ state: "frozen", ySplit: 1 }];
+  treeSheet.properties.outlineLevelRow = 2;
+  treeSheet.properties.outlineProperties = { summaryBelow: true, summaryRight: true };
+  const stageById = new Map(g.stages.map((stage) => [stage.id, stage]));
+  const tree = buildHierarchicalEstimate({
+    stages: g.stages,
+    positions: calc?.positions ?? [],
+    params: rsParams,
+  });
+  for (const node of tree) {
+    const stage = stageById.get(node.id);
+    const workRow = treeSheet.addRow({
+      name: node.name,
+      quantity: stage?.planVolume ?? null,
+      amount: node.subtotal,
+      start: stage?.start ?? "",
+      end: stage?.end ?? "",
+      status: node.incomplete ? "Частично" : "Подтверждено",
+    });
+    workRow.height = 24;
+    workRow.font = { name: "Arial", size: 10, bold: true, color: { argb: "FFFFFFFF" } };
+    workRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF183A57" } };
+    workRow.alignment = { vertical: "middle", wrapText: true };
+    workRow.getCell(6).numFmt = '#,##0.00;[Red]-#,##0.00;–';
+    workRow.getCell(9).font = { name: "Arial", size: 9, bold: true, color: { argb: node.incomplete ? "FFFFD28A" : "FFC8E6D0" } };
+
+    for (const group of node.groups) {
+      const groupRow = treeSheet.addRow({
+        name: `↳ ${group.label}`,
+        quantity: `${group.leaves.length} поз.`,
+        amount: group.subtotal,
+        status: group.incomplete ? "Частично" : "Подтверждено",
+      });
+      groupRow.outlineLevel = 1;
+      groupRow.height = 21;
+      groupRow.font = { name: "Arial", size: 9, bold: true, color: { argb: "FF405466" } };
+      groupRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEAF0F4" } };
+      groupRow.alignment = { vertical: "middle", wrapText: true };
+      groupRow.getCell(1).alignment = { vertical: "middle", indent: 1 };
+      groupRow.getCell(6).numFmt = '#,##0.00;[Red]-#,##0.00;–';
+
+      for (const leaf of group.leaves) {
+        const leafRow = treeSheet.addRow({
+          name: leaf.name,
+          unit: leaf.unit,
+          quantity: leaf.quantity,
+          hours: leaf.hoursQ,
+          rate: leaf.rate,
+          amount: leaf.amount,
+          start: stage?.start ?? "",
+          end: stage?.end ?? "",
+          status: leaf.amount == null ? "Нет ставки" : leaf.incomplete.length ? "Проверить" : "Подтверждено",
+        });
+        leafRow.outlineLevel = 2;
+        leafRow.height = 21;
+        leafRow.alignment = { vertical: "middle", wrapText: true };
+        leafRow.getCell(1).alignment = { vertical: "middle", indent: 2, wrapText: true };
+        leafRow.getCell(5).numFmt = '#,##0.00;[Red]-#,##0.00;–';
+        leafRow.getCell(6).numFmt = '#,##0.00;[Red]-#,##0.00;–';
+        if (leaf.amount == null) {
+          leafRow.getCell(6).value = "нет ставки";
+          leafRow.getCell(6).font = { color: { argb: "FF9A5A00" }, italic: true };
+        }
+      }
+    }
+  }
+  if (tree.length === 0) {
+    treeSheet.addRow({ name: "Нет работ или ресурсов для показа" });
+  }
+  for (let rowIndex = 2; rowIndex <= treeSheet.rowCount; rowIndex += 1) {
+    const row = treeSheet.getRow(rowIndex);
+    if (!row.fill || row.fill.type === "pattern" && row.fill.fgColor?.argb === "FFFFFFFF") {
+      if (rowIndex % 2 === 0) {
+        row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF4F7F9" } };
+      }
+    }
+    row.border = { bottom: { style: "hair", color: { argb: "FFD9E1E7" } } };
+  }
+
   const cs = calc?.costSummary;
   const totalsPartial = Boolean(
     cs?.totalsIncomplete || cs?.resourceSlices?.partial
