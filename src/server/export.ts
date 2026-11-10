@@ -959,3 +959,67 @@ export async function parseSmetaXlsx(buf: Buffer): Promise<{ code: string; quant
   });
   return rows;
 }
+
+export type ClientMaterialRow = {
+  sourceRow: number;
+  sourceCode: string;
+  workName: string;
+  section: string;
+  materialName: string;
+  quantity: number;
+  unit: string;
+  rate: number | null;
+};
+
+/** Parse the client's multi-sheet workbook without treating its first sheet as a generic estimate. */
+export async function parseClientMaterialsXlsx(buf: Buffer): Promise<ClientMaterialRow[]> {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buf as unknown as ExcelJS.Buffer);
+  const ws = wb.getWorksheet("Материалы");
+  if (!ws) throw new Error('В книге не найден лист «Материалы»');
+  const headerRow = ws.getRow(14);
+  const headers = new Map<string, number>();
+  headerRow.eachCell((cell, col) => {
+    headers.set(String(cell.value ?? "").trim().toLocaleLowerCase("ru-RU"), col);
+  });
+  const col = (name: string) => headers.get(name.toLocaleLowerCase("ru-RU"));
+  const workCol = col("Работа ГПР");
+  const sectionCol = col("Раздел");
+  const codeCol = col("Код ВОР");
+  const materialCol = col("Материал / конструкция");
+  const quantityCol = col("Кол-во для цены");
+  const unitCol = col("Ед. цены");
+  const rateCol = col("Цена за ед., руб.");
+  if (![workCol, sectionCol, codeCol, materialCol, quantityCol, unitCol, rateCol].every(Boolean)) {
+    throw new Error('Лист «Материалы»: не найдены ожидаемые колонки шаблона клиента');
+  }
+  const read = (row: ExcelJS.Row, column: number) => {
+    const value = row.getCell(column).value;
+    if (value && typeof value === "object" && "result" in value) return value.result;
+    return value;
+  };
+  const rows: ClientMaterialRow[] = [];
+  ws.eachRow((row, rowNumber) => {
+    if (rowNumber <= 14) return;
+    const workName = String(read(row, workCol!) ?? "").trim();
+    const materialName = String(read(row, materialCol!) ?? "").trim();
+    if (!workName || !materialName) return;
+    const quantity = Number(read(row, quantityCol!));
+    if (!Number.isFinite(quantity) || quantity < 0) return;
+    const rawRate = read(row, rateCol!);
+    const parsedRate = Number(rawRate);
+    rows.push({
+      sourceRow: row.number,
+      sourceCode: String(read(row, codeCol!) ?? "").trim(),
+      workName,
+      section: String(read(row, sectionCol!) ?? "").trim(),
+      materialName,
+      quantity,
+      unit: String(read(row, unitCol!) ?? "").trim(),
+      // Zero/missing prices are not treated as confirmed rates.
+      rate: Number.isFinite(parsedRate) && parsedRate > 0 ? parsedRate : null,
+    });
+  });
+  if (!rows.length) throw new Error('На листе «Материалы» нет строк с работой и материалом');
+  return rows;
+}

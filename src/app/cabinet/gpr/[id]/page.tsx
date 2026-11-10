@@ -1,6 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
+import { useRef } from "react";
 import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
@@ -27,6 +28,7 @@ import type { CalcPosition, GprStageResource } from "@/lib/types";
 
 export default function GprDetailPage() {
   const params = useParams<{ id: string }>();
+  const materialsFileRef = useRef<HTMLInputElement>(null);
   const { data, user, updateSchedule, updateCalculation, refresh } = useStore();
 
   if (!user) return null;
@@ -114,6 +116,31 @@ export default function GprDetailPage() {
         actions={
           <>
             <StatusBadge status={schedule.status} />
+            <input
+              ref={materialsFileRef}
+              type="file"
+              accept=".xlsx"
+              className="hidden"
+              aria-label="Загрузить материалы из Excel"
+              onChange={async (event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                if (!file) return;
+                const form = new FormData();
+                form.set("scheduleId", schedule.id);
+                form.set("file", file);
+                try {
+                  const result = await api<{ imported: number; stages: number }>("/api/gpr/materials", { method: "POST", body: form });
+                  await refresh();
+                  toast.success(`Импортировано материалов: ${result.imported} · работ: ${result.stages}`);
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : "Не удалось импортировать материалы");
+                }
+              }}
+            />
+            <Button variant="outline" onClick={() => materialsFileRef.current?.click()}>
+              Загрузить материалы XLSX
+            </Button>
             <Button
               variant="outline"
               onClick={() => {

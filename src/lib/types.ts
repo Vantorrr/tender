@@ -427,6 +427,8 @@ export type ResourceQuantityBasis =
 
 export interface GprStageResource {
   id: string;
+  /** Stable source row key used to make client workbook imports repeatable. */
+  sourceKey?: string;
   kind: "labor" | "equipment" | "material" | "bus" | "other";
   name: string;
   quantity: number;
