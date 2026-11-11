@@ -65,6 +65,9 @@ export default function ProizvodstvoPage() {
   const [period, setPeriod] = useState<PeriodMode>("cum");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [qty, setQty] = useState("1");
+  const [newWorkName, setNewWorkName] = useState("");
+  const [newWorkUnit, setNewWorkUnit] = useState("");
+  const [newWorkPlan, setNewWorkPlan] = useState("");
   const [savingDaily, setSavingDaily] = useState(false);
   const [varianceLoading, setVarianceLoading] = useState(false);
   const [supplySavingId, setSupplySavingId] = useState<string | null>(null);
@@ -108,10 +111,9 @@ export default function ProizvodstvoPage() {
 
   const workOptions = plan?.entries.map((e) => e.workName) ?? [];
   const [workName, setWorkName] = useState("");
-  const selectedWork =
-    workName || workOptions[0] || "Общий объём";
+  const selectedWork = workName || workOptions[0] || "";
   const selectedEntry = plan?.entries.find((e) => e.workName === selectedWork);
-  const selectedUnit = selectedEntry?.unit ?? "%";
+  const selectedUnit = selectedEntry?.unit ?? "—";
 
   if (!user) return null;
 
@@ -229,7 +231,7 @@ export default function ProizvodstvoPage() {
   }
 
   async function submitDaily(withPhoto: boolean) {
-    if (!plan || savingDailyRef.current) return;
+    if (!plan || !selectedEntry || savingDailyRef.current) return;
     savingDailyRef.current = true;
     setSavingDaily(true);
     const factId = pendingFactIdRef.current ?? createDailyFactId();
@@ -821,6 +823,30 @@ export default function ProizvodstvoPage() {
               ) : null}
 
               <div className="mb-6 rounded-xl border bg-white/80 p-4">
+                <h3 className="mb-2 font-medium">Виды работ плана договора</h3>
+                {plan.entries.length === 0 ? (
+                  <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+                    В смете нет подтверждённых физических объёмов. Добавьте виды работ и плановые количества вручную, чтобы вести план/факт.
+                  </p>
+                ) : null}
+                <div className="mb-5 flex flex-wrap items-end gap-2">
+                  <label className="text-xs">Вид работ<Input aria-label="Новый вид работ" value={newWorkName} onChange={(e) => setNewWorkName(e.target.value)} className="mt-1 w-64" /></label>
+                  <label className="text-xs">Ед. изм.<Input aria-label="Единица нового вида работ" value={newWorkUnit} onChange={(e) => setNewWorkUnit(e.target.value)} placeholder="м², м, шт" className="mt-1 w-24" /></label>
+                  <label className="text-xs">Плановый объём<Input aria-label="Плановый объём нового вида работ" type="number" min="0" step="any" value={newWorkPlan} onChange={(e) => setNewWorkPlan(e.target.value)} className="mt-1 w-32" /></label>
+                  <Button disabled={!plan || !newWorkName.trim() || !newWorkUnit.trim() || !Number.isFinite(Number(newWorkPlan)) || Number(newWorkPlan) <= 0} onClick={() => {
+                    if (!plan) return;
+                    const name = newWorkName.trim();
+                    if (plan.entries.some((entry) => entry.workName.toLocaleLowerCase("ru-RU") === name.toLocaleLowerCase("ru-RU"))) {
+                      toast.error("Такой вид работ уже есть в плане");
+                      return;
+                    }
+                    const volume = Number(newWorkPlan);
+                    updatePlanFact(plan.id, { entries: [...plan.entries, { id: `pfe-manual-${crypto.randomUUID()}`, workName: name, unit: newWorkUnit.trim(), plan: volume, fact: 0, contractRemaining: volume }] });
+                    setWorkName(name);
+                    setNewWorkName(""); setNewWorkUnit(""); setNewWorkPlan("");
+                    toast.success("Вид работ добавлен в план договора");
+                  }}>Добавить работу</Button>
+                </div>
                 <h3 className="mb-3 font-medium">Дневной факт + фото</h3>
                 <div className="flex flex-wrap items-end gap-2">
                   <div>
@@ -874,7 +900,7 @@ export default function ProizvodstvoPage() {
                   />
                   <Button
                     data-testid="daily-fact-save"
-                    disabled={savingDaily}
+                    disabled={savingDaily || !selectedEntry}
                     onClick={() => submitDaily(false)}
                   >
                     {savingDaily ? "Сохранение…" : "Сохранить факт"}
@@ -882,7 +908,7 @@ export default function ProizvodstvoPage() {
                   <Button
                     variant="outline"
                     data-testid="daily-fact-photo"
-                    disabled={savingDaily}
+                    disabled={savingDaily || !selectedEntry}
                     onClick={() => submitDaily(true)}
                   >
                     Факт + фото

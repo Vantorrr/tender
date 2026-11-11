@@ -193,7 +193,7 @@ function DayDetailsInner() {
   const dateMiss = !linkMissing && linkedStages.length === 0;
 
   async function save(withPhoto: boolean) {
-    if (savingRef.current) return;
+    if (savingRef.current || !entry) return;
     savingRef.current = true;
     setSaving(true);
     const factId = pendingFactIdRef.current ?? createDailyFactId();
@@ -342,6 +342,12 @@ function DayDetailsInner() {
         ) : null}
       </div>
 
+      {!entry ? (
+        <p className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+          Для этого проекта не задан физический план. Вернитесь в производство и добавьте вид работ с единицей измерения и плановым объёмом.
+        </p>
+      ) : null}
+
       <div
         className="mb-6 grid gap-3 sm:grid-cols-2"
         data-testid="day-plan-fact-row"
@@ -458,12 +464,12 @@ function DayDetailsInner() {
             ref={photoRef}
             data-testid="day-upload-input"
           />
-          <Button disabled={saving} data-testid="day-save" onClick={() => void save(false)}>
+          <Button disabled={saving || !entry} data-testid="day-save" onClick={() => void save(false)}>
             {saving ? "Сохранение…" : "Сохранить"}
           </Button>
           <Button
             variant="outline"
-            disabled={saving}
+            disabled={saving || !entry}
             data-testid="day-save-photo"
             onClick={() => void save(true)}
           >

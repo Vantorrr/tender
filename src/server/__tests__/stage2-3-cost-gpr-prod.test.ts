@@ -405,6 +405,60 @@ describe("stage3 won→production + daily fact + baseline", () => {
     );
   });
 
+  it("does not invent a 100% production task when physical estimate volumes are missing", () => {
+    mutateAppData((data) => {
+      const procurement = data.procurements.find((item) => item.id === "p-2")!;
+      procurement.lifecycle = "won";
+      procurement.originalCalculationId = undefined;
+      const plan = data.planFacts.find((item) => item.id === procurement.planFactId)!;
+      plan.entries = [{ id: "legacy", workName: "Общий объём", unit: "%", plan: 100, fact: 0 }];
+      plan.baselineEntries = undefined;
+      plan.dailyFacts = [];
+      return data;
+    });
+    transferProcurementToProduction("u-ruk", "p-2");
+    const data = readAppData();
+    const procurement = data.procurements.find((item) => item.id === "p-2")!;
+    const plan = data.planFacts.find((item) => item.id === procurement.planFactId)!;
+    expect(plan.entries).toEqual([]);
+    expect(plan.baselineEntries).toEqual([]);
+  });
+
+  it("seeds production plan from customer estimate physical positions only", () => {
+    mutateAppData((data) => {
+      const procurement = data.procurements.find((item) => item.id === "p-2")!;
+      procurement.lifecycle = "won";
+      const template = data.calculations[0];
+      const originalId = "calc-customer-plan-test";
+      procurement.originalCalculationId = originalId;
+      const plan = data.planFacts.find((item) => item.id === procurement.planFactId)!;
+      plan.entries = [{ id: "legacy", workName: "Общий объём", unit: "%", plan: 100, fact: 0 }];
+      plan.baselineEntries = undefined;
+      plan.dailyFacts = [];
+      data.calculations.push({
+        ...structuredClone(template),
+        id: originalId,
+        procurementId: procurement.id,
+        kind: "customer_original",
+        immutable: true,
+        positions: [
+          { id: "a", code: "01", name: "Монтаж труб", unit: "м", quantity: 25, rate: 10 },
+          { id: "b", code: "02", name: "Монтаж труб", unit: "м", quantity: 5, rate: 10 },
+          { id: "c", code: "НР", name: "Накладные расходы", unit: "руб", quantity: 100, rate: 1 },
+        ],
+      });
+      return data;
+    });
+    transferProcurementToProduction("u-ruk", "p-2");
+    const data = readAppData();
+    const procurement = data.procurements.find((item) => item.id === "p-2")!;
+    const plan = data.planFacts.find((item) => item.id === procurement.planFactId)!;
+    expect(plan.entries).toMatchObject([
+      { workName: "Монтаж труб", unit: "м", plan: 30, fact: 0, contractRemaining: 30 },
+    ]);
+    expect(plan.baselineEntries).toEqual(plan.entries);
+  });
+
   it("daily fact updates physical totals without touching cash", () => {
     transferProcurementToProduction("u-ruk", "p-1");
     const pfId = readAppData().procurements.find((p) => p.id === "p-1")!

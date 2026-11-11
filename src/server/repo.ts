@@ -903,15 +903,7 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
         procurementId: p.id,
         title: `План/факт — ${p.title.slice(0, 48)}`,
         status: "v_rabote",
-        entries: [
-          {
-            id: `pfe-${Date.now()}`,
-            workName: "Общий объём",
-            unit: "%",
-            plan: 100,
-            fact: 0,
-          },
-        ],
+        entries: [],
         updatedAt: now,
       });
       p.planFactId = id;
@@ -930,6 +922,35 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
     );
     return data;
   });
+}
+
+function productionEntriesFromCustomerEstimate(data: AppData, procurementId: string): PlanFactEntry[] {
+  const procurement = data.procurements.find((item) => item.id === procurementId);
+  const original = data.calculations.find((item) =>
+    item.id === procurement?.originalCalculationId && item.kind === "customer_original"
+  ) ?? data.calculations.find((item) =>
+    item.procurementId === procurementId && item.kind === "customer_original"
+  );
+  if (!original) return [];
+  const grouped = new Map<string, { workName: string; unit: string; plan: number }>();
+  for (const position of original.positions) {
+    const workName = position.name.trim();
+    const unit = position.unit.trim();
+    const code = position.code.trim().toUpperCase();
+    if (!workName || !unit || /^(НР|СП)(?:$|[-.\s])/i.test(code) || !Number.isFinite(position.quantity) || position.quantity <= 0) continue;
+    const key = `${workName.toLocaleLowerCase("ru-RU")}\u0000${unit.toLocaleLowerCase("ru-RU")}`;
+    const row = grouped.get(key) ?? { workName, unit, plan: 0 };
+    row.plan += position.quantity;
+    grouped.set(key, row);
+  }
+  return [...grouped.values()].map((row, index) => ({
+    id: `pfe-est-${procurementId}-${index + 1}`,
+    workName: row.workName,
+    unit: row.unit,
+    plan: row.plan,
+    fact: 0,
+    contractRemaining: row.plan,
+  }));
 }
 
 export function updateSchedule(
@@ -2128,22 +2149,27 @@ export function transferProcurementToProduction(
         procurementId: p.id,
         title: `План/факт — ${p.title.slice(0, 48)}`,
         status: "v_rabote",
-        entries: [
-          {
-            id: `pfe-${Date.now()}`,
-            workName: "Общий объём",
-            unit: "%",
-            plan: 100,
-            fact: 0,
-            contractRemaining: 100,
-          },
-        ],
+        entries: productionEntriesFromCustomerEstimate(data, p.id),
         dailyFacts: [],
         updatedAt: now,
       });
       p.planFactId = id;
     }
     const pf = data.planFacts.find((x) => x.id === p.planFactId)!;
+    // Migrate legacy synthetic 100% placeholder to measured estimate rows, or
+    // an empty plan when the customer has not provided physical quantities.
+    if (
+      !pf.baselineEntries &&
+      (pf.dailyFacts ?? []).length === 0 &&
+      pf.entries.length === 1 &&
+      pf.entries[0].workName === "Общий объём" &&
+      pf.entries[0].unit === "%"
+    ) {
+      pf.entries = productionEntriesFromCustomerEstimate(data, p.id);
+    }
+    if (!pf.baselineEntries && (pf.dailyFacts ?? []).length === 0 && pf.entries.length === 0) {
+      pf.entries = productionEntriesFromCustomerEstimate(data, p.id);
+    }
     if (!pf.baselineEntries) {
       pf.baselineEntries = structuredClone(pf.entries) as PlanFactEntry[];
       pf.baselineAt = now;
