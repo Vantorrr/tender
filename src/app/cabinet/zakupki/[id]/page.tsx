@@ -29,6 +29,7 @@ import { REVIEW_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
 import type { Citation, DocumentCategory, ReviewStatus, SupplyRequest, SupplyStatus } from "@/lib/types";
 import { useStore } from "@/lib/store";
 import { Input } from "@/components/ui/input";
+import { ProjectAiChat } from "@/components/project-ai-chat";
 
 const SUPPLY_RU: Record<SupplyStatus, string> = {
   need: "Потребность",
@@ -389,6 +390,9 @@ export default function ZakupkaDetailPage() {
         description={`${procurement.number} · ${procurement.customer}`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            {user && userHasSection(user, "zakupki") ? (
+              <ProjectAiChat procurementId={procurement.id} projectTitle={procurement.title} screen="procurement" />
+            ) : null}
             <StatusBadge status={procurement.status} />
             <ReviewBadge status={procurement.reviewStatus} />
             {procurement.lifecycle !== "production" && user?.sections.includes("zakupki") ? (

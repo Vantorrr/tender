@@ -5,6 +5,7 @@ import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
+import { ProjectAiChat } from "@/components/project-ai-chat";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -283,15 +284,20 @@ export default function ProizvodstvoPage() {
         description="День / месяц / период / накопительно. Фото и ручной факт. Финансовый результат отделён от кассы. Базовый план сохраняется при переводе в производство."
         actions={
           plan ? (
-            <Button
-              data-testid="planfact-export"
-              onClick={() => {
-                downloadUrl(`/api/export?kind=planfact-xlsx&id=${plan.id}`);
-                toast.success("Скачивание XLSX…");
-              }}
-            >
-              Экспорт
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              {procurement && user && userHasSection(user, "proizvodstvo") ? (
+                <ProjectAiChat procurementId={procurement.id} projectTitle={procurement.title} screen="production" />
+              ) : null}
+              <Button
+                data-testid="planfact-export"
+                onClick={() => {
+                  downloadUrl(`/api/export?kind=planfact-xlsx&id=${plan.id}`);
+                  toast.success("Скачивание XLSX…");
+                }}
+              >
+                Экспорт
+              </Button>
+            </div>
           ) : null
         }
       />

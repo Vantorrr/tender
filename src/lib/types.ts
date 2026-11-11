@@ -81,6 +81,27 @@ export interface NotificationItem {
   href?: string;
 }
 
+export type ProjectChatScreen = "procurement" | "calculation" | "gpr" | "production";
+
+export interface ProjectChatSource {
+  id: string;
+  label: string;
+  quote: string;
+  href?: string;
+}
+
+export interface ProjectChatMessage {
+  id: string;
+  orgId: string;
+  procurementId: string;
+  userId: string;
+  role: "user" | "assistant";
+  content: string;
+  screen: ProjectChatScreen;
+  sources?: ProjectChatSource[];
+  createdAt: string;
+}
+
 export type WorkTypeCode =
   | "дорожные"
   | "общестрой"
@@ -725,4 +746,6 @@ export interface AppData {
   auditLog: AuditEntry[];
   smetaExchanges: SmetaExchangeVersion[];
   supplyRequests?: SupplyRequest[];
+  /** Private-by-user project chat history; fetched only through the scoped chat API. */
+  projectChatMessages?: ProjectChatMessage[];
 }

@@ -25,6 +25,8 @@ import { formatMoney } from "@/lib/format";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { useStore } from "@/lib/store";
 import type { CalcPosition, GprStageResource } from "@/lib/types";
+import { ProjectAiChat } from "@/components/project-ai-chat";
+import { userHasSection } from "@/lib/acl";
 
 type MaterialsPreview = {
   file: File;
@@ -176,6 +178,13 @@ export default function GprDetailPage() {
         } смен`}
         actions={
           <>
+            {userHasSection(user, "gpr") ? (
+              <ProjectAiChat
+                procurementId={schedule.procurementId}
+                projectTitle={schedule.title}
+                screen="gpr"
+              />
+            ) : null}
             <StatusBadge status={schedule.status} />
             <input
               ref={materialsFileRef}

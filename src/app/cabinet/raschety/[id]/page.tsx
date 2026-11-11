@@ -40,6 +40,8 @@ import {
 import { compareCalculations } from "@/lib/calc-compare";
 import type { NorthernInputs } from "@/lib/cost-engine";
 import type { CalcCompareAiReport } from "@/server/calc-compare-ai";
+import { ProjectAiChat } from "@/components/project-ai-chat";
+import { userHasSection } from "@/lib/acl";
 
 function NorthernCostEditor({
   calculationId,
@@ -339,6 +341,9 @@ export default function RaschetDetailPage() {
         }`}
         actions={
           <>
+            {procurement && user && userHasSection(user, "raschety") ? (
+              <ProjectAiChat procurementId={calc.procurementId} projectTitle={procurement.title} screen="calculation" />
+            ) : null}
             <StatusBadge status={calc.status} />
             {!locked ? (
               <>

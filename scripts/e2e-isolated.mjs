@@ -284,7 +284,7 @@ if (schedule && firstStage) {
         (new Date(`${shiftedStage.end}T12:00:00Z`).getTime() -
           new Date(`${shiftedStage.start}T12:00:00Z`).getTime()) /
           86400000
-      )
+      ) + 1
     );
     const resized = await json("/api/gpr", {
       method: "PATCH",
@@ -303,7 +303,7 @@ if (schedule && firstStage) {
       "GPR duration edit persists",
       resized.res.ok &&
         Boolean(resizedStage) &&
-        resizedStage.end === addUtcDays(resizedStage.start, oldSpan + 2),
+        resizedStage.end === addUtcDays(resizedStage.start, oldSpan + 1),
       resized.body.error
     );
   } else {
@@ -349,7 +349,7 @@ const recoverReq = await json("/api/auth/recover", {
 check("recovery request accepted", recoverReq.res.ok, recoverReq.body.error);
 
 let recoveryCode = null;
-const sinkLatest = path.join(process.cwd(), "data", "mail-sink", "latest.json");
+const sinkLatest = path.resolve(process.cwd(), process.env.DATA_DIR ?? "data", "mail-sink", "latest.json");
 if (fs.existsSync(sinkLatest)) {
   try {
     const mail = JSON.parse(fs.readFileSync(sinkLatest, "utf8"));
