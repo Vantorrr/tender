@@ -28,6 +28,7 @@ import {
   busCost,
   runCostEngine,
   shiftStages,
+  workingDaysBetween,
   type BusRouteInput,
   type NorthernInputs,
 } from "@/lib/cost-engine";
@@ -46,7 +47,7 @@ import { createSession, publicUser } from "@/server/auth";
 import { randomBytes } from "node:crypto";
 import { economicsFromVolumes } from "@/lib/economics-from-rates";
 import { ensureStageResources } from "@/lib/gpr-resources";
-import { totalStageCalendarDays } from "@/lib/plan-from-gpr";
+import { gprCoveredDays, totalStageCalendarDays } from "@/lib/plan-from-gpr";
 import { recomputeEntriesFromDaily } from "@/lib/plan-fact-agg";
 import { buildMaterialNeeds, materialNeedsIncomplete } from "@/lib/materials-need";
 import {
@@ -1762,9 +1763,12 @@ export function shiftGprStage(
     item.stages = result.stages.map((stage) => {
       const previous = oldStageById.get(stage.id);
       if (!previous) return stage;
-      const oldDays = Math.max(1, totalStageCalendarDays([previous]));
-      const newDays = Math.max(1, totalStageCalendarDays([stage]));
-      if (oldDays === newDays) return stage;
+      const oldCalendarDays = Math.max(1, totalStageCalendarDays([previous]));
+      const newCalendarDays = Math.max(1, totalStageCalendarDays([stage]));
+      const weekendDays = item.calendar?.weekendDays ?? [0, 6];
+      const oldWorkDays = Math.max(1, workingDaysBetween(previous.start, previous.end, weekendDays));
+      const newWorkDays = Math.max(1, workingDaysBetween(stage.start, stage.end, weekendDays));
+      if (oldWorkDays === newWorkDays && oldCalendarDays === newCalendarDays) return stage;
       return {
         ...stage,
         resources: (stage.resources ?? []).map((resource) => {
@@ -1772,8 +1776,8 @@ export function shiftGprStage(
           // Resource duration follows its GPR stage until the user gives it a
           // different P value. Explicitly shortened/extended resource windows
           // therefore stay independent from the stage calendar.
-          return resource.days == null || resource.days === oldDays
-            ? { ...resource, days: newDays }
+          return resource.days == null || resource.days === oldWorkDays || resource.days === oldCalendarDays
+            ? { ...resource, days: newWorkDays }
             : resource;
         }),
       };
@@ -1799,7 +1803,7 @@ export function shiftGprStage(
       applyResourceDraftAdjustments(calc);
     }
     if (calc && calc.kind !== "customer_original") {
-      const days = totalStageCalendarDays(item.stages);
+      const days = gprCoveredDays(item.stages, item.calendar).length;
       if (calc.busRoutes?.length) {
         calc.busRoutes = calc.busRoutes.map((r) => ({ ...r, days }));
       }
@@ -1871,7 +1875,7 @@ export function shiftGprStage(
       "shift",
       "gpr",
       scheduleId,
-      `Сдвиг ${stageId} на ${deltaDays} дн.; конфликтов ${result.conflicts.length}; связанные дни автобуса=${totalStageCalendarDays(item.stages)}`
+      `Сдвиг ${stageId} на ${deltaDays} дн.; конфликтов ${result.conflicts.length}; связанные рабочие дни автобуса=${gprCoveredDays(item.stages, item.calendar).length}`
     );
     return data;
   });

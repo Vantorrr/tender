@@ -384,6 +384,35 @@ describe("stage2 cost engine + gantt", () => {
     expect(totalStageCalendarDays([resized])).toBe(2);
   });
 
+  it("calendar edits recalculate resource days using the project's working week", () => {
+    const schedule = readAppData().schedules[0];
+    const stage = schedule.stages[0];
+    mutateAppData((data) => {
+      const current = data.schedules.find((item) => item.id === schedule.id)!;
+      current.calendar = { weekendDays: [0, 6], hoursPerShift: 8, shiftsPerDay: 1, timezone: "Europe/Moscow" };
+      current.stages = current.stages.map((item) => item.id !== stage.id ? item : {
+        ...item,
+        start: "2026-12-04", // Friday
+        end: "2026-12-06", // Sunday: three calendar days, one working day
+        resources: [{
+          id: "qa-bus-weekend-calendar",
+          kind: "bus" as const,
+          name: "QA shuttle bus",
+          quantity: 1,
+          unit: "bus",
+          rate: 100,
+          days: 1,
+        }],
+      });
+      return data;
+    });
+
+    shiftGprStage("u-smet", schedule.id, stage.id, 0, { resizeDays: 4 });
+    const resized = readAppData().schedules.find((item) => item.id === schedule.id)!.stages.find((item) => item.id === stage.id)!;
+    expect(resized.end).toBe("2026-12-07");
+    expect(resized.resources?.[0].days).toBe(2); // Friday + Monday, weekend excluded
+  });
+
   it("recomputeCalculationCost writes summary without inventing VAT", () => {
     sendProcurementToCalculation("u-smet", "p-norilsk-1");
     const draft = readAppData().procurements.find((p) => p.id === "p-norilsk-1")!

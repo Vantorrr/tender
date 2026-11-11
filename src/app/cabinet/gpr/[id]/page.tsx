@@ -257,8 +257,7 @@ export default function GprDetailPage() {
           className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-950"
           data-testid="t25u-test-banner"
         >
-          <span className="font-semibold">TEST</span> — изолированный ГПР
-          приёмки t25u (школа №12 не изменена).
+          Изолированный приёмочный ГПР · демонстрационные данные.
         </div>
       ) : null}
 
@@ -279,18 +278,14 @@ export default function GprDetailPage() {
         <h2 className="mb-2 font-[family-name:var(--font-display)] text-base">
           План / факт · Гант
         </h2>
-        <p className="mb-3 text-xs text-[var(--tk-muted)]">
-          Передвигайте серую полосу плана мышью или клавишами ←/→. Точные даты и
-          длительность этапа можно изменить в календарных полях; зависимые этапы
-          и ресурсный расчёт пересчитываются автоматически.
-        </p>
         <PlanFactGantt
           stages={schedule.stages}
           entries={planFact?.entries}
           dailyFacts={planFact?.dailyFacts}
           planFactId={planFact?.id}
           filterScope={schedule.id}
-          onShift={(id, d, resize) => void shiftStage(id, d, resize)}
+          weekendDays={schedule.calendar?.weekendDays}
+          onShift={(id, d, resize) => shiftStage(id, d, resize)}
         />
       </div>
 
