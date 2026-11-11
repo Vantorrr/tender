@@ -221,8 +221,27 @@ export async function POST(req: Request) {
       } catch (e) {
         const message =
           e instanceof Error ? e.message.slice(0, 200) : "ошибка разбора";
-        const timedOut = /таймаут/i.test(message);
-        return json({ error: message }, timedOut ? 504 : 422);
+        // Preserve the user's original file even when extraction/OCR fails.
+        // A parser outage should mark the document for review, not look like
+        // the upload itself was rejected and discard the bytes.
+        const tempId = `d-${Date.now()}`;
+        const stored = await saveUpload(tempId, file.name, buf);
+        createDocument(user.id, {
+          orgId: user.orgId,
+          procurementId,
+          title: String(form.get("title") ?? "").trim() || file.name,
+          fileName: file.name,
+          fileType,
+          category,
+          storedPath: stored.storedPath,
+          fileSize: stored.fileSize,
+          extractionErrors: [message],
+        });
+        await refreshAndMaybeAnalyzePackage(user.id, procurementId);
+        return json({
+          ...getBootstrap(user),
+          uploadWarning: `Файл сохранён, но не разобран: ${message}`,
+        });
       }
       const title =
         String(form.get("title") ?? "").trim() || prepared.title;

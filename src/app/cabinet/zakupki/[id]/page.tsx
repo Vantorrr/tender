@@ -184,6 +184,8 @@ export default function ZakupkaDetailPage() {
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
+  const [analyticsBusy, setAnalyticsBusy] = useState(false);
+  const [activeTab, setActiveTab] = useState("overview");
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [payTitle, setPayTitle] = useState("Аванс");
   const [payAmount, setPayAmount] = useState("0");
@@ -296,13 +298,14 @@ export default function ZakupkaDetailPage() {
     setBusy(true);
     setUploadError(null);
     try {
-      await createDocumentUpload({
+      const warning = await createDocumentUpload({
         procurementId: procurement!.id,
         title: file.name.replace(/\.[^.]+$/, ""),
         file,
         category: uploadCategory,
       });
-      toast.success(`Файл «${file.name}» добавлен в закупку`);
+      if (warning) toast.warning(warning);
+      else toast.success(`Файл «${file.name}» добавлен в закупку`);
       await refresh();
     } catch (e) {
       const msg =
@@ -313,6 +316,30 @@ export default function ZakupkaDetailPage() {
       toast.error(msg);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function refreshProjectAnalytics() {
+    setAnalyticsBusy(true);
+    try {
+      await refreshAnalytics(procurement!.id);
+      toast.success("Сводка проекта обновлена");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось обновить сводку");
+    } finally {
+      setAnalyticsBusy(false);
+    }
+  }
+
+  async function analyzeProjectPackage() {
+    setAiAnalyzing(true);
+    try {
+      await analyzeProjectWithAI(procurement!.id);
+      toast.success("ИИ подготовил сводный анализ всего пакета");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось проанализировать пакет");
+    } finally {
+      setAiAnalyzing(false);
     }
   }
 
@@ -418,7 +445,20 @@ export default function ZakupkaDetailPage() {
         }
       />
 
-      <Tabs defaultValue="overview" className="mt-2">
+      <input
+        ref={fileRef}
+        type="file"
+        className="sr-only"
+        accept=".pdf,.doc,.docx,.xlsx,.zip,.rar,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp"
+        aria-label="Выберите документы для загрузки в закупку"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void onUpload(f);
+          e.target.value = "";
+        }}
+      />
+
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-2">
         <TabsList className="mb-4 flex h-auto flex-wrap gap-1">
           <TabsTrigger value="overview">Карточка</TabsTrigger>
           {canDocs ? (
@@ -437,6 +477,52 @@ export default function ZakupkaDetailPage() {
         </TabsList>
 
         <TabsContent value="overview">
+          <section className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4" data-testid="procurement-overview-analysis">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <h2 className="font-[family-name:var(--font-display)] text-base">Аналитика и документы проекта</h2>
+                <p className="mt-1 text-xs text-[var(--tk-muted)]">
+                  Загрузите файл или архив — система сохранит его в карточке, обновит сводку и разберёт доступные источники.
+                </p>
+                {analytics ? (
+                  <div className="mt-3">
+                    <p className="text-sm font-medium">Рекомендация: {PARTICIPATE_LABELS[analytics.recommendation]}</p>
+                    <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-sm text-[var(--tk-muted)]">{analytics.summary}</p>
+                    <p className="mt-1 text-xs text-[var(--tk-muted)]">Документов: {analytics.quality?.sourceDocuments ?? docs.length} · Цитат: {analytics.citations.length} · {analytics.quality?.status === "evidence_backed" ? "есть подтверждённые источниками тезисы" : "проверьте исходные документы"}</p>
+                  </div>
+                ) : (
+                  <p className="mt-3 text-sm text-[var(--tk-muted)]">Сводки пока нет. После загрузки документа она появится здесь.</p>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <label className="sr-only" htmlFor="overview-upload-category">Тип загружаемого файла</label>
+                <select
+                  id="overview-upload-category"
+                  className="h-9 rounded-lg border border-[var(--tk-line)] bg-white px-2 text-sm"
+                  value={uploadCategory}
+                  onChange={(event) => setUploadCategory(event.target.value as DocumentCategory)}
+                >
+                  <option value="general">Другой файл</option>
+                  <option value="estimate">Смета</option>
+                  <option value="contract">Договор</option>
+                  <option value="tz">ТЗ / извещение</option>
+                  <option value="archive">Архив</option>
+                </select>
+                <Button variant="outline" disabled={busy} onClick={() => fileRef.current?.click()}>
+                  {busy ? "Загрузка…" : "Добавить файлы"}
+                </Button>
+                <Button variant="outline" disabled={analyticsBusy} onClick={() => void refreshProjectAnalytics()}>
+                  {analyticsBusy ? "Обновляю…" : "Обновить сводку"}
+                </Button>
+                {docs.some((document) => document.citations.length > 0) ? (
+                  <Button disabled={aiAnalyzing} onClick={() => void analyzeProjectPackage()}>
+                    {aiAnalyzing ? "ИИ анализирует…" : "ИИ-анализ пакета"}
+                  </Button>
+                ) : null}
+                <Button variant="ghost" onClick={() => setActiveTab("analytics")}>Подробная аналитика</Button>
+              </div>
+            </div>
+          </section>
           <div className="grid gap-4 lg:grid-cols-3">
             <div className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5 lg:col-span-2">
               <h2 className="font-[family-name:var(--font-display)] text-base">
@@ -620,17 +706,6 @@ export default function ZakupkaDetailPage() {
                 <option value="archive">Архив</option>
               </select>
             </div>
-            <input
-              ref={fileRef}
-              type="file"
-              className="hidden"
-              accept=".pdf,.doc,.docx,.xlsx,.zip,.rar"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) void onUpload(f);
-                e.target.value = "";
-              }}
-            />
             <Button
               disabled={busy}
               data-testid="upload-to-procurement"
@@ -720,31 +795,14 @@ export default function ZakupkaDetailPage() {
                 Аналитическая сводка проекта
               </h2>
               <div className="flex flex-wrap gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={async () => {
-                    await refreshAnalytics(procurement.id);
-                    toast.success("Сводка пересчитана");
-                  }}
-                >
-                  Обновить сводку
+                <Button variant="outline" size="sm" disabled={analyticsBusy} onClick={() => void refreshProjectAnalytics()}>
+                  {analyticsBusy ? "Обновляю…" : "Обновить сводку"}
                 </Button>
                 <Button
                   size="sm"
                   disabled={aiAnalyzing || docs.length === 0 || !docs.some((document) => document.citations.length > 0)}
                   title="Модель может вернуть только тезисы с дословной цитатой из загруженных документов"
-                  onClick={async () => {
-                    setAiAnalyzing(true);
-                    try {
-                      await analyzeProjectWithAI(procurement.id);
-                      toast.success("ИИ подготовил сводный анализ всего пакета");
-                    } catch (error) {
-                      toast.error(error instanceof Error ? error.message : "Не удалось проанализировать пакет");
-                    } finally {
-                      setAiAnalyzing(false);
-                    }
-                  }}
+                  onClick={() => void analyzeProjectPackage()}
                 >
                   {aiAnalyzing ? "ИИ анализирует пакет…" : "ИИ-анализ всего пакета"}
                 </Button>

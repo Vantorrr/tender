@@ -87,7 +87,7 @@ interface StoreContextValue {
     title?: string;
     file: File;
     category?: string;
-  }) => Promise<void>;
+  }) => Promise<string | undefined>;
   updateSchedule: (id: string, patch: Partial<GprSchedule>) => Promise<void>;
   patchScheduleResource: (
     scheduleId: string,
@@ -477,11 +477,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       form.append("procurementId", input.procurementId);
       if (input.title) form.append("title", input.title);
       if (input.category) form.append("category", input.category);
-      const boot = await api<BootstrapResponse>("/api/dokumenty", {
+      const boot = await api<BootstrapResponse & { uploadWarning?: string }>("/api/dokumenty", {
         method: "POST",
         body: form,
       });
       applyBoot(boot);
+      return boot.uploadWarning;
     },
     [applyBoot]
   );

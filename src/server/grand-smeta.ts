@@ -755,12 +755,13 @@ export async function analyzeUpload(
         );
       }
     } catch {
-      return unrecognized(fileName, "Файл Excel повреждён или это не книга .xlsx.");
+      try {
+        return await analyzeGenericWorkbook(fileName, buf);
+      } catch {
+        return unrecognized(fileName, "Файл Excel повреждён или это не книга .xlsx.");
+      }
     }
-    return unrecognized(
-      fileName,
-      `Книга не распознана как локальный сметный расчёт ${GRAND_PROFILE.vendor} ${GRAND_PROFILE.version} (${GRAND_PROFILE.form}).`
-    );
+    return analyzeGenericWorkbook(fileName, buf);
   }
   if (fileType === "docx" || fileName.toLowerCase().endsWith(".docx")) {
     const { analysisFromDocx, parseDocxBuffer } = await import(
@@ -952,5 +953,107 @@ function unrecognized(fileName: string, reason: string): UploadAnalysis {
       positionCount: 0,
       profileMatch: false,
     },
+  };
+}
+
+/** Read ordinary XLSX workbooks as source material when they are not GRAND-Smeta exports. */
+async function analyzeGenericWorkbook(fileName: string, buf: Buffer): Promise<UploadAnalysis> {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buf as unknown as ExcelJS.Buffer);
+  const rows: Array<{ sheet: string; row: number; text: string; lastCol: number; priority: number }> = [];
+  const positions: GrandPosition[] = [];
+  const preferredMaterialPositions: GrandPosition[] = [];
+
+  for (const ws of wb.worksheets) {
+    let header: { name?: number; unit?: number; quantity?: number; rate?: number; code?: number; preferredMaterials?: boolean } | null = null;
+    ws.eachRow((row, rowNumber) => {
+      if (rowNumber > 5000) return;
+      const cells: Array<{ col: number; text: string; value: ExcelJS.CellValue }> = [];
+      row.eachCell((cell, col) => {
+        if (col > 40) return;
+        const value = cell.value;
+        const text = cellText(value);
+        if (text) cells.push({ col, text, value });
+      });
+      if (!cells.length) return;
+      const joined = cells.map(({ col, text }) => `${colLetter(col)}: ${text}`).join(" · ").slice(0, 1200);
+      const plain = cells.map((cell) => cell.text).join(" ");
+      const priority =
+        (/материал/i.test(ws.name) ? 30 : /ресурсный.?график/i.test(ws.name) ? 20 : 0) +
+        (/заказчик|срок|оплат|аванс|штраф|пени|неустойк|договор|итого|сметная стоимость/i.test(plain) ? 5 : 0) +
+        (/работ|материал|ресурс|график|объем|объём/i.test(plain) ? 2 : 0) +
+        (rowNumber <= 10 ? 1 : 0);
+      rows.push({ sheet: ws.name, row: rowNumber, text: joined, lastCol: cells.at(-1)!.col, priority });
+
+      if (!header) {
+        const normalized = cells.map((cell) => cell.text.toLocaleLowerCase("ru-RU").replace(/ё/g, "е"));
+        const find = (pattern: RegExp) => cells.find((cell, index) => pattern.test(normalized[index]))?.col;
+        const name = find(/материал\s*\/\s*конструкц/) ?? find(/наименование\s*(работ|материал|ресурс)?/);
+        const quantity = find(/кол-во\s*для\s*цены|колич|объем|объём|quantity|qty/);
+        const unit = find(/ед\.\s*цены|единиц|^ед\.?$|unit/);
+        const rate = find(/цена\s*за\s*ед|ставка|тариф|price|rate/);
+        const code = find(/код\s*вор|шифр|^код$|code/);
+        const preferredMaterials = ws.name.trim().toLocaleLowerCase("ru-RU") === "материалы" &&
+          cells.some((cell) => /материал\s*\/\s*конструкц/i.test(cell.text)) &&
+          cells.some((cell) => /кол-во\s*для\s*цены/i.test(cell.text));
+        if (name && quantity && unit) header = { name, quantity, unit, rate, code, preferredMaterials };
+        return;
+      }
+      if (positions.length >= 2000) return;
+      const name = cellText(row.getCell(header.name!).value);
+      const quantity = asNumber(row.getCell(header.quantity!).value);
+      const unit = cellText(row.getCell(header.unit!).value);
+      if (!name || quantity == null || quantity <= 0 || !unit) return;
+      const rate = header.rate ? asNumber(row.getCell(header.rate).value) : null;
+      const position = {
+        code: header.code ? cellText(row.getCell(header.code).value) : "",
+        name,
+        unit,
+        quantity,
+        rate: rate ?? 0,
+      };
+      if (header.preferredMaterials) preferredMaterialPositions.push(position);
+      else positions.push(position);
+    });
+  }
+
+  // Keep source citations bounded and prioritize terms users need for a bid decision.
+  const selected = rows
+    .sort((a, b) => b.priority - a.priority || a.row - b.row)
+    .slice(0, 80);
+  const selectedPositions = preferredMaterialPositions.length
+    ? preferredMaterialPositions
+    : positions;
+  const citations = selected.map((item, index): Citation => ({
+    id: `c-xlsx-${index + 1}`,
+    text: item.text,
+    page: 1,
+    sourceFile: fileName,
+    sheet: item.sheet,
+    cell: `A${item.row}:${colLetter(item.lastCol)}${item.row}`,
+    confidence: "heuristic",
+  }));
+  const title = fileName.replace(/\.[^.]+$/, "");
+  const sheets = wb.worksheets.map((sheet) => sheet.name);
+  const reason = "Книга прочитана как обычный Excel. Сметная методика ГРАНД-Сметы не подтверждена; суммы и тарифы проверьте по исходному файлу.";
+  return {
+    title,
+    analyticalNote: `${reason}\nЛистов: ${sheets.length}; строк-источников: ${citations.length}; распознанных строк таблиц: ${selectedPositions.length}.`,
+    citations,
+    highlights: [{ id: "h-xlsx-generic", text: "Нестандартная книга Excel", reason, severity: "warning", page: 1 }],
+    status: "trebuet_proverki",
+    analysis: {
+      vendor: "Microsoft Excel",
+      region: "",
+      zone: "",
+      estimateNumber: "",
+      workName: "",
+      basis: "",
+      priceLevel: "",
+      costThousand: null,
+      positionCount: selectedPositions.length,
+      profileMatch: false,
+    },
+    positions: selectedPositions,
   };
 }
