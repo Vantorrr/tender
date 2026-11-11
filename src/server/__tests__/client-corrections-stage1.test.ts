@@ -412,6 +412,29 @@ describe("client corrections stage 1", () => {
     expect(onlyUploaded.quality?.sourceDocuments).toBe(1);
   });
 
+  it("recognizes a technical specification named in full", () => {
+    const data = readAppData();
+    const p = data.procurements.find((x) => x.id === "p-norilsk-1")!;
+    const note = buildProjectAnalytics(p, [{
+      id: "doc-technical-spec",
+      orgId: p.orgId,
+      procurementId: p.id,
+      title: "Техническое задание",
+      fileName: "техническое_задание.docx",
+      fileType: "docx",
+      category: "general",
+      status: "v_rabote",
+      versions: [],
+      analyticalNote: "Извлечено содержание технического задания для проверки проекта.",
+      citations: [],
+      highlights: [],
+      uploadedBy: "u-tender",
+      uploadedAt: new Date().toISOString(),
+      storedPath: "uploads/technical-spec.docx",
+    }]);
+    expect(note.missingInputs).not.toContain("нет ТЗ / извещения");
+  });
+
   it("safe archive rejects path traversal and surfaces errors", () => {
     const dir = archiveExtractDir("test-zip");
     fs.rmSync(dir, { recursive: true, force: true });

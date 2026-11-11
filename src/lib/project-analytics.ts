@@ -43,7 +43,7 @@ export function buildProjectAnalytics(
   const hasContract = sourceDocs.some(
     (d) => d.category === "contract" || /dogovor|договор/i.test(d.fileName)
   );
-  const hasTz = sourceDocs.some((d) => /tz|тз|извещ/i.test(d.fileName + d.title));
+  const hasTz = sourceDocs.some((d) => /tz|тз|извещ|техническ.{0,12}задан/i.test(d.fileName + d.title));
   const analyzed = sourceDocs.filter(
     (d) => (d.analyticalNote && d.analyticalNote.length > 40) || d.analysis
   );

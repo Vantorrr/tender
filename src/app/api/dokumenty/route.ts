@@ -107,7 +107,7 @@ function inferCategory(
   }
   if (/smeta|смет/i.test(fileName)) return "estimate";
   if (/dogovor|договор|контракт/i.test(fileName)) return "contract";
-  if (/tz|тз|извещ/i.test(fileName)) return "tz";
+  if (/tz|тз|извещ|техническ.{0,12}задан/i.test(fileName)) return "tz";
   if (/\.zip$/i.test(fileName)) return "archive";
   return "general";
 }
