@@ -823,6 +823,28 @@ export async function analyzeUpload(
       useLlm
     );
   }
+  const imageExtension = fileName.toLowerCase().match(/\.(png|jpe?g|webp|tiff?|bmp)$/)?.[1];
+  if (imageExtension) {
+    const mimeHint = imageExtension === "jpg" ? "image/jpeg" :
+      imageExtension.startsWith("jpeg") ? "image/jpeg" :
+        imageExtension === "tif" || imageExtension === "tiff" ? "image/tiff" :
+          `image/${imageExtension}`;
+    const ocr = await extractDocumentText({ fileName, buffer: buf, mimeHint });
+    const scan = analysisFromScan(fileName, ocr);
+    return maybeRefineNote(
+      scan,
+      {
+        kind: "image-scan",
+        fileName,
+        mimeHint,
+        textLayer: Boolean(ocr.text),
+        ocrStatus: ocr.status,
+        ocrSnippet: (ocr.text ?? "").slice(0, 400),
+      },
+      ocr.text ? [ocr.text.slice(0, 24)] : [],
+      useLlm
+    );
+  }
   if (fileType === "pdf" || fileName.toLowerCase().endsWith(".pdf")) {
     const ocr = await extractDocumentText({
       fileName,

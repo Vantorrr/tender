@@ -7,6 +7,7 @@ import type { DocumentItem } from "@/lib/types";
 
 type PreviewData =
   | { kind: "pdf" }
+  | { kind: "image" }
   | { kind: "docx"; paragraphs: Array<{ index: number; text: string }> }
   | { kind: "xlsx"; sheets: Array<{ name: string; rows: string[][] }> }
   | { kind: "archive"; files: NonNullable<DocumentItem["extractedFiles"]>; errors: string[] }
@@ -31,6 +32,17 @@ export function DocumentWebPreview({ document }: { document: DocumentItem }) {
   if (!preview) return <p className="p-4 text-sm text-[var(--tk-muted)]">Открываем файл…</p>;
   if (preview.kind === "pdf") {
     return <iframe title={document.fileName} src={`/api/dokumenty/file?id=${document.id}&disposition=inline`} className="h-[70vh] w-full rounded-lg border" />;
+  }
+  if (preview.kind === "image") {
+    return <div className="max-h-[75vh] overflow-auto rounded-lg border bg-stone-100 p-2">
+      {/* The file endpoint checks the user's session and organization before serving bytes. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={`/api/dokumenty/file?id=${encodeURIComponent(document.id)}&disposition=inline`}
+        alt={document.fileName}
+        className="mx-auto h-auto max-w-full object-contain"
+      />
+    </div>;
   }
   if (preview.kind === "docx") {
     return <div className="max-h-[70vh] space-y-3 overflow-auto rounded-lg border bg-white p-5 text-sm leading-relaxed">

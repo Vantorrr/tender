@@ -20,6 +20,7 @@ import type { DocumentCategory, DocumentItem } from "@/lib/types";
 import type { ArchiveExtractResult } from "@/server/safe-archive";
 
 const DOC_SECTIONS = ["dokumenty", "zakupki", "riski"] as const;
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp"]);
 
 type ExtractedFile = ArchiveExtractResult["files"][number];
 
@@ -63,7 +64,7 @@ async function processArchiveFiles(
       }
       continue;
     }
-    if (childExt !== "pdf" && childExt !== "doc" && childExt !== "docx" && childExt !== "xlsx") {
+    if (childExt !== "pdf" && childExt !== "doc" && childExt !== "docx" && childExt !== "xlsx" && !IMAGE_EXTENSIONS.has(childExt)) {
       const childStored = await saveUpload(childId, extractedFile.name, childBytes);
       const reason = "Файл сохранён из архива; формат пока нельзя автоматически разобрать";
       const child = createDocument(userId, {
@@ -76,11 +77,11 @@ async function processArchiveFiles(
       continue;
     }
     try {
-      const prepared = await analyzeUpload(extractedFile.name, childExt, childBytes, { useLlm });
+      const prepared = await analyzeUpload(extractedFile.name, IMAGE_EXTENSIONS.has(childExt) ? "other" : childExt, childBytes, { useLlm });
       const childStored = await saveUpload(childId, extractedFile.name, childBytes);
       const child = createDocument(userId, {
         orgId, procurementId, title: prepared.title, fileName: extractedFile.name,
-        fileType: childExt, category: inferCategory(null, extractedFile.name),
+        fileType: (IMAGE_EXTENSIONS.has(childExt) ? "other" : childExt) as DocumentItem["fileType"], category: inferCategory(null, extractedFile.name),
         storedPath: childStored.storedPath, fileSize: childStored.fileSize, prepared,
       });
       analyzedFiles.push({ name: extractedFile.relativePath, documentId: child.documentId, status: "analyzed" });
@@ -199,7 +200,7 @@ export async function POST(req: Request) {
       }
 
       const fileType =
-        ext === "doc" || ext === "docx" || ext === "xlsx" || ext === "pdf" ? ext : "pdf";
+        ext === "doc" || ext === "docx" || ext === "xlsx" || ext === "pdf" ? ext : "other";
       let prepared;
       try {
         let timer: ReturnType<typeof setTimeout> | undefined;

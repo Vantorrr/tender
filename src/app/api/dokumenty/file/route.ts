@@ -41,13 +41,26 @@ export async function GET(req: Request) {
             ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             : doc.fileType === "zip"
               ? "application/zip"
-              : "application/octet-stream";
+              : (() => {
+                  const ext = doc.fileName.toLowerCase().split(".").pop();
+                  const imageTypes: Record<string, string> = {
+                    png: "image/png",
+                    jpg: "image/jpeg",
+                    jpeg: "image/jpeg",
+                    webp: "image/webp",
+                    tif: "image/tiff",
+                    tiff: "image/tiff",
+                    bmp: "image/bmp",
+                  };
+                  return imageTypes[ext ?? ""] ?? "application/octet-stream";
+                })();
     return new NextResponse(new Uint8Array(buf), {
       status: 200,
       headers: {
         "Content-Type": type,
         "Content-Disposition": `${disposition}; filename="${doc.fileName}"`,
         "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
       },
     });
   });
