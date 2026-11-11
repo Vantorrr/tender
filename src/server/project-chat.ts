@@ -36,6 +36,43 @@ function isClearlyOutOfScope(question: string) {
   );
 }
 
+function displayedDeadline(value: string) {
+  const date = new Date(value);
+  if (!value || Number.isNaN(date.getTime())) return value || "не указан";
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Europe/Moscow",
+  }).format(date);
+}
+
+function directCardFacts(question: string, cardSource: Source | undefined) {
+  if (!cardSource) return null;
+  const fieldPatterns: Array<[RegExp, RegExp]> = [
+    [/(?:заказчик|кто разместил|организатор закупки)/iu, /^Заказчик:/u],
+    [/(?:срок подачи|дата подачи|дедлайн|до какого числа|когда заканчивается прием)/iu, /^Срок подачи/u],
+    [/(?:нмцк|начальн\p{L}* цен|стартов\p{L}* цен)/iu, /^НМЦК:/u],
+    [/(?:регион|где расположен|место выполнения)/iu, /^Регион:/u],
+    [/(?:номер закупки|номер извещения|реестров\p{L}* номер)/iu, /^Номер:/u],
+    [/(?:название|наименование) (?:закупки|проекта|объекта)|что за закупка/iu, /^Название:/u],
+  ];
+  const lines = cardSource.sourceText.split("\n");
+  const quotes = fieldPatterns
+    .filter(([questionPattern]) => questionPattern.test(question))
+    .map(([, linePattern]) => lines.find((line) => linePattern.test(line)))
+    .filter((line): line is string => Boolean(line && !/: (?:не указан|не указана)$/u.test(line)))
+    .slice(0, 4);
+  if (!quotes.length) return null;
+  return {
+    answer: quotes.join("\n"),
+    outOfScope: false,
+    sources: quotes.map((quote) => ({ sourceId: cardSource.id, quote })),
+  } satisfies ChatResult;
+}
+
 export function parseProjectChatResult(raw: string): ChatResult {
   const text = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   const parsed = JSON.parse(text) as Partial<ChatResult>;
@@ -102,7 +139,7 @@ function buildSources(data: AppData, procurementId: string): Source[] {
       `Регион: ${procurement.region}`,
       `Вид работ: ${procurement.workType ?? "не указан"}`,
       `НМЦК: ${procurement.nmck ?? "не указана"}`,
-      `Срок подачи: ${procurement.deadline || "не указан"}`,
+      `Срок подачи: ${displayedDeadline(procurement.deadline)}${procurement.deadline ? ` (исходное значение: ${procurement.deadline})` : ""}`,
       `Решение об участии: ${procurement.reviewStatus}`,
       `Стадия проекта: ${procurement.lifecycle ?? "закупка"}`,
     ].join("\n"),
@@ -269,18 +306,25 @@ export async function sendProjectChatMessage(
   if (outOfScope) {
     answer = "Я отвечаю только по текущей закупке: её документам, смете, расчёту, графику, рискам, поставкам и производству.";
   } else {
-    if (!modelConfigured()) throw new Error("ИИ-чат не настроен: администратору нужно подключить модель");
-    const userPrompt = JSON.stringify({
-      project: { title: procurement.title, number: procurement.number },
-      currentBlock: input.screen,
-      history,
-      question,
-      sources: allSources.map(({ id, label, sourceText }) => ({ id, label, text: sourceText })),
-    });
-    const parsed = parseProjectChatResult(await completeJson(SYSTEM, userPrompt));
-    const validated = validateProjectChatResult(parsed, allSources);
-    answer = validated.answer;
-    citations = validated.sources;
+    const direct = directCardFacts(question, allSources[0]);
+    if (direct) {
+      const validated = validateProjectChatResult(direct, allSources);
+      answer = validated.answer;
+      citations = validated.sources;
+    } else {
+      if (!modelConfigured()) throw new Error("ИИ-чат не настроен: администратору нужно подключить модель");
+      const userPrompt = JSON.stringify({
+        project: { title: procurement.title, number: procurement.number },
+        currentBlock: input.screen,
+        history,
+        question,
+        sources: allSources.map(({ id, label, sourceText }) => ({ id, label, text: sourceText })),
+      });
+      const parsed = parseProjectChatResult(await completeJson(SYSTEM, userPrompt));
+      const validated = validateProjectChatResult(parsed, allSources);
+      answer = validated.answer;
+      citations = validated.sources;
+    }
   }
 
   const now = new Date().toISOString();
