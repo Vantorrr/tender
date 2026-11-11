@@ -9,7 +9,10 @@ import {
   roundMoney,
 } from "@/lib/calc-math";
 import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
-import { resolveResourceDimensions } from "@/lib/resource-dimensions";
+import {
+  resolveResourceDimensions,
+  type ResolvedResourceDims,
+} from "@/lib/resource-dimensions";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
 import { readAppData } from "@/server/db";
 import { estimateKey, parseGrandBuffer } from "@/server/grand-smeta";
@@ -411,6 +414,7 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
   const g = data.schedules.find((s) => s.id === gprId);
   if (!g) throw new Error("ГПР не найден");
   const wb = new ExcelJS.Workbook();
+  wb.calcProperties = { fullCalcOnLoad: true };
   const ws = wb.addWorksheet("ГПР");
   ws.addRow([
     "Этап",
@@ -622,6 +626,8 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
         cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF183A57" } };
       }
     }
+    const resourceRowsByKind = new Map<typeof buckets[number], ExcelJS.Row[]>();
+    const basisByResourceRow = new Map<ExcelJS.Row, ResolvedResourceDims["basis"]>();
     for (const kind of buckets) {
       const items = resolved.filter((item) => item.resource.kind === kind);
       if (!items.length) continue;
@@ -632,8 +638,32 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
       for (const item of items) {
         const { resource, dim } = item;
         const row = clientSheet.addRow(["", "", resource.name, resource.unit, "", "", "", "", "РЕСУРС", clientLabel[kind], resource.sourceKey ?? "", dim.sourceQty, dim.rate ?? "", dim.hoursPerShift ?? "", dim.shiftsPerDay ?? "", dim.days ?? "", dim.hours ?? "", dim.amount ?? "нет ставки"]);
+        const kindRows = resourceRowsByKind.get(kind) ?? [];
+        kindRows.push(row);
+        resourceRowsByKind.set(kind, kindRows);
+        basisByResourceRow.set(row, dim.basis);
         row.outlineLevel = 2;
         row.getCell(3).alignment = { indent: 2, vertical: "middle", wrapText: true };
+        if (dim.basis === "material_qty") {
+          row.getCell(17).value = null;
+          row.getCell(18).value = {
+            formula: `IF(AND(ISNUMBER(L${row.number}),ISNUMBER(M${row.number})),L${row.number}*M${row.number},"")`,
+          };
+        } else if (dim.basis === "total_hours") {
+          row.getCell(17).value = {
+            formula: `IF(ISNUMBER(L${row.number}),L${row.number},"")`,
+          };
+          row.getCell(18).value = {
+            formula: `IF(AND(ISNUMBER(Q${row.number}),ISNUMBER(M${row.number})),Q${row.number}*M${row.number},"")`,
+          };
+        } else if (dim.basis === "count_per_shift") {
+          row.getCell(17).value = {
+            formula: `IF(AND(ISNUMBER(L${row.number}),ISNUMBER(N${row.number}),ISNUMBER(O${row.number}),ISNUMBER(P${row.number})),L${row.number}*N${row.number}*O${row.number}*P${row.number},"")`,
+          };
+          row.getCell(18).value = {
+            formula: `IF(AND(ISNUMBER(Q${row.number}),ISNUMBER(M${row.number})),Q${row.number}*M${row.number},"")`,
+          };
+        }
         if (dim.days != null && startOffset != null && endOffset != null) {
           for (let day = startOffset; day <= endOffset; day += 1) {
             const cell = row.getCell(27 + day);
@@ -644,6 +674,43 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
         }
       }
     }
+
+    // Keep the downloaded spreadsheet live: changing L:P or a unit rate must
+    // recalculate each resource line and the work's S:Z cost summary in Excel.
+    const resourceRows = [...resourceRowsByKind.values()].flat();
+    const completeCondition = resourceRows.map((row) => {
+      const basis = basisByResourceRow.get(row);
+      if (basis === "uncertain") return "FALSE";
+      const checks = [`ISNUMBER(M${row.number})`];
+      if (basis === "count_per_shift") checks.push(`ISNUMBER(Q${row.number})`);
+      else if (basis === "total_hours") checks.push(`ISNUMBER(Q${row.number})`);
+      return `AND(${checks.join(",")})`;
+    });
+    const allResourcesComplete = completeCondition.length
+      ? `AND(${completeCondition.join(",")})`
+      : "FALSE";
+    const subtotalFor = (kind: typeof buckets[number]) => {
+      const rows = resourceRowsByKind.get(kind) ?? [];
+      if (!rows.length) return "0";
+      return `SUM(${rows.map((row) => `R${row.number}`).join(",")})`;
+    };
+    const materialsKinds = resourceRowsByKind.has("material");
+    const laborKinds = resourceRowsByKind.has("labor");
+    const equipmentKinds = resourceRowsByKind.has("equipment") || resourceRowsByKind.has("bus");
+    work.getCell(19).value = materialsKinds
+      ? { formula: `IF(${allResourcesComplete},${subtotalFor("material")},"неполно")` }
+      : 0;
+    work.getCell(20).value = laborKinds
+      ? { formula: `IF(${allResourcesComplete},${subtotalFor("labor")},"неполно")` }
+      : 0;
+    work.getCell(21).value = equipmentKinds
+      ? { formula: `IF(${allResourcesComplete},${subtotalFor("equipment")}+${subtotalFor("bus")},"неполно")` }
+      : 0;
+    work.getCell(22).value = { formula: `IF(${allResourcesComplete},S${work.number}+T${work.number}+U${work.number},"неполно")` };
+    work.getCell(23).value = { formula: `IF(ISNUMBER(V${work.number}),V${work.number}*$B$8,"неполно")` };
+    work.getCell(24).value = { formula: `IF(ISNUMBER(V${work.number}),V${work.number}+W${work.number},"неполно")` };
+    work.getCell(25).value = { formula: `IF(ISNUMBER(X${work.number}),X${work.number}*$B$9,"неполно")` };
+    work.getCell(26).value = { formula: `IF(ISNUMBER(X${work.number}),X${work.number}+Y${work.number},"неполно")` };
   }
   clientSheet.columns = [7, 18, 48, 12, 15, 16, 12, 12, 22, 18, 30, 13, 19, 14, 13, 14, 13, 18, 18, 18, 18, 18, 18, 18, 18, 18].map((width) => ({ width }));
   clientSheet.getColumn(27).width = 3;

@@ -295,6 +295,10 @@ describe("t25u shared dimensions (P1 #1)", () => {
     expect(rows[work + 1].getCell(10).value).toBe("Люди");
     expect(rows[work].getCell(28).value).toBe("■");
     expect(rows[work + 2].getCell(28).value).toBe(4);
+    expect(rows[work].getCell(19).value).toMatchObject({ formula: expect.stringContaining("SUM(") });
+    expect(rows[work].getCell(22).value).toMatchObject({ formula: expect.stringContaining("S") });
+    expect(rows[work + 2].getCell(17).value).toMatchObject({ formula: expect.stringContaining("L") });
+    expect(rows[work + 2].getCell(18).value).toMatchObject({ formula: expect.stringContaining("Q") });
     expect(sheet.views[0]).toMatchObject({ state: "frozen", ySplit: 12 });
   });
 
