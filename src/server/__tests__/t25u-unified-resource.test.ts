@@ -778,6 +778,39 @@ describe("t25u school non-destructive + custom line", () => {
     resetT25uDb();
   });
 
+  it("manual resource row added in the spreadsheet resyncs draft positions and cost slices", () => {
+    const before = readAppData();
+    const schedule = before.schedules.find((item) => item.id === T25U_TEST.scheduleId)!;
+    const calculation = before.calculations.find((item) => item.id === T25U_TEST.calculationId)!;
+    const materialsBefore = calculation.costSummary?.resourceSlices?.materials ?? 0;
+    const stages = structuredClone(schedule.stages);
+    stages[0].resources = [
+      ...(stages[0].resources ?? []),
+      {
+        id: "manual-sheet-material",
+        kind: "material",
+        name: "[TEST] Ручной материал из таблицы",
+        unit: "м³",
+        quantity: 12,
+        rate: 250,
+        quantityBasis: "material_qty",
+      },
+    ];
+    updateSchedule("u-smet", schedule.id, { stages });
+    const after = readAppData();
+    const updatedCalculation = after.calculations.find((item) => item.id === calculation.id)!;
+    expect(updatedCalculation.positions.some((position) =>
+      position.sourceResourceId === "manual-sheet-material" &&
+      position.name === "[TEST] Ручной материал из таблицы" &&
+      position.quantity === 12 &&
+      position.rate === 250
+    )).toBe(true);
+    expect(updatedCalculation.costSummary?.resourceSlices?.materials).toBe(materialsBefore + 3000);
+    expect(updatedCalculation.costSummary?.resourceSlices?.total).toBeGreaterThan(
+      calculation.costSummary?.resourceSlices?.total ?? 0
+    );
+  });
+
   it("updateSchedule with unrelated custom line preserves dates/rates/facts/photos/custom", () => {
     const before = readAppData();
     const c1 = before.calculations.find((c) => c.id === "c-1")!;

@@ -3,6 +3,9 @@ import { compareCalculations } from "@/lib/calc-compare";
 import { completeJson } from "@/server/openrouter";
 
 export type CalcCompareAiReport = {
+  rowsAnalyzed: number;
+  rowsTotal: number;
+  batches: number;
   overall: "review_required" | "no_material_differences" | "insufficient_data";
   summary: string;
   findings: Array<{
@@ -20,6 +23,7 @@ const SYSTEM = `Ты сметчик, помогающий проверить с�
 Верни только JSON: {"summary":"короткое наблюдение без цифр","findings":[{"rowId":"идентификатор строки","text":"короткий вывод без цифр","sourceExcerpt":"дословный фрагмент factsText этой строки"}]}.
 Используй только rowId и factsText, переданные во входе. Каждое замечание обязано содержать точную цитату factsText. Если оснований нет — верни пустой findings.
 Не называй расхождение ошибкой или нарушением нормы: здесь нет нормативной базы. Не советуй участие в тендере. Не обещай точность.`;
+const BATCH_SIZE = 80;
 
 function parseJson(raw: string): unknown {
   const text = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
@@ -90,15 +94,28 @@ export async function analyzeCalculationComparisonWithAI(
     rowId: `row-${index + 1}`,
     factsText: makeFactsText(row),
   }));
-  const input = {
-    totals: comparison.totals,
-    notes: comparison.notes,
-    rows: rows.slice(0, 80),
-  };
-  const validated = validateCalcCompareAiResult(
-    await completeJson(SYSTEM, JSON.stringify(input)),
-    rows.slice(0, 80)
-  );
+  const batchCount = Math.ceil(rows.length / BATCH_SIZE);
+  const validatedBatches: Array<Pick<CalcCompareAiReport, "summary" | "findings">> = [];
+  for (let offset = 0; offset < rows.length; offset += BATCH_SIZE) {
+    const batch = rows.slice(offset, offset + BATCH_SIZE);
+    const input = {
+      totals: comparison.totals,
+      notes: comparison.notes,
+      rowRange: { from: offset + 1, to: offset + batch.length, total: rows.length },
+      rows: batch,
+    };
+    validatedBatches.push(validateCalcCompareAiResult(
+      await completeJson(SYSTEM, JSON.stringify(input)),
+      batch
+    ));
+  }
+  const summaries = [...new Set(validatedBatches.map((batch) => batch.summary).filter(Boolean))];
+  const summary = summaries.length === 0
+    ? "Нет строк для анализа."
+    : summaries.length === 1
+      ? summaries[0]
+      : "Пакетный анализ завершён; выводы по отдельным строкам приведены ниже.";
+  const findings = validatedBatches.flatMap((batch) => batch.findings);
   const hasBoth = Boolean(original && draft);
   const hasIncompleteRates = comparison.rows.some((row) => row.status === "incomplete") ||
     comparison.notes.some((note) => note.includes("неподтверждённые ставки"));
@@ -109,9 +126,12 @@ export async function analyzeCalculationComparisonWithAI(
       ? "no_material_differences"
       : "review_required";
   return {
+    rowsAnalyzed: rows.length,
+    rowsTotal: rows.length,
+    batches: batchCount,
     overall,
-    ...validated,
-    findings: validated.findings.map((finding) => ({
+    summary,
+    findings: findings.map((finding) => ({
       ...finding,
       sourceExcerpt: finding.sourceExcerpt,
     })),

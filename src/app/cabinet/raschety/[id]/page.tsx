@@ -222,6 +222,7 @@ export default function RaschetDetailPage() {
       ? compareCalculations(paired, calc)
       : compareCalculations(calc, paired);
   const compareSignature = JSON.stringify(compare);
+  const compareAiBatches = Math.ceil(compare.rows.length / 80);
 
   const totals = calculationTotals(calc);
   const originalTotals = paired ? calculationTotals(paired) : null;
@@ -1171,8 +1172,8 @@ export default function RaschetDetailPage() {
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <Button
             variant="outline"
-            disabled={!paired || aiCompareLoading}
-            title="Отправляет только строки сравнения в платную модель; расчётные суммы модель не меняет"
+            disabled={!paired || compare.rows.length === 0 || aiCompareLoading}
+            title={`Отправляет строки сравнения в платную модель: ${compareAiBatches} запрос(а/ов), до 80 строк в каждом блоке. Расчётные суммы модель не меняет.`}
             onClick={async () => {
               setAiCompareLoading(true);
               try {
@@ -1194,8 +1195,7 @@ export default function RaschetDetailPage() {
             {aiCompareLoading ? "ИИ проверяет расхождения…" : "Получить комментарий ИИ"}
           </Button>
           <span className="text-xs text-[var(--tk-muted)]">
-            Платный запрос. AI поясняет только строки сравнения; суммы считает система.
-            {compare.rows.length > 80 ? " ИИ анализирует первые 80 строк; полная таблица показана ниже." : ""}
+            Платный пакетный анализ: {compareAiBatches} запрос(а/ов) по всем {compare.rows.length} строкам сравнения; суммы считает система.
           </span>
         </div>
         {aiCompare?.signature === compareSignature ? (
@@ -1208,6 +1208,9 @@ export default function RaschetDetailPage() {
                   : "Требуется проверка расхождений"}
             </div>
             <p className="mt-1 text-sm">{aiCompare.report.summary}</p>
+            <p className="mt-1 text-xs text-[var(--tk-muted)]" data-testid="calc-compare-ai-coverage">
+              AI охватил {aiCompare.report.rowsAnalyzed} из {aiCompare.report.rowsTotal} строк · платных запросов: {aiCompare.report.batches}
+            </p>
             {aiCompare.report.findings.length ? (
               <ul className="mt-3 space-y-2 text-sm">
                 {aiCompare.report.findings.map((finding) => {
