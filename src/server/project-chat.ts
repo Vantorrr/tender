@@ -97,7 +97,7 @@ export function validateProjectChatResult(result: ChatResult, sources: Source[])
     const source = byId.get(candidate.sourceId);
     const quote = normalize(candidate.quote);
     if (!source || quote.length < 8 || !normalize(source.sourceText).includes(quote)) continue;
-    if (accepted.some((item) => item.id === source.id)) continue;
+    if (accepted.some((item) => item.id === source.id && normalize(item.quote) === quote)) continue;
     accepted.push({ id: source.id, label: source.label, quote: candidate.quote.trim(), href: source.href });
   }
   const answerNumbers = result.answer.match(/\d+(?:[.,]\d+)?\s*%?/g) ?? [];
