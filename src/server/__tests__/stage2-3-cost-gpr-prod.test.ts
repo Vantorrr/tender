@@ -22,6 +22,7 @@ import {
   entryDisplayRemain,
   recomputeEntriesFromDaily,
 } from "@/lib/plan-fact-agg";
+import { forecastWorkCompletion } from "@/lib/production-forecast";
 import "./setup";
 
 describe("stage2 cost engine + gantt", () => {
@@ -156,6 +157,44 @@ describe("stage2 cost engine + gantt", () => {
     expect(pf.entries[0].contractRemaining).toBe(98);
     expect(entryDisplayFact(pf.entries[0], pf.dailyFacts)).toBe(2);
     expect(entryDisplayRemain(pf.entries[0], pf.dailyFacts)).toBe(98);
+  });
+
+  it("production forecast waits for three report days and counts GPR working days", () => {
+    const entry = { id: "work", workName: "Монтаж", unit: "м", plan: 20, fact: 0 };
+    const dailyFacts = [
+      ["2026-11-02", 4],
+      ["2026-11-03", 4],
+      ["2026-11-04", 4],
+    ].map(([date, quantity], index) => ({
+      id: `df-${index}`,
+      date: String(date),
+      workName: "Монтаж",
+      unit: "м",
+      quantity: Number(quantity),
+      photos: [],
+      authorId: "u-ruk",
+      at: `${date}T12:00:00.000Z`,
+    }));
+    const insufficient = forecastWorkCompletion({
+      entry,
+      dailyFacts: dailyFacts.slice(0, 2),
+      asOfDate: "2026-11-04",
+      plannedFinish: "2026-11-05",
+    });
+    expect(insufficient.status).toBe("insufficient_data");
+    const forecast = forecastWorkCompletion({
+      entry,
+      dailyFacts,
+      asOfDate: "2026-11-04",
+      plannedFinish: "2026-11-05",
+    });
+    expect(forecast).toMatchObject({
+      status: "forecast",
+      observedDays: 3,
+      averagePerWorkday: 4,
+      projectedFinish: "2026-11-06",
+      varianceWorkdays: 1,
+    });
   });
 
   it("labor/shifts and bus cost are deterministic; no dual profit", () => {

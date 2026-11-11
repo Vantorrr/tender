@@ -34,6 +34,7 @@ import {
 } from "@/lib/plan-fact-agg";
 import { allocatePlanForSlice, stagesForWork } from "@/lib/plan-from-gpr";
 import { economicsFromVolumes } from "@/lib/economics-from-rates";
+import { forecastWorkCompletion } from "@/lib/production-forecast";
 import { useStore } from "@/lib/store";
 import type { ProductionVarianceReport } from "@/server/production-variance-ai";
 import type { SupplyStatus } from "@/lib/types";
@@ -929,6 +930,7 @@ export default function ProizvodstvoPage() {
                       <TableHead className="text-right">Остаток</TableHead>
                       <TableHead className="text-right">План ГПР · срез</TableHead>
                       <TableHead className="text-right">Δ факт−ГПР</TableHead>
+                      <TableHead title="Оценка по фактическому темпу, только после 3 дней с положительным фактом; выходные берутся из календаря ГПР, праздники не моделируются">Прогноз окончания</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -939,6 +941,15 @@ export default function ProizvodstvoPage() {
                       const remain = entryDisplayRemain(e, daily);
                       const workStages = stagesForWork(plan.entries.map((entry) => entry.workName), gprStages, e.workName);
                       const workPlanSlice = allocatePlanForSlice(e.plan, workStages, period, date, gpr?.calendar);
+                      const workForecast = forecastWorkCompletion({
+                        entry: e,
+                        dailyFacts: daily,
+                        asOfDate: date,
+                        plannedFinish: workStages.length
+                          ? workStages.map((stage) => stage.end).sort().at(-1)
+                          : undefined,
+                        weekendDays: gpr?.calendar?.weekendDays,
+                      });
                       const workFactsInSlice = period === "day"
                         ? qtyForWork(e.workName, dayFacts)
                         : period === "month"
@@ -1004,6 +1015,28 @@ export default function ProizvodstvoPage() {
                             title="Факт выбранного периода минус план этапов ГПР, только при явной связке работы и этапа"
                           >
                             {workVariance == null ? "—" : formatNumber(workVariance)}
+                          </TableCell>
+                          <TableCell className="min-w-44 text-xs">
+                            {workForecast.status === "complete" ? (
+                              <span className="font-medium text-emerald-800">Выполнено по факту</span>
+                            ) : workForecast.status === "insufficient_data" ? (
+                              <span className="text-[var(--tk-muted)]">
+                                {workForecast.observedDays}/3 дней факта
+                              </span>
+                            ) : (
+                              <>
+                                <span className="font-medium">{formatDate(workForecast.projectedFinish ?? "")}</span>
+                                {workForecast.varianceWorkdays != null ? (
+                                  <span className={`ml-1 ${workForecast.varianceWorkdays > 0 ? "text-rose-700" : "text-emerald-700"}`}>
+                                    {workForecast.varianceWorkdays > 0
+                                      ? `+${workForecast.varianceWorkdays} раб. дн.`
+                                      : workForecast.varianceWorkdays < 0
+                                        ? `${workForecast.varianceWorkdays} раб. дн.`
+                                        : "в срок"}
+                                  </span>
+                                ) : null}
+                              </>
+                            )}
                           </TableCell>
                         </TableRow>
                       );
