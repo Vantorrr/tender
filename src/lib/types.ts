@@ -488,6 +488,8 @@ export interface GprStage {
   planVolume?: number | null;
   /** Optional link to plan/fact or calc work name. */
   workName?: string;
+  /** A GPR stage can cover several production work types. */
+  workNames?: string[];
 }
 
 export interface WorkCalendar {

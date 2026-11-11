@@ -130,6 +130,16 @@ describe("t22u closeout remediable", () => {
     expect(stagesForWork(["Трубопровод", "Опоры"], stages, "Неизвестная работа")).toEqual([]);
   });
 
+  it("allows one GPR stage to cover multiple explicitly linked production works", () => {
+    const stage = {
+      id: "s1", name: "Отделка", workNames: ["Штукатурка стен", "Устройство стяжки"],
+      start: "2026-11-01", end: "2026-11-02", sequence: 1,
+    };
+    expect(stagesForWork(["Штукатурка стен", "Устройство стяжки"], [stage], "Штукатурка стен")).toEqual([stage]);
+    expect(stagesForWork(["Штукатурка стен", "Устройство стяжки"], [stage], "Устройство стяжки")).toEqual([stage]);
+    expect(stagesForWork(["Штукатурка стен", "Устройство стяжки"], [stage], "Покраска")).toEqual([]);
+  });
+
   it("economics uses confirmed rates only; missing → incomplete not 0 money", () => {
     const eco = economicsFromVolumes({
       entries: [

@@ -8,14 +8,8 @@ import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { api, downloadUrl } from "@/lib/api";
 import { PlanFactGantt } from "@/components/plan-fact-gantt";
 import { GprResourceTree } from "@/components/gpr-resource-tree";
@@ -473,30 +467,39 @@ export default function GprDetailPage() {
                   });
                 }}
               />
-              <Select
-                value={stage.workName ?? "__unlinked"}
-                onValueChange={(value) => {
-                  if (!value) return;
-                  updateSchedule(schedule.id, {
-                    stages: schedule.stages.map((item) => item.id === stage.id
-                      ? { ...item, workName: value === "__unlinked" ? undefined : value }
-                      : item),
-                  });
-                }}
-              >
-                <SelectTrigger aria-label={`Вид работ ГПР · ${stage.name}`} data-testid={`stage-work-link-${stage.id}`}>
-                  <SelectValue>{stage.workName ?? "Связать с видом работ"}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__unlinked">Не связана</SelectItem>
-                  {[...new Set((planFact?.entries ?? []).map((entry) => entry.workName.trim()).filter(Boolean))].map((workName) => (
-                    <SelectItem key={workName} value={workName}>{workName}</SelectItem>
-                  ))}
-                  {stage.workName && !planFact?.entries.some((entry) => entry.workName === stage.workName) ? (
-                    <SelectItem value={stage.workName}>{stage.workName} · текущая связь</SelectItem>
+              <div className="rounded-lg border border-[var(--tk-line)] bg-white px-3 py-2" data-testid={`stage-work-link-${stage.id}`}>
+                <div className="mb-2 text-xs font-medium text-[var(--tk-muted)]">Виды работ план-факта</div>
+                <div className="max-h-28 space-y-1 overflow-y-auto">
+                  {[...new Set([
+                    ...(planFact?.entries ?? []).map((entry) => entry.workName.trim()).filter(Boolean),
+                    ...(stage.workNames ?? (stage.workName ? [stage.workName] : [])),
+                  ])].map((workName) => {
+                    const selected = stage.workNames?.length ? stage.workNames : stage.workName ? [stage.workName] : [];
+                    return (
+                      <label key={workName} className="flex cursor-pointer items-center gap-2 text-xs">
+                        <Checkbox
+                          checked={selected.includes(workName)}
+                          aria-label={`Связать ${stage.name} с работой ${workName}`}
+                          onCheckedChange={(checked) => {
+                            const nextNames = checked
+                              ? [...new Set([...selected, workName])]
+                              : selected.filter((name) => name !== workName);
+                            updateSchedule(schedule.id, {
+                              stages: schedule.stages.map((item) => item.id === stage.id
+                                ? { ...item, workNames: nextNames, workName: nextNames[0] }
+                                : item),
+                            });
+                          }}
+                        />
+                        <span>{workName}</span>
+                      </label>
+                    );
+                  })}
+                  {!planFact?.entries.length && !stage.workName && !stage.workNames?.length ? (
+                    <div className="text-xs text-[var(--tk-muted)]">Сначала добавьте работы в план-факт</div>
                   ) : null}
-                </SelectContent>
-              </Select>
+                </div>
+              </div>
               <Input
                 type="number"
                 min={0}

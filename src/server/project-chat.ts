@@ -221,7 +221,7 @@ function buildSources(data: AppData, procurementId: string): Source[] {
       add(
         `Этап ГПР · ${stage.name}`,
         [
-          `Работа: ${stage.workName ?? "не связана с видом работ"}`,
+          `Работы: ${(stage.workNames?.length ? stage.workNames : stage.workName ? [stage.workName] : []).join(", ") || "не связана с видом работ"}`,
           `Период: ${stage.start} — ${stage.end}`,
           `Плановый объём: ${stage.planVolume ?? "не задан"}`,
           `Зависимость: ${stage.dependencyType ?? "нет"}${stage.dependsOn ? ` от ${stage.dependsOn}` : ""}`,

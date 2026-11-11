@@ -15,10 +15,13 @@ export function stagesForWork(
 ): GprStage[] {
   const key = workName.trim();
   if (!key) return [];
-  const linked = stages.filter((stage) => stage.workName?.trim() === key);
+  const linked = stages.filter((stage) =>
+    (stage.workNames?.length ? stage.workNames : [stage.workName])
+      .some((name) => name?.trim() === key)
+  );
   if (linked.length) return linked;
   const hasMultipleWorks = new Set(workNames.map((name) => name.trim()).filter(Boolean)).size > 1;
-  return !hasMultipleWorks && stages.every((stage) => !stage.workName?.trim())
+  return !hasMultipleWorks && stages.every((stage) => !(stage.workNames?.length || stage.workName?.trim()))
     ? stages
     : [];
 }
