@@ -110,6 +110,24 @@ export default function ProizvodstvoPage() {
       .sort((a, b) => a.needBy.localeCompare(b.needBy)),
     [data.supplyRequests, plan?.procurementId, user?.orgId]
   );
+  const gprMaterialNeeds = useMemo(() => {
+    const linked = new Set(projectSupplies.map((supply) =>
+      `${supply.workName ?? ""}|${supply.materialName}`.toLocaleLowerCase("ru-RU")
+    ));
+    return (gpr?.stages ?? []).flatMap((stage) =>
+      (stage.resources ?? [])
+        .filter((resource) => resource.kind === "material" && resource.quantity > 0)
+        .filter((resource) => !linked.has(`${stage.name}|${resource.name}`.toLocaleLowerCase("ru-RU")))
+        .map((resource) => ({
+          key: `${stage.id}:${resource.id}`,
+          stageName: stage.name,
+          materialName: resource.name,
+          unit: resource.unit,
+          quantity: resource.quantity,
+          needBy: stage.end,
+        }))
+    );
+  }, [gpr?.stages, projectSupplies]);
 
   const workOptions = plan?.entries.map((e) => e.workName) ?? [];
   const [workName, setWorkName] = useState("");
@@ -227,6 +245,30 @@ export default function ProizvodstvoPage() {
       toast.success("Факт поставки обновлён");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось обновить поставку");
+    } finally {
+      setSupplySavingId(null);
+    }
+  }
+
+  async function createSupplyFromGpr(need: (typeof gprMaterialNeeds)[number]) {
+    if (!procurement) return;
+    setSupplySavingId(need.key);
+    try {
+      await api("/api/supply", {
+        method: "POST",
+        body: JSON.stringify({
+          procurementId: procurement.id,
+          workName: need.stageName,
+          materialName: need.materialName,
+          unit: need.unit,
+          qtyNeed: need.quantity,
+          needBy: need.needBy,
+        }),
+      });
+      await refresh();
+      toast.success(`Потребность добавлена: ${need.materialName}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось создать потребность");
     } finally {
       setSupplySavingId(null);
     }
@@ -720,12 +762,32 @@ export default function ProizvodstvoPage() {
                     </Link>
                   ) : null}
                 </div>
-                {projectSupplies.length === 0 ? (
+                {projectSupplies.length === 0 && gprMaterialNeeds.length === 0 ? (
                   <p className="rounded-lg bg-stone-50 px-3 py-4 text-sm text-[var(--tk-muted)]">
-                    Для этого проекта пока не добавлены материальные потребности.
+                    В ГПР ещё не заданы материалы и потребности поставок.
                   </p>
                 ) : (
                   <div className="space-y-2">
+                    {gprMaterialNeeds.map((need) => (
+                      <div key={need.key} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-dashed border-[var(--tk-line)] bg-stone-50/70 p-3" data-testid={`gpr-material-need-${need.key}`}>
+                        <div>
+                          <p className="font-medium">{need.materialName}</p>
+                          <p className="mt-1 text-xs text-[var(--tk-muted)]">
+                            Из ГПР · {need.stageName} · нужно {formatNumber(need.quantity)} {need.unit} · к {formatDate(need.needBy)}
+                          </p>
+                        </div>
+                        {canViewProcurement ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled={supplySavingId === need.key}
+                            onClick={() => void createSupplyFromGpr(need)}
+                          >
+                            {supplySavingId === need.key ? "Добавляем…" : "Создать потребность"}
+                          </Button>
+                        ) : <span className="text-xs text-[var(--tk-muted)]">Нужно создать потребность в закупках</span>}
+                      </div>
+                    ))}
                     {projectSupplies.map((supply) => {
                       const remaining = Math.max(0, supply.qtyNeed - supply.qtyDelivered);
                       const overdue = supply.needBy < date && remaining > 0;

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { closeDb, ensureReady, mutateAppData, readAppData } from "@/server/db";
 import {
   createDocument,
+  ensureProcurementChain,
   joinOrganizationByCode,
   registerNewOrganization,
   sendProcurementToCalculation,
@@ -134,6 +135,30 @@ describe("client corrections stage 1", () => {
       after.documents.filter((d) => d.procurementId === p.id).length
     ).toBe(docCount);
     expect(proc.reviewStatus).toBe("na_rassmotrenii");
+  });
+
+  it("new money plan does not invent an advance from NMCK", () => {
+    const base = readAppData().procurements.find((x) => x.id === "p-norilsk-1")!;
+    const testId = "p-test-no-default-cashflow";
+    mutateAppData((data) => {
+      data.procurements.push({
+        ...structuredClone(base),
+        id: testId,
+        number: "QA-NO-DEFAULT-CASHFLOW",
+        title: "QA payment terms must be sourced",
+        calculationId: undefined,
+        originalCalculationId: undefined,
+        gprId: undefined,
+        moneyId: undefined,
+        planFactId: undefined,
+        supplyRequestIds: [],
+      });
+      return data;
+    });
+    ensureProcurementChain("u-super", testId);
+    const project = readAppData().procurements.find((item) => item.id === testId)!;
+    const money = readAppData().moneyPlans.find((item) => item.id === project.moneyId)!;
+    expect(money.payments).toEqual([]);
   });
 
   it("immutable original rejects edits; draft accepts directory adds", () => {

@@ -855,21 +855,9 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
         procurementId: p.id,
         title: `Деньги — ${p.title.slice(0, 48)}`,
         status: "v_rabote",
-        payments: p.nmck == null ? [] : [
-          {
-            id: `mp-${Date.now()}`,
-            type: "avans",
-            title: "Аванс 30%",
-            amount: Math.round(p.nmck * 0.3),
-            date: now.slice(0, 10),
-            week: Math.ceil(
-              (new Date().getTime() -
-                new Date(new Date().getFullYear(), 0, 1).getTime()) /
-                604800000
-            ),
-            month: new Date().getMonth() + 1,
-          },
-        ],
+        // A project chain must not invent payment terms from NMCK. Add cash
+        // events only after they are sourced from the contract or entered.
+        payments: [],
         updatedAt: now,
       });
       p.moneyId = id;
