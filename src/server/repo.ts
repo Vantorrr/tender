@@ -1364,7 +1364,7 @@ export async function analyzeProcurementPackageWithAI(
   const procurement = snapshot.procurements.find((item) => item.id === procurementId);
   if (!procurement) throw new Error("Закупка не найдена");
   assertOrgAccess(actor, procurement.orgId, "закупки");
-  const documents = snapshot.documents.filter((document) => document.procurementId === procurement.id);
+  const documents = snapshot.documents.filter((document) => document.procurementId === procurement.id && document.storedPath);
   const deterministic = buildProjectAnalytics(procurement, documents);
   const generated = await analyzeProjectPackageWithModel(procurement, documents, deterministic);
   mutateAppData((data) => {
@@ -1416,6 +1416,7 @@ export function sendProcurementToCalculation(
     const estimateDoc = data.documents.find(
       (d) =>
         d.procurementId === p.id &&
+        Boolean(d.storedPath) &&
         (d.category === "estimate" || /smeta|смет/i.test(d.fileName))
     );
     if (!p.originalCalculationId && estimateDoc?.analysis?.positionCount) {

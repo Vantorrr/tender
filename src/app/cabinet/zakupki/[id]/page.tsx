@@ -738,11 +738,18 @@ export default function ZakupkaDetailPage() {
                       <div className="text-xs text-[var(--tk-muted)]">
                         {d.fileName} · {d.category ?? "general"} · {d.status}
                       </div>
+                      {!d.storedPath ? (
+                        <div className="mt-1 text-xs font-medium text-amber-800">
+                          Исходный файл не приложен или недоступен. Загрузите оригинал, чтобы открыть его и включить в анализ.
+                        </div>
+                      ) : null}
                     </div>
                     <div className="flex gap-2">
                       <Button
                         size="sm"
                         variant="outline"
+                        disabled={!d.storedPath}
+                        title={!d.storedPath ? "Оригинальный файл недоступен" : undefined}
                         onClick={() => setPreviewId(d.id)}
                       >
                         Открыть в веб

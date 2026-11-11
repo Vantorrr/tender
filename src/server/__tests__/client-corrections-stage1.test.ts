@@ -392,7 +392,24 @@ describe("client corrections stage 1", () => {
     refreshProcurementAnalytics("u-tender", "p-1");
     const after = readAppData().procurements.find((x) => x.id === "p-1")!;
     expect(after.analytics?.method).toBe("deterministic_aggregate_v1");
-    expect(after.analytics?.citations.length).toBeGreaterThan(0);
+    expect(after.analytics?.citations).toEqual([]);
+    expect(after.analytics?.missingInputs.join(" ")).toMatch(/файл.*не приложен|доступных исходных файлов/i);
+  });
+
+  it("does not treat metadata-only document records as uploaded evidence", () => {
+    const data = readAppData();
+    const p = data.procurements.find((x) => x.id === "p-1")!;
+    const documents = data.documents.filter((document) => document.procurementId === p.id);
+    const note = buildProjectAnalytics(p, documents);
+    expect(note.citations).toEqual([]);
+    expect(note.quality?.sourceDocuments).toBe(0);
+    expect(note.missingInputs.join(" ")).toMatch(/smeta_zakazchika\.xlsx.*не приложен/i);
+    const onlyUploaded = buildProjectAnalytics(p, documents.map((document) => ({
+      ...document,
+      storedPath: document.id === "d-1" ? "uploads/test-izveshchenie.pdf" : undefined,
+    })));
+    expect(onlyUploaded.citations.length).toBeGreaterThan(0);
+    expect(onlyUploaded.quality?.sourceDocuments).toBe(1);
   });
 
   it("safe archive rejects path traversal and surfaces errors", () => {

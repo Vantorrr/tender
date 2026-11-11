@@ -159,7 +159,15 @@ function buildSources(data: AppData, procurementId: string): Source[] {
     );
   }
 
-  const documents = data.documents.filter((item) => item.procurementId === procurementId);
+  const documents = data.documents.filter((item) => item.procurementId === procurementId && item.storedPath);
+  const unavailableDocuments = data.documents.filter((item) => item.procurementId === procurementId && !item.storedPath);
+  if (unavailableDocuments.length) {
+    add(
+      "Недоступные оригиналы документов",
+      unavailableDocuments.map((item) => `${item.fileName}: исходный файл не приложен или недоступен; сведения из карточки документа нельзя подтверждать этим источником.`).join("\n"),
+      `/cabinet/zakupki/${procurementId}`
+    );
+  }
   for (const doc of documents.slice(0, 20)) {
     const docHref = `/cabinet/dokumenty/${doc.id}`;
     add(

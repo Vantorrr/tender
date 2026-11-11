@@ -30,22 +30,29 @@ export function buildProjectAnalytics(
   documents: DocumentItem[]
 ): ProjectAnalytics {
   const docs = documents.filter((d) => d.procurementId === procurement.id);
-  const citations = uniqueCitations(docs);
-  const highlights = docs.flatMap((d) => d.highlights ?? []);
-  const extractionErrors = docs.flatMap((d) => d.extractionErrors ?? []);
-  const hasEstimate = docs.some(
+  // Metadata-only legacy/demo rows are not evidence: their uploaded file is
+  // unavailable, so neither citations nor conclusions may be attributed to it.
+  const sourceDocs = docs.filter((d) => Boolean(d.storedPath));
+  const unavailableDocs = docs.filter((d) => !d.storedPath);
+  const citations = uniqueCitations(sourceDocs);
+  const highlights = sourceDocs.flatMap((d) => d.highlights ?? []);
+  const extractionErrors = sourceDocs.flatMap((d) => d.extractionErrors ?? []);
+  const hasEstimate = sourceDocs.some(
     (d) => d.category === "estimate" || /\bsmeta\b|смет/i.test(d.fileName)
   );
-  const hasContract = docs.some(
+  const hasContract = sourceDocs.some(
     (d) => d.category === "contract" || /dogovor|договор/i.test(d.fileName)
   );
-  const hasTz = docs.some((d) => /tz|тз|извещ/i.test(d.fileName + d.title));
-  const analyzed = docs.filter(
+  const hasTz = sourceDocs.some((d) => /tz|тз|извещ/i.test(d.fileName + d.title));
+  const analyzed = sourceDocs.filter(
     (d) => (d.analyticalNote && d.analyticalNote.length > 40) || d.analysis
   );
 
   const missing: string[] = [];
-  if (!docs.length) missing.push("нет загруженных документов пакета");
+  if (!sourceDocs.length) missing.push("нет доступных исходных файлов пакета");
+  for (const d of unavailableDocs) {
+    missing.push(`файл «${d.fileName}» не приложен или недоступен — загрузите оригинал повторно`);
+  }
   if (!hasEstimate) missing.push("нет сметы заказчика");
   if (!hasContract) missing.push("нет проекта договора");
   if (!hasTz) missing.push("нет ТЗ / извещения");
@@ -54,7 +61,7 @@ export function buildProjectAnalytics(
       `ошибки извлечения: ${extractionErrors.slice(0, 3).join("; ")}`
     );
   }
-  for (const d of docs) {
+  for (const d of sourceDocs) {
     if (d.status === "oshibka" || d.status === "trebuet_proverki") {
       missing.push(`документ «${d.title}» требует проверки (${d.status})`);
     }
@@ -64,7 +71,7 @@ export function buildProjectAnalytics(
   let recommendation: ParticipateRecommendation = "insufficient_data";
   let rationale: string;
 
-  if (missing.length >= 3 || docs.length === 0) {
+  if (missing.length >= 3 || sourceDocs.length === 0) {
     recommendation = "insufficient_data";
     rationale =
       "Недостаточно исходников для рекомендации: заполните пакет документов и устраните ошибки извлечения.";
@@ -91,7 +98,7 @@ export function buildProjectAnalytics(
 
   const summaryParts: string[] = [
     `Проект «${procurement.title}» (${procurement.number}). Регион: ${procurement.region}.`,
-    `Документов в пакете: ${docs.length}; цитат: ${citations.length}; критичных подсветок: ${stopHits.length}.`,
+    `Доступных исходных файлов: ${sourceDocs.length} из ${docs.length}; цитат: ${citations.length}; критичных подсветок: ${stopHits.length}.`,
     rationale,
   ];
   if (missing.length) {
@@ -112,12 +119,12 @@ export function buildProjectAnalytics(
     disclaimer:
       "Записка собрана детерминированно из загруженных документов. Это не ИИ-экспертное заключение и не обещание точности.",
     quality: {
-      status: docs.length === 0 || missing.length >= 3
+      status: sourceDocs.length === 0 || missing.length >= 3
         ? "insufficient_sources"
         : missing.length || extractionErrors.length || stopHits.length
           ? "needs_review"
           : "evidence_backed",
-      sourceDocuments: docs.length,
+      sourceDocuments: sourceDocs.length,
       requiredDocumentsFound: [hasEstimate, hasContract, hasTz].filter(Boolean).length,
       citationCount: citations.length,
     },
