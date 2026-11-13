@@ -194,8 +194,18 @@ describe("negative tenant / id / file / export ACL", () => {
             rate: 100,
           },
         ],
-        analysis: { positionCount: 1, costThousand: 0.3, workName: "beta" },
-      } as (typeof live.documents)[number]);
+        analysis: {
+        vendor: "",
+        region: "",
+        zone: "",
+        estimateNumber: "",
+        workName: "beta",
+        costThousand: 0.3,
+        positionCount: 1,
+        method: "",
+        basis: "",
+      },
+      } as unknown as (typeof live.documents)[number]);
       return live;
     });
 
