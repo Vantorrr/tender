@@ -150,6 +150,11 @@ function DayDetailsInner() {
     entry && linkedStages.length
       ? allocatePlanForSlice(entry.plan, linkedStages, "day", date, schedule?.calendar).plan
       : 0;
+  /** Day slice as % of contract plan — never dayPlan/dayPlan (always 100%). */
+  const dayPlanPctOfContract =
+    entry && entry.plan > 0 && dayPlan > 0
+      ? Math.round((dayPlan / entry.plan) * 100)
+      : null;
 
   const baselineLines = planResourceLinesForDay(
     schedule?.stages ?? [],
@@ -302,7 +307,13 @@ function DayDetailsInner() {
           <DateInputRu
             data-testid="day-date"
             value={date}
-            onChange={(iso) => setDate(iso)}
+            onChange={(iso) => {
+              setDate(iso);
+              // Persist calendar day in the query so reload cannot TZ-shift the field.
+              const next = new URLSearchParams(sp.toString());
+              next.set("date", iso);
+              router.replace(`?${next.toString()}`, { scroll: false });
+            }}
           />
         </div>
         <div>
@@ -360,11 +371,18 @@ function DayDetailsInner() {
           <p className="mt-1 font-[family-name:var(--font-display)] text-3xl">
             {linkedStages.length === 0 || dayPlan <= 0 ? (
               <span className="text-lg text-amber-800">нет данных</span>
-            ) : (
+            ) : dayPlanPctOfContract != null ? (
               <>
-                {Math.round((dayPlan / Math.max(dayPlan, 1)) * 100)}%
+                {dayPlanPctOfContract}%
                 <span className="ml-2 text-base font-normal text-[var(--tk-muted)]">
                   ({formatNumber(dayPlan)} {entry?.unit ?? ""})
+                </span>
+              </>
+            ) : (
+              <>
+                {formatNumber(dayPlan)}{" "}
+                <span className="text-base font-normal text-[var(--tk-muted)]">
+                  {entry?.unit ?? ""}
                 </span>
               </>
             )}

@@ -837,6 +837,7 @@ export default function ProizvodstvoPage() {
                           <label className="text-xs text-[var(--tk-muted)]">
                             Получено ({supply.unit})
                             <Input
+                              key={`qty-delivered-${supply.id}:${supply.qtyDelivered}`}
                               className="mt-1 h-9"
                               type="number"
                               min="0"

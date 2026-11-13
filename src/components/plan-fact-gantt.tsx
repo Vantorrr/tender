@@ -6,6 +6,7 @@ import { DateInputRu } from "@/components/date-input-ru";
 import { Button } from "@/components/ui/button";
 import { diffDays } from "@/lib/cost-engine";
 import { formatDate, formatDateRangeShort, formatMoney, formatNumber } from "@/lib/format";
+import { stageResourceSummary } from "@/lib/gpr-stage-cost";
 import { entryDisplayFact } from "@/lib/plan-fact-agg";
 import { gprCoveredDays } from "@/lib/plan-from-gpr";
 import type { DailyFact, GprStage, PlanFactEntry } from "@/lib/types";
@@ -14,31 +15,6 @@ const GANTT_FILTER_EVENT = "tma361:gantt-filter-change";
 const ganttFilterFallback = new Map<string, string>();
 const DAY_MS = 86_400_000;
 const LABEL_WIDTH = 360;
-
-function stageResourceSummary(stage: GprStage) {
-  const resources = stage.resources ?? [];
-  const labor = resources
-    .filter((r) => r.kind === "labor")
-    .reduce((sum, r) => sum + (Number(r.quantity) || 0), 0);
-  const equipment = resources
-    .filter((r) => r.kind === "equipment" || r.kind === "bus")
-    .reduce((sum, r) => sum + (Number(r.quantity) || 0), 0);
-  let cost: number | null = 0;
-  let incomplete = false;
-  for (const r of resources) {
-    if (r.rate == null || !Number.isFinite(r.rate)) {
-      incomplete = true;
-      continue;
-    }
-    cost += (Number(r.quantity) || 0) * r.rate;
-  }
-  if (resources.length === 0) {
-    cost = null;
-  } else if (incomplete && cost === 0) {
-    cost = null;
-  }
-  return { labor, equipment, cost, incomplete };
-}
 
 type Scale = "day" | "week" | "month";
 type DragMode = "move" | "resize";
@@ -467,12 +443,36 @@ export function PlanFactGantt({
                       <div className="text-right tabular-nums">
                         {resSummary.equipment ? formatNumber(resSummary.equipment) : "—"}
                       </div>
-                      <div className="text-right tabular-nums">
+                      <div
+                        className="text-right tabular-nums"
+                        data-testid={`gantt-stage-cost-${stage.id}`}
+                      >
                         {resSummary.cost == null
                           ? "нет данных"
                           : formatMoney(resSummary.cost)}
                         {resSummary.incomplete ? (
-                          <span className="mt-0.5 block text-[10px] text-amber-800">неполно</span>
+                          <span
+                            className="mt-0.5 block text-[10px] text-amber-800"
+                            data-testid={`gantt-cost-incomplete-${stage.id}`}
+                            title={
+                              resSummary.incompleteHint === "нет тарифа"
+                                ? "В сумме учтены только ресурсы с тарифом; позиции без ставки не входят в итог"
+                                : undefined
+                            }
+                          >
+                            неполно
+                            {resSummary.incompleteHint
+                              ? ` · ${resSummary.incompleteHint}`
+                              : ""}
+                          </span>
+                        ) : null}
+                        {resSummary.busCost != null ? (
+                          <span
+                            className="mt-0.5 block text-[10px] text-[var(--tk-muted)]"
+                            data-testid={`gantt-bus-cost-${stage.id}`}
+                          >
+                            автобус {formatMoney(resSummary.busCost)}
+                          </span>
                         ) : null}
                       </div>
                     </div>

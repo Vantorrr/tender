@@ -1,12 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { formatDate, parseDateRu } from "@/lib/format";
 
 /**
  * Date field shown as DD.MM.YYYY (never browser US MM/DD).
  * Value prop / onChange use ISO YYYY-MM-DD.
+ *
+ * Commits only on blur (or Enter) so partial edits like «15.03.2026» → «1.03.2026»
+ * never fire an intermediate save while the user is still typing.
+ *
+ * Enter commits once: the following blur is skipped so Gantt relative shifts
+ * cannot double-apply. We do NOT cache a "last emitted" ISO ahead of the parent
+ * `value` — a rejected end-before-start (or failed shift) must remain retryable.
  */
 export function DateInputRu({
   value,
@@ -25,6 +32,7 @@ export function DateInputRu({
 }) {
   const [text, setText] = useState(() => (value ? formatDate(value) : ""));
   const [invalid, setInvalid] = useState(false);
+  const skipNextBlurCommit = useRef(false);
 
   useEffect(() => {
     // Keep the editable text in sync when the parent changes the ISO value.
@@ -33,42 +41,93 @@ export function DateInputRu({
     setInvalid(false);
   }, [value]);
 
+  function commit(raw: string) {
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      setInvalid(false);
+      if (value) {
+        setText(formatDate(value));
+      }
+      return;
+    }
+    const iso = parseDateRu(trimmed);
+    if (iso) {
+      setText(formatDate(iso));
+      setInvalid(false);
+      // Compare to the controlled prop only — so a rejected parent update
+      // (e.g. Gantt end < start) can be retried with the same ISO.
+      if (iso !== value) onChange(iso);
+      return;
+    }
+    // Keep the invalid text visible with an error (do not silently revert mid-feedback).
+    setInvalid(true);
+  }
+
+  const errorId = testId ? `${testId}-error` : id ? `${id}-error` : undefined;
+
   return (
-    <Input
-      id={id}
-      data-testid={testId}
-      inputMode="numeric"
-      placeholder="ДД.ММ.ГГГГ"
-      autoComplete="off"
-      lang="ru"
-      disabled={disabled}
-      className={className}
-      value={text}
-      aria-invalid={invalid || undefined}
-      onChange={(e) => {
-        const v = e.target.value;
-        setText(v);
-        const iso = parseDateRu(v);
-        if (iso) {
-          setInvalid(false);
-          onChange(iso);
-        } else if (v.trim() === "") {
-          setInvalid(false);
-        } else {
-          setInvalid(true);
-        }
-      }}
-      onBlur={() => {
-        const iso = parseDateRu(text);
-        if (iso) {
-          setText(formatDate(iso));
-          setInvalid(false);
-          onChange(iso);
-        } else if (value) {
-          setText(formatDate(value));
-          setInvalid(false);
-        }
-      }}
-    />
+    <div className="grid gap-1">
+      <Input
+        id={id}
+        data-testid={testId}
+        inputMode="numeric"
+        placeholder="ДД.ММ.ГГГГ"
+        autoComplete="off"
+        lang="ru"
+        disabled={disabled}
+        className={className}
+        value={text}
+        aria-invalid={invalid || undefined}
+        aria-describedby={invalid && errorId ? errorId : undefined}
+        onChange={(e) => {
+          const v = e.target.value;
+          setText(v);
+          if (v.trim() === "") {
+            setInvalid(false);
+            return;
+          }
+          setInvalid(parseDateRu(v) == null);
+        }}
+        onBlur={() => {
+          if (skipNextBlurCommit.current) {
+            skipNextBlurCommit.current = false;
+            return;
+          }
+          commit(text);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit(text);
+            // Blur for UX, but do not re-commit on the blur that follows Enter.
+            skipNextBlurCommit.current = true;
+            (e.currentTarget as HTMLInputElement).blur();
+          }
+        }}
+      />
+      {invalid ? (
+        <p
+          id={errorId}
+          data-testid={errorId}
+          className="text-[11px] font-medium text-rose-700"
+          role="alert"
+        >
+          Неверная дата — укажите ДД.ММ.ГГГГ
+        </p>
+      ) : null}
+    </div>
   );
+}
+
+/**
+ * Pure helpers for Enter/blur + retry semantics (no premature emit cache).
+ * - skipBlurAfterEnter: Enter already committed → blur must not commit again
+ * - shouldEmitIso: emit when candidate differs from the controlled value prop
+ */
+export function skipBlurAfterEnter(enterJustCommitted: boolean): boolean {
+  return enterJustCommitted;
+}
+
+export function shouldEmitIso(valueProp: string, candidate: string | null): boolean {
+  return Boolean(candidate && candidate !== valueProp);
 }

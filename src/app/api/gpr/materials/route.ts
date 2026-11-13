@@ -31,10 +31,17 @@ export async function POST(req: Request) {
     }
     const stagesByName = new Map<string, typeof schedule.stages>();
     for (const stage of schedule.stages) {
-      for (const name of [stage.workName, stage.name].filter((x): x is string => Boolean(x))) {
+      const linkedNames = [
+        ...(stage.workNames ?? []),
+        stage.workName,
+        stage.name,
+      ].filter((x): x is string => Boolean(x));
+      for (const name of linkedNames) {
         const key = normalize(name);
         const matches = stagesByName.get(key) ?? [];
-        if (!matches.some((item) => item.id === stage.id)) stagesByName.set(key, [...matches, stage]);
+        if (!matches.some((item) => item.id === stage.id)) {
+          stagesByName.set(key, [...matches, stage]);
+        }
       }
     }
     const works = [...new Set(rows.map((row) => row.workName))].map((workName) => ({
