@@ -240,17 +240,21 @@ export function runCostEngine(input: CostEngineInput): CostEngineResult {
   const incomplete: string[] = [];
 
   let northernKnown = 0;
-  for (const item of input.northern.confirmedItems) {
-    if (item.status === "known" && item.amount != null) {
-      northernKnown = roundMoney(northernKnown + item.amount);
-    } else if (item.status === "clarify") {
-      incomplete.push(`north:${item.id}:${item.name}`);
-    } else if (item.status === "scenario") {
-      flags.push(`north_scenario:${item.id}`);
+  if (!input.northern.applicable) {
+    flags.push("northern_not_applicable");
+    if (input.northern.confirmedItems.some((item) => item.amount != null && item.amount > 0)) {
+      flags.push("northern_marked_not_applicable_but_amounts_present");
     }
-  }
-  if (input.northern.applicable === false && northernKnown > 0) {
-    flags.push("northern_marked_not_applicable_but_amounts_present");
+  } else {
+    for (const item of input.northern.confirmedItems) {
+      if (item.status === "known" && item.amount != null) {
+        northernKnown = roundMoney(northernKnown + item.amount);
+      } else if (item.status === "clarify") {
+        incomplete.push(`north:${item.id}:${item.name}`);
+      } else if (item.status === "scenario") {
+        flags.push(`north_scenario:${item.id}`);
+      }
+    }
   }
 
   const D = roundMoney(
@@ -340,9 +344,9 @@ export function classifyDirectCostBucket(
   if (/труд|зарплат|оплат[аы] труда|сварщик|электрогазосварщик|монтажник|рабоч(ий|ая|ие)|машинист|слесар[ьи]|чел\.?[- ]?ч/.test(hay)) {
     return "labor";
   }
-  if (/^(т|кг|л|м2|м²|м3|м³|шт|компл|комплект|тонн[аы]?)$/.test(unit)) {
-    return "materials";
-  }
+  // A unit such as шт, м² or комплект is not evidence that a line is a
+  // material: works, rental services and containers use the same units.
+  // Require an explicit MAT code or material wording below.
   if (/материал|мтр|сэндвич|бетон|арматур/.test(hay)) return "materials";
   if (/маш|техник|jcb|экскав|кран|атс|дсм|автобус|bus/.test(hay)) {
     return "equipment";
@@ -404,9 +408,40 @@ export function diffDays(a: string, b: string): number {
   return Math.round(ms / 86400000);
 }
 
+function dependencySatisfied(parent: GprStage, child: GprStage): boolean {
+  const lag = Number.isFinite(child.lagDays) ? Math.trunc(child.lagDays ?? 0) : 0;
+  switch (child.dependencyType ?? "FS") {
+    case "SS":
+      return child.start >= addDaysIso(parent.start, lag);
+    case "FF":
+      return child.end >= addDaysIso(parent.end, lag);
+    case "SF":
+      return child.end >= addDaysIso(parent.start, lag);
+    case "FS":
+    default:
+      return child.start >= addDaysIso(parent.end, lag + 1);
+  }
+}
+
+function dependencyStart(parent: GprStage, child: GprStage, duration: number): string {
+  const lag = Number.isFinite(child.lagDays) ? Math.trunc(child.lagDays ?? 0) : 0;
+  switch (child.dependencyType ?? "FS") {
+    case "SS":
+      return addDaysIso(parent.start, lag);
+    case "FF":
+      return addDaysIso(addDaysIso(parent.end, lag), -(duration - 1));
+    case "SF":
+      return addDaysIso(addDaysIso(parent.start, lag), -(duration - 1));
+    case "FS":
+    default:
+      return addDaysIso(parent.end, lag + 1);
+  }
+}
+
 /**
  * Shift a stage by deltaDays; optionally cascade dependents (FS).
- * Does not invent durations — keeps stage length unless resizeDays set.
+ * Stage start and end dates are inclusive. Does not invent durations — keeps
+ * the calendar-day count unless resizeDays is set.
  */
 export function shiftStages(
   stages: GprStage[],
@@ -420,12 +455,12 @@ export function shiftStages(
   const target = byId.get(stageId);
   if (!target) return { stages, conflicts: ["stage_not_found"] };
 
-  const len = Math.max(1, diffDays(target.start, target.end));
+  const len = Math.max(1, diffDays(target.start, target.end) + 1);
   const newStart = addDaysIso(target.start, deltaDays);
   const newEnd =
     opts?.resizeDays != null
-      ? addDaysIso(newStart, Math.max(1, opts.resizeDays))
-      : addDaysIso(newStart, len);
+      ? addDaysIso(newStart, Math.max(1, opts.resizeDays) - 1)
+      : addDaysIso(newStart, len - 1);
   target.start = newStart;
   target.end = newEnd;
   byId.set(stageId, target);
@@ -440,12 +475,11 @@ export function shiftStages(
       const parent = byId.get(id)!;
       for (const s of byId.values()) {
         if (s.dependsOn !== id) continue;
-        const childLen = Math.max(1, diffDays(s.start, s.end));
-        // FS: child starts day after parent ends
-        const desiredStart = addDaysIso(parent.end, 1);
+        const childLen = Math.max(1, diffDays(s.start, s.end) + 1);
+        const desiredStart = dependencyStart(parent, s, childLen);
         if (s.start < desiredStart) {
           s.start = desiredStart;
-          s.end = addDaysIso(desiredStart, childLen);
+          s.end = addDaysIso(desiredStart, childLen - 1);
           byId.set(s.id, s);
         }
         queue.push(s.id);
@@ -453,13 +487,22 @@ export function shiftStages(
     }
   }
 
-  // conflict: dependent starts before predecessor ends
+  // Report any violated dependency using its selected relation and lag.
   for (const s of byId.values()) {
     if (!s.dependsOn) continue;
     const pred = byId.get(s.dependsOn);
-    if (pred && s.start <= pred.end) {
+    if (pred && !dependencySatisfied(pred, s)) {
+      const rel = s.dependencyType ?? "FS";
+      const relRu =
+        rel === "SS"
+          ? "начало–начало"
+          : rel === "FF"
+            ? "окончание–окончание"
+            : rel === "SF"
+              ? "начало–окончание"
+              : "окончание–начало";
       conflicts.push(
-        `${s.id} starts ${s.start} before/on predecessor ${pred.id} end ${pred.end}`
+        `Этап «${s.name}» нарушает зависимость «${relRu}» от «${pred.name}»`
       );
     }
   }

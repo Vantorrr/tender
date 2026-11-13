@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useRef, useState, Suspense } from "react";
+import { useEffect, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
@@ -23,6 +23,10 @@ import {
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import type { DailyFact, DailyResourceLine } from "@/lib/types";
 import { useStore } from "@/lib/store";
+
+function createDailyFactId() {
+  return `df-${crypto.randomUUID()}`;
+}
 
 function ResourceRows({
   lines,
@@ -106,6 +110,9 @@ function DayDetailsInner() {
   const router = useRouter();
   const { data, user, refresh } = useStore();
   const photoRef = useRef<HTMLInputElement>(null);
+  const savingRef = useRef(false);
+  const pendingFactIdRef = useRef<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const planFactId = sp.get("planFactId") ?? "";
   const [date, setDate] = useState(
@@ -136,33 +143,18 @@ function DayDetailsInner() {
     ? entryDisplayFact(entry, plan?.dailyFacts ?? [])
     : 0;
 
-  const linkedStages = useMemo(
-    () => stagesForWork(schedule?.stages ?? [], selectedWork, date),
-    [schedule?.stages, selectedWork, date]
-  );
-  const linkedAnyDate = useMemo(
-    () => stagesForWork(schedule?.stages ?? [], selectedWork),
-    [schedule?.stages, selectedWork]
-  );
+  const linkedStages = stagesForWork(schedule?.stages ?? [], selectedWork, date);
+  const linkedAnyDate = stagesForWork(schedule?.stages ?? [], selectedWork);
 
-  const dayPlan = useMemo(() => {
-    if (!entry || !linkedStages.length) return 0;
-    return allocatePlanForSlice(
-      entry.plan,
-      linkedStages,
-      "day",
-      date
-    ).plan;
-  }, [entry, linkedStages, date]);
+  const dayPlan =
+    entry && linkedStages.length
+      ? allocatePlanForSlice(entry.plan, linkedStages, "day", date, schedule?.calendar).plan
+      : 0;
 
-  const baselineLines = useMemo(
-    () =>
-      planResourceLinesForDay(
-        schedule?.stages ?? [],
-        date,
-        selectedWork
-      ),
-    [schedule?.stages, date, selectedWork]
+  const baselineLines = planResourceLinesForDay(
+    schedule?.stages ?? [],
+    date,
+    selectedWork
   );
 
   const existingLines = dayFacts.reduce<DailyFact | undefined>(
@@ -176,6 +168,8 @@ function DayDetailsInner() {
   const [caption, setCaption] = useState("");
 
   useEffect(() => {
+    // Reset the local daily draft when its work/date context changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLines(null);
     setQty(dayQty ? String(dayQty) : "");
   }, [date, selectedWork, dayQty]);
@@ -199,6 +193,11 @@ function DayDetailsInner() {
   const dateMiss = !linkMissing && linkedStages.length === 0;
 
   async function save(withPhoto: boolean) {
+    if (savingRef.current || !entry) return;
+    savingRef.current = true;
+    setSaving(true);
+    const factId = pendingFactIdRef.current ?? createDailyFactId();
+    pendingFactIdRef.current = factId;
     try {
       const resourceLines = displayLines.map((l) => ({
         ...l,
@@ -206,6 +205,7 @@ function DayDetailsInner() {
       }));
       if (withPhoto && photoRef.current?.files?.[0]) {
         const form = new FormData();
+        form.append("factId", factId);
         form.append("planFactId", plan!.id);
         form.append("date", date);
         form.append("workName", selectedWork);
@@ -222,6 +222,7 @@ function DayDetailsInner() {
             action: "dailyFact",
             planFactId: plan!.id,
             fact: {
+              factId,
               date,
               workName: selectedWork,
               unit: entry?.unit ?? "%",
@@ -233,12 +234,16 @@ function DayDetailsInner() {
         });
       }
       await refresh();
+      pendingFactIdRef.current = null;
       setLines(null);
       if (photoRef.current) photoRef.current.value = "";
       setCaption("");
       toast.success("Сохранено");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка сохранения");
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
     }
   }
 
@@ -337,6 +342,12 @@ function DayDetailsInner() {
         ) : null}
       </div>
 
+      {!entry ? (
+        <p className="mb-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950">
+          Для этого проекта не задан физический план. Вернитесь в производство и добавьте вид работ с единицей измерения и плановым объёмом.
+        </p>
+      ) : null}
+
       <div
         className="mb-6 grid gap-3 sm:grid-cols-2"
         data-testid="day-plan-fact-row"
@@ -345,15 +356,15 @@ function DayDetailsInner() {
           className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-5"
           data-testid="day-plan-card"
         >
-          <p className="text-xs text-[var(--tk-muted)]">План (срез дня из ГПР)</p>
+          <p className="text-xs text-[var(--tk-muted)]">План</p>
           <p className="mt-1 font-[family-name:var(--font-display)] text-3xl">
-            {linkedStages.length === 0 ? (
+            {linkedStages.length === 0 || dayPlan <= 0 ? (
               <span className="text-lg text-amber-800">нет данных</span>
             ) : (
               <>
-                {formatNumber(dayPlan)}{" "}
-                <span className="text-base font-normal">
-                  {entry?.unit ?? ""}
+                {Math.round((dayPlan / Math.max(dayPlan, 1)) * 100)}%
+                <span className="ml-2 text-base font-normal text-[var(--tk-muted)]">
+                  ({formatNumber(dayPlan)} {entry?.unit ?? ""})
                 </span>
               </>
             )}
@@ -363,10 +374,21 @@ function DayDetailsInner() {
           className="rounded-2xl border border-teal-800 bg-teal-800 p-5 text-white"
           data-testid="day-fact-card"
         >
-          <p className="text-xs text-teal-100">Факт за день</p>
+          <p className="text-xs text-teal-100">Факт</p>
           <p className="mt-1 font-[family-name:var(--font-display)] text-3xl">
-            {formatNumber(factVal)}{" "}
-            <span className="text-base font-normal">{entry?.unit ?? ""}</span>
+            {dayPlan > 0 ? (
+              <>
+                {Math.round((factVal / dayPlan) * 100)}%
+                <span className="ml-2 text-base font-normal text-teal-100">
+                  ({formatNumber(factVal)} {entry?.unit ?? ""})
+                </span>
+              </>
+            ) : (
+              <>
+                {formatNumber(factVal)}{" "}
+                <span className="text-base font-normal">{entry?.unit ?? ""}</span>
+              </>
+            )}
           </p>
           <p className="mt-2 text-sm">
             Δ к плану дня:{" "}
@@ -447,17 +469,28 @@ function DayDetailsInner() {
               placeholder="подпись к снимку"
             />
           </div>
-          <Input
+          <input
             type="file"
             accept="image/*"
             ref={photoRef}
+            className="hidden"
             data-testid="day-upload-input"
           />
-          <Button data-testid="day-save" onClick={() => void save(false)}>
-            Сохранить
+          <Button
+            type="button"
+            variant="outline"
+            disabled={saving || !entry}
+            data-testid="day-upload-btn"
+            onClick={() => photoRef.current?.click()}
+          >
+            Загрузить фото
+          </Button>
+          <Button disabled={saving || !entry} data-testid="day-save" onClick={() => void save(false)}>
+            {saving ? "Сохранение…" : "Сохранить"}
           </Button>
           <Button
             variant="outline"
+            disabled={saving || !entry}
             data-testid="day-save-photo"
             onClick={() => void save(true)}
           >
@@ -478,8 +511,11 @@ function DayDetailsInner() {
           data-testid="day-photo-report"
         >
           {photos.length === 0 ? (
-            <p className="text-sm text-[var(--tk-muted)]">
-              Нет фото за этот день / вид работ
+            <p
+              className="col-span-full rounded-xl border border-dashed border-[var(--tk-line)] bg-stone-50 px-4 py-8 text-center text-sm text-[var(--tk-muted)]"
+              data-testid="day-photo-empty"
+            >
+              Фотоотчёт пуст. Нажмите «Загрузить фото», укажите подпись и сохраните «Факт + фото».
             </p>
           ) : (
             photos.map((ph) => (

@@ -685,6 +685,7 @@ export function createSeedData(): AppData {
             end: "2027-01-25",
             sequence: 2,
             dependsOn: "gs-1",
+            workName: "Демонтаж перегородок",
           },
           {
             id: "gs-3",
@@ -693,6 +694,8 @@ export function createSeedData(): AppData {
             end: "2027-04-15",
             sequence: 3,
             dependsOn: "gs-2",
+            workNames: ["Штукатурка стен", "Устройство стяжки"],
+            workName: "Штукатурка стен",
           },
           {
             id: "gs-4",

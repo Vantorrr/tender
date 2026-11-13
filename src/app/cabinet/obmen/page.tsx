@@ -42,7 +42,7 @@ export default function ObmenPage() {
     <div>
       <PageHeader
         title="Обмен со сметным ПО"
-        description="Доступ из Справочников. Формат фиксируется на kickoff (ориентир XLSX). После загрузки — версии и расхождения ниже, не «тишина». Фикстуры ГРАНД 2022.3; итоговое ПО — от заказчика."
+        description="Обмен принимает XLSX. После импорта результат и расхождения появятся в истории; исходная смета и черновик не перезаписываются."
         actions={
           <>
             <Select
@@ -69,7 +69,7 @@ export default function ObmenPage() {
             <input
               ref={inputRef}
               type="file"
-              accept=".xlsx,.xls,.csv"
+              accept=".xlsx"
               className="hidden"
               onChange={async (e) => {
                 const file = e.target.files?.[0];

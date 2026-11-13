@@ -312,6 +312,11 @@ export function detectArchiveFormat(
   bytes: Buffer
 ): ArchiveExtractResult["format"] {
   const lower = fileName.toLowerCase();
+  // XLSX/DOCX and OpenDocument files are ZIP containers internally, but they
+  // must go through their document parsers instead of archive extraction.
+  if (/\.(xlsx|xlsm|xlsb|docx|docm|dotx|dotm|pptx|pptm|ppsx|ppsm|potx|potm|ods|odt|odp)$/i.test(lower)) {
+    return "none";
+  }
   if (isZip(bytes) || lower.endsWith(".zip")) return "zip";
   if (/\.rar$/i.test(lower)) return "rar";
   if (/\.(7z|tar|gz|tgz)$/i.test(lower)) return "unsupported";
@@ -334,7 +339,7 @@ export function extractArchiveSafely(
       files: [],
       errors: [
         format === "rar"
-          ? `Для распаковки «${fileName}» вызовите RAR-распаковщик.`
+          ? `Формат RAR «${fileName}» не поддерживается ZIP-распаковщиком; вызовите RAR-распаковщик.`
           : `Формат архива «${fileName}» не поддерживается безопасным извлечением (ZIP/RAR).`,
       ],
       skipped: [],

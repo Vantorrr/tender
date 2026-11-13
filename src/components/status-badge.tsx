@@ -19,6 +19,30 @@ const reviewClass: Record<ReviewStatus, string> = {
   dublirovana: "bg-orange-50 text-orange-900 border-orange-200",
 };
 
+/** Status text for chips — real space in DOM (a11y/copy); word-spacing keeps «В работе» readable. */
+export function StatusLabel({
+  status,
+  className,
+}: {
+  status: CardStatus;
+  className?: string;
+}) {
+  const plain = STATUS_LABELS[status];
+  return (
+    <span
+      className={cn(
+        "whitespace-nowrap tracking-normal",
+        status === "v_rabote" && "[word-spacing:0.2em]",
+        className
+      )}
+      data-testid={`status-label-${status}`}
+      title={plain}
+    >
+      {plain}
+    </span>
+  );
+}
+
 export function StatusBadge({
   status,
   className,
@@ -29,9 +53,17 @@ export function StatusBadge({
   return (
     <Badge
       variant="outline"
-      className={cn("font-medium", statusClass[status], className)}
+      className={cn(
+        "h-6 min-w-fit shrink-0 overflow-visible px-2.5 font-medium whitespace-nowrap tracking-normal",
+        status === "v_rabote" && "[word-spacing:0.2em]",
+        statusClass[status],
+        className
+      )}
+      data-testid={`status-badge-${status}`}
+      title={STATUS_LABELS[status]}
+      aria-label={STATUS_LABELS[status]}
     >
-      {STATUS_LABELS[status]}
+      <StatusLabel status={status} />
     </Badge>
   );
 }
@@ -46,7 +78,7 @@ export function ReviewBadge({
   return (
     <Badge
       variant="outline"
-      className={cn("font-medium", reviewClass[status], className)}
+      className={cn("font-medium whitespace-nowrap", reviewClass[status], className)}
     >
       {REVIEW_LABELS[status]}
     </Badge>

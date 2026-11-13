@@ -130,7 +130,7 @@ export default function DocumentDetailPage() {
               variant="outline"
               onClick={async () => {
                 const ok = window.confirm(
-                  "Сформировать записку через OpenRouter? Это платный вызов API."
+                  "Сформировать записку через внешний сервис анализа? Это платный вызов."
                 );
                 if (!ok) return;
                 try {

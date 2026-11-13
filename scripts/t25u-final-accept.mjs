@@ -114,19 +114,60 @@ function assertMatch(name, text, re) {
 function digits(s) {
   return String(s ?? "").replace(/[^\d]/g, "");
 }
-function requireCount(name, locatorPromiseCount, min = 1) {
-  // sync helper unused — keep asserts explicit
-  return min;
+async function login(page, email, password) {
+  // Prefer API session cookie — UI login is flaky under cold Next compiles.
+  const api = await page.request.post(`${base}/api/auth/login`, {
+    data: { email, password },
+  });
+  if (api.ok()) {
+    await gotoStable(page, `${base}/cabinet`);
+    return;
+  }
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await page.goto(`${base}/login`, { waitUntil: "domcontentloaded" });
+    const emailField = page.getByLabel(/email|почта|e-mail/i).or(
+      page.locator('input[type="email"], input[name="email"]').first()
+    );
+    try {
+      await emailField.first().waitFor({ state: "visible", timeout: 15000 });
+      await emailField.first().fill(email);
+      const pwdTab = page.getByRole("tab", { name: /Пароль/i });
+      if (await pwdTab.count()) await pwdTab.click();
+      await page.locator('input[type="password"]').first().fill(password);
+      await page.getByRole("button", { name: /Войти/i }).click();
+      await page.waitForURL(/\/cabinet/, { timeout: 25000 });
+      return;
+    } catch (err) {
+      if (attempt === 3) throw err;
+      await page.waitForTimeout(1500 * attempt);
+    }
+  }
 }
 
-async function login(page, email, password) {
-  await page.goto(`${base}/login`);
-  await page.getByLabel(/email/i).fill(email);
-  const pwdTab = page.getByRole("tab", { name: /Пароль/i });
-  if (await pwdTab.count()) await pwdTab.click();
-  await page.locator('input[type="password"]').first().fill(password);
-  await page.getByRole("button", { name: /Войти/i }).click();
-  await page.waitForURL(/\/cabinet/, { timeout: 25000 });
+/** Avoid load races when Next soft-navigates mid-goto. */
+async function gotoStable(page, url) {
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.waitForTimeout(400);
+      const here = page.url();
+      if (here.includes("/login")) {
+        const api = await page.request.post(`${base}/api/auth/login`, {
+          data: { email: "ruk@alfastroy.ru", password: "Ruk123!" },
+        });
+        if (!api.ok()) throw new Error(`relogin ${api.status()}`);
+        continue;
+      }
+      const want = new URL(url).pathname;
+      if (new URL(here).pathname === want || here.startsWith(url.split("?")[0])) {
+        return;
+      }
+    } catch (err) {
+      if (attempt === 4) throw err;
+      await page.waitForTimeout(500 * attempt);
+    }
+  }
+  throw new Error(`gotoStable failed for ${url} (at ${page.url()})`);
 }
 
 async function shot(page, name) {
@@ -241,7 +282,7 @@ try {
   await login(page, "ruk@alfastroy.ru", "Ruk123!");
   act("login", "ruk@alfastroy.ru");
 
-  await page.goto(`${base}/cabinet/gpr/g-1`);
+  await gotoStable(page, `${base}/cabinet/gpr/g-1`);
   await page.waitForTimeout(600);
   assert(
     "school-g1-no-test-banner",
@@ -250,7 +291,7 @@ try {
   );
 
   // ── Estimate: mutate bus via real UI ──
-  await page.goto(`${base}/cabinet/raschety/${TEST.calcId}`);
+  await gotoStable(page, `${base}/cabinet/raschety/${TEST.calcId}`);
   await page.waitForTimeout(1200);
   assert(
     "test-banner-on-estimate",
@@ -362,11 +403,19 @@ try {
   const ptxt = pdfText(
     await downloadBuf(page, `/api/export?kind=calc-pdf&id=${TEST.calcId}`)
   );
-  assertMatch("pdf-V", ptxt, new RegExp(`V direct:\\s*${Math.round(EXPECTED.V)}`));
-  assertMatch("pdf-W", ptxt, new RegExp(`W OH43%:\\s*${Math.round(EXPECTED.W)}`));
-  assertMatch("pdf-X", ptxt, new RegExp(`X cost\\+OH:\\s*${Math.round(EXPECTED.X)}`));
-  assertMatch("pdf-Y", ptxt, new RegExp(`Y markup40%:\\s*${Math.round(EXPECTED.Y)}`));
-  assertMatch("pdf-Z", ptxt, new RegExp(`Z TOTAL:\\s*${Math.round(EXPECTED.Z)}`));
+  // PDF is Russian (Прямые затраты V / … / Итого … Z) with ru-RU spaced numbers.
+  const pdfCompact = String(ptxt ?? "").replace(/\s/g, "");
+  function pdfHas(label, amount) {
+    const formatted = (Math.round(amount * 100) / 100)
+      .toLocaleString("ru-RU", { maximumFractionDigits: 2 })
+      .replace(/\s/g, "");
+    return pdfCompact.includes(`${label.replace(/\s/g, "")}${formatted}`);
+  }
+  assert("pdf-V", true, pdfHas("Прямые затраты V:", EXPECTED.V));
+  assert("pdf-W", true, pdfHas("Накладные W:", EXPECTED.W));
+  assert("pdf-X", true, pdfHas("Себестоимость с накладными X:", EXPECTED.X));
+  assert("pdf-Y", true, pdfHas("Прибыль Y:", EXPECTED.Y));
+  assert("pdf-Z", true, pdfHas("Итого ресурсного черновика Z:", EXPECTED.Z));
 
   act("export-gpr-xlsx", "gpr-xlsx");
   const gwb = await loadXlsx(
@@ -396,7 +445,7 @@ try {
   assert("gpr-Z", EXPECTED.Z, findVal(/Итого Z/));
 
   // ── Gantt: filter effect BEFORE reload; shift +1 day persists ──
-  await page.goto(`${base}/cabinet/gpr/${TEST.scheduleId}`);
+  await gotoStable(page, `${base}/cabinet/gpr/${TEST.scheduleId}`);
   await page.waitForTimeout(1200);
   assert(
     "test-banner-on-gantt",
@@ -452,11 +501,12 @@ try {
     ok: true,
   });
   act("gantt-filter-after-reload", filtAfter);
-  await shot(page, "gantt.png");
+  // Early gantt shot is before day facts — retaken after day save for consistency.
+  await shot(page, "gantt-before-day.png");
 
   // ── Day: volume + people + photo via correct controls ──
   const dayUrl = `${base}/cabinet/proizvodstvo/day?planFactId=${TEST.planFactId}&date=${TEST.date}&work=${encodeURIComponent(TEST.work)}`;
-  await page.goto(dayUrl);
+  await gotoStable(page, dayUrl);
   await page.waitForTimeout(1200);
   assert(
     "test-banner-on-day",
@@ -502,7 +552,7 @@ try {
   await page.waitForTimeout(2000);
 
   // Ordinary reload — same work+date URL
-  await page.goto(dayUrl);
+  await gotoStable(page, dayUrl);
   await page.waitForTimeout(1200);
   assert(
     "day-work-same-after-reload",
@@ -567,6 +617,24 @@ try {
   const photoShot = path.join(media, `pass${passNo}-day-photo-card.png`);
   await photoCard.screenshot({ path: photoShot });
   results.shots.push(photoShot);
+
+  // ── Gantt after day save: daily facts must match the same fixture ──
+  await gotoStable(page, `${base}/cabinet/gpr/${TEST.scheduleId}`);
+  await page.waitForTimeout(1200);
+  const dailyFactsAttr = await page
+    .getByTestId("gantt-daily-facts-count")
+    .getAttribute("data-daily-facts");
+  const dailyFactsCount = Number(dailyFactsAttr ?? "0");
+  assert("gantt-daily-facts-after-day-save", true, dailyFactsCount >= 1);
+  const ganttAfterDay = await page.getByTestId("plan-fact-gantt").innerText();
+  assertMatch("gantt-daily-facts-label-nonzero", ganttAfterDay, /Дневных фактов:\s*[1-9]/);
+  assert(
+    "gantt-title-once",
+    1,
+    (await page.getByTestId("gantt-title").count())
+  );
+  await page.getByTestId("plan-fact-gantt").scrollIntoViewIfNeeded();
+  await shot(page, "gantt.png");
 } catch (e) {
   results.nofail = false;
   results.fail.push({

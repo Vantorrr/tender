@@ -1,6 +1,7 @@
 import {
   addMoneyPayment,
   analyzeProcurementPackageWithAI,
+  attachCustomerEstimate,
   ensureMoneyPlan,
   ensureProcurementChain,
   getBootstrap,
@@ -58,6 +59,7 @@ export async function POST(req: Request) {
       action?:
         | "ensureChain"
         | "sendToCalculation"
+        | "attachCustomerEstimate"
         | "refreshAnalytics"
         | "analyzeProject"
         | "transferToProduction"
@@ -68,6 +70,8 @@ export async function POST(req: Request) {
       moneyId?: string;
       patch?: Partial<MoneyPlan>;
       payment?: Omit<MoneyPayment, "id">;
+      fileName?: string;
+      mappedCount?: number;
     };
     if (!body.id && body.action !== "saveMoney" && body.action !== "addMoneyPayment") {
       return json({ error: "Не указан id" }, 400);
@@ -78,6 +82,13 @@ export async function POST(req: Request) {
     }
     if (body.action === "sendToCalculation") {
       sendProcurementToCalculation(user.id, body.id!);
+      return json(getBootstrap(user));
+    }
+    if (body.action === "attachCustomerEstimate") {
+      attachCustomerEstimate(user.id, body.id!, {
+        fileName: body.fileName,
+        mappedCount: body.mappedCount,
+      });
       return json(getBootstrap(user));
     }
     if (body.action === "refreshAnalytics") {

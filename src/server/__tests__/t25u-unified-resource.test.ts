@@ -25,7 +25,6 @@ import {
 import {
   isResourceLinkedDraft,
   stagesToResourceLines,
-  syncDraftFromStages,
 } from "@/lib/unified-resource-sync";
 import type { CalcPosition, GprStage } from "@/lib/types";
 import {
@@ -80,6 +79,14 @@ function pdfExtractText(buf: Buffer): string {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+function expectPdfAmount(text: string, label: string, amount: number) {
+  const compact = text.replace(/\s/g, "");
+  const formatted = (Math.round(amount * 100) / 100)
+    .toLocaleString("ru-RU", { maximumFractionDigits: 2 })
+    .replace(/\s/g, "");
+  expect(compact).toContain(`${label.replace(/\s/g, "")}${formatted}`);
 }
 
 /** Hand-computed COMPLETE fixture: one labor + one bus, no missing rates. */
@@ -250,6 +257,49 @@ describe("t25u shared dimensions (P1 #1)", () => {
       }
     });
     expect(busR).toBe(174900);
+  });
+
+  it("GPR workbook exports a nested work → resource groups → materials sheet", async () => {
+    const buf = await buildGprXlsx(T25U_TEST.scheduleId);
+    const wb = await loadXlsx(buf);
+    const tree = wb.getWorksheet("Ресурсный график")!;
+    const rows: Array<{ row: ExcelJS.Row; name: string }> = [];
+    tree.eachRow((row) => rows.push({ row, name: String(row.getCell(1).value ?? "") }));
+
+    const stageIndex = rows.findIndex((entry) => entry.name === "Мобилизация [TEST]");
+    expect(stageIndex).toBeGreaterThanOrEqual(0);
+    expect(rows[stageIndex + 1].name).toBe("↳ Люди");
+    expect(rows[stageIndex + 2].name).toBe("Дорожный рабочий");
+    expect(rows[stageIndex + 2].row.outlineLevel).toBe(2);
+
+    const materialGroup = rows.findIndex((entry) => entry.name === "↳ Материалы");
+    expect(materialGroup).toBeGreaterThan(stageIndex);
+    expect(rows[materialGroup + 1].name).toBe("Материалы мобилизации");
+    expect(rows[materialGroup + 1].row.outlineLevel).toBe(2);
+    expect(tree.views[0]).toMatchObject({ state: "frozen", ySplit: 1 });
+  });
+
+  it("exports the client A:Z resource grid with nested material rows", async () => {
+    const buf = await buildGprXlsx(T25U_TEST.scheduleId);
+    const wb = await loadXlsx(buf);
+    const sheet = wb.getWorksheet("Клиентский ресурсный график")!;
+    expect(sheet.getRow(12).getCell(1).value).toBe("№");
+    expect(sheet.getRow(12).getCell(26).value).toBe("Итого Z");
+    expect(sheet.getRow(12).getCell(28).value).toBe(1);
+    const rows: ExcelJS.Row[] = [];
+    sheet.eachRow((row) => rows.push(row));
+    const work = rows.findIndex((row) => String(row.getCell(3).value) === "Мобилизация [TEST]");
+    expect(work).toBeGreaterThanOrEqual(0);
+    expect(String(rows[work].getCell(9).value)).toMatch(/^РАБОТА/);
+    expect(rows[work + 1].getCell(9).value).toBe("ГРУППА");
+    expect(rows[work + 1].getCell(10).value).toBe("Люди");
+    expect(rows[work].getCell(28).value).toBe("■");
+    expect(rows[work + 2].getCell(28).value).toBe(4);
+    expect(rows[work].getCell(19).value).toMatchObject({ formula: expect.stringContaining("SUM(") });
+    expect(rows[work].getCell(22).value).toMatchObject({ formula: expect.stringContaining("S") });
+    expect(rows[work + 2].getCell(17).value).toMatchObject({ formula: expect.stringContaining("L") });
+    expect(rows[work + 2].getCell(18).value).toMatchObject({ formula: expect.stringContaining("Q") });
+    expect(sheet.views[0]).toMatchObject({ state: "frozen", ySplit: 12 });
   });
 
   it("materials never enter Q-hours", () => {
@@ -487,11 +537,11 @@ describe("t25u shared dimensions (P1 #1)", () => {
     expect(cell("Z_total")).toBe(Z);
 
     const pdfText = pdfExtractText(await buildCalculationPdf(T25U_TEST.calculationId));
-    expect(pdfText).toMatch(new RegExp(`V direct:\\s*${Math.round(V)}`));
-    expect(pdfText).toMatch(new RegExp(`W OH43%:\\s*${Math.round(W)}`));
-    expect(pdfText).toMatch(new RegExp(`X cost\\+OH:\\s*${Math.round(X)}`));
-    expect(pdfText).toMatch(new RegExp(`Y markup40%:\\s*${Math.round(Y)}`));
-    expect(pdfText).toMatch(new RegExp(`Z TOTAL:\\s*${Math.round(Z)}`));
+    expectPdfAmount(pdfText, "Прямые затраты V:", V);
+    expectPdfAmount(pdfText, "Накладные W:", W);
+    expectPdfAmount(pdfText, "Себестоимость с накладными X:", X);
+    expectPdfAmount(pdfText, "Прибыль Y:", Y);
+    expectPdfAmount(pdfText, "Итого ресурсного черновика Z:", Z);
 
     const gpr = await loadXlsx(await buildGprXlsx(T25U_TEST.scheduleId));
     const res = gpr.getWorksheet("Ресурсы")!;
@@ -560,16 +610,12 @@ describe("t25u export PARTIAL + numerics (P1 #3 + evidence)", () => {
     )!.costSummary!.resourceSlices!;
     const pdf = await buildCalculationPdf(T25U_TEST.calculationId);
     const text = pdfExtractText(pdf);
-    expect(text).toMatch(new RegExp(`V direct:\\s*${Math.round(slices.direct)}`));
-    expect(text).toMatch(new RegExp(`W OH43%:\\s*${Math.round(slices.overhead)}`));
-    expect(text).toMatch(
-      new RegExp(`X cost\\+OH:\\s*${Math.round(slices.costWithOh)}`)
-    );
-    expect(text).toMatch(
-      new RegExp(`Y markup40%:\\s*${Math.round(slices.profit)}`)
-    );
-    expect(text).toMatch(new RegExp(`Z TOTAL:\\s*${Math.round(slices.total)}`));
-    expect(text).toMatch(/PARTIAL/);
+    expectPdfAmount(text, "Прямые затраты V:", slices.direct);
+    expectPdfAmount(text, "Накладные W:", slices.overhead);
+    expectPdfAmount(text, "Себестоимость с накладными X:", slices.costWithOh);
+    expectPdfAmount(text, "Прибыль Y:", slices.profit);
+    expectPdfAmount(text, "Итого ресурсного черновика Z:", slices.total);
+    expect(text).toMatch(/неполный расчёт/i);
   });
 
   it("GPR export marks PARTIAL on Итого Z and Цена без НДС rows", async () => {
@@ -695,11 +741,11 @@ describe("t25u export PARTIAL + numerics (P1 #3 + evidence)", () => {
     const pdfText = pdfExtractText(
       await buildCalculationPdf(T25U_TEST.calculationId)
     );
-    expect(pdfText).toMatch(new RegExp(`V direct:\\s*${Math.round(V)}`));
-    expect(pdfText).toMatch(new RegExp(`W OH43%:\\s*${Math.round(W)}`));
-    expect(pdfText).toMatch(new RegExp(`X cost\\+OH:\\s*${Math.round(X)}`));
-    expect(pdfText).toMatch(new RegExp(`Y markup40%:\\s*${Math.round(Y)}`));
-    expect(pdfText).toMatch(new RegExp(`Z TOTAL:\\s*${Math.round(Z)}`));
+    expectPdfAmount(pdfText, "Прямые затраты V:", V);
+    expectPdfAmount(pdfText, "Накладные W:", W);
+    expectPdfAmount(pdfText, "Себестоимость с накладными X:", X);
+    expectPdfAmount(pdfText, "Прибыль Y:", Y);
+    expectPdfAmount(pdfText, "Итого ресурсного черновика Z:", Z);
 
     const gpr = await loadXlsx(await buildGprXlsx(T25U_TEST.scheduleId));
     const res = gpr.getWorksheet("Ресурсы")!;
@@ -734,6 +780,39 @@ describe("t25u export PARTIAL + numerics (P1 #3 + evidence)", () => {
 describe("t25u school non-destructive + custom line", () => {
   beforeEach(() => {
     resetT25uDb();
+  });
+
+  it("manual resource row added in the spreadsheet resyncs draft positions and cost slices", () => {
+    const before = readAppData();
+    const schedule = before.schedules.find((item) => item.id === T25U_TEST.scheduleId)!;
+    const calculation = before.calculations.find((item) => item.id === T25U_TEST.calculationId)!;
+    const materialsBefore = calculation.costSummary?.resourceSlices?.materials ?? 0;
+    const stages = structuredClone(schedule.stages);
+    stages[0].resources = [
+      ...(stages[0].resources ?? []),
+      {
+        id: "manual-sheet-material",
+        kind: "material",
+        name: "[TEST] Ручной материал из таблицы",
+        unit: "м³",
+        quantity: 12,
+        rate: 250,
+        quantityBasis: "material_qty",
+      },
+    ];
+    updateSchedule("u-smet", schedule.id, { stages });
+    const after = readAppData();
+    const updatedCalculation = after.calculations.find((item) => item.id === calculation.id)!;
+    expect(updatedCalculation.positions.some((position) =>
+      position.sourceResourceId === "manual-sheet-material" &&
+      position.name === "[TEST] Ручной материал из таблицы" &&
+      position.quantity === 12 &&
+      position.rate === 250
+    )).toBe(true);
+    expect(updatedCalculation.costSummary?.resourceSlices?.materials).toBe(materialsBefore + 3000);
+    expect(updatedCalculation.costSummary?.resourceSlices?.total).toBeGreaterThan(
+      calculation.costSummary?.resourceSlices?.total ?? 0
+    );
   });
 
   it("updateSchedule with unrelated custom line preserves dates/rates/facts/photos/custom", () => {

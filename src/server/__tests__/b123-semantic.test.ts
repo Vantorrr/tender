@@ -95,6 +95,19 @@ describe("B2 OCR ordinary scans", () => {
     expect(analysis.noteByModel).toBeFalsy();
   });
 
+  it("uploaded PNG/JPEG scans use OCR analysis instead of the unsupported-format fallback", async () => {
+    setOcrProvider(new MockOcrProvider("КП заказчика, срок подачи 18.11.2026", 1));
+    const analysis = await analyzeUpload(
+      "Приложение.png",
+      "other",
+      Buffer.from("image bytes"),
+      { useLlm: false }
+    );
+    expect(analysis.analyticalNote).toMatch(/КП заказчика/);
+    expect(analysis.citations.some((citation) => citation.id === "c-ocr")).toBe(true);
+    expect(analysis.status).not.toBe("oshibka");
+  });
+
   it("analysisFromScan marks empty OCR as manual review, not invented text", () => {
     const a = analysisFromScan("x.pdf", {
       status: "empty",

@@ -153,7 +153,7 @@ function fieldValue(value: unknown): string {
 export class NornickelLocalProcurementSource implements ProcurementSource {
   readonly id = "nornickel-local-public";
 
-  async fetchNotices(_orgId: string): Promise<ProcurementFetchResult> {
+  async fetchNotices(): Promise<ProcurementFetchResult> {
     try {
       const fetchPage = async (page: number) => {
         const url = new URL(NORILSK_TENDERS_URL);
@@ -280,7 +280,7 @@ export class MockProcurementSource implements ProcurementSource {
     private readonly detail = "mock ok"
   ) {}
 
-  async fetchNotices(_orgId: string): Promise<ProcurementFetchResult> {
+  async fetchNotices(): Promise<ProcurementFetchResult> {
     return {
       ok: true,
       stub: true,

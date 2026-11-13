@@ -9,11 +9,14 @@ import {
 import { buildGprXlsx, buildPlanFactXlsx } from "@/server/export";
 import {
   addDailyProductionFact,
+  recordSupplierQuote,
   recomputeCalculationCost,
+  selectSupplierQuote,
   transferProcurementToProduction,
+  upsertSupplyRequest,
 } from "@/server/repo";
 import { validateDirectoryImport } from "@/lib/directory-import";
-import { allocatePlanForSlice } from "@/lib/plan-from-gpr";
+import { allocatePlanForSlice, stageDayList, stagesForWork } from "@/lib/plan-from-gpr";
 import { economicsFromVolumes } from "@/lib/economics-from-rates";
 import { collectCalendarWarnings } from "@/lib/calendar-availability";
 import ExcelJS from "exceljs";
@@ -99,6 +102,44 @@ describe("t22u closeout remediable", () => {
     expect(b.plan).toBe(5);
   });
 
+  it("distributes GPR volume across working days from the project calendar", () => {
+    const calendar = { weekendDays: [0, 6], hoursPerShift: 8, shiftsPerDay: 1, timezone: "Asia/Krasnoyarsk" };
+    const stage = {
+      id: "weekend-stage",
+      name: "Устройство покрытия",
+      start: "2026-11-06",
+      end: "2026-11-08",
+      sequence: 1,
+      planVolume: 40,
+    };
+    expect(stageDayList(stage, calendar)).toEqual(["2026-11-06"]);
+    expect(allocatePlanForSlice(40, [stage], "day", "2026-11-06", calendar).plan).toBe(40);
+    expect(allocatePlanForSlice(40, [stage], "day", "2026-11-07", calendar).plan).toBe(0);
+    expect(allocatePlanForSlice(40, [stage], "period", "2026-11-07", calendar).plan).toBe(40);
+
+    const weekendOnly = { ...stage, start: "2026-11-07", end: "2026-11-08" };
+    expect(allocatePlanForSlice(40, [weekendOnly], "period", "2026-11-08", calendar)).toMatchObject({ plan: 0, source: "none" });
+  });
+
+  it("links each production work only to its named GPR stages", () => {
+    const stages = [
+      { id: "s1", name: "Pipe", workName: "Трубопровод", start: "2026-11-01", end: "2026-11-02", sequence: 1, planVolume: 10 },
+      { id: "s2", name: "Supports", workName: "Опоры", start: "2026-11-01", end: "2026-11-02", sequence: 2, planVolume: 5 },
+    ];
+    expect(stagesForWork(["Трубопровод", "Опоры"], stages, "Трубопровод").map((stage) => stage.id)).toEqual(["s1"]);
+    expect(stagesForWork(["Трубопровод", "Опоры"], stages, "Неизвестная работа")).toEqual([]);
+  });
+
+  it("allows one GPR stage to cover multiple explicitly linked production works", () => {
+    const stage = {
+      id: "s1", name: "Отделка", workNames: ["Штукатурка стен", "Устройство стяжки"],
+      start: "2026-11-01", end: "2026-11-02", sequence: 1,
+    };
+    expect(stagesForWork(["Штукатурка стен", "Устройство стяжки"], [stage], "Штукатурка стен")).toEqual([stage]);
+    expect(stagesForWork(["Штукатурка стен", "Устройство стяжки"], [stage], "Устройство стяжки")).toEqual([stage]);
+    expect(stagesForWork(["Штукатурка стен", "Устройство стяжки"], [stage], "Покраска")).toEqual([]);
+  });
+
   it("economics uses confirmed rates only; missing → incomplete not 0 money", () => {
     const eco = economicsFromVolumes({
       entries: [
@@ -153,6 +194,97 @@ describe("t22u closeout remediable", () => {
     });
     expect(missing.autoIncurred).toBe(0);
     expect(missing.incomplete.length).toBeGreaterThan(0);
+
+    const ambiguous = economicsFromVolumes({
+      entries: [
+        {
+          id: "e-ambiguous",
+          workName: "Монтаж оборудования",
+          unit: "шт",
+          plan: 1,
+          fact: 1,
+        },
+      ],
+      positions: [
+        { id: "p-a", code: "A", name: "Монтаж оборудования", unit: "шт", quantity: 1, rate: 100 },
+        { id: "p-b", code: "B", name: "Монтаж оборудования", unit: "шт", quantity: 1, rate: 250 },
+      ],
+      directories: [],
+    });
+    expect(ambiguous.autoIncurred).toBe(0);
+    expect(ambiguous.incomplete).toContain("rate:Монтаж оборудования");
+  });
+
+  it("calculates production cost from actual GPR resource quantities without double counting work rates", () => {
+    const eco = economicsFromVolumes({
+      entries: [{ id: "e1", workName: "Монтаж труб", unit: "м", plan: 10, fact: 2 }],
+      daily: [{
+        id: "d1", date: "2026-11-08", workName: "Монтаж труб", unit: "м",
+        quantity: 2, photos: [], authorId: "u", at: "",
+        resourceLines: [
+          { kind: "labor", sourceResourceId: "labor-1", name: "Монтажник", unit: "чел.-ч", planQty: 4, factQty: 3 },
+          { kind: "material", sourceResourceId: "mat-1", name: "Труба", unit: "м", planQty: 2, factQty: 2 },
+        ],
+      }],
+      positions: [
+        { id: "work", code: "W", name: "Монтаж труб", unit: "м", quantity: 10, rate: 1000 },
+        { id: "labor-pos", sourceResourceId: "labor-1", code: "L", name: "Монтажник", unit: "чел.-ч", quantity: 40, rate: 500 },
+        { id: "mat-pos", sourceResourceId: "mat-1", code: "M", name: "Труба", unit: "м", quantity: 20, rate: 200 },
+      ],
+      directories: [],
+    });
+
+    expect(eco.autoIncurred).toBe(1900);
+    expect(eco.incomplete).toEqual([]);
+    expect(eco.lines[0].amount).toBe(1900);
+  });
+
+  it("keeps resource-based production cost incomplete if a fact quantity or confirmed rate is missing", () => {
+    const eco = economicsFromVolumes({
+      entries: [{ id: "e1", workName: "Монтаж труб", unit: "м", plan: 10, fact: 2 }],
+      daily: [{
+        id: "d1", date: "2026-11-08", workName: "Монтаж труб", unit: "м",
+        quantity: 2, photos: [], authorId: "u", at: "",
+        resourceLines: [
+          { kind: "material", sourceResourceId: "mat-1", name: "Труба", unit: "м", planQty: 2, factQty: null },
+        ],
+      }],
+      positions: [{ id: "mat-pos", sourceResourceId: "mat-1", code: "M", name: "Труба", unit: "м", quantity: 20, rate: 0, rateMissing: true }],
+      directories: [],
+    });
+
+    expect(eco.autoIncurred).toBe(0);
+    expect(eco.incomplete).toContain("resource_facts:Монтаж труб");
+    expect(eco.lines[0].amount).toBeNull();
+  });
+
+  it("values completed and remaining quantities from the customer estimate separately from revenue", () => {
+    const input = {
+      entries: [{ id: "e1", workName: "Монтаж труб", unit: "м", plan: 10, fact: 2 }],
+      daily: [{
+        id: "d1", date: "2026-11-08", workName: "Монтаж труб", unit: "м",
+        quantity: 2, photos: [], authorId: "u", at: "",
+      }],
+      positions: [{ id: "cost", code: "C", name: "Монтаж труб", unit: "м", quantity: 10, rate: 500 }],
+      customerEstimatePositions: [{ id: "customer", code: "O", name: "Монтаж труб", unit: "м", quantity: 10, rate: 800 }],
+      directories: [],
+    };
+    const complete = economicsFromVolumes(input);
+    expect(complete.autoIncurred).toBe(1000);
+    expect(complete.customerEstimateValue).toBe(1600);
+    expect(complete.customerEstimateRemainingValue).toBe(6400);
+    expect(complete.customerEstimateIncomplete).toEqual([]);
+
+    const incomplete = economicsFromVolumes({
+      ...input,
+      customerEstimatePositions: [
+        input.customerEstimatePositions[0],
+        { ...input.customerEstimatePositions[0], id: "customer-2", rate: 900 },
+      ],
+    });
+    expect(incomplete.customerEstimateValue).toBeNull();
+    expect(incomplete.customerEstimateRemainingValue).toBeNull();
+    expect(incomplete.customerEstimateIncomplete).toContain("customer_rate:Монтаж труб");
   });
 
   it("calendar warnings surface crew peaks and supply timing", () => {
@@ -196,6 +328,232 @@ describe("t22u closeout remediable", () => {
     );
     expect(w.some((x) => x.kind === "crew_peak")).toBe(true);
     expect(w.some((x) => x.kind === "supply_late")).toBe(true);
+  });
+
+  it("supply workflow persists vendor contact, RFQ draft, and unit price", () => {
+    upsertSupplyRequest("u-ruk", {
+      procurementId: "p-1",
+      workName: "Монтаж трубопровода",
+      materialName: "Труба стальная",
+      unit: "м",
+      qtyNeed: 120,
+      needBy: "2026-12-15",
+      status: "quoted_draft",
+      quoteDraftText: "Просим направить КП на трубу 120 м",
+      supplierName: "СеверСнаб",
+      supplierEmail: "sales@example.test",
+      unitPrice: 1250,
+    });
+    const created = readAppData().supplyRequests?.find(
+      (item) => item.materialName === "Труба стальная"
+    );
+    expect(created).toMatchObject({
+      workName: "Монтаж трубопровода",
+      supplierName: "СеверСнаб",
+      supplierEmail: "sales@example.test",
+      quoteDraftText: "Просим направить КП на трубу 120 м",
+      unitPrice: 1250,
+    });
+
+    upsertSupplyRequest("u-ruk", {
+      id: created!.id,
+      procurementId: "p-1",
+      materialName: created!.materialName,
+      unit: created!.unit,
+      qtyNeed: created!.qtyNeed,
+      needBy: created!.needBy,
+      status: "ordered",
+    });
+    expect(readAppData().supplyRequests?.find((item) => item.id === created!.id)).toMatchObject({
+      status: "ordered",
+      supplierName: "СеверСнаб",
+      supplierEmail: "sales@example.test",
+      unitPrice: 1250,
+    });
+  });
+
+  it("compares multiple supplier quotes and applies only the explicitly selected offer", () => {
+    upsertSupplyRequest("u-ruk", {
+      procurementId: "p-1",
+      materialName: "Кабель для сравнения",
+      unit: "м",
+      qtyNeed: 100,
+      needBy: "2026-12-20",
+    });
+    const supply = readAppData().supplyRequests!.find((item) => item.materialName === "Кабель для сравнения")!;
+    recordSupplierQuote("u-ruk", supply.id, {
+      supplierName: "СеверЭлектро",
+      supplierEmail: "sales@sever.example",
+      unitPrice: 245,
+      deliveryDays: 8,
+      note: "Доставка включена",
+    });
+    recordSupplierQuote("u-ruk", supply.id, {
+      supplierName: "ПромКабель",
+      unitPrice: 220,
+      deliveryDays: 14,
+      note: "Самовывоз",
+    });
+    const offers = readAppData().supplyRequests!.find((item) => item.id === supply.id)!;
+    expect(offers.quotes).toHaveLength(2);
+    expect(offers.unitPrice).toBeNull();
+
+    const selected = offers.quotes!.find((quote) => quote.supplierName === "СеверЭлектро")!;
+    selectSupplierQuote("u-ruk", supply.id, selected.id);
+    const after = readAppData().supplyRequests!.find((item) => item.id === supply.id)!;
+    expect(after).toMatchObject({
+      selectedQuoteId: selected.id,
+      supplierName: "СеверЭлектро",
+      supplierEmail: "sales@sever.example",
+      unitPrice: 245,
+    });
+    expect(() => selectSupplierQuote("u-ruk", supply.id, "quote-from-another-material")).toThrow(/КП/);
+    expect(() => recordSupplierQuote("u-ruk", supply.id, { supplierName: "Ошибка", unitPrice: -1 })).toThrow(/неотрицательным/);
+  });
+
+  it("supplier quote API validates price and stores a selected offer on its material request", async () => {
+    upsertSupplyRequest("u-ruk", {
+      procurementId: "p-1",
+      materialName: "КП через API",
+      unit: "шт",
+      qtyNeed: 5,
+      needBy: "2026-12-22",
+    });
+    const supply = readAppData().supplyRequests!.find((item) => item.materialName === "КП через API")!;
+    const { POST } = await import("@/app/api/supply/route");
+    const post = (body: unknown) => POST(new Request("http://local/api/supply", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${createSession("u-ruk")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(body),
+    }));
+    const invalid = await post({ action: "recordQuote", id: supply.id, quote: { supplierName: "Поставщик", unitPrice: -5 } });
+    expect(invalid.status).toBe(400);
+
+    const recorded = await post({ action: "recordQuote", id: supply.id, quote: { supplierName: "РесурсПоставка", unitPrice: 125, deliveryDays: 6 } });
+    expect(recorded.status).toBe(200);
+    const quote = readAppData().supplyRequests!.find((item) => item.id === supply.id)!.quotes![0];
+    const selected = await post({ action: "selectQuote", id: supply.id, quoteId: quote.id });
+    expect(selected.status).toBe(200);
+    expect(readAppData().supplyRequests!.find((item) => item.id === supply.id)).toMatchObject({
+      selectedQuoteId: quote.id,
+      supplierName: "РесурсПоставка",
+      unitPrice: 125,
+    });
+  });
+
+  it("production can update receipt on its own linked supply, but procurement users cannot", async () => {
+    const productionUser = readAppData().users.find((user) => user.role === "otvetstvennyy");
+    expect(productionUser?.sections).toContain("proizvodstvo");
+    const plan = readAppData().planFacts.find((item) => item.procurementId === "p-1");
+    expect(plan).toBeTruthy();
+    upsertSupplyRequest("u-ruk", {
+      procurementId: "p-1",
+      materialName: "Кабель силовой",
+      unit: "м",
+      qtyNeed: 100,
+      needBy: "2026-12-15",
+      status: "in_transit",
+    });
+    const supply = readAppData().supplyRequests!.find((item) => item.materialName === "Кабель силовой")!;
+
+    const { POST } = await import("@/app/api/proizvodstvo/route");
+    const request = (userId: string, qtyDelivered: number, supplyStatus: string) => POST(new Request("http://local/api/proizvodstvo", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${createSession(userId)}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        action: "updateSupplyReceipt",
+        planFactId: plan!.id,
+        supplyId: supply.id,
+        qtyDelivered,
+        supplyStatus,
+      }),
+    }));
+    const allowed = await request(productionUser!.id, 35, "in_transit");
+    expect(allowed.status).toBe(200);
+    expect(readAppData().supplyRequests!.find((item) => item.id === supply.id)).toMatchObject({ qtyDelivered: 35, status: "in_transit" });
+
+    const invalid = await request(productionUser!.id, -1, "delivered");
+    expect(invalid.status).toBe(400);
+    expect(readAppData().supplyRequests!.find((item) => item.id === supply.id)?.qtyDelivered).toBe(35);
+
+    const response = await request("u-tender", 80, "delivered");
+    expect(response.status).toBe(403);
+    expect(readAppData().supplyRequests!.find((item) => item.id === supply.id)?.qtyDelivered).toBe(35);
+  });
+
+  it("daily production API preserves GPR resource links and rejects invalid fact quantities", async () => {
+    const { POST } = await import("@/app/api/proizvodstvo/route");
+    const postFact = (resourceLines: unknown[], quantity = 1) => POST(new Request("http://local/api/proizvodstvo", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${createSession("u-obj")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        action: "dailyFact",
+        planFactId: "pf-1",
+        fact: {
+          factId: "df-api-resource-link",
+          date: "2026-11-10",
+          workName: "Демонтаж перегородок",
+          unit: "м²",
+          quantity,
+          resourceLines: [
+            { kind: "material", sourceResourceId: "gpr-material-1", name: "Щебень", unit: "т", planQty: 2, factQty: 1 },
+            ...resourceLines,
+          ],
+        },
+      }),
+    }));
+
+    const accepted = await postFact([]);
+    expect(accepted.status).toBe(200);
+    const saved = readAppData().planFacts.find((item) => item.id === "pf-1")!
+      .dailyFacts?.find((item) => item.id === "df-api-resource-link");
+    expect(saved?.resourceLines?.[0]).toMatchObject({
+      sourceResourceId: "gpr-material-1",
+      kind: "material",
+      factQty: 1,
+    });
+
+    const negativeWorkFact = await postFact([], -1);
+    expect(negativeWorkFact.status).toBe(400);
+
+    const rejected = await postFact([
+      { kind: "material", sourceResourceId: "gpr-material-2", name: "Песок", unit: "т", planQty: 2, factQty: -1 },
+    ]);
+    expect(rejected.status).toBe(400);
+    expect(readAppData().planFacts.find((item) => item.id === "pf-1")!
+      .dailyFacts?.find((item) => item.id === "df-api-resource-link")?.resourceLines)
+      .toEqual(saved?.resourceLines);
+  });
+
+  it("production variance API refuses a work that is not linked to a GPR stage", async () => {
+    mutateAppData((data) => {
+      const plan = data.planFacts.find((item) => item.id === "pf-1")!;
+      plan.entries = [
+        { id: "entry-m", workName: "Трубопровод", unit: "м", plan: 10, fact: 2, contractRemaining: 8 },
+        { id: "entry-pc", workName: "Опоры", unit: "шт", plan: 5, fact: 1, contractRemaining: 4 },
+      ];
+      return data;
+    });
+    const { POST } = await import("@/app/api/proizvodstvo/route");
+    const res = await POST(new Request("http://local/api/proizvodstvo", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${createSession("u-obj")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ action: "analyzeVariance", planFactId: "pf-1", period: "cum", date: "2026-11-10", workName: "Трубопровод" }),
+    }));
+    expect(res.status).toBe(422);
+    expect((await res.json()).error).toMatch(/нет связанных этапов/);
   });
 
   it("GPR and planfact xlsx reopen with formulas + incompleteness sheet", async () => {

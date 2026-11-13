@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
@@ -29,7 +29,7 @@ import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-pa
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { bucketsFromPositions } from "@/lib/cost-engine";
 import { formatMoney, formatNumber } from "@/lib/format";
-import type { Calculation } from "@/lib/types";
+import type { Calculation, GprStageResource, ResourceQuantityBasis } from "@/lib/types";
 import type { EstimateLeaf } from "@/lib/hierarchical-estimate";
 import type { ResourceScheduleParams } from "@/lib/resource-schedule-model";
 import { useStore } from "@/lib/store";
@@ -38,13 +38,107 @@ import {
   positionLineSum,
 } from "@/lib/calc-math";
 import { compareCalculations } from "@/lib/calc-compare";
+import type { NorthernInputs } from "@/lib/cost-engine";
+import type { CalcCompareAiReport } from "@/server/calc-compare-ai";
+import { ProjectAiChat } from "@/components/project-ai-chat";
+import { userHasSection } from "@/lib/acl";
+
+function NorthernCostEditor({
+  calculationId,
+  value,
+  onSaved,
+}: {
+  calculationId: string;
+  value?: NorthernInputs;
+  onSaved: () => Promise<void>;
+}) {
+  const [applicable, setApplicable] = useState(value?.applicable ?? true);
+  const [items, setItems] = useState<NorthernInputs["confirmedItems"]>(
+    value?.confirmedItems ?? []
+  );
+  const [saving, setSaving] = useState(false);
+
+  function patchItem(
+    id: string,
+    patch: Partial<NorthernInputs["confirmedItems"][number]>
+  ) {
+    setItems((current) => current.map((item) => item.id === id ? { ...item, ...patch } : item));
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      await api("/api/raschety", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id: calculationId,
+          recomputeCost: true,
+          costPatch: {
+            northern: { applicable, confirmedItems: items, notes: [] },
+            useResourceScheduleEconomics: true,
+          },
+        }),
+      });
+      await onSaved();
+      toast.success("Северные затраты сохранены, расчёт обновлён");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось сохранить затраты");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-4 space-y-3">
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={applicable} onChange={(event) => setApplicable(event.target.checked)} />
+        Для проекта применимы северные/вахтовые затраты
+      </label>
+      {items.length ? (
+        <div className="space-y-2">
+          {items.map((item) => (
+            <div key={item.id} className="grid gap-2 rounded-lg border border-[var(--tk-line)] p-3 sm:grid-cols-2 xl:grid-cols-[1.2fr_0.7fr_0.9fr_1.2fr_auto]">
+              <Input aria-label="Статья северных затрат" placeholder="Например, проживание вахты" value={item.name} onChange={(event) => patchItem(item.id, { name: event.target.value })} />
+              <Select value={item.status} onValueChange={(status) => status && patchItem(item.id, { status: status as NorthernInputs["confirmedItems"][number]["status"] })}>
+                <SelectTrigger aria-label={`Статус · ${item.name}`}>
+                  <SelectValue>{(status) => status === "known" ? "Подтверждено" : status === "clarify" ? "Уточнить" : "Сценарий"}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="known">Подтверждено</SelectItem>
+                  <SelectItem value="clarify">Уточнить</SelectItem>
+                  <SelectItem value="scenario">Сценарий</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input aria-label={`Сумма · ${item.name}`} type="number" min={0} step="0.01" placeholder="Сумма, ₽" value={item.amount ?? ""} onChange={(event) => {
+                const raw = event.target.value.trim();
+                const amount = raw ? Number(raw.replace(",", ".")) : null;
+                patchItem(item.id, { amount: amount != null && Number.isFinite(amount) && amount >= 0 ? amount : null });
+              }} />
+              <Input aria-label={`Основание · ${item.name}`} placeholder="Основание: КП, ШР, документ" value={item.basis} onChange={(event) => patchItem(item.id, { basis: event.target.value })} />
+              <Button variant="ghost" size="sm" aria-label={`Удалить · ${item.name}`} onClick={() => setItems((current) => current.filter((row) => row.id !== item.id))}>Удалить</Button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-[var(--tk-muted)]">Подтверждённые северные затраты не добавлены. Автоматический коэффициент не применяется.</p>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" size="sm" onClick={() => setItems((current) => [...current, { id: `north-${Date.now()}`, name: "", status: "clarify", amount: null, basis: "" }])}>Добавить статью</Button>
+        <Button size="sm" disabled={saving} onClick={() => void save()}>{saving ? "Пересчёт…" : "Сохранить и пересчитать"}</Button>
+      </div>
+      <p className="text-xs text-[var(--tk-muted)]">В итог включаются только строки «Подтверждено» с заполненной суммой. Строки «Уточнить» помечают расчёт как неполный; сценарные суммы хранятся отдельно и не включаются.</p>
+    </div>
+  );
+}
 
 export default function RaschetDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const {
     data,
     user,
     updateCalculation,
+    updateSchedule,
     patchScheduleResource,
     recalcCalculation,
     addCalcFromDirectory,
@@ -58,6 +152,11 @@ export default function RaschetDetailPage() {
   const [rateKey, setRateKey] = useState<string>("price");
   const [filter, setFilter] = useState("");
   const [showDirAdd, setShowDirAdd] = useState(false);
+  const [aiCompare, setAiCompare] = useState<{
+    signature: string;
+    report: CalcCompareAiReport;
+  } | null>(null);
+  const [aiCompareLoading, setAiCompareLoading] = useState(false);
 
   const calc = user
     ? data.calculations.find(
@@ -124,6 +223,8 @@ export default function RaschetDetailPage() {
     calc.kind === "resource_draft"
       ? compareCalculations(paired, calc)
       : compareCalculations(calc, paired);
+  const compareSignature = JSON.stringify(compare);
+  const compareAiBatches = Math.ceil(compare.rows.length / 80);
 
   const totals = calculationTotals(calc);
   const originalTotals = paired ? calculationTotals(paired) : null;
@@ -151,15 +252,24 @@ export default function RaschetDetailPage() {
 
   async function patchEstimateLeaf(
     leaf: EstimateLeaf,
-    patch: { quantity?: number; rate?: number | null }
+    patch: {
+      name?: string;
+      unit?: string;
+      quantity?: number;
+      rate?: number | null;
+      hoursPerShift?: number | null;
+      shiftsPerDay?: number | null;
+      days?: number | null;
+      kind?: GprStageResource["kind"];
+      quantityBasis?: ResourceQuantityBasis | null;
+    }
   ) {
     try {
       if (leaf.source === "stage_resource" && linkedSchedule) {
         await patchScheduleResource(linkedSchedule.id, {
           resourceId: leaf.id,
           stageId: leaf.stageId,
-          quantity: patch.quantity,
-          rate: patch.rate,
+          ...patch,
         });
         return;
       }
@@ -222,15 +332,26 @@ export default function RaschetDetailPage() {
     { label: "Производство", href: "/cabinet/proizvodstvo" },
   ];
 
+  const directorySubtitle = dir
+    ? `Справочник: ${dir.name} · версия ${dir.version}`
+    : "версия справочника не указана";
+  const procurementSubtitle = procurement
+    ? [procurement.number, procurement.title].filter(Boolean).join(" — ")
+    : "закупка не указана";
+  const calcKindSubtitle = locked
+    ? "оригинал сметы заказчика"
+    : "ресурсный черновик";
+
   return (
     <div>
       <PageHeader
         title={calc.title}
-        description={`Справочник: ${dir?.name ?? "—"} v${dir?.version ?? "?"} · закупка ${calc.procurementId} · ${
-          locked ? "оригинал (immutable)" : "ресурсный черновик"
-        }`}
+        description={`${directorySubtitle} · ${procurementSubtitle} · ${calcKindSubtitle}`}
         actions={
           <>
+            {procurement && user && userHasSection(user, "raschety") ? (
+              <ProjectAiChat procurementId={calc.procurementId} projectTitle={procurement.title} screen="calculation" />
+            ) : null}
             <StatusBadge status={calc.status} />
             {!locked ? (
               <>
@@ -306,16 +427,16 @@ export default function RaschetDetailPage() {
                       });
                       await refresh();
                       toast.success(
-                        "Cost-engine: НР×прямые + наценка на с/с с НР (НДС — нет данных)"
+                        "Пересчёт: накладные от прямых + наценка на себестоимость (НДС — нет данных)"
                       );
                     } catch (e) {
                       toast.error(
-                        e instanceof Error ? e.message : "Ошибка cost-engine"
+                        e instanceof Error ? e.message : "Ошибка пересчёта"
                       );
                     }
                   }}
                 >
-                  Cost-engine
+                  Пересчитать итоги
                 </Button>
               </>
             ) : null}
@@ -480,9 +601,8 @@ export default function RaschetDetailPage() {
         </div>
       ) : (
         <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
-          Редактируемый черновик. Арифметика детерминированная; причины
-          отклонений только из сравнения полей — без выдуманных LLM-причин. Не
-          обещаем 97% точности.
+          Черновик можно редактировать. Суммы пересчитываются автоматически по
+          формулам сметы.
         </div>
       )}
 
@@ -549,15 +669,15 @@ export default function RaschetDetailPage() {
         <div className="tk-glass rounded-3xl px-4 py-2" data-testid="calc-total-chip">
           <div className="text-xs text-[var(--tk-muted)]">
             {calc.kind === "customer_original"
-              ? "Оригинал сметы (immutable)"
+              ? "Оригинал сметы заказчика"
               : draftSlices
-                ? `Черновик · Z (ресурсный)${
+                ? `Черновик · итого${
                     calc.costSummary?.totalsIncomplete || draftSlices.partial
-                      ? " · PARTIAL"
+                      ? " · расчёт неполный"
                       : ""
                   }`
                 : calc.costSummary?.totalsIncomplete
-                  ? "Итого черновика · PARTIAL"
+                  ? "Итого черновика · расчёт неполный"
                   : "Итого черновика"}
           </div>
           <div className="font-[family-name:var(--font-display)] text-xl">
@@ -570,7 +690,7 @@ export default function RaschetDetailPage() {
                 className="ml-2 text-sm font-normal text-amber-800"
                 data-testid="calc-total-chip-partial"
               >
-                PARTIAL
+                расчёт неполный
               </span>
             ) : null}
           </div>
@@ -591,8 +711,8 @@ export default function RaschetDetailPage() {
           }
           originalLabel={
             calc.kind === "customer_original"
-              ? "Этот документ — оригинал (immutable)"
-              : "Оригинал сметы (immutable)"
+              ? "Этот документ — оригинал сметы заказчика"
+              : "Оригинал сметы заказчика"
           }
           costSummary={calc.costSummary}
           costIncomplete={Boolean(calc.costSummary?.totalsIncomplete)}
@@ -625,8 +745,28 @@ export default function RaschetDetailPage() {
             await refresh();
           }}
           onPatchLeaf={(leaf, patch) => {
-            void patchEstimateLeaf(leaf, patch);
+            return patchEstimateLeaf(leaf, patch);
           }}
+          onAddManualResources={async (stageId, resources) => {
+            if (!linkedSchedule || locked) return;
+            await updateSchedule(linkedSchedule.id, {
+              stages: linkedSchedule.stages.map((stage) =>
+                stage.id === stageId
+                  ? {
+                      ...stage,
+                      resources: [
+                        ...(stage.resources ?? []),
+                        ...resources.map((resource) => ({
+                          ...resource,
+                          id: `gprr-${crypto.randomUUID()}`,
+                        })),
+                      ],
+                    }
+                  : stage
+              ),
+            });
+          }}
+          onOpenSchedule={linkedSchedule ? () => router.push(`/cabinet/gpr/${linkedSchedule.id}`) : undefined}
           onExport={exportExcelLike}
           onAddClick={() => {
             setShowDirAdd(true);
@@ -788,9 +928,7 @@ export default function RaschetDetailPage() {
             Север / экономика — подтверждаемые входы
           </h2>
           <p className="mt-1 text-sm text-[var(--tk-muted)]">
-            Значения ставок уточнит Егор. Здесь только структура входов: без
-            универсального «северного коэффициента». Прибыль — наценка XOR
-            маржа.
+            Вносите только подтверждённые расходы и указывайте источник суммы. Универсальный «северный коэффициент» не применяется. Прибыль — наценка XOR маржа.
           </p>
           <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-[var(--tk-muted)]">
             <li>
@@ -811,41 +949,12 @@ export default function RaschetDetailPage() {
             </li>
             <li>НДС %, дата цен, валюта; 14 позиций без тарифа → 0 + «неполно»</li>
           </ul>
-          <Button
-            className="mt-3"
-            variant="outline"
-            data-testid="recompute-northern"
-            onClick={async () => {
-              try {
-                await api("/api/raschety", {
-                  method: "PATCH",
-                  body: JSON.stringify({
-                    id: calc.id,
-                    recomputeCost: true,
-                    costPatch: {
-                      vatPercent: null,
-                      profitMethod: "markup",
-                      useResourceScheduleEconomics: true,
-                      profitRate: 0.4,
-                      northern: calc.northern ?? {
-                        applicable: true,
-                        confirmedItems: [],
-                        notes: [
-                          "север/вахта в эталоне есть; подтверждайте базу каждого коэффициента",
-                        ],
-                      },
-                    },
-                  }),
-                });
-                await refresh();
-                toast.success("Пересчёт связанных статей (без выдуманных ставок)");
-              } catch (e) {
-                toast.error(e instanceof Error ? e.message : "Ошибка");
-              }
-            }}
-          >
-            Пересчитать связанные
-          </Button>
+          <NorthernCostEditor
+            key={`${calc.id}:${calc.updatedAt}:${JSON.stringify(calc.northern ?? null)}`}
+            calculationId={calc.id}
+            value={calc.northern}
+            onSaved={refresh}
+          />
         </section>
       ) : null}
 
@@ -1007,7 +1116,7 @@ export default function RaschetDetailPage() {
       {calc.costSummary ? (
         <section className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
           <h2 className="font-[family-name:var(--font-display)] text-base">
-            Сводка cost-engine
+            Сводка расчёта
           </h2>
           <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
             <div>C0 (без резерва): {formatMoney(calc.costSummary.C0)}</div>
@@ -1028,8 +1137,8 @@ export default function RaschetDetailPage() {
             </div>
           </dl>
           <p className="mt-2 text-xs text-[var(--tk-muted)]">
-            Метод {calc.costSummary.method}. Без угадывания Excel и без обещания
-            97%. Север — только подтверждённые статьи.
+            Метод {calc.costSummary.method}. Северные надбавки — только по
+            подтверждённым статьям.
           </p>
         </section>
       ) : null}
@@ -1069,6 +1178,77 @@ export default function RaschetDetailPage() {
               : "нет данных"}
           </div>
         </div>
+        <p className="mt-2 text-xs text-[var(--tk-muted)]">
+          Строк: {compare.rows.length} · требуют проверки: {compare.rows.filter((row) => row.status === "diff" || row.status === "only_original" || row.status === "only_draft").length} · неполные данные: {compare.rows.filter((row) => row.status === "incomplete").length}
+        </p>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Button
+            variant="outline"
+            disabled={!paired || compare.rows.length === 0 || aiCompareLoading}
+            title={`Отправляет строки сравнения в платную модель: ${compareAiBatches} запрос(а/ов), до 80 строк в каждом блоке. Расчётные суммы модель не меняет.`}
+            onClick={async () => {
+              setAiCompareLoading(true);
+              try {
+                const response = await api<{ report: CalcCompareAiReport }>(
+                  "/api/raschety",
+                  {
+                    method: "POST",
+                    body: JSON.stringify({ action: "analyzeCompare", calculationId: calc!.id }),
+                  }
+                );
+                setAiCompare({ signature: compareSignature, report: response.report });
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : "Не удалось проанализировать сравнение");
+              } finally {
+                setAiCompareLoading(false);
+              }
+            }}
+          >
+            {aiCompareLoading ? "ИИ проверяет расхождения…" : "Получить комментарий ИИ"}
+          </Button>
+          <span className="text-xs text-[var(--tk-muted)]">
+            Платный пакетный анализ: {compareAiBatches} запрос(а/ов) по всем {compare.rows.length} строкам сравнения; суммы считает система.
+          </span>
+        </div>
+        {aiCompare?.signature === compareSignature ? (
+          <div className="mt-4 rounded-lg border border-[var(--tk-line)] bg-stone-50 p-4" data-testid="calc-compare-ai">
+            <div className="font-medium">
+              {aiCompare.report.overall === "no_material_differences"
+                ? "Существенных различий по имеющимся полям нет"
+                : aiCompare.report.overall === "insufficient_data"
+                  ? "Недостаточно данных для вывода"
+                  : "Требуется проверка расхождений"}
+            </div>
+            <p className="mt-1 text-sm">{aiCompare.report.summary}</p>
+            <p className="mt-1 text-xs text-[var(--tk-muted)]" data-testid="calc-compare-ai-coverage">
+              AI охватил {aiCompare.report.rowsAnalyzed} из {aiCompare.report.rowsTotal} строк · платных запросов: {aiCompare.report.batches}
+            </p>
+            {aiCompare.report.findings.length ? (
+              <ul className="mt-3 space-y-2 text-sm">
+                {aiCompare.report.findings.map((finding) => {
+                  const rowIndex = Number(finding.rowId.replace("row-", "")) - 1;
+                  const row = compare.rows[rowIndex];
+                  return (
+                    <li key={finding.rowId}>
+                      <span className="font-medium">{row?.code} · {row?.name}: </span>
+                      {finding.text}
+                      <span className="mt-1 block text-xs text-[var(--tk-muted)]">
+                        Основание: «{finding.sourceExcerpt}»
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="mt-2 text-sm text-[var(--tk-muted)]">
+                Нет замечаний с проверяемой цитатой из строк сравнения.
+              </p>
+            )}
+            <p className="mt-3 text-xs text-[var(--tk-muted)]">
+              {aiCompare.report.disclaimer}
+            </p>
+          </div>
+        ) : null}
         <div className="mt-4 max-h-72 overflow-auto rounded-lg border">
           <Table>
             <TableHeader>
@@ -1080,10 +1260,15 @@ export default function RaschetDetailPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {compare.rows.slice(0, 40).map((r) => (
-                <TableRow key={`${r.code}-${r.unit}-${r.status}`}>
+              {compare.rows.map((r, index) => (
+                <TableRow key={`compare-row-${index}`}>
                   <TableCell className="font-mono text-xs">{r.code}</TableCell>
-                  <TableCell>{r.status}</TableCell>
+                  <TableCell>{
+                    r.status === "matched" ? "Совпадает" :
+                      r.status === "diff" ? "Отклонение" :
+                        r.status === "incomplete" ? "Неполные данные" :
+                          r.status === "only_original" ? "Только у заказчика" : "Только в черновике"
+                  }</TableCell>
                   <TableCell className="text-xs">{r.reason}</TableCell>
                   <TableCell className="text-right">
                     {r.deltaSum != null ? formatMoney(r.deltaSum) : "—"}

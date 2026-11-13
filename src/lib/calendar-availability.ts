@@ -1,7 +1,7 @@
 /**
  * Resource + supply availability checks against GPR calendar (UX warnings, not a solver).
  */
-import type { GprStage, SupplyRequest } from "@/lib/types";
+import type { GprStage, SupplyRequest, WorkCalendar } from "@/lib/types";
 import { stageDayList } from "@/lib/plan-from-gpr";
 
 export type CalendarWarning = {
@@ -15,13 +15,14 @@ export type CalendarWarning = {
 /** Same calendar day: sum crew across stages; warn if peak exceeds capacity. */
 export function crewPeakWarnings(
   stages: GprStage[],
-  capacityPerDay = 40
+  capacityPerDay = 40,
+  calendar?: Pick<WorkCalendar, "weekendDays">
 ): CalendarWarning[] {
   const byDay = new Map<string, { crew: number; stages: string[] }>();
   for (const st of stages) {
     const crew = st.crewSize ?? 0;
     if (crew <= 0) continue;
-    for (const d of stageDayList(st)) {
+    for (const d of stageDayList(st, calendar)) {
       const cur = byDay.get(d) ?? { crew: 0, stages: [] };
       cur.crew += crew;
       cur.stages.push(st.id);
@@ -43,12 +44,15 @@ export function crewPeakWarnings(
 }
 
 /** Material/equipment resource names overlapping many stages without rates. */
-export function resourceOverlapWarnings(stages: GprStage[]): CalendarWarning[] {
+export function resourceOverlapWarnings(
+  stages: GprStage[],
+  calendar?: Pick<WorkCalendar, "weekendDays">
+): CalendarWarning[] {
   const byDayKind = new Map<string, { qty: number; names: string[] }>();
   for (const st of stages) {
     for (const r of st.resources ?? []) {
       if (r.kind !== "equipment" && r.kind !== "bus") continue;
-      for (const d of stageDayList(st)) {
+      for (const d of stageDayList(st, calendar)) {
         const key = `${d}|${r.kind}|${r.name}`;
         const cur = byDayKind.get(key) ?? { qty: 0, names: [] };
         cur.qty += r.quantity;
@@ -117,11 +121,12 @@ export function supplyCalendarWarnings(
 export function collectCalendarWarnings(
   stages: GprStage[],
   supplies: SupplyRequest[],
-  capacityPerDay = 40
+  capacityPerDay = 40,
+  calendar?: Pick<WorkCalendar, "weekendDays">
 ): CalendarWarning[] {
   return [
-    ...crewPeakWarnings(stages, capacityPerDay),
-    ...resourceOverlapWarnings(stages),
+    ...crewPeakWarnings(stages, capacityPerDay, calendar),
+    ...resourceOverlapWarnings(stages, calendar),
     ...supplyCalendarWarnings(stages, supplies),
   ];
 }

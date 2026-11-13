@@ -5,6 +5,7 @@ import {
   refreshProcurementAnalytics,
   updateDocument,
 } from "@/server/repo";
+import { refreshAndMaybeAnalyzePackage } from "@/server/upload-package-analysis";
 import { analyzeUpload } from "@/server/grand-smeta";
 import { config } from "@/server/config";
 import {
@@ -19,6 +20,7 @@ import type { DocumentCategory, DocumentItem } from "@/lib/types";
 import type { ArchiveExtractResult } from "@/server/safe-archive";
 
 const DOC_SECTIONS = ["dokumenty", "zakupki", "riski"] as const;
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp", "tif", "tiff", "bmp"]);
 
 type ExtractedFile = ArchiveExtractResult["files"][number];
 
@@ -62,7 +64,7 @@ async function processArchiveFiles(
       }
       continue;
     }
-    if (childExt !== "pdf" && childExt !== "doc" && childExt !== "docx" && childExt !== "xlsx") {
+    if (childExt !== "pdf" && childExt !== "doc" && childExt !== "docx" && childExt !== "xlsx" && !IMAGE_EXTENSIONS.has(childExt)) {
       const childStored = await saveUpload(childId, extractedFile.name, childBytes);
       const reason = "Файл сохранён из архива; формат пока нельзя автоматически разобрать";
       const child = createDocument(userId, {
@@ -75,11 +77,11 @@ async function processArchiveFiles(
       continue;
     }
     try {
-      const prepared = await analyzeUpload(extractedFile.name, childExt, childBytes, { useLlm });
+      const prepared = await analyzeUpload(extractedFile.name, IMAGE_EXTENSIONS.has(childExt) ? "other" : childExt, childBytes, { useLlm });
       const childStored = await saveUpload(childId, extractedFile.name, childBytes);
       const child = createDocument(userId, {
         orgId, procurementId, title: prepared.title, fileName: extractedFile.name,
-        fileType: childExt, category: inferCategory(null, extractedFile.name),
+        fileType: (IMAGE_EXTENSIONS.has(childExt) ? "other" : childExt) as DocumentItem["fileType"], category: inferCategory(null, extractedFile.name),
         storedPath: childStored.storedPath, fileSize: childStored.fileSize, prepared,
       });
       analyzedFiles.push({ name: extractedFile.relativePath, documentId: child.documentId, status: "analyzed" });
@@ -105,7 +107,7 @@ function inferCategory(
   }
   if (/smeta|смет/i.test(fileName)) return "estimate";
   if (/dogovor|договор|контракт/i.test(fileName)) return "contract";
-  if (/tz|тз|извещ/i.test(fileName)) return "tz";
+  if (/tz|тз|извещ|техническ.{0,12}задан/i.test(fileName)) return "tz";
   if (/\.zip$/i.test(fileName)) return "archive";
   return "general";
 }
@@ -183,7 +185,7 @@ export async function POST(req: Request) {
             status: "trebuet_proverki",
           });
         }
-        refreshProcurementAnalytics(user.id, procurementId);
+        await refreshAndMaybeAnalyzePackage(user.id, procurementId);
         return json({
           ...getBootstrap(user),
           archive: {
@@ -198,7 +200,7 @@ export async function POST(req: Request) {
       }
 
       const fileType =
-        ext === "doc" || ext === "docx" || ext === "xlsx" || ext === "pdf" ? ext : "pdf";
+        ext === "doc" || ext === "docx" || ext === "xlsx" || ext === "pdf" ? ext : "other";
       let prepared;
       try {
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -219,8 +221,27 @@ export async function POST(req: Request) {
       } catch (e) {
         const message =
           e instanceof Error ? e.message.slice(0, 200) : "ошибка разбора";
-        const timedOut = /таймаут/i.test(message);
-        return json({ error: message }, timedOut ? 504 : 422);
+        // Preserve the user's original file even when extraction/OCR fails.
+        // A parser outage should mark the document for review, not look like
+        // the upload itself was rejected and discard the bytes.
+        const tempId = `d-${Date.now()}`;
+        const stored = await saveUpload(tempId, file.name, buf);
+        createDocument(user.id, {
+          orgId: user.orgId,
+          procurementId,
+          title: String(form.get("title") ?? "").trim() || file.name,
+          fileName: file.name,
+          fileType,
+          category,
+          storedPath: stored.storedPath,
+          fileSize: stored.fileSize,
+          extractionErrors: [message],
+        });
+        await refreshAndMaybeAnalyzePackage(user.id, procurementId);
+        return json({
+          ...getBootstrap(user),
+          uploadWarning: `Файл сохранён, но не разобран: ${message}`,
+        });
       }
       const title =
         String(form.get("title") ?? "").trim() || prepared.title;
@@ -237,7 +258,7 @@ export async function POST(req: Request) {
         fileSize: stored.fileSize,
         prepared,
       });
-      refreshProcurementAnalytics(user.id, procurementId);
+      await refreshAndMaybeAnalyzePackage(user.id, procurementId);
       return json(getBootstrap(user));
     }
 

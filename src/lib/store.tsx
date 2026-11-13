@@ -16,6 +16,7 @@ import type {
   Calculation,
   DocumentItem,
   GprSchedule,
+  GprStageResource,
   MoneyPlan,
   NotificationItem,
   PlanFact,
@@ -25,6 +26,7 @@ import type {
   Role,
   SectionKey,
   User,
+  ResourceQuantityBasis,
 } from "./types";
 
 type PublicUser = Omit<User, "password" | "secretKey" | "secretKeyHash"> & {
@@ -85,15 +87,22 @@ interface StoreContextValue {
     title?: string;
     file: File;
     category?: string;
-  }) => Promise<void>;
+  }) => Promise<string | undefined>;
   updateSchedule: (id: string, patch: Partial<GprSchedule>) => Promise<void>;
   patchScheduleResource: (
     scheduleId: string,
     input: {
       resourceId: string;
       stageId?: string;
+      name?: string;
+      unit?: string;
+      kind?: GprStageResource["kind"];
       quantity?: number;
       rate?: number | null;
+      hoursPerShift?: number | null;
+      shiftsPerDay?: number | null;
+      days?: number | null;
+      quantityBasis?: ResourceQuantityBasis | null;
     }
   ) => Promise<void>;
   updateMoney: (id: string, patch: Partial<MoneyPlan>) => Promise<void>;
@@ -170,6 +179,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    // ready is set after the initial auth/bootstrap request settles.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     refresh().finally(() => setReady(true));
   }, [refresh]);
 
@@ -466,11 +477,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       form.append("procurementId", input.procurementId);
       if (input.title) form.append("title", input.title);
       if (input.category) form.append("category", input.category);
-      const boot = await api<BootstrapResponse>("/api/dokumenty", {
+      const boot = await api<BootstrapResponse & { uploadWarning?: string }>("/api/dokumenty", {
         method: "POST",
         body: form,
       });
       applyBoot(boot);
+      return boot.uploadWarning;
     },
     [applyBoot]
   );
@@ -492,8 +504,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       input: {
         resourceId: string;
         stageId?: string;
+        name?: string;
+        unit?: string;
+        kind?: GprStageResource["kind"];
         quantity?: number;
         rate?: number | null;
+        hoursPerShift?: number | null;
+        shiftsPerDay?: number | null;
+        days?: number | null;
+        quantityBasis?: ResourceQuantityBasis | null;
       }
     ) => {
       const boot = await api<BootstrapResponse>("/api/gpr", {
@@ -503,8 +522,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           action: "patchResource",
           resourceId: input.resourceId,
           stageId: input.stageId,
+          name: input.name,
+          unit: input.unit,
+          kind: input.kind,
           quantity: input.quantity,
           rate: input.rate,
+          hoursPerShift: input.hoursPerShift,
+          shiftsPerDay: input.shiftsPerDay,
+          days: input.days,
+          quantityBasis: input.quantityBasis,
         }),
       });
       applyBoot(boot);

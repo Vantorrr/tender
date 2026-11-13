@@ -23,10 +23,6 @@ export default function CabinetHomePage() {
   const calcs = data.calculations.filter((c) => c.orgId === user.orgId);
   const risks = data.risks.filter((r) => r.orgId === user.orgId);
   const recent = orgProcurements.slice(0, 4);
-  const featured =
-    orgProcurements.find((p) => p.calculationId && p.gprId && p.moneyId) ??
-    orgProcurements[0];
-
   const stats = [
     {
       label: "Закупки",
@@ -108,21 +104,21 @@ export default function CabinetHomePage() {
         ))}
       </div>
 
-      {featured ? (
+      {orgProcurements.length > 0 ? (
         <div className="mt-8 rounded-xl border border-[var(--tk-line)] bg-[linear-gradient(120deg,rgba(27,58,75,0.06),rgba(184,107,43,0.08))] p-5">
           <h3 className="font-[family-name:var(--font-display)] text-base">
             Сквозная цепочка
           </h3>
           <p className="mt-1 text-sm text-[var(--tk-muted)]">
-            Закупка → документы → расчёт → ГПР → деньги → план/факт. Откройте
-            карточку «{featured.title}», чтобы пройти весь путь.
+            Закупка → документы → расчёт → ГПР → деньги → план/факт. Выберите
+            нужный проект на доске закупок, чтобы открыть его карточку и продолжить работу.
           </p>
           <Button
-            render={<Link href={`/cabinet/zakupki/${featured.id}`} />}
+            render={<Link href="/cabinet/zakupki" />}
             variant="outline"
             className="mt-4"
           >
-            Открыть закупку
+            Открыть доску закупок
           </Button>
         </div>
       ) : null}

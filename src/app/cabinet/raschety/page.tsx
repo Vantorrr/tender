@@ -75,7 +75,7 @@ export default function RaschetyPage() {
           {originals.length ? (
             <section>
               <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-[var(--tk-muted)]">
-                Оригиналы смет заказчика (immutable)
+                Оригиналы смет заказчика
               </h2>
               <div className="grid gap-4 md:grid-cols-2">
                 {originals.map((c) => {

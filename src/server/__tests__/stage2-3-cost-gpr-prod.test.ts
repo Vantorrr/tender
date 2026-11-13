@@ -15,11 +15,14 @@ import {
   shiftsNeeded,
 } from "@/lib/cost-engine";
 import { parseDateRu, formatDate } from "@/lib/format";
+import { T25U_TEST } from "@/lib/t25u-test-fixture";
+import { totalStageCalendarDays } from "@/lib/plan-from-gpr";
 import {
   entryDisplayFact,
   entryDisplayRemain,
   recomputeEntriesFromDaily,
 } from "@/lib/plan-fact-agg";
+import { forecastWorkCompletion } from "@/lib/production-forecast";
 import "./setup";
 
 describe("stage2 cost engine + gantt", () => {
@@ -156,6 +159,44 @@ describe("stage2 cost engine + gantt", () => {
     expect(entryDisplayRemain(pf.entries[0], pf.dailyFacts)).toBe(98);
   });
 
+  it("production forecast waits for three report days and counts GPR working days", () => {
+    const entry = { id: "work", workName: "Монтаж", unit: "м", plan: 20, fact: 0 };
+    const dailyFacts = [
+      ["2026-11-02", 4],
+      ["2026-11-03", 4],
+      ["2026-11-04", 4],
+    ].map(([date, quantity], index) => ({
+      id: `df-${index}`,
+      date: String(date),
+      workName: "Монтаж",
+      unit: "м",
+      quantity: Number(quantity),
+      photos: [],
+      authorId: "u-ruk",
+      at: `${date}T12:00:00.000Z`,
+    }));
+    const insufficient = forecastWorkCompletion({
+      entry,
+      dailyFacts: dailyFacts.slice(0, 2),
+      asOfDate: "2026-11-04",
+      plannedFinish: "2026-11-05",
+    });
+    expect(insufficient.status).toBe("insufficient_data");
+    const forecast = forecastWorkCompletion({
+      entry,
+      dailyFacts,
+      asOfDate: "2026-11-04",
+      plannedFinish: "2026-11-05",
+    });
+    expect(forecast).toMatchObject({
+      status: "forecast",
+      observedDays: 3,
+      averagePerWorkday: 4,
+      projectedFinish: "2026-11-06",
+      varianceWorkdays: 1,
+    });
+  });
+
   it("labor/shifts and bus cost are deterministic; no dual profit", () => {
     expect(laborHours(100, 1.5)).toBe(150);
     expect(shiftsNeeded(150, 5, 8, 1)).toBe(4);
@@ -246,6 +287,68 @@ describe("stage2 cost engine + gantt", () => {
     );
   });
 
+  it("calendar resize treats both endpoints as work days and cascades resource days", () => {
+    const stages = [
+      {
+        id: "single",
+        name: "Однодневный этап",
+        start: "2026-12-01",
+        end: "2026-12-01",
+        sequence: 1,
+        resources: [{ id: "bus", kind: "bus" as const, name: "Автобус", quantity: 1, unit: "ед", rate: 100, days: 1 }],
+      },
+      {
+        id: "next",
+        name: "Следующий этап",
+        start: "2026-12-02",
+        end: "2026-12-02",
+        sequence: 2,
+        dependsOn: "single",
+        dependencyType: "FS" as const,
+      },
+    ];
+    expect(totalStageCalendarDays(stages)).toBe(2);
+
+    const resized = shiftStages(stages, "single", 0, { resizeDays: 3 });
+    const first = resized.stages.find((stage) => stage.id === "single")!;
+    const next = resized.stages.find((stage) => stage.id === "next")!;
+    expect(first.end).toBe("2026-12-03");
+    expect(first.resources?.[0].days).toBe(1); // pure date function leaves explicit resource input untouched
+    expect(next.start).toBe("2026-12-04");
+    expect(next.end).toBe("2026-12-04");
+    expect(totalStageCalendarDays([first])).toBe(3);
+  });
+
+  it("cascades FS, SS, FF and SF links with lag without changing child duration", () => {
+    const relations = [
+      { type: "FS" as const, lag: 1, childStart: "2026-12-03", expected: "2026-12-09" },
+      { type: "SS" as const, lag: 2, childStart: "2026-12-03", expected: "2026-12-08" },
+      { type: "FF" as const, lag: 2, childStart: "2026-12-03", expected: "2026-12-08" },
+      { type: "SF" as const, lag: 2, childStart: "2026-12-03", expected: "2026-12-07" },
+    ];
+    for (const relation of relations) {
+      const stages = [
+        { id: "parent", name: "Предшественник", start: "2026-12-01", end: "2026-12-02", sequence: 1 },
+        {
+          id: "child",
+          name: "Последователь",
+          start: relation.childStart,
+          end: "2026-12-04",
+          sequence: 2,
+          dependsOn: "parent",
+          dependencyType: relation.type,
+          lagDays: relation.lag,
+        },
+      ];
+
+      const result = shiftStages(stages, "parent", 5, { cascade: true });
+      const child = result.stages.find((stage) => stage.id === "child")!;
+      expect(child.start, relation.type).toBe(relation.expected);
+      expect(totalStageCalendarDays([child]), relation.type).toBe(2);
+      expect(result.conflicts, relation.type).toEqual([]);
+    }
+  });
+
   it("shiftGprStage persists via repo", () => {
     const g = readAppData().schedules[0];
     const stage = g.stages[0];
@@ -256,6 +359,58 @@ describe("stage2 cost engine + gantt", () => {
       true
     );
     expect(after.version).toBeGreaterThan(g.version);
+  });
+
+  it("resizing a one-day stage updates linked resource participation days", () => {
+    const schedule = readAppData().schedules[0];
+    const stage = schedule.stages[0];
+    mutateAppData((data) => {
+      const current = data.schedules.find((item) => item.id === schedule.id)!;
+      current.stages = current.stages.map((item) => item.id !== stage.id ? item : {
+        ...item,
+        start: "2026-12-01",
+        end: "2026-12-01",
+        resources: (item.resources ?? []).map((resource) => resource.kind === "material" ? resource : { ...resource, days: 1 }),
+      });
+      return data;
+    });
+
+    shiftGprStage("u-smet", schedule.id, stage.id, 0, { resizeDays: 2 });
+    const resized = readAppData().schedules.find((item) => item.id === schedule.id)!.stages.find((item) => item.id === stage.id)!;
+    expect(resized.end).toBe("2026-12-02");
+    for (const resource of resized.resources ?? []) {
+      if (resource.kind !== "material") expect(resource.days).toBe(2);
+    }
+    expect(totalStageCalendarDays([resized])).toBe(2);
+  });
+
+  it("calendar edits recalculate resource days using the project's working week", () => {
+    const schedule = readAppData().schedules[0];
+    const stage = schedule.stages[0];
+    mutateAppData((data) => {
+      const current = data.schedules.find((item) => item.id === schedule.id)!;
+      current.calendar = { weekendDays: [0, 6], hoursPerShift: 8, shiftsPerDay: 1, timezone: "Europe/Moscow" };
+      current.stages = current.stages.map((item) => item.id !== stage.id ? item : {
+        ...item,
+        start: "2026-12-04", // Friday
+        end: "2026-12-06", // Sunday: three calendar days, one working day
+        resources: [{
+          id: "qa-bus-weekend-calendar",
+          kind: "bus" as const,
+          name: "QA shuttle bus",
+          quantity: 1,
+          unit: "bus",
+          rate: 100,
+          days: 1,
+        }],
+      });
+      return data;
+    });
+
+    shiftGprStage("u-smet", schedule.id, stage.id, 0, { resizeDays: 4 });
+    const resized = readAppData().schedules.find((item) => item.id === schedule.id)!.stages.find((item) => item.id === stage.id)!;
+    expect(resized.end).toBe("2026-12-07");
+    expect(resized.resources?.[0].days).toBe(2); // Friday + Monday, weekend excluded
   });
 
   it("recomputeCalculationCost writes summary without inventing VAT", () => {
@@ -318,6 +473,60 @@ describe("stage3 won→production + daily fact + baseline", () => {
     );
   });
 
+  it("does not invent a 100% production task when physical estimate volumes are missing", () => {
+    mutateAppData((data) => {
+      const procurement = data.procurements.find((item) => item.id === "p-2")!;
+      procurement.lifecycle = "won";
+      procurement.originalCalculationId = undefined;
+      const plan = data.planFacts.find((item) => item.id === procurement.planFactId)!;
+      plan.entries = [{ id: "legacy", workName: "Общий объём", unit: "%", plan: 100, fact: 0 }];
+      plan.baselineEntries = undefined;
+      plan.dailyFacts = [];
+      return data;
+    });
+    transferProcurementToProduction("u-ruk", "p-2");
+    const data = readAppData();
+    const procurement = data.procurements.find((item) => item.id === "p-2")!;
+    const plan = data.planFacts.find((item) => item.id === procurement.planFactId)!;
+    expect(plan.entries).toEqual([]);
+    expect(plan.baselineEntries).toEqual([]);
+  });
+
+  it("seeds production plan from customer estimate physical positions only", () => {
+    mutateAppData((data) => {
+      const procurement = data.procurements.find((item) => item.id === "p-2")!;
+      procurement.lifecycle = "won";
+      const template = data.calculations[0];
+      const originalId = "calc-customer-plan-test";
+      procurement.originalCalculationId = originalId;
+      const plan = data.planFacts.find((item) => item.id === procurement.planFactId)!;
+      plan.entries = [{ id: "legacy", workName: "Общий объём", unit: "%", plan: 100, fact: 0 }];
+      plan.baselineEntries = undefined;
+      plan.dailyFacts = [];
+      data.calculations.push({
+        ...structuredClone(template),
+        id: originalId,
+        procurementId: procurement.id,
+        kind: "customer_original",
+        immutable: true,
+        positions: [
+          { id: "a", code: "01", name: "Монтаж труб", unit: "м", quantity: 25, rate: 10 },
+          { id: "b", code: "02", name: "Монтаж труб", unit: "м", quantity: 5, rate: 10 },
+          { id: "c", code: "НР", name: "Накладные расходы", unit: "руб", quantity: 100, rate: 1 },
+        ],
+      });
+      return data;
+    });
+    transferProcurementToProduction("u-ruk", "p-2");
+    const data = readAppData();
+    const procurement = data.procurements.find((item) => item.id === "p-2")!;
+    const plan = data.planFacts.find((item) => item.id === procurement.planFactId)!;
+    expect(plan.entries).toMatchObject([
+      { workName: "Монтаж труб", unit: "м", plan: 30, fact: 0, contractRemaining: 30 },
+    ]);
+    expect(plan.baselineEntries).toEqual(plan.entries);
+  });
+
   it("daily fact updates physical totals without touching cash", () => {
     transferProcurementToProduction("u-ruk", "p-1");
     const pfId = readAppData().procurements.find((p) => p.id === "p-1")!
@@ -351,6 +560,44 @@ describe("stage3 won→production + daily fact + baseline", () => {
     );
     // baseline unchanged
     expect(after.baselineEntries).toEqual(before.baselineEntries);
+  });
+
+  it("values completed and remaining production by the immutable customer estimate", () => {
+    const before = readAppData();
+    const original = before.calculations.find(
+      (item) => item.id === T25U_TEST.originalCalculationId
+    )!;
+    mutateAppData((data) => {
+      const estimate = data.calculations.find((item) => item.id === original.id)!;
+      estimate.positions.push({
+        id: "t25u-estimate-work-value",
+        code: "WORK-1",
+        name: T25U_TEST.workName,
+        unit: "м²",
+        quantity: 420,
+        rate: 800,
+      });
+      return data;
+    });
+    const cashBefore = readAppData().planFacts.find(
+      (item) => item.id === T25U_TEST.planFactId
+    )!.pnl?.cashIn ?? 0;
+
+    addDailyProductionFact("u-obj", T25U_TEST.planFactId, {
+      date: "2026-11-08",
+      workName: T25U_TEST.workName,
+      unit: "м²",
+      quantity: 2,
+      photos: [],
+    });
+
+    const after = readAppData().planFacts.find(
+      (item) => item.id === T25U_TEST.planFactId
+    )!;
+    expect(after.pnl?.valueOfFactByCustomerEstimate).toBe(1600);
+    expect(after.pnl?.remainingValueByCustomerEstimate).toBe(334400);
+    expect(after.pnl?.recognizedRevenue).toBeNull();
+    expect(after.pnl?.cashIn).toBe(cashBefore);
   });
 
   it("daily fact matches by workName when unit mismatches (UI bug regression)", () => {

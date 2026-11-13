@@ -27,6 +27,8 @@ export function DateInputRu({
   const [invalid, setInvalid] = useState(false);
 
   useEffect(() => {
+    // Keep the editable text in sync when the parent changes the ISO value.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setText(value ? formatDate(value) : "");
     setInvalid(false);
   }, [value]);

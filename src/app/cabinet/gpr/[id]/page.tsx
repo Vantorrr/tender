@@ -1,32 +1,43 @@
 "use client";
 
 import { useParams } from "next/navigation";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { api, downloadUrl } from "@/lib/api";
 import { PlanFactGantt } from "@/components/plan-fact-gantt";
+import { GprResourceTree } from "@/components/gpr-resource-tree";
 import { collectCalendarWarnings } from "@/lib/calendar-availability";
 import { bucketsFromPositions } from "@/lib/cost-engine";
 import { formatMoney } from "@/lib/format";
-import { buildMaterialNeeds } from "@/lib/materials-need";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { useStore } from "@/lib/store";
+import type { CalcPosition, GprStageResource } from "@/lib/types";
+import { ProjectAiChat } from "@/components/project-ai-chat";
+import { userHasSection } from "@/lib/acl";
 
-const KIND_RU: Record<string, string> = {
-  labor: "Люди",
-  material: "Материалы",
-  equipment: "Техника",
-  bus: "Автобусы",
-  other: "Прочее",
+type MaterialsPreview = {
+  file: File;
+  rows: number;
+  works: Array<{
+    workName: string;
+    matches: Array<{ id: string; name: string }>;
+    selectedStageId: string;
+  }>;
+  stages: Array<{ id: string; name: string }>;
 };
 
 export default function GprDetailPage() {
   const params = useParams<{ id: string }>();
+  const materialsFileRef = useRef<HTMLInputElement>(null);
+  const [materialsPreview, setMaterialsPreview] = useState<MaterialsPreview | null>(null);
+  const [materialsImportBusy, setMaterialsImportBusy] = useState(false);
   const { data, user, updateSchedule, updateCalculation, refresh } = useStore();
 
   if (!user) return null;
@@ -44,16 +55,12 @@ export default function GprDetailPage() {
   const supplies = (data.supplyRequests ?? []).filter(
     (s) => s.procurementId === schedule.procurementId
   );
-  const calWarnings = collectCalendarWarnings(schedule.stages, supplies);
-  const matNeeds = calc
-    ? buildMaterialNeeds({
-        positions: calc.positions,
-        stages: schedule.stages,
-      })
-    : [];
-  const planFact = data.planFacts.find(
-    (p) => p.procurementId === schedule.procurementId
-  );
+  const calWarnings = collectCalendarWarnings(schedule.stages, supplies, 40, schedule.calendar);
+  const procurement = data.procurements.find((p) => p.id === schedule.procurementId);
+  // Prefer explicit planFactId so Gantt daily-fact count matches day screen for the same fixture.
+  const planFact =
+    data.planFacts.find((p) => p.id === procurement?.planFactId) ??
+    data.planFacts.find((p) => p.procurementId === schedule.procurementId);
 
   async function shiftStage(
     stageId: string,
@@ -83,6 +90,78 @@ export default function GprDetailPage() {
     }
   }
 
+  function patchResource(stageId: string, resourceId: string, patch: Partial<GprStageResource>) {
+    updateSchedule(schedule!.id, {
+      stages: schedule!.stages.map((stage) =>
+        stage.id === stageId
+          ? {
+              ...stage,
+              resources: (stage.resources ?? []).map((resource) =>
+                resource.id === resourceId ? { ...resource, ...patch } : resource
+              ),
+            }
+          : stage
+      ),
+    });
+  }
+
+  function patchPosition(positionId: string, patch: Partial<CalcPosition>) {
+    if (!calc) return;
+    updateCalculation(calc.id, {
+      positions: calc.positions.map((position) =>
+        position.id === positionId ? { ...position, ...patch } : position
+      ),
+    });
+  }
+
+  async function previewMaterialsFile(file: File) {
+    const form = new FormData();
+    form.set("scheduleId", schedule!.id);
+    form.set("file", file);
+    form.set("preview", "1");
+    setMaterialsImportBusy(true);
+    try {
+      const result = await api<{
+        rows: number;
+        works: Array<{ workName: string; matches: Array<{ id: string; name: string }> }>;
+        stages: Array<{ id: string; name: string }>;
+      }>("/api/gpr/materials", { method: "POST", body: form });
+      setMaterialsPreview({
+        file,
+        rows: result.rows,
+        stages: result.stages,
+        works: result.works.map((work) => ({
+          ...work,
+          selectedStageId: work.matches.length === 1 ? work.matches[0].id : "",
+        })),
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось прочитать лист «Материалы»");
+    } finally {
+      setMaterialsImportBusy(false);
+    }
+  }
+
+  async function importPreviewedMaterials() {
+    if (!materialsPreview) return;
+    const stageMap = Object.fromEntries(materialsPreview.works.map((work) => [work.workName, work.selectedStageId]));
+    const form = new FormData();
+    form.set("scheduleId", schedule!.id);
+    form.set("file", materialsPreview.file);
+    form.set("stageMap", JSON.stringify(stageMap));
+    setMaterialsImportBusy(true);
+    try {
+      const result = await api<{ imported: number; stages: number }>("/api/gpr/materials", { method: "POST", body: form });
+      await refresh();
+      setMaterialsPreview(null);
+      toast.success(`Импортировано материалов: ${result.imported} · работ: ${result.stages}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось импортировать материалы");
+    } finally {
+      setMaterialsImportBusy(false);
+    }
+  }
+
   return (
     <div>
       <PageHeader
@@ -95,7 +174,30 @@ export default function GprDetailPage() {
         } смен`}
         actions={
           <>
+            {userHasSection(user, "gpr") ? (
+              <ProjectAiChat
+                procurementId={schedule.procurementId}
+                projectTitle={schedule.title}
+                screen="gpr"
+              />
+            ) : null}
             <StatusBadge status={schedule.status} />
+            <input
+              ref={materialsFileRef}
+              type="file"
+              accept=".xlsx"
+              className="hidden"
+              aria-label="Загрузить материалы из Excel"
+              onChange={async (event) => {
+                const file = event.target.files?.[0];
+                event.target.value = "";
+                if (!file) return;
+                await previewMaterialsFile(file);
+              }}
+            />
+            <Button variant="outline" disabled={materialsImportBusy} onClick={() => materialsFileRef.current?.click()}>
+              Загрузить материалы XLSX
+            </Button>
             <Button
               variant="outline"
               onClick={() => {
@@ -119,38 +221,78 @@ export default function GprDetailPage() {
         }
       />
 
+      {materialsPreview ? (
+        <section className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white p-4" aria-label="Сопоставление материалов с работами ГПР">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="font-semibold">Материалы из {materialsPreview.file.name}</h2>
+              <p className="mt-1 text-sm text-[var(--tk-muted)]">Строк: {materialsPreview.rows}. Проверьте, к какой работе ГПР относится каждая группа. Повторный импорт заменит только ранее импортированные строки из клиентского листа.</p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="outline" disabled={materialsImportBusy} onClick={() => setMaterialsPreview(null)}>Отмена</Button>
+              <Button disabled={materialsImportBusy || materialsPreview.works.some((work) => !work.selectedStageId)} onClick={() => void importPreviewedMaterials()}>
+                {materialsImportBusy ? "Импорт…" : "Импортировать материалы"}
+              </Button>
+            </div>
+          </div>
+          <div className="mt-4 max-h-80 space-y-2 overflow-auto">
+            {materialsPreview.works.map((work, index) => (
+              <label key={work.workName} className="grid gap-2 text-sm md:grid-cols-[minmax(0,1fr)_minmax(16rem,24rem)] md:items-center">
+                <span>{work.workName}{work.matches.length === 1 ? <span className="ml-2 text-xs text-emerald-700">совпадение найдено</span> : <span className="ml-2 text-xs text-amber-700">выберите вручную</span>}</span>
+                <select
+                  className="h-9 rounded-md border border-[var(--tk-line)] bg-white px-2"
+                  aria-label={`Работа ГПР для ${work.workName}`}
+                  value={work.selectedStageId}
+                  onChange={(event) => setMaterialsPreview((current) => current ? ({ ...current, works: current.works.map((item, i) => i === index ? { ...item, selectedStageId: event.target.value } : item) }) : current)}
+                >
+                  <option value="">Выберите этап ГПР</option>
+                  {materialsPreview.stages.map((stage) => <option key={stage.id} value={stage.id}>{stage.name}</option>)}
+                </select>
+              </label>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {isT25uTestId(schedule.id) || isT25uTestTitle(schedule.title) ? (
         <div
           className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-950"
           data-testid="t25u-test-banner"
         >
-          <span className="font-semibold">TEST</span> — изолированный ГПР
-          приёмки t25u (школа №12 не изменена).
+          Изолированный приёмочный ГПР · демонстрационные данные.
         </div>
       ) : null}
 
       {(schedule.conflicts?.length ?? 0) > 0 ? (
-        <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-950">
-          Конфликты зависимостей: {schedule.conflicts!.join("; ")}
+        <div
+          className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-950"
+          data-testid="gantt-dependency-conflict"
+        >
+          <p className="font-semibold">Конфликт зависимостей</p>
+          <ul className="mt-1 list-disc space-y-1 pl-5">
+            {schedule.conflicts!.map((c) => (
+              <li key={c}>{c}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {(schedule.assumptions?.length ?? 0) > 0 ? (
+        <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950" data-testid="gpr-assumptions">
+          <p className="font-semibold">Черновик требует подтверждения</p>
+          <ul className="mt-1 list-disc space-y-1 pl-5">{schedule.assumptions!.map((assumption) => <li key={assumption}>{assumption}</li>)}</ul>
         </div>
       ) : null}
 
       <div className="mb-6" data-testid="gantt-track">
-        <h2 className="mb-2 font-[family-name:var(--font-display)] text-base">
-          План / факт · Гант
-        </h2>
-        <p className="mb-3 text-xs text-[var(--tk-muted)]">
-          Передвигайте серую полосу плана мышью или клавишами ←/→. Точные даты и
-          длительность этапа можно изменить в календарных полях; зависимые этапы
-          и ресурсный расчёт пересчитываются автоматически.
-        </p>
         <PlanFactGantt
           stages={schedule.stages}
           entries={planFact?.entries}
           dailyFacts={planFact?.dailyFacts}
           planFactId={planFact?.id}
           filterScope={schedule.id}
-          onShift={(id, d, resize) => void shiftStage(id, d, resize)}
+          weekendDays={schedule.calendar?.weekendDays}
+          onShift={(id, d, resize) => shiftStage(id, d, resize)}
         />
       </div>
 
@@ -177,51 +319,51 @@ export default function GprDetailPage() {
               {cost.resourceSlices ? (
                 <>
                   <div data-testid="gpr-slice-v">
-                    V прямые
+                    Прямые затраты
                     {cost.totalsIncomplete || cost.resourceSlices.partial
-                      ? " · PARTIAL"
+                      ? " · расчёт неполный"
                       : ""}
                     : {formatMoney(cost.resourceSlices.direct)}
                   </div>
                   <div data-testid="gpr-slice-w">
-                    W НР 43%
+                    Накладные 43%
                     {cost.totalsIncomplete || cost.resourceSlices.partial
-                      ? " · PARTIAL"
+                      ? " · расчёт неполный"
                       : ""}
                     : {formatMoney(cost.resourceSlices.overhead)}
                   </div>
                   <div data-testid="gpr-slice-x">
-                    X с/с с НР
+                    Себестоимость с накладными
                     {cost.totalsIncomplete || cost.resourceSlices.partial
-                      ? " · PARTIAL"
+                      ? " · расчёт неполный"
                       : ""}
                     : {formatMoney(cost.resourceSlices.costWithOh)}
                   </div>
                   <div data-testid="gpr-slice-y">
-                    Y наценка 40%
+                    Прибыль
                     {cost.totalsIncomplete || cost.resourceSlices.partial
-                      ? " · PARTIAL"
+                      ? " · расчёт неполный"
                       : ""}
                     : {formatMoney(cost.resourceSlices.profit)}
                   </div>
                   <div data-testid="gpr-slice-z">
-                    Z итого
+                    Итого
                     {cost.totalsIncomplete || cost.resourceSlices.partial
-                      ? " · PARTIAL"
+                      ? " · расчёт неполный"
                       : ""}
                     : {formatMoney(cost.resourceSlices.total)}
                   </div>
                   <div data-testid="gpr-materials-cost">
-                    S материалы:{" "}
+                    Материалы:{" "}
                     {cost.resourceSlices.materials > 0
                       ? formatMoney(cost.resourceSlices.materials)
                       : "нет данных"}
                   </div>
                   <div data-testid="gpr-labor-cost">
-                    T люди: {formatMoney(cost.resourceSlices.labor)}
+                    Люди: {formatMoney(cost.resourceSlices.labor)}
                   </div>
                   <div data-testid="gpr-equipment-cost">
-                    U техника: {formatMoney(cost.resourceSlices.equipment)}
+                    Техника: {formatMoney(cost.resourceSlices.equipment)}
                   </div>
                   {buckets && buckets.other > 0 ? (
                     <div data-testid="gpr-other-cost">
@@ -264,7 +406,7 @@ export default function GprDetailPage() {
           </>
         ) : (
           <p className="text-sm text-[var(--tk-muted)]">
-            Сводка появится после пересчёта cost-engine в связанном черновике
+            Сводка появится после пересчёта итогов в связанном черновике
             расчёта. Здесь нет угаданных Excel-формул.
           </p>
         )}
@@ -291,221 +433,17 @@ export default function GprDetailPage() {
         </div>
       ) : null}
 
-      <div
-        className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5"
-        data-testid="gpr-material-needs"
-      >
-        <h2 className="mb-2 font-[family-name:var(--font-display)] text-base">
-          Потребность в материалах (из расчёта и ресурсов этапов)
-        </h2>
-        {matNeeds.length === 0 ? (
-          <p className="text-sm text-[var(--tk-muted)]">
-            Нет материальных позиций/ресурсов — укажите в расчёте или ставках
-            ресурсов. Каталог не угадывается.
-          </p>
-        ) : (
-          <ul className="space-y-2 text-sm" data-testid="gpr-material-needs-list">
-            {matNeeds.map((m) => (
-              <li
-                key={m.key}
-                className="flex flex-wrap items-center gap-2 border-b border-[var(--tk-line)]/50 py-1"
-              >
-                <span className="min-w-[180px] font-medium">{m.name}</span>
-                <span className="text-xs text-[var(--tk-muted)]">
-                  {m.source === "calc_position" ? "расчёт" : m.stageName}
-                </span>
-                <Input
-                  className="h-8 w-24"
-                  type="number"
-                  min={0}
-                  step="any"
-                  title="Количество"
-                  data-testid={`mat-need-qty-${m.key}`}
-                  value={m.quantity}
-                  onChange={(e) => {
-                    const q = Number(e.target.value) || 0;
-                    if (m.source === "stage_resource" && m.stageId) {
-                      const rid = m.key.replace(/^res:/, "");
-                      updateSchedule(schedule.id, {
-                        stages: schedule.stages.map((s) =>
-                          s.id === m.stageId
-                            ? {
-                                ...s,
-                                resources: (s.resources ?? []).map((x) =>
-                                  x.id === rid ? { ...x, quantity: q } : x
-                                ),
-                              }
-                            : s
-                        ),
-                      });
-                    } else if (
-                      m.source === "calc_position" &&
-                      calc &&
-                      m.positionId
-                    ) {
-                      updateCalculation(calc.id, {
-                        positions: calc.positions.map((p) =>
-                          p.id === m.positionId ? { ...p, quantity: q } : p
-                        ),
-                      });
-                    }
-                  }}
-                />
-                <span>{m.unit}</span>
-                <Input
-                  className="h-8 w-28"
-                  type="number"
-                  min={0}
-                  step="any"
-                  title="Ставка"
-                  placeholder="нет данных"
-                  data-testid={`mat-need-rate-${m.key}`}
-                  value={m.rate == null ? "" : String(m.rate)}
-                  onChange={(e) => {
-                    const raw = e.target.value.trim();
-                    const rate = raw === "" ? null : Number(raw);
-                    const nextRate =
-                      rate == null || Number.isNaN(rate) ? null : rate;
-                    if (m.source === "stage_resource" && m.stageId) {
-                      const rid = m.key.replace(/^res:/, "");
-                      updateSchedule(schedule.id, {
-                        stages: schedule.stages.map((s) =>
-                          s.id === m.stageId
-                            ? {
-                                ...s,
-                                resources: (s.resources ?? []).map((x) =>
-                                  x.id === rid ? { ...x, rate: nextRate } : x
-                                ),
-                              }
-                            : s
-                        ),
-                      });
-                    } else if (
-                      m.source === "calc_position" &&
-                      calc &&
-                      m.positionId
-                    ) {
-                      updateCalculation(calc.id, {
-                        positions: calc.positions.map((p) =>
-                          p.id === m.positionId
-                            ? { ...p, rate: nextRate ?? 0 }
-                            : p
-                        ),
-                      });
-                    }
-                  }}
-                />
-                <span>
-                  {m.amount == null
-                    ? "сумма: нет данных"
-                    : formatMoney(m.amount)}
-                </span>
-                {m.missing.length ? (
-                  <span className="text-amber-800">
-                    ввод: {m.missing.join(", ")}
-                  </span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-
       <div className="mb-6 overflow-x-auto rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
         <h2 className="mb-2 font-[family-name:var(--font-display)] text-base">
-          Сводка ресурсов (люди / материалы / техника / автобусы)
+          Ресурсный график · работа и вложенные ресурсы
         </h2>
-        <table className="w-full text-left text-sm" data-testid="gpr-resource-table">
-          <thead>
-            <tr className="border-b border-[var(--tk-line)] text-xs text-[var(--tk-muted)]">
-              <th className="py-1 pr-2">Этап</th>
-              <th className="py-1 pr-2">Вид</th>
-              <th className="py-1 pr-2">Название</th>
-              <th className="py-1 pr-2">Кол-во</th>
-              <th className="py-1 pr-2">Ед.</th>
-              <th className="py-1">Ставка</th>
-            </tr>
-          </thead>
-          <tbody>
-            {schedule.stages.flatMap((stage) =>
-              (stage.resources ?? []).map((r) => (
-                <tr
-                  key={`${stage.id}-${r.id}`}
-                  className="border-b border-[var(--tk-line)]/60"
-                >
-                  <td className="py-1 pr-2">{stage.name}</td>
-                  <td className="py-1 pr-2">
-                    {KIND_RU[r.kind] ?? r.kind}
-                  </td>
-                  <td className="py-1 pr-2">{r.name}</td>
-                  <td className="py-1 pr-2">
-                    <Input
-                      className="h-8 w-20"
-                      type="number"
-                      min={0}
-                      step="any"
-                      value={r.quantity}
-                      data-testid={`res-qty-${r.id}`}
-                      onChange={(e) => {
-                        const q = Number(e.target.value) || 0;
-                        updateSchedule(schedule.id, {
-                          stages: schedule.stages.map((s) =>
-                            s.id === stage.id
-                              ? {
-                                  ...s,
-                                  resources: (s.resources ?? []).map((x) =>
-                                    x.id === r.id ? { ...x, quantity: q } : x
-                                  ),
-                                }
-                              : s
-                          ),
-                        });
-                      }}
-                    />
-                  </td>
-                  <td className="py-1 pr-2">{r.unit ?? "—"}</td>
-                  <td className="py-1">
-                    <Input
-                      className="h-8 w-28"
-                      type="number"
-                      min={0}
-                      step="any"
-                      placeholder="нет данных"
-                      value={r.rate == null ? "" : String(r.rate)}
-                      data-testid={`res-rate-${r.id}`}
-                      onChange={(e) => {
-                        const raw = e.target.value.trim();
-                        const rate =
-                          raw === "" ? null : Number(raw);
-                        updateSchedule(schedule.id, {
-                          stages: schedule.stages.map((s) =>
-                            s.id === stage.id
-                              ? {
-                                  ...s,
-                                  resources: (s.resources ?? []).map((x) =>
-                                    x.id === r.id
-                                      ? {
-                                          ...x,
-                                          rate:
-                                            rate == null ||
-                                            Number.isNaN(rate)
-                                              ? null
-                                              : rate,
-                                        }
-                                      : x
-                                  ),
-                                }
-                              : s
-                          ),
-                        });
-                      }}
-                    />
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+        <GprResourceTree
+          stages={schedule.stages}
+          positions={calc?.positions ?? []}
+          params={calc?.resourceScheduleParams}
+          onPatchResource={patchResource}
+          onPatchPosition={patchPosition}
+        />
       </div>
 
       <div className="space-y-3">
@@ -518,7 +456,7 @@ export default function GprDetailPage() {
           .map((stage) => (
             <div
               key={stage.id}
-              className="grid gap-2 rounded-xl border border-[var(--tk-line)] bg-white/80 p-3 sm:grid-cols-5"
+              className="grid gap-2 rounded-xl border border-[var(--tk-line)] bg-white/80 p-3 sm:grid-cols-2 lg:grid-cols-6"
             >
               <Input
                 value={stage.name}
@@ -531,14 +469,47 @@ export default function GprDetailPage() {
                   });
                 }}
               />
+              <div className="rounded-lg border border-[var(--tk-line)] bg-white px-3 py-2" data-testid={`stage-work-link-${stage.id}`}>
+                <div className="mb-2 text-xs font-medium text-[var(--tk-muted)]">Виды работ план-факта</div>
+                <div className="max-h-28 space-y-1 overflow-y-auto">
+                  {[...new Set([
+                    ...(planFact?.entries ?? []).map((entry) => entry.workName.trim()).filter(Boolean),
+                    ...(stage.workNames ?? (stage.workName ? [stage.workName] : [])),
+                  ])].map((workName) => {
+                    const selected = stage.workNames?.length ? stage.workNames : stage.workName ? [stage.workName] : [];
+                    return (
+                      <label key={workName} className="flex cursor-pointer items-center gap-2 text-xs">
+                        <Checkbox
+                          checked={selected.includes(workName)}
+                          aria-label={`Связать ${stage.name} с работой ${workName}`}
+                          onCheckedChange={(checked) => {
+                            const nextNames = checked
+                              ? [...new Set([...selected, workName])]
+                              : selected.filter((name) => name !== workName);
+                            updateSchedule(schedule.id, {
+                              stages: schedule.stages.map((item) => item.id === stage.id
+                                ? { ...item, workNames: nextNames, workName: nextNames[0] }
+                                : item),
+                            });
+                          }}
+                        />
+                        <span>{workName}</span>
+                      </label>
+                    );
+                  })}
+                  {!planFact?.entries.length && !stage.workName && !stage.workNames?.length ? (
+                    <div className="text-xs text-[var(--tk-muted)]">Сначала добавьте работы в план-факт</div>
+                  ) : null}
+                </div>
+              </div>
               <Input
                 type="number"
-                min={1}
-                value={stage.crewSize ?? 4}
+                min={0}
+                value={stage.crewSize ?? 0}
                 title="Численность"
                 aria-label={`Численность бригады · ${stage.name}`}
                 onChange={(e) => {
-                  const crew = Number(e.target.value) || 1;
+                  const crew = Math.max(0, Number(e.target.value) || 0);
                   updateSchedule(schedule.id, {
                     stages: schedule.stages.map((s) => {
                       if (s.id !== stage.id) return s;
@@ -548,12 +519,6 @@ export default function GprDetailPage() {
                         resources: (next.resources ?? []).map((r) => {
                           if (r.kind === "labor" && /бригада/i.test(r.name)) {
                             return { ...r, quantity: crew };
-                          }
-                          if (r.kind === "bus" && /автобус/i.test(r.name)) {
-                            return {
-                              ...r,
-                              quantity: Math.max(1, Math.ceil(crew / 20)),
-                            };
                           }
                           return r;
                         }),

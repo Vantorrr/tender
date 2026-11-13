@@ -6,6 +6,7 @@ import {
 import { parseSmetaXlsx } from "@/server/export";
 import { withSection, json } from "@/server/http";
 import { readAppData } from "@/server/db";
+import { config } from "@/server/config";
 
 export async function GET(req: Request) {
   return withSection(req, "obmen", (user) =>
@@ -23,8 +24,34 @@ export async function POST(req: Request) {
       if (!(file instanceof File)) {
         return json({ error: "Файл не передан" }, 400);
       }
+      if (!file.name.toLowerCase().endsWith(".xlsx")) {
+        return json(
+          { error: "Обмен принимает только XLSX. Выгрузите смету из сметной программы в формате Excel (.xlsx)." },
+          415
+        );
+      }
+      if (file.size > config.maxUploadBytes) {
+        return json(
+          { error: `Файл слишком большой (лимит ${Math.round(config.maxUploadBytes / (1024 * 1024))} МБ)` },
+          413
+        );
+      }
       const buf = Buffer.from(await file.arrayBuffer());
-      const mapped = await parseSmetaXlsx(buf);
+      let mapped;
+      try {
+        mapped = await parseSmetaXlsx(buf);
+      } catch {
+        return json(
+          { error: "Не удалось прочитать файл как XLSX. Пересохраните смету в формате .xlsx и загрузите снова." },
+          422
+        );
+      }
+      if (mapped.length === 0) {
+        return json(
+          { error: "В книге не найдены сметные позиции. Нужна выгрузка XLSX с шифрами расценок и количествами." },
+          422
+        );
+      }
       const data = readAppData();
       const calc = data.calculations.find((c) => c.id === calcId);
       if (calc && user.role !== "superadmin" && calc.orgId !== user.orgId) {

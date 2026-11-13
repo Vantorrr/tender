@@ -2,7 +2,7 @@
  * Material need list from calc positions + stage material resources.
  * Does not invent catalog rows — only surfaces missing rates for user input.
  */
-import type { CalcPosition, GprStage, GprStageResource } from "@/lib/types";
+import type { CalcPosition, GprStage } from "@/lib/types";
 
 export type MaterialNeedRow = {
   source: "calc_position" | "stage_resource";

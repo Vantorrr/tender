@@ -211,12 +211,14 @@ describe("t25u day details resourceLines persistence", () => {
     expect(day?.resourceLines?.[0]?.factQty).toBe(9);
   });
 
-  it("school g-1 keeps original Dec'26 window (no auto-mod for screens)", () => {
+  it("school g-1 links plan/fact works without changing its original Dec'26 window", () => {
     const g1 = readAppData().schedules.find((s) => s.id === "g-1")!;
     const gs2 = g1.stages.find((s) => s.id === "gs-2")!;
     expect(gs2.start).toBe("2026-12-21");
     expect(gs2.end).toBe("2027-01-25");
-    expect(gs2.workName).toBeUndefined();
+    expect(gs2.workName).toBe("Демонтаж перегородок");
+    const gs3 = g1.stages.find((s) => s.id === "gs-3")!;
+    expect(gs3.workNames).toEqual(["Штукатурка стен", "Устройство стяжки"]);
   });
 
   it("isolated [TEST] fixture exists without rewriting school", () => {

@@ -4,7 +4,6 @@
  */
 import { roundMoney } from "@/lib/calc-math";
 import {
-  inferQuantityBasis,
   resolveResourceDimensions,
 } from "@/lib/resource-dimensions";
 import {
@@ -22,6 +21,7 @@ import type {
   CostSummarySnapshot,
   GprStage,
   GprStageResource,
+  ResourceQuantityBasis,
 } from "@/lib/types";
 
 export { inferQuantityBasis, resolveResourceDimensions } from "@/lib/resource-dimensions";
@@ -353,11 +353,15 @@ export function patchStageResource(
   stages: GprStage[],
   resourceId: string,
   patch: {
+    name?: string;
+    unit?: string;
+    kind?: GprStageResource["kind"];
     quantity?: number;
     rate?: number | null;
     hoursPerShift?: number | null;
     shiftsPerDay?: number | null;
     days?: number | null;
+    quantityBasis?: ResourceQuantityBasis | null;
   },
   stageId?: string
 ): GprStage[] {
@@ -367,6 +371,15 @@ export function patchStageResource(
       if (r.id !== resourceId) return r;
       return {
         ...r,
+        name: patch.name ?? r.name,
+        unit: patch.unit ?? r.unit,
+        kind: patch.kind ?? r.kind,
+        quantityBasis:
+          patch.quantityBasis !== undefined
+            ? patch.quantityBasis ?? undefined
+            : patch.unit !== undefined || patch.kind !== undefined
+              ? undefined
+              : r.quantityBasis,
         quantity: patch.quantity ?? r.quantity,
         rate: patch.rate !== undefined ? patch.rate : r.rate,
         hoursPerShift:

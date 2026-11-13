@@ -81,6 +81,27 @@ export interface NotificationItem {
   href?: string;
 }
 
+export type ProjectChatScreen = "procurement" | "calculation" | "gpr" | "production";
+
+export interface ProjectChatSource {
+  id: string;
+  label: string;
+  quote: string;
+  href?: string;
+}
+
+export interface ProjectChatMessage {
+  id: string;
+  orgId: string;
+  procurementId: string;
+  userId: string;
+  role: "user" | "assistant";
+  content: string;
+  screen: ProjectChatScreen;
+  sources?: ProjectChatSource[];
+  createdAt: string;
+}
+
 export type WorkTypeCode =
   | "дорожные"
   | "общестрой"
@@ -103,6 +124,15 @@ export interface ProjectAnalytics {
   generatedAt: string;
   method: string;
   disclaimer: string;
+  /** Source coverage and evidence validation; this is not an accuracy percentage. */
+  quality?: {
+    status: "insufficient_sources" | "needs_review" | "evidence_backed";
+    sourceDocuments: number;
+    requiredDocumentsFound: number;
+    citationCount: number;
+    acceptedClaims?: number;
+    rejectedClaims?: number;
+  };
 }
 
 export type ProjectLifecycle =
@@ -162,6 +192,16 @@ export type SupplyStatus =
   | "cancelled";
 
 /** Потребность → КП-черновик (не отправка) → поставка/факт. */
+export interface SupplierQuote {
+  id: string;
+  supplierName: string;
+  supplierEmail?: string;
+  unitPrice: number;
+  deliveryDays?: number | null;
+  note?: string;
+  receivedAt: string;
+}
+
 export interface SupplyRequest {
   id: string;
   orgId: string;
@@ -176,8 +216,13 @@ export interface SupplyRequest {
   status: SupplyStatus;
   /** Текст запроса КП — только черновик, без send. */
   quoteDraftText?: string;
+  supplierName?: string;
+  supplierEmail?: string;
   supplierNote?: string;
   unitPrice?: number | null;
+  /** Several supplier offers for comparison; legacy supplier fields mirror the selected quote. */
+  quotes?: SupplierQuote[];
+  selectedQuoteId?: string;
   updatedAt: string;
   createdAt: string;
 }
@@ -309,7 +354,7 @@ export interface CalcCompareRow {
   originalSum: number | null;
   draftSum: number | null;
   deltaSum: number | null;
-  status: "matched" | "diff" | "only_original" | "only_draft";
+  status: "matched" | "diff" | "incomplete" | "only_original" | "only_draft";
   reason: string;
   source: "customer_original" | "resource_draft" | "both";
 }
@@ -403,6 +448,8 @@ export type ResourceQuantityBasis =
 
 export interface GprStageResource {
   id: string;
+  /** Stable source row key used to make client workbook imports repeatable. */
+  sourceKey?: string;
   kind: "labor" | "equipment" | "material" | "bus" | "other";
   name: string;
   quantity: number;
@@ -441,6 +488,8 @@ export interface GprStage {
   planVolume?: number | null;
   /** Optional link to plan/fact or calc work name. */
   workName?: string;
+  /** A GPR stage can cover several production work types. */
+  workNames?: string[];
 }
 
 export interface WorkCalendar {
@@ -463,6 +512,8 @@ export interface GprSchedule {
   updatedAt: string;
   calendar?: WorkCalendar;
   conflicts?: string[];
+  /** User-visible assumptions / unconfirmed scaffold inputs. */
+  assumptions?: string[];
 }
 
 export interface MoneyPayment {
@@ -526,6 +577,8 @@ export interface DailyFactPhoto {
 
 export interface DailyResourceLine {
   kind: "labor" | "material" | "equipment" | "bus" | "other";
+  /** Stable link to the GPR resource and editable draft position, when sourced from GPR. */
+  sourceResourceId?: string;
   name: string;
   unit: string;
   /** Plan qty from GPR/resources for the day (sourced). */
@@ -559,6 +612,11 @@ export interface ContractPnl {
   earnedValue: number;
   /** Auto economics from volumes×confirmed rates (null if incomplete). */
   economicsAuto?: number | null;
+  /** Value of physical fact using customer estimate rates; not an act or recognized revenue. */
+  valueOfFactByCustomerEstimate?: number | null;
+  /** Estimated remaining value using customer estimate rates; not a cash forecast. */
+  remainingValueByCustomerEstimate?: number | null;
+  customerEstimateIncomplete?: string[];
   /** Confirmed incurred costs (₽); may follow auto unless manual. */
   incurredCosts: number;
   /** True when user manually overrode incurredCosts. */
@@ -690,4 +748,6 @@ export interface AppData {
   auditLog: AuditEntry[];
   smetaExchanges: SmetaExchangeVersion[];
   supplyRequests?: SupplyRequest[];
+  /** Private-by-user project chat history; fetched only through the scoped chat API. */
+  projectChatMessages?: ProjectChatMessage[];
 }

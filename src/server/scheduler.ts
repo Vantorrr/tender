@@ -4,7 +4,6 @@ import { runProcurementSync } from "@/server/jobs";
 import { procurementSourceStatus } from "@/server/procurement-source";
 
 declare global {
-  // eslint-disable-next-line no-var
   var __tkSchedulerStarted: boolean | undefined;
 }
 

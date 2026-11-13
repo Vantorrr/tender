@@ -7,7 +7,7 @@ import type { GprStage, GprStageResource } from "@/lib/types";
  */
 export function defaultStageResources(
   stageId: string,
-  crew: number,
+  _crew: number,
   stageName = "этап"
 ): GprStageResource[] {
   const label = stageName.trim() || "этап";
@@ -16,33 +16,37 @@ export function defaultStageResources(
       id: `res-${stageId}-labor`,
       kind: "labor",
       name: `Бригада · ${label}`,
-      quantity: crew,
+      quantity: 0,
       unit: "чел",
       rate: null,
+      quantityBasis: "uncertain",
     },
     {
       id: `res-${stageId}-mat`,
       kind: "material",
-      name: `Материалы · ${label}`,
-      quantity: 1,
+      name: `Указать материалы · ${label}`,
+      quantity: 0,
       unit: "компл",
       rate: null,
+      quantityBasis: "uncertain",
     },
     {
       id: `res-${stageId}-eq`,
       kind: "equipment",
-      name: `Техника · ${label}`,
-      quantity: 1,
+      name: `Указать технику · ${label}`,
+      quantity: 0,
       unit: "маш",
       rate: null,
+      quantityBasis: "uncertain",
     },
     {
       id: `res-${stageId}-bus`,
       kind: "bus",
-      name: `Автобус · ${label}`,
-      quantity: Math.max(1, Math.ceil(crew / 20)),
+      name: `Указать транспорт · ${label}`,
+      quantity: 0,
       unit: "ед",
       rate: null,
+      quantityBasis: "uncertain",
     },
   ];
 }
@@ -63,26 +67,12 @@ function isLegacyIdenticalStub(res: GprStageResource[]): boolean {
 export function ensureStageResources(stage: GprStage): GprStage {
   const res = stage.resources ?? [];
   const kinds = new Set(res.map((r) => r.kind));
-  const incomplete =
-    res.length === 0 ||
-    (res.length === 1 && res[0]?.kind === "labor") ||
-    !kinds.has("material") ||
-    !kinds.has("equipment") ||
-    !kinds.has("bus");
-  if (incomplete || isLegacyIdenticalStub(res)) {
-    const fresh = defaultStageResources(
-      stage.id,
-      stage.crewSize ?? 4,
-      stage.name
-    );
-    // Preserve user qty when refreshing legacy identical stubs
-    if (isLegacyIdenticalStub(res)) {
-      for (const f of fresh) {
-        const prev = res.find((r) => r.kind === f.kind);
-        if (prev) f.quantity = prev.quantity;
-      }
-    }
-    return { ...stage, resources: fresh };
+  const missing = defaultStageResources(stage.id, stage.crewSize ?? 0, stage.name)
+    .filter((resource) => !kinds.has(resource.kind));
+  if (res.length === 0 || missing.length > 0 || isLegacyIdenticalStub(res)) {
+    // Keep every resource the user already entered. Add only missing, explicitly
+    // unconfirmed placeholder rows with zero quantity and no tariff.
+    return { ...stage, resources: [...res, ...missing] };
   }
   return stage;
 }
@@ -92,9 +82,6 @@ export function syncLaborBusToCrew(stage: GprStage): GprStage {
   const resources = (stage.resources ?? []).map((r) => {
     if (r.kind === "labor" && /бригада/i.test(r.name)) {
       return { ...r, quantity: crew };
-    }
-    if (r.kind === "bus" && /автобус/i.test(r.name)) {
-      return { ...r, quantity: Math.max(1, Math.ceil(crew / 20)) };
     }
     return r;
   });

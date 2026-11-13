@@ -6,11 +6,17 @@ import { PDFDocument, rgb } from "pdf-lib";
 import {
   calculationTotals,
   positionLineSum,
+  roundMoney,
 } from "@/lib/calc-math";
-import { resolveResourceDimensions } from "@/lib/resource-dimensions";
+import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
+import {
+  resolveResourceDimensions,
+  type ResolvedResourceDims,
+} from "@/lib/resource-dimensions";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
 import { readAppData } from "@/server/db";
 import { estimateKey, parseGrandBuffer } from "@/server/grand-smeta";
+import { stageDayList } from "@/lib/plan-from-gpr";
 
 function columnLetter(column: number): string {
   let n = column;
@@ -408,6 +414,7 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
   const g = data.schedules.find((s) => s.id === gprId);
   if (!g) throw new Error("ГПР не найден");
   const wb = new ExcelJS.Workbook();
+  wb.calcProperties = { fullCalcOnLoad: true };
   const ws = wb.addWorksheet("ГПР");
   ws.addRow([
     "Этап",
@@ -445,6 +452,278 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
   }
   const calc = data.calculations.find((c) => c.id === g.calculationId);
   const rsParams = calc?.resourceScheduleParams ?? EXCEL_RESOURCE_SCHEDULE_DEFAULTS;
+  const treeSheet = wb.addWorksheet("Ресурсный график");
+  treeSheet.columns = [
+    { header: "Работа / ресурс", key: "name", width: 42 },
+    { header: "Ед.", key: "unit", width: 12 },
+    { header: "Количество", key: "quantity", width: 14 },
+    { header: "Часы", key: "hours", width: 14 },
+    { header: "Цена за ед., ₽", key: "rate", width: 17 },
+    { header: "Сумма, ₽", key: "amount", width: 18 },
+    { header: "Начало", key: "start", width: 14 },
+    { header: "Окончание", key: "end", width: 14 },
+    { header: "Статус", key: "status", width: 18 },
+  ];
+  const header = treeSheet.getRow(1);
+  header.height = 30;
+  header.font = { name: "Arial", size: 10, bold: true, color: { argb: "FFFFFFFF" } };
+  header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF183A57" } };
+  header.alignment = { vertical: "middle", wrapText: true };
+  header.border = { bottom: { style: "medium", color: { argb: "FFB86B2B" } } };
+  treeSheet.views = [{ state: "frozen", ySplit: 1 }];
+  treeSheet.properties.outlineLevelRow = 2;
+  treeSheet.properties.outlineProperties = { summaryBelow: true, summaryRight: true };
+  const stageById = new Map(g.stages.map((stage) => [stage.id, stage]));
+  const tree = buildHierarchicalEstimate({
+    stages: g.stages,
+    positions: calc?.positions ?? [],
+    params: rsParams,
+  });
+  for (const node of tree) {
+    const stage = stageById.get(node.id);
+    const workRow = treeSheet.addRow({
+      name: node.name,
+      quantity: stage?.planVolume ?? null,
+      amount: node.subtotal,
+      start: stage?.start ?? "",
+      end: stage?.end ?? "",
+      status: node.incomplete ? "Частично" : "Подтверждено",
+    });
+    workRow.height = 24;
+    workRow.font = { name: "Arial", size: 10, bold: true, color: { argb: "FFFFFFFF" } };
+    workRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF183A57" } };
+    workRow.alignment = { vertical: "middle", wrapText: true };
+    workRow.getCell(6).numFmt = '#,##0.00;[Red]-#,##0.00;–';
+    workRow.getCell(9).font = { name: "Arial", size: 9, bold: true, color: { argb: node.incomplete ? "FFFFD28A" : "FFC8E6D0" } };
+
+    for (const group of node.groups) {
+      const groupRow = treeSheet.addRow({
+        name: `↳ ${group.label}`,
+        quantity: `${group.leaves.length} поз.`,
+        amount: group.subtotal,
+        status: group.incomplete ? "Частично" : "Подтверждено",
+      });
+      groupRow.outlineLevel = 1;
+      groupRow.height = 21;
+      groupRow.font = { name: "Arial", size: 9, bold: true, color: { argb: "FF405466" } };
+      groupRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEAF0F4" } };
+      groupRow.alignment = { vertical: "middle", wrapText: true };
+      groupRow.getCell(1).alignment = { vertical: "middle", indent: 1 };
+      groupRow.getCell(6).numFmt = '#,##0.00;[Red]-#,##0.00;–';
+
+      for (const leaf of group.leaves) {
+        const leafRow = treeSheet.addRow({
+          name: leaf.name,
+          unit: leaf.unit,
+          quantity: leaf.quantity,
+          hours: leaf.hoursQ,
+          rate: leaf.rate,
+          amount: leaf.amount,
+          start: stage?.start ?? "",
+          end: stage?.end ?? "",
+          status: leaf.amount == null ? "Нет ставки" : leaf.incomplete.length ? "Проверить" : "Подтверждено",
+        });
+        leafRow.outlineLevel = 2;
+        leafRow.height = 21;
+        leafRow.alignment = { vertical: "middle", wrapText: true };
+        leafRow.getCell(1).alignment = { vertical: "middle", indent: 2, wrapText: true };
+        leafRow.getCell(5).numFmt = '#,##0.00;[Red]-#,##0.00;–';
+        leafRow.getCell(6).numFmt = '#,##0.00;[Red]-#,##0.00;–';
+        if (leaf.amount == null) {
+          leafRow.getCell(6).value = "нет ставки";
+          leafRow.getCell(6).font = { color: { argb: "FF9A5A00" }, italic: true };
+        }
+      }
+    }
+  }
+  if (tree.length === 0) {
+    treeSheet.addRow({ name: "Нет работ или ресурсов для показа" });
+  }
+  for (let rowIndex = 2; rowIndex <= treeSheet.rowCount; rowIndex += 1) {
+    const row = treeSheet.getRow(rowIndex);
+    if (!row.fill || row.fill.type === "pattern" && row.fill.fgColor?.argb === "FFFFFFFF") {
+      if (rowIndex % 2 === 0) {
+        row.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF4F7F9" } };
+      }
+    }
+    row.border = { bottom: { style: "hair", color: { argb: "FFD9E1E7" } } };
+  }
+
+  // Spreadsheet closer to the client's familiar A:Z resource calculation grid.
+  const clientSheet = wb.addWorksheet("Клиентский ресурсный график");
+  const clientHeaders = [
+    "№", "Раздел", "Наименование работ / ресурс", "Ед.", "Объём", "Длит., раб.дн.", "Начало", "Окончание", "Тип строки", "Категория", "Тарифная позиция / модель", "Кол-во", "Тариф БЕЗ НР 40%, руб.", "Часов/смена", "Смен/сутки", "Дни участия", "Часы Q", "Сумма R, руб.", "Материалы S", "Люди T", "Техника U", "Прямые V", "НР W", "С/с X", "Прибыль Y", "Итого Z",
+  ];
+  clientSheet.addRow(["Ресурсный график и калькуляция стоимости работ"]);
+  clientSheet.addRow([]);
+  clientSheet.addRow(["ПАРАМЕТР", "ЗНАЧЕНИЕ", "", "РАСЧЁТ", "ЗНАЧЕНИЕ", "", "ИТОГОВАЯ ФОРМУЛА", "ЗНАЧЕНИЕ"]);
+  clientSheet.addRow(["Стоимость 1 чел.-часа, руб.", rsParams.personHourRate, "", "Прямые затраты", calc?.costSummary?.resourceSlices?.direct ?? "неполные данные", "", "НР", rsParams.overheadRate]);
+  clientSheet.addRow(["Смен персонала в сутки", rsParams.personnelShiftsPerDay, "", "Стоимость МТР", calc?.costSummary?.resourceSlices?.materials ?? "неполные данные", "", "Прибыль", rsParams.profitMarkupOnCostWithOh]);
+  clientSheet.addRow(["Продолжительность смены, ч", rsParams.hoursPerShift, "", "Затраты на людей", calc?.costSummary?.resourceSlices?.labor ?? "неполные данные", "", "ИТОГО", "X + Y"]);
+  clientSheet.addRow(["Смен техники в сутки", rsParams.equipmentShiftsPerDay, "", "Затраты на технику", calc?.costSummary?.resourceSlices?.equipment ?? "неполные данные"]);
+  clientSheet.addRow(["Накладные расходы", rsParams.overheadRate]);
+  clientSheet.addRow(["Прибыль", rsParams.profitMarkupOnCostWithOh]);
+  clientSheet.addRow([]);
+  clientSheet.addRow([]);
+  const clientHeader = clientSheet.addRow(clientHeaders);
+  clientHeader.height = 36;
+  clientHeader.font = { bold: true, color: { argb: "FFFFFFFF" } };
+  clientHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF183A57" } };
+  clientHeader.alignment = { vertical: "middle", wrapText: true };
+  clientSheet.views = [{ state: "frozen", ySplit: 12 }];
+  clientSheet.autoFilter = { from: "A12", to: "Z12" };
+  clientSheet.properties.outlineLevelRow = 2;
+  clientSheet.properties.outlineProperties = { summaryBelow: true, summaryRight: true };
+  const clientLabel: Record<string, string> = { labor: "Люди", equipment: "Техника", bus: "Транспорт", material: "Материалы", other: "Прочее" };
+  const stages = g.stages.slice().sort((a, b) => a.sequence - b.sequence);
+  const firstStart = stages.map((stage) => stage.start).filter(Boolean).sort()[0];
+  const dayOffset = (date: string) => firstStart && date
+    ? Math.floor((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${firstStart}T00:00:00Z`)) / 86400000) + 1
+    : null;
+  const timelineDays = stages.reduce((max, stage) => Math.max(max, dayOffset(stage.end) ?? 0), 0);
+  for (let day = 1; day <= timelineDays; day += 1) {
+    const cell = clientHeader.getCell(27 + day);
+    cell.value = day;
+    cell.alignment = { horizontal: "center", vertical: "middle" };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEAF0F4" } };
+    cell.font = { bold: true, size: 9, color: { argb: "FF183A57" } };
+  }
+  for (const stage of stages) {
+    const resources = stage.resources ?? [];
+    const resolved = resources.map((resource) => ({ resource, dim: resolveResourceDimensions(resource, stage, rsParams) }));
+    const buckets = ["labor", "equipment", "bus", "material", "other"] as const;
+    const bucketAmount = (kind: typeof buckets[number]) => {
+      const items = resolved.filter((item) => item.resource.kind === kind);
+      return items.some((item) => item.dim.amount == null) ? null : roundMoney(items.reduce((sum, item) => sum + (item.dim.amount ?? 0), 0));
+    };
+    const materials = bucketAmount("material");
+    const labor = bucketAmount("labor");
+    const equipmentItems = [...resolved.filter((item) => item.resource.kind === "equipment"), ...resolved.filter((item) => item.resource.kind === "bus")];
+    const equipment = equipmentItems.some((item) => item.dim.amount == null) ? null : roundMoney(equipmentItems.reduce((sum, item) => sum + (item.dim.amount ?? 0), 0));
+    const complete = resources.length > 0 && resolved.every((item) => item.dim.amount != null);
+    const direct = complete ? roundMoney((materials ?? 0) + (labor ?? 0) + (equipment ?? 0)) : null;
+    const overhead = direct == null ? null : roundMoney(direct * rsParams.overheadRate);
+    const cost = direct == null ? null : roundMoney(direct + (overhead ?? 0));
+    const profit = cost == null ? null : roundMoney(cost * rsParams.profitMarkupOnCostWithOh);
+    const total = cost == null ? null : roundMoney(cost + (profit ?? 0));
+    const work = clientSheet.addRow([
+      stage.sequence, "", stage.name, "", stage.planVolume ?? "", stageDayList(stage, g.calendar).length,
+      firstStart && stage.start ? String(Math.round((Date.parse(`${stage.start}T00:00:00Z`) - Date.parse(`${firstStart}T00:00:00Z`)) / 86400000) + 1) : "",
+      firstStart && stage.end ? String(Math.round((Date.parse(`${stage.end}T00:00:00Z`) - Date.parse(`${firstStart}T00:00:00Z`)) / 86400000) + 1) : "",
+      complete ? "РАБОТА" : "РАБОТА · ЧАСТИЧНО", "", "", "", "", "", "", "", "", "",
+      materials ?? "", labor ?? "", equipment ?? "", direct ?? "", overhead ?? "", cost ?? "", profit ?? "", total ?? "",
+    ]);
+    work.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    work.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF183A57" } };
+    const startOffset = dayOffset(stage.start);
+    const endOffset = dayOffset(stage.end);
+    if (startOffset != null && endOffset != null) {
+      for (let day = startOffset; day <= endOffset; day += 1) {
+        const cell = work.getCell(27 + day);
+        cell.value = "■";
+        cell.alignment = { horizontal: "center", vertical: "middle" };
+        cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF183A57" } };
+      }
+    }
+    const resourceRowsByKind = new Map<typeof buckets[number], ExcelJS.Row[]>();
+    const basisByResourceRow = new Map<ExcelJS.Row, ResolvedResourceDims["basis"]>();
+    for (const kind of buckets) {
+      const items = resolved.filter((item) => item.resource.kind === kind);
+      if (!items.length) continue;
+      const group = clientSheet.addRow(["", "", `↳ ${clientLabel[kind]}`, "", `${items.length} поз.`, "", "", "", "ГРУППА", clientLabel[kind]]);
+      group.outlineLevel = 1;
+      group.font = { bold: true, color: { argb: "FF405466" } };
+      group.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEAF0F4" } };
+      for (const item of items) {
+        const { resource, dim } = item;
+        const row = clientSheet.addRow(["", "", resource.name, resource.unit, "", "", "", "", "РЕСУРС", clientLabel[kind], resource.sourceKey ?? "", dim.sourceQty, dim.rate ?? "", dim.hoursPerShift ?? "", dim.shiftsPerDay ?? "", dim.days ?? "", dim.hours ?? "", dim.amount ?? "нет ставки"]);
+        const kindRows = resourceRowsByKind.get(kind) ?? [];
+        kindRows.push(row);
+        resourceRowsByKind.set(kind, kindRows);
+        basisByResourceRow.set(row, dim.basis);
+        row.outlineLevel = 2;
+        row.getCell(3).alignment = { indent: 2, vertical: "middle", wrapText: true };
+        if (dim.basis === "material_qty") {
+          row.getCell(17).value = null;
+          row.getCell(18).value = {
+            formula: `IF(AND(ISNUMBER(L${row.number}),ISNUMBER(M${row.number})),L${row.number}*M${row.number},"")`,
+          };
+        } else if (dim.basis === "total_hours") {
+          row.getCell(17).value = {
+            formula: `IF(ISNUMBER(L${row.number}),L${row.number},"")`,
+          };
+          row.getCell(18).value = {
+            formula: `IF(AND(ISNUMBER(Q${row.number}),ISNUMBER(M${row.number})),Q${row.number}*M${row.number},"")`,
+          };
+        } else if (dim.basis === "count_per_shift") {
+          row.getCell(17).value = {
+            formula: `IF(AND(ISNUMBER(L${row.number}),ISNUMBER(N${row.number}),ISNUMBER(O${row.number}),ISNUMBER(P${row.number})),L${row.number}*N${row.number}*O${row.number}*P${row.number},"")`,
+          };
+          row.getCell(18).value = {
+            formula: `IF(AND(ISNUMBER(Q${row.number}),ISNUMBER(M${row.number})),Q${row.number}*M${row.number},"")`,
+          };
+        }
+        if (dim.days != null && startOffset != null && endOffset != null) {
+          for (let day = startOffset; day <= endOffset; day += 1) {
+            const cell = row.getCell(27 + day);
+            cell.value = dim.sourceQty;
+            cell.alignment = { horizontal: "center", vertical: "middle" };
+            cell.numFmt = "#,##0.###";
+          }
+        }
+      }
+    }
+
+    // Keep the downloaded spreadsheet live: changing L:P or a unit rate must
+    // recalculate each resource line and the work's S:Z cost summary in Excel.
+    const resourceRows = [...resourceRowsByKind.values()].flat();
+    const completeCondition = resourceRows.map((row) => {
+      const basis = basisByResourceRow.get(row);
+      if (basis === "uncertain") return "FALSE";
+      const checks = [`ISNUMBER(M${row.number})`];
+      if (basis === "count_per_shift") checks.push(`ISNUMBER(Q${row.number})`);
+      else if (basis === "total_hours") checks.push(`ISNUMBER(Q${row.number})`);
+      return `AND(${checks.join(",")})`;
+    });
+    const allResourcesComplete = completeCondition.length
+      ? `AND(${completeCondition.join(",")})`
+      : "FALSE";
+    const subtotalFor = (kind: typeof buckets[number]) => {
+      const rows = resourceRowsByKind.get(kind) ?? [];
+      if (!rows.length) return "0";
+      return `SUM(${rows.map((row) => `R${row.number}`).join(",")})`;
+    };
+    const materialsKinds = resourceRowsByKind.has("material");
+    const laborKinds = resourceRowsByKind.has("labor");
+    const equipmentKinds = resourceRowsByKind.has("equipment") || resourceRowsByKind.has("bus");
+    work.getCell(19).value = materialsKinds
+      ? { formula: `IF(${allResourcesComplete},${subtotalFor("material")},"неполно")` }
+      : 0;
+    work.getCell(20).value = laborKinds
+      ? { formula: `IF(${allResourcesComplete},${subtotalFor("labor")},"неполно")` }
+      : 0;
+    work.getCell(21).value = equipmentKinds
+      ? { formula: `IF(${allResourcesComplete},${subtotalFor("equipment")}+${subtotalFor("bus")},"неполно")` }
+      : 0;
+    work.getCell(22).value = { formula: `IF(${allResourcesComplete},S${work.number}+T${work.number}+U${work.number},"неполно")` };
+    work.getCell(23).value = { formula: `IF(ISNUMBER(V${work.number}),V${work.number}*$B$8,"неполно")` };
+    work.getCell(24).value = { formula: `IF(ISNUMBER(V${work.number}),V${work.number}+W${work.number},"неполно")` };
+    work.getCell(25).value = { formula: `IF(ISNUMBER(X${work.number}),X${work.number}*$B$9,"неполно")` };
+    work.getCell(26).value = { formula: `IF(ISNUMBER(X${work.number}),X${work.number}+Y${work.number},"неполно")` };
+  }
+  clientSheet.columns = [7, 18, 48, 12, 15, 16, 12, 12, 22, 18, 30, 13, 19, 14, 13, 14, 13, 18, 18, 18, 18, 18, 18, 18, 18, 18].map((width) => ({ width }));
+  clientSheet.getColumn(27).width = 3;
+  for (let column = 28; column < 28 + timelineDays; column += 1) clientSheet.getColumn(column).width = 4;
+  for (let index = 13; index <= clientSheet.rowCount; index += 1) {
+    const row = clientSheet.getRow(index);
+    row.height = 21;
+    row.alignment = { vertical: "middle", wrapText: true };
+    row.border = { bottom: { style: "hair", color: { argb: "FFD9E1E7" } } };
+  }
+  for (const column of [13, 18, 19, 20, 21, 22, 23, 24, 25, 26]) clientSheet.getColumn(column).numFmt = '#,##0.00;[Red]-#,##0.00;–';
+  for (const column of [5, 6, 12, 14, 15, 16, 17, ...Array.from({ length: timelineDays }, (_, index) => 28 + index)]) clientSheet.getColumn(column).numFmt = '#,##0.###;[Red]-#,##0.###;–';
+
   const cs = calc?.costSummary;
   const totalsPartial = Boolean(
     cs?.totalsIncomplete || cs?.resourceSlices?.partial
@@ -859,5 +1138,69 @@ export async function parseSmetaXlsx(buf: Buffer): Promise<{ code: string; quant
       rows.push({ code, quantity, name });
     }
   });
+  return rows;
+}
+
+export type ClientMaterialRow = {
+  sourceRow: number;
+  sourceCode: string;
+  workName: string;
+  section: string;
+  materialName: string;
+  quantity: number;
+  unit: string;
+  rate: number | null;
+};
+
+/** Parse the client's multi-sheet workbook without treating its first sheet as a generic estimate. */
+export async function parseClientMaterialsXlsx(buf: Buffer): Promise<ClientMaterialRow[]> {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buf as unknown as ExcelJS.Buffer);
+  const ws = wb.getWorksheet("Материалы");
+  if (!ws) throw new Error('В книге не найден лист «Материалы»');
+  const headerRow = ws.getRow(14);
+  const headers = new Map<string, number>();
+  headerRow.eachCell((cell, col) => {
+    headers.set(String(cell.value ?? "").trim().toLocaleLowerCase("ru-RU"), col);
+  });
+  const col = (name: string) => headers.get(name.toLocaleLowerCase("ru-RU"));
+  const workCol = col("Работа ГПР");
+  const sectionCol = col("Раздел");
+  const codeCol = col("Код ВОР");
+  const materialCol = col("Материал / конструкция");
+  const quantityCol = col("Кол-во для цены");
+  const unitCol = col("Ед. цены");
+  const rateCol = col("Цена за ед., руб.");
+  if (![workCol, sectionCol, codeCol, materialCol, quantityCol, unitCol, rateCol].every(Boolean)) {
+    throw new Error('Лист «Материалы»: не найдены ожидаемые колонки шаблона клиента');
+  }
+  const read = (row: ExcelJS.Row, column: number) => {
+    const value = row.getCell(column).value;
+    if (value && typeof value === "object" && "result" in value) return value.result;
+    return value;
+  };
+  const rows: ClientMaterialRow[] = [];
+  ws.eachRow((row, rowNumber) => {
+    if (rowNumber <= 14) return;
+    const workName = String(read(row, workCol!) ?? "").trim();
+    const materialName = String(read(row, materialCol!) ?? "").trim();
+    if (!workName || !materialName) return;
+    const quantity = Number(read(row, quantityCol!));
+    if (!Number.isFinite(quantity) || quantity < 0) return;
+    const rawRate = read(row, rateCol!);
+    const parsedRate = Number(rawRate);
+    rows.push({
+      sourceRow: row.number,
+      sourceCode: String(read(row, codeCol!) ?? "").trim(),
+      workName,
+      section: String(read(row, sectionCol!) ?? "").trim(),
+      materialName,
+      quantity,
+      unit: String(read(row, unitCol!) ?? "").trim(),
+      // Zero/missing prices are not treated as confirmed rates.
+      rate: Number.isFinite(parsedRate) && parsedRate > 0 ? parsedRate : null,
+    });
+  });
+  if (!rows.length) throw new Error('На листе «Материалы» нет строк с работой и материалом');
   return rows;
 }
