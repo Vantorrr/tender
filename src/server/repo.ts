@@ -363,9 +363,26 @@ export function updateProcurement(
     const item = data.procurements.find((p) => p.id === id);
     if (!item) throw new Error("Закупка не найдена");
     assertOrgAccess(actor, item.orgId, "закупки");
-    const { orgId: _o, id: _i, ...safe } = patch;
+    const {
+      orgId: _o,
+      id: _i,
+      // Client must not retarget linked calc/GPR/plan ids across tenants.
+      originalCalculationId: _orig,
+      calculationId: _calc,
+      gprId: _gpr,
+      planFactId: _pf,
+      moneyId: _money,
+      documentIds: _docs,
+      ...safe
+    } = patch;
     void _o;
     void _i;
+    void _orig;
+    void _calc;
+    void _gpr;
+    void _pf;
+    void _money;
+    void _docs;
     data.procurements = data.procurements.map((p) =>
       p.id === id ? { ...p, ...safe } : p
     );
@@ -1440,17 +1457,29 @@ export function attachCustomerEstimate(
     const existing = oid
       ? data.calculations.find((c) => c.id === oid)
       : undefined;
-    if (existing && existing.kind === "customer_original") {
-      existing.positions = positions;
-      existing.title = `Смета заказчика (оригинал) — ${p.title.slice(0, 40)}`;
-      existing.updatedAt = now;
-      existing.immutable = true;
-      existing.assumptions = [
+    // Only overwrite an original that already belongs to this org + procurement.
+    const ownedOriginal =
+      existing &&
+      existing.kind === "customer_original" &&
+      existing.orgId === p.orgId &&
+      existing.procurementId === p.id
+        ? existing
+        : undefined;
+    if (ownedOriginal) {
+      ownedOriginal.positions = positions;
+      ownedOriginal.title = `Смета заказчика (оригинал) — ${p.title.slice(0, 40)}`;
+      ownedOriginal.updatedAt = now;
+      ownedOriginal.immutable = true;
+      ownedOriginal.assumptions = [
         `Неизменяемый снимок сметы заказчика: ${positions.length} позиций`,
         `Источник: ${estimateDoc.fileName}`,
         "Собственные ресурсы сюда не добавляются",
       ];
-      existing.dataFlags = ["immutable_original", "from_estimate_doc", "user_attached"];
+      ownedOriginal.dataFlags = [
+        "immutable_original",
+        "from_estimate_doc",
+        "user_attached",
+      ];
     } else {
       oid = `c-orig-${Date.now()}`;
       data.calculations.unshift({

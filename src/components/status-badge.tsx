@@ -19,7 +19,7 @@ const reviewClass: Record<ReviewStatus, string> = {
   dublirovana: "bg-orange-50 text-orange-900 border-orange-200",
 };
 
-/** Visible two-word status — flex gap cannot collapse like a tight single string. */
+/** Status text for chips — real space in DOM (a11y/copy); word-spacing keeps «В работе» readable. */
 export function StatusLabel({
   status,
   className,
@@ -28,20 +28,16 @@ export function StatusLabel({
   className?: string;
 }) {
   const plain = STATUS_LABELS[status];
-  if (status === "v_rabote") {
-    return (
-      <span
-        className={cn("inline-flex items-baseline gap-[0.35em]", className)}
-        data-testid="status-label-v_rabote"
-        title="В работе"
-      >
-        <span>В</span>
-        <span>работе</span>
-      </span>
-    );
-  }
   return (
-    <span className={className} data-testid={`status-label-${status}`} title={plain}>
+    <span
+      className={cn(
+        "whitespace-nowrap tracking-normal",
+        status === "v_rabote" && "[word-spacing:0.2em]",
+        className
+      )}
+      data-testid={`status-label-${status}`}
+      title={plain}
+    >
       {plain}
     </span>
   );
@@ -58,12 +54,14 @@ export function StatusBadge({
     <Badge
       variant="outline"
       className={cn(
-        "h-6 min-w-fit shrink-0 px-2.5 font-medium whitespace-nowrap overflow-visible tracking-normal",
+        "h-6 min-w-fit shrink-0 overflow-visible px-2.5 font-medium whitespace-nowrap tracking-normal",
+        status === "v_rabote" && "[word-spacing:0.2em]",
         statusClass[status],
         className
       )}
       data-testid={`status-badge-${status}`}
       title={STATUS_LABELS[status]}
+      aria-label={STATUS_LABELS[status]}
     >
       <StatusLabel status={status} />
     </Badge>
