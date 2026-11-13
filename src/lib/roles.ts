@@ -90,7 +90,8 @@ export const DEFAULT_SECTIONS: Record<Role, SectionKey[]> = {
 
 export const STATUS_LABELS = {
   zagruzheno: "Загружено",
-  v_rabote: "В работе",
+  // NBSP keeps «В работе» from collapsing to «Вработе» in tight badges.
+  v_rabote: "В\u00a0работе",
   gotovo: "Готово",
   trebuet_proverki: "Требует проверки",
   oshibka: "Ошибка",
@@ -112,7 +113,7 @@ export const PARTICIPATE_RECOMMENDATION_LABELS = {
 
 export const REMARK_STATUS_LABELS = {
   otkryto: "Открыто",
-  v_rabote: "В работе",
+  v_rabote: "В\u00a0работе",
   zakryto: "Закрыто",
   prinyato: "Принято",
 } as const;

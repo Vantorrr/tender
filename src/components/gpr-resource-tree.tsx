@@ -147,13 +147,13 @@ function FragmentRows({
                 <Input className="ml-auto h-8 w-28 text-right" type="number" min={0} step="any" aria-label={`Количество · ${leaf.name}`} data-testid={`res-qty-${leaf.id}`} value={String(leaf.quantity)} onChange={(event) => onPatch(leaf, { quantity: Number(event.target.value) || 0 })} />
               </td>
               <td className="px-3 py-1.5">
-                <Input className="ml-auto h-8 w-32 text-right" type="number" min={0} step="any" aria-label={`Цена за единицу · ${leaf.name}`} data-testid={`res-rate-${leaf.id}`} placeholder="нет данных" value={leaf.rate == null ? "" : String(leaf.rate)} onChange={(event) => {
+                <Input className="ml-auto h-8 w-32 text-right" type="number" min={0} step="any" aria-label={`Ставка · ${leaf.name}`} data-testid={`res-rate-${leaf.id}`} placeholder="—" title="нет данных" value={leaf.rate == null ? "" : String(leaf.rate)} onChange={(event) => {
                   const raw = event.target.value.trim();
                   const rate = raw === "" ? null : Number(raw);
                   onPatch(leaf, { rate: rate == null || !Number.isFinite(rate) ? null : rate });
                 }} />
               </td>
-              <td className={`px-3 py-1.5 text-right ${leaf.amount == null ? "text-amber-800" : ""}`}>{leaf.amount == null ? "нет ставки" : formatMoney(leaf.amount)}</td>
+              <td className={`px-3 py-1.5 text-right ${leaf.amount == null ? "text-amber-800" : ""}`} title={leaf.amount == null ? "нет данных" : undefined}>{leaf.amount == null ? "—" : formatMoney(leaf.amount)}</td>
               <td className="px-3 py-1.5 text-xs text-[var(--tk-muted)]">{stage ? `${stage.start} — ${stage.end}` : "—"}</td>
             </tr>
           ))}

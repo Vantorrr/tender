@@ -324,8 +324,13 @@ export function PlanFactGantt({
           <span className="rounded-md border border-[var(--tk-line)] bg-white px-2.5 py-1.5">
             План задан: <strong className="text-[var(--tk-ink)]">{plannedCount}/{sorted.length}</strong>
           </span>
-          <span className="rounded-md border border-[var(--tk-line)] bg-white px-2.5 py-1.5">
-            Дневных фактов: <strong className="text-[var(--tk-ink)]">{dailyFacts.length}</strong>
+          <span
+            className="rounded-md border border-[var(--tk-line)] bg-white px-2.5 py-1.5"
+            data-testid="gantt-daily-facts-count"
+            data-daily-facts={dailyFacts.length}
+          >
+            Дневных фактов:{" "}
+            <strong className="text-[var(--tk-ink)]">{dailyFacts.length}</strong>
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-2">

@@ -525,18 +525,43 @@ export function HierarchicalEstimatePanel({
                           <div className="text-right">
                             {locked ? (
                               leaf.rate == null ? (
-                                <span className="text-amber-800">нет данных</span>
+                                <span className="text-amber-800" title="нет данных">
+                                  —
+                                </span>
                               ) : (
                                 formatNumber(leaf.rate)
                               )
+                            ) : leaf.rate == null ? (
+                              <Input
+                                className="h-8 text-right"
+                                type="number"
+                                min={0}
+                                step="any"
+                                placeholder="—"
+                                title="нет данных"
+                                aria-label={`Ставка · ${leaf.name} (нет данных)`}
+                                value=""
+                                data-testid={`estimate-rate-${leaf.id}`}
+                                onChange={(e) => {
+                                  const raw = e.target.value.trim();
+                                  const rate =
+                                    raw === "" ? null : Number(raw);
+                                  onPatchLeaf(leaf, {
+                                    rate:
+                                      rate == null || Number.isNaN(rate)
+                                        ? null
+                                        : rate,
+                                  });
+                                }}
+                              />
                             ) : (
                               <Input
                                 className="h-8 text-right"
                                 type="number"
                                 min={0}
                                 step="any"
-                                placeholder="нет данных"
-                                value={leaf.rate == null ? "" : String(leaf.rate)}
+                                title="Ставка"
+                                value={String(leaf.rate)}
                                 data-testid={`estimate-rate-${leaf.id}`}
                                 onChange={(e) => {
                                   const raw = e.target.value.trim();
@@ -555,9 +580,10 @@ export function HierarchicalEstimatePanel({
                           <div
                             className="sticky right-0 bg-inherit text-right shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.08)]"
                             data-testid={`estimate-amount-${leaf.id}`}
+                            title={leaf.amount == null ? "нет данных" : undefined}
                           >
                             {leaf.amount == null
-                              ? "нет данных"
+                              ? "—"
                               : formatMoney(leaf.amount)}
                           </div>
                         </div>

@@ -1091,8 +1091,8 @@ export default function ZakupkaDetailPage() {
         <TabsContent value="calc">
           <div className="space-y-3 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
             <p className="text-sm">
-              Ресурсный черновик редактируем; оригинал сметы заказчика —
-              immutable. Собственные ресурсы не пишутся в нормативную смету.
+              Ресурсный черновик редактируем; оригинал сметы заказчика не
+              изменяется. Собственные ресурсы не пишутся в нормативную смету.
             </p>
             {calc ? (
               <Link

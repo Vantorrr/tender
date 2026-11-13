@@ -29,7 +29,9 @@ export function StatusBadge({
   return (
     <Badge
       variant="outline"
-      className={cn("font-medium", statusClass[status], className)}
+      className={cn("font-medium whitespace-nowrap", statusClass[status], className)}
+      data-testid={`status-badge-${status}`}
+      title={STATUS_LABELS[status]}
     >
       {STATUS_LABELS[status]}
     </Badge>

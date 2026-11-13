@@ -455,7 +455,8 @@ try {
     ok: true,
   });
   act("gantt-filter-after-reload", filtAfter);
-  await shot(page, "gantt.png");
+  // Early gantt shot is before day facts — retaken after day save for consistency.
+  await shot(page, "gantt-before-day.png");
 
   // ── Day: volume + people + photo via correct controls ──
   const dayUrl = `${base}/cabinet/proizvodstvo/day?planFactId=${TEST.planFactId}&date=${TEST.date}&work=${encodeURIComponent(TEST.work)}`;
@@ -570,6 +571,24 @@ try {
   const photoShot = path.join(media, `pass${passNo}-day-photo-card.png`);
   await photoCard.screenshot({ path: photoShot });
   results.shots.push(photoShot);
+
+  // ── Gantt after day save: daily facts must match the same fixture ──
+  await page.goto(`${base}/cabinet/gpr/${TEST.scheduleId}`);
+  await page.waitForTimeout(1200);
+  const dailyFactsAttr = await page
+    .getByTestId("gantt-daily-facts-count")
+    .getAttribute("data-daily-facts");
+  const dailyFactsCount = Number(dailyFactsAttr ?? "0");
+  assert("gantt-daily-facts-after-day-save", true, dailyFactsCount >= 1);
+  const ganttAfterDay = await page.getByTestId("plan-fact-gantt").innerText();
+  assertMatch("gantt-daily-facts-label-nonzero", ganttAfterDay, /Дневных фактов:\s*[1-9]/);
+  assert(
+    "gantt-title-once",
+    1,
+    (await page.getByTestId("gantt-title").count())
+  );
+  await page.getByTestId("plan-fact-gantt").scrollIntoViewIfNeeded();
+  await shot(page, "gantt.png");
 } catch (e) {
   results.nofail = false;
   results.fail.push({

@@ -56,9 +56,11 @@ export default function GprDetailPage() {
     (s) => s.procurementId === schedule.procurementId
   );
   const calWarnings = collectCalendarWarnings(schedule.stages, supplies, 40, schedule.calendar);
-  const planFact = data.planFacts.find(
-    (p) => p.procurementId === schedule.procurementId
-  );
+  const procurement = data.procurements.find((p) => p.id === schedule.procurementId);
+  // Prefer explicit planFactId so Gantt daily-fact count matches day screen for the same fixture.
+  const planFact =
+    data.planFacts.find((p) => p.id === procurement?.planFactId) ??
+    data.planFacts.find((p) => p.procurementId === schedule.procurementId);
 
   async function shiftStage(
     stageId: string,
@@ -283,9 +285,6 @@ export default function GprDetailPage() {
       ) : null}
 
       <div className="mb-6" data-testid="gantt-track">
-        <h2 className="mb-2 font-[family-name:var(--font-display)] text-base">
-          График — план и факт
-        </h2>
         <PlanFactGantt
           stages={schedule.stages}
           entries={planFact?.entries}
@@ -407,7 +406,7 @@ export default function GprDetailPage() {
           </>
         ) : (
           <p className="text-sm text-[var(--tk-muted)]">
-            Сводка появится после пересчёта cost-engine в связанном черновике
+            Сводка появится после пересчёта итогов в связанном черновике
             расчёта. Здесь нет угаданных Excel-формул.
           </p>
         )}
