@@ -201,6 +201,14 @@ describe("t33u DateInputRu / parseDateRu timezone + invalid", () => {
     expect(parseDateRu("31.02.2026")).toBeNull();
     expect(parseDateRu("2026-11-08")).toBe("2026-11-08");
   });
+
+  it("Enter+blur must not emit the same ISO twice (Gantt double-shift)", async () => {
+    const { nextEmittedIso } = await import("@/components/date-input-ru");
+    const first = nextEmittedIso("2026-11-01", "2026-11-03");
+    expect(first).toBe("2026-11-03");
+    // Second commit before parent re-renders (same as Enter then blur):
+    expect(nextEmittedIso(first!, "2026-11-03")).toBeNull();
+  });
 });
 
 describe("t33u Obmen — no org-wide fallback on procurement card", () => {

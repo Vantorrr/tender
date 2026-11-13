@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { formatDate, parseDateRu } from "@/lib/format";
 
@@ -10,6 +10,9 @@ import { formatDate, parseDateRu } from "@/lib/format";
  *
  * Commits only on blur (or Enter) so partial edits like «15.03.2026» → «1.03.2026»
  * never fire an intermediate save while the user is still typing.
+ *
+ * Enter commits once: we skip the subsequent blur commit, and also dedupe
+ * against the last emitted ISO so Gantt relative shifts cannot double-apply.
  */
 export function DateInputRu({
   value,
@@ -28,12 +31,15 @@ export function DateInputRu({
 }) {
   const [text, setText] = useState(() => (value ? formatDate(value) : ""));
   const [invalid, setInvalid] = useState(false);
+  const lastEmittedIso = useRef(value);
+  const skipNextBlurCommit = useRef(false);
 
   useEffect(() => {
     // Keep the editable text in sync when the parent changes the ISO value.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setText(value ? formatDate(value) : "");
     setInvalid(false);
+    lastEmittedIso.current = value;
   }, [value]);
 
   function commit(raw: string) {
@@ -49,7 +55,11 @@ export function DateInputRu({
     if (iso) {
       setText(formatDate(iso));
       setInvalid(false);
-      if (iso !== value) onChange(iso);
+      // Dedupe: Enter then blur must not fire onChange twice before parent re-renders.
+      if (iso !== lastEmittedIso.current) {
+        lastEmittedIso.current = iso;
+        onChange(iso);
+      }
       return;
     }
     // Keep the invalid text visible with an error (do not silently revert mid-feedback).
@@ -81,11 +91,19 @@ export function DateInputRu({
           }
           setInvalid(parseDateRu(v) == null);
         }}
-        onBlur={() => commit(text)}
+        onBlur={() => {
+          if (skipNextBlurCommit.current) {
+            skipNextBlurCommit.current = false;
+            return;
+          }
+          commit(text);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.preventDefault();
             commit(text);
+            // Blur for UX, but do not re-commit on the blur that follows Enter.
+            skipNextBlurCommit.current = true;
             (e.currentTarget as HTMLInputElement).blur();
           }
         }}
@@ -102,4 +120,13 @@ export function DateInputRu({
       ) : null}
     </div>
   );
+}
+
+/** Pure helper for regression: emit only when ISO differs from last emitted. */
+export function nextEmittedIso(
+  lastEmitted: string,
+  candidate: string | null
+): string | null {
+  if (!candidate || candidate === lastEmitted) return null;
+  return candidate;
 }
