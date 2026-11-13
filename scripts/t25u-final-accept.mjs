@@ -115,13 +115,34 @@ function digits(s) {
   return String(s ?? "").replace(/[^\d]/g, "");
 }
 async function login(page, email, password) {
-  await page.goto(`${base}/login`);
-  await page.getByLabel(/email/i).fill(email);
-  const pwdTab = page.getByRole("tab", { name: /Пароль/i });
-  if (await pwdTab.count()) await pwdTab.click();
-  await page.locator('input[type="password"]').first().fill(password);
-  await page.getByRole("button", { name: /Войти/i }).click();
-  await page.waitForURL(/\/cabinet/, { timeout: 25000 });
+  // Prefer API session cookie — UI login is flaky under cold Next compiles.
+  const api = await page.request.post(`${base}/api/auth/login`, {
+    data: { email, password },
+  });
+  if (api.ok()) {
+    await page.goto(`${base}/cabinet`);
+    await page.waitForURL(/\/cabinet/, { timeout: 25000 });
+    return;
+  }
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    await page.goto(`${base}/login`, { waitUntil: "domcontentloaded" });
+    const emailField = page.getByLabel(/email|почта|e-mail/i).or(
+      page.locator('input[type="email"], input[name="email"]').first()
+    );
+    try {
+      await emailField.first().waitFor({ state: "visible", timeout: 15000 });
+      await emailField.first().fill(email);
+      const pwdTab = page.getByRole("tab", { name: /Пароль/i });
+      if (await pwdTab.count()) await pwdTab.click();
+      await page.locator('input[type="password"]').first().fill(password);
+      await page.getByRole("button", { name: /Войти/i }).click();
+      await page.waitForURL(/\/cabinet/, { timeout: 25000 });
+      return;
+    } catch (err) {
+      if (attempt === 3) throw err;
+      await page.waitForTimeout(1500 * attempt);
+    }
+  }
 }
 
 async function shot(page, name) {
