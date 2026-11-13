@@ -492,8 +492,17 @@ export function shiftStages(
     if (!s.dependsOn) continue;
     const pred = byId.get(s.dependsOn);
     if (pred && !dependencySatisfied(pred, s)) {
+      const rel = s.dependencyType ?? "FS";
+      const relRu =
+        rel === "SS"
+          ? "начало–начало"
+          : rel === "FF"
+            ? "окончание–окончание"
+            : rel === "SF"
+              ? "начало–окончание"
+              : "окончание–начало";
       conflicts.push(
-        `${s.id} violates ${s.dependencyType ?? "FS"} dependency on ${pred.id}`
+        `Этап «${s.name}» нарушает зависимость «${relRu}» от «${pred.name}»`
       );
     }
   }

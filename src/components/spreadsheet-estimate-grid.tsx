@@ -62,6 +62,7 @@ function GridInput({
   step,
   min,
   placeholder,
+  title,
   readOnly,
   onCommit,
 }: {
@@ -71,6 +72,7 @@ function GridInput({
   step?: string;
   min?: number;
   placeholder?: string;
+  title?: string;
   readOnly?: boolean;
   onCommit: (value: string) => Promise<void> | void;
 }) {
@@ -85,6 +87,7 @@ function GridInput({
       step={step}
       min={min}
       placeholder={placeholder}
+      title={title}
       value={draft}
       readOnly={readOnly}
       disabled={saving}
@@ -240,16 +243,16 @@ function StageTotals({ stage, params }: { stage: GprStage; params: ResourceSched
   );
   const partial = built.incomplete.length > 0 || rollup.incomplete.length > 0 || !hasKnownMaterials;
   const values = [
-    ["S · Материалы", hasKnownMaterials ? total?.materials ?? 0 : null],
-    ["T · Люди", total?.labor ?? 0],
-    ["U · Техника", total?.equipment ?? 0],
-    ["V · Прямые", total?.direct ?? 0],
-    ["W · НР", total?.overhead ?? 0],
-    ["X · С НР", total?.costWithOh ?? 0],
-    ["Y · Прибыль", total?.profit ?? 0],
-    ["Z · Итого", total?.total ?? 0],
+    ["Материалы", hasKnownMaterials ? total?.materials ?? 0 : null],
+    ["Люди", total?.labor ?? 0],
+    ["Техника", total?.equipment ?? 0],
+    ["Прямые", total?.direct ?? 0],
+    ["Накладные", total?.overhead ?? 0],
+    ["Себестоимость", total?.costWithOh ?? 0],
+    ["Прибыль", total?.profit ?? 0],
+    ["Итого", total?.total ?? 0],
   ] as const;
-  return <>{values.map(([label, amount]) => <td key={label} className="min-w-[8.5rem] border-l border-[var(--tk-line)]/70 px-2 py-2 text-right tabular-nums"><div className="text-[10px] text-[var(--tk-muted)]">{label}{partial ? " · частично" : ""}</div><div className="font-medium">{amount == null ? "нет данных" : formatMoney(amount)}</div></td>)}</>;
+  return <>{values.map(([label, amount]) => <td key={label} className="min-w-[8.5rem] border-l border-[var(--tk-line)]/70 px-2 py-2 text-right tabular-nums"><div className="text-[10px] text-[var(--tk-muted)]">{label}{partial ? " · частично" : ""}</div><div className="font-medium" title={amount == null ? "нет данных" : undefined}>{amount == null ? "—" : formatMoney(amount)}</div></td>)}</>;
 }
 
 function ResourceCostCells({ leaf, params }: { leaf: EstimateLeaf; params: ResourceScheduleParams }) {
@@ -267,7 +270,7 @@ function ResourceCostCells({ leaf, params }: { leaf: EstimateLeaf; params: Resou
   const profit = cost == null ? null : cost * params.profitMarkupOnCostWithOh;
   const total = cost == null ? null : cost + (profit ?? 0);
   const values = [materials, labor, equipment, direct, overhead, cost, profit, total];
-  return <>{values.map((value, index) => <td key={index} className="border-b border-r border-[var(--tk-line)]/70 px-2 py-1 text-right text-[var(--tk-muted)]">{value == null ? (partial ? "нет данных" : "—") : formatMoney(value)}</td>)}</>;
+  return <>{values.map((value, index) => <td key={index} className="border-b border-r border-[var(--tk-line)]/70 px-2 py-1 text-right text-[var(--tk-muted)]" title={value == null && partial ? "нет данных" : undefined}>{value == null ? "—" : formatMoney(value)}</td>)}</>;
 }
 
 export function SpreadsheetEstimateGrid({
@@ -344,7 +347,8 @@ export function SpreadsheetEstimateGrid({
       type={key === "name" || key === "unit" ? "text" : "number"}
       step={key === "quantity" || key === "rate" ? "any" : "1"}
       min={0}
-      placeholder={key === "rate" ? "нет тарифа" : undefined}
+      placeholder={key === "rate" ? "—" : undefined}
+      title={key === "rate" && rawValue == null ? "нет данных" : undefined}
       readOnly={locked || (!stageResource && key !== "quantity" && key !== "rate")}
       onCommit={async (raw) => {
         if (key === "name" || key === "unit") {
@@ -383,7 +387,7 @@ export function SpreadsheetEstimateGrid({
           <label className="text-xs text-[var(--tk-muted)]">Вид<select className="mt-1 h-9 w-full rounded-md border bg-white px-2 text-sm text-[var(--tk-ink)]" value={manual.kind} onChange={(e) => { const kind = e.target.value as GprStageResource["kind"]; setManual((v) => ({ ...v, kind, basis: kind === "material" ? "material_qty" : v.basis === "material_qty" ? "count_per_shift" : v.basis })); }}>{Object.entries(KIND_LABEL).filter(([value]) => value !== "other").map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <label className="text-xs text-[var(--tk-muted)]">Ед.<Input className="mt-1 h-9 text-sm" value={manual.unit} onChange={(e) => setManual((v) => ({ ...v, unit: e.target.value }))} /></label>
           <label className="text-xs text-[var(--tk-muted)]">Количество<Input className="mt-1 h-9 text-sm" type="number" min={0} step="any" value={manual.quantity} onChange={(e) => setManual((v) => ({ ...v, quantity: e.target.value }))} /></label>
-          <label className="text-xs text-[var(--tk-muted)]">Ставка, ₽<Input className="mt-1 h-9 text-sm" type="number" min={0} step="any" placeholder="нет данных" value={manual.rate} onChange={(e) => setManual((v) => ({ ...v, rate: e.target.value }))} /></label>
+          <label className="text-xs text-[var(--tk-muted)]">Ставка, ₽<Input className="mt-1 h-9 text-sm" type="number" min={0} step="any" placeholder="—" title="нет данных" value={manual.rate} onChange={(e) => setManual((v) => ({ ...v, rate: e.target.value }))} /></label>
           <label className="text-xs text-[var(--tk-muted)] sm:col-span-2">Формула количества<select className="mt-1 h-9 w-full rounded-md border bg-white px-2 text-sm text-[var(--tk-ink)]" value={manual.basis} onChange={(e) => setManual((v) => ({ ...v, basis: e.target.value as ResourceQuantityBasis }))}>{Object.entries(BASIS_LABEL).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
           <div className="flex items-end"><Button disabled={saving || !manual.name.trim() || !selectedStageId} onClick={() => { const quantity = toNumber(manual.quantity); const rate = toNumber(manual.rate); if (quantity == null || quantity < 0 || (manual.rate.trim() && rate == null)) { toast.error("Проверьте количество и ставку"); return; } const stage = stages.find((x) => x.id === selectedStageId); const inferredDays = stage ? Math.max(1, diffDays(stage.start, stage.end) + 1) : 1; void addRows([{ kind: manual.kind, name: manual.name.trim(), unit: manual.unit.trim() || "ед.", quantity, rate, quantityBasis: manual.basis, hoursPerShift: params.hoursPerShift, shiftsPerDay: manual.kind === "labor" ? params.personnelShiftsPerDay : params.equipmentShiftsPerDay, days: inferredDays }]); }}>Добавить</Button></div>
         </div>
@@ -411,7 +415,7 @@ export function SpreadsheetEstimateGrid({
         <table className="min-w-[2400px] border-separate border-spacing-0 text-xs tabular-nums">
           <thead className="sticky top-0 z-20 bg-stone-100 text-[var(--tk-ink)]">
             <tr>
-              {["A · №", "B · Раздел", "C · Работа / ресурс", "D · Ед.", "E · Объём", "F · Дл., дн.", "G · Начало", "H · Окончание", "I · Тип", "J · Категория", "K · Основание", "L · Кол-во", "M · Тариф, ₽", "N · ч/смена", "O · смен/сутки", "P · дни", "Q · часы", "R · Сумма, ₽", "S · Материалы", "T · Люди", "U · Техника", "V · Прямые", "W · НР", "X · С/с", "Y · Прибыль", "Z · Итого"].map((heading, index) => <th key={heading} style={index < 3 ? { left: [0, 72, 264][index] } : undefined} className={`sticky top-0 border-b border-r border-[var(--tk-line)] px-2 py-2 text-left font-medium ${index < 3 ? "z-30 bg-stone-100" : "z-20"} ${index === 0 ? "w-[72px] min-w-[72px]" : index === 1 ? "w-48 min-w-48" : index === 2 ? "w-64 min-w-64" : "min-w-[7rem]"}`}>{heading}</th>)}
+              {["№", "Раздел", "Работа / ресурс", "Ед.", "Объём", "Дл., дн.", "Начало", "Окончание", "Тип", "Категория", "Основание", "Кол-во", "Ставка, ₽", "ч/смена", "смен/сутки", "дни", "часы", "Сумма, ₽", "Материалы", "Люди", "Техника", "Прямые", "Накладные", "Себестоимость", "Прибыль", "Итого"].map((heading, index) => <th key={heading} style={index < 3 ? { left: [0, 72, 264][index] } : undefined} className={`sticky top-0 border-b border-r border-[var(--tk-line)] px-2 py-2 text-left font-medium ${index < 3 ? "z-30 bg-stone-100" : "z-20"} ${index === 0 ? "w-[72px] min-w-[72px]" : index === 1 ? "w-48 min-w-48" : index === 2 ? "w-64 min-w-64" : "min-w-[7rem]"}`}>{heading}</th>)}
             </tr>
           </thead>
           <tbody>
@@ -443,7 +447,7 @@ export function SpreadsheetEstimateGrid({
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-1 py-1">{stage && leaf.source === "stage_resource" ? tableInput(leaf, "shiftsPerDay") : "—"}</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-1 py-1">{stage && leaf.source === "stage_resource" ? tableInput(leaf, "days") : "—"}</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-2 py-1 text-right">{leaf.hoursQ == null ? "—" : formatNumber(leaf.hoursQ)}</td>
-                  <td className={`border-b border-r border-[var(--tk-line)]/70 px-2 py-1 text-right font-medium ${leaf.amount == null ? "text-amber-800" : ""}`}>{leaf.amount == null ? "нет тарифа" : formatMoney(leaf.amount)}</td>
+                  <td className={`border-b border-r border-[var(--tk-line)]/70 px-2 py-1 text-right font-medium ${leaf.amount == null ? "text-amber-800" : ""}`} title={leaf.amount == null ? "нет данных" : undefined}>{leaf.amount == null ? "—" : formatMoney(leaf.amount)}</td>
                   <ResourceCostCells leaf={leaf} params={params} />
                 </tr>;
                 return row;
@@ -453,7 +457,7 @@ export function SpreadsheetEstimateGrid({
                 <td style={{ left: 72 }} className="sticky z-10 w-48 min-w-48 border-b border-r border-[var(--tk-line)] bg-stone-50 px-2 py-2"><button type="button" className="text-left hover:underline" onClick={() => setCollapsed((current) => ({ ...current, [node.id]: !current[node.id] }))}>{isCollapsed ? "▸" : "▾"} {node.name}</button></td>
                 <td style={{ left: 264 }} className="sticky z-10 w-64 min-w-64 border-b border-r border-[var(--tk-line)] bg-stone-50 px-2 py-2">{stage?.workName || (isUnbound ? "Позиции расчёта" : node.name)}</td>
                 <td className="border-b border-r border-[var(--tk-line)] px-2 py-2 text-[var(--tk-muted)]">—</td>
-                <td className="border-b border-r border-[var(--tk-line)] px-2 py-2 text-right">{stage?.planVolume == null ? "нет данных" : formatNumber(stage.planVolume)}</td>
+                <td className="border-b border-r border-[var(--tk-line)] px-2 py-2 text-right" title={stage?.planVolume == null ? "нет данных" : undefined}>{stage?.planVolume == null ? "—" : formatNumber(stage.planVolume)}</td>
                 <td className="border-b border-r border-[var(--tk-line)] px-2 py-2 text-right">{plannedDays ?? "—"}</td>
                 <td className="border-b border-r border-[var(--tk-line)] px-2 py-2">{stage?.start ?? "—"}</td>
                 <td className="border-b border-r border-[var(--tk-line)] px-2 py-2">{stage?.end ?? "—"}</td>

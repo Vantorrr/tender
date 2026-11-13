@@ -117,7 +117,7 @@ export function buildProjectAnalytics(
     generatedAt: new Date().toISOString(),
     method: "deterministic_aggregate_v1",
     disclaimer:
-      "Записка собрана детерминированно из загруженных документов. Это не ИИ-экспертное заключение и не обещание точности.",
+      "Записка собрана из загруженных документов по правилам сервиса. Это не ИИ-экспертное заключение и не обещание точности.",
     quality: {
       status: sourceDocs.length === 0 || missing.length >= 3
         ? "insufficient_sources"

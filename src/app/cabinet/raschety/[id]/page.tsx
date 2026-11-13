@@ -332,13 +332,21 @@ export default function RaschetDetailPage() {
     { label: "Производство", href: "/cabinet/proizvodstvo" },
   ];
 
+  const directorySubtitle = dir
+    ? `Справочник: ${dir.name} · версия ${dir.version}`
+    : "версия справочника не указана";
+  const procurementSubtitle = procurement
+    ? [procurement.number, procurement.title].filter(Boolean).join(" — ")
+    : "закупка не указана";
+  const calcKindSubtitle = locked
+    ? "оригинал сметы заказчика"
+    : "ресурсный черновик";
+
   return (
     <div>
       <PageHeader
         title={calc.title}
-        description={`Справочник: ${dir?.name ?? "—"} v${dir?.version ?? "?"} · закупка ${calc.procurementId} · ${
-          locked ? "оригинал (immutable)" : "ресурсный черновик"
-        }`}
+        description={`${directorySubtitle} · ${procurementSubtitle} · ${calcKindSubtitle}`}
         actions={
           <>
             {procurement && user && userHasSection(user, "raschety") ? (
@@ -419,16 +427,16 @@ export default function RaschetDetailPage() {
                       });
                       await refresh();
                       toast.success(
-                        "Cost-engine: НР×прямые + наценка на с/с с НР (НДС — нет данных)"
+                        "Пересчёт: накладные от прямых + наценка на себестоимость (НДС — нет данных)"
                       );
                     } catch (e) {
                       toast.error(
-                        e instanceof Error ? e.message : "Ошибка cost-engine"
+                        e instanceof Error ? e.message : "Ошибка пересчёта"
                       );
                     }
                   }}
                 >
-                  Cost-engine
+                  Пересчитать итоги
                 </Button>
               </>
             ) : null}
@@ -593,9 +601,8 @@ export default function RaschetDetailPage() {
         </div>
       ) : (
         <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
-          Редактируемый черновик. Арифметика детерминированная; причины
-          отклонений только из сравнения полей — без выдуманных LLM-причин. Не
-          обещаем 97% точности.
+          Черновик можно редактировать. Суммы пересчитываются автоматически по
+          формулам сметы.
         </div>
       )}
 
@@ -662,15 +669,15 @@ export default function RaschetDetailPage() {
         <div className="tk-glass rounded-3xl px-4 py-2" data-testid="calc-total-chip">
           <div className="text-xs text-[var(--tk-muted)]">
             {calc.kind === "customer_original"
-              ? "Оригинал сметы (immutable)"
+              ? "Оригинал сметы заказчика"
               : draftSlices
-                ? `Черновик · Z (ресурсный)${
+                ? `Черновик · итого${
                     calc.costSummary?.totalsIncomplete || draftSlices.partial
-                      ? " · PARTIAL"
+                      ? " · расчёт неполный"
                       : ""
                   }`
                 : calc.costSummary?.totalsIncomplete
-                  ? "Итого черновика · PARTIAL"
+                  ? "Итого черновика · расчёт неполный"
                   : "Итого черновика"}
           </div>
           <div className="font-[family-name:var(--font-display)] text-xl">
@@ -683,7 +690,7 @@ export default function RaschetDetailPage() {
                 className="ml-2 text-sm font-normal text-amber-800"
                 data-testid="calc-total-chip-partial"
               >
-                PARTIAL
+                расчёт неполный
               </span>
             ) : null}
           </div>
@@ -704,8 +711,8 @@ export default function RaschetDetailPage() {
           }
           originalLabel={
             calc.kind === "customer_original"
-              ? "Этот документ — оригинал (immutable)"
-              : "Оригинал сметы (immutable)"
+              ? "Этот документ — оригинал сметы заказчика"
+              : "Оригинал сметы заказчика"
           }
           costSummary={calc.costSummary}
           costIncomplete={Boolean(calc.costSummary?.totalsIncomplete)}
@@ -1109,7 +1116,7 @@ export default function RaschetDetailPage() {
       {calc.costSummary ? (
         <section className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
           <h2 className="font-[family-name:var(--font-display)] text-base">
-            Сводка cost-engine
+            Сводка расчёта
           </h2>
           <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
             <div>C0 (без резерва): {formatMoney(calc.costSummary.C0)}</div>
@@ -1130,8 +1137,8 @@ export default function RaschetDetailPage() {
             </div>
           </dl>
           <p className="mt-2 text-xs text-[var(--tk-muted)]">
-            Метод {calc.costSummary.method}. Без угадывания Excel и без обещания
-            97%. Север — только подтверждённые статьи.
+            Метод {calc.costSummary.method}. Северные надбавки — только по
+            подтверждённым статьям.
           </p>
         </section>
       ) : null}

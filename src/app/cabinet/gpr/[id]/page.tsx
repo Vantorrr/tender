@@ -56,9 +56,11 @@ export default function GprDetailPage() {
     (s) => s.procurementId === schedule.procurementId
   );
   const calWarnings = collectCalendarWarnings(schedule.stages, supplies, 40, schedule.calendar);
-  const planFact = data.planFacts.find(
-    (p) => p.procurementId === schedule.procurementId
-  );
+  const procurement = data.procurements.find((p) => p.id === schedule.procurementId);
+  // Prefer explicit planFactId so Gantt daily-fact count matches day screen for the same fixture.
+  const planFact =
+    data.planFacts.find((p) => p.id === procurement?.planFactId) ??
+    data.planFacts.find((p) => p.procurementId === schedule.procurementId);
 
   async function shiftStage(
     stageId: string,
@@ -262,8 +264,16 @@ export default function GprDetailPage() {
       ) : null}
 
       {(schedule.conflicts?.length ?? 0) > 0 ? (
-        <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-950">
-          Конфликты зависимостей: {schedule.conflicts!.join("; ")}
+        <div
+          className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-950"
+          data-testid="gantt-dependency-conflict"
+        >
+          <p className="font-semibold">Конфликт зависимостей</p>
+          <ul className="mt-1 list-disc space-y-1 pl-5">
+            {schedule.conflicts!.map((c) => (
+              <li key={c}>{c}</li>
+            ))}
+          </ul>
         </div>
       ) : null}
 
@@ -275,9 +285,6 @@ export default function GprDetailPage() {
       ) : null}
 
       <div className="mb-6" data-testid="gantt-track">
-        <h2 className="mb-2 font-[family-name:var(--font-display)] text-base">
-          План / факт · Гант
-        </h2>
         <PlanFactGantt
           stages={schedule.stages}
           entries={planFact?.entries}
@@ -312,51 +319,51 @@ export default function GprDetailPage() {
               {cost.resourceSlices ? (
                 <>
                   <div data-testid="gpr-slice-v">
-                    V прямые
+                    Прямые затраты
                     {cost.totalsIncomplete || cost.resourceSlices.partial
-                      ? " · PARTIAL"
+                      ? " · расчёт неполный"
                       : ""}
                     : {formatMoney(cost.resourceSlices.direct)}
                   </div>
                   <div data-testid="gpr-slice-w">
-                    W НР 43%
+                    Накладные 43%
                     {cost.totalsIncomplete || cost.resourceSlices.partial
-                      ? " · PARTIAL"
+                      ? " · расчёт неполный"
                       : ""}
                     : {formatMoney(cost.resourceSlices.overhead)}
                   </div>
                   <div data-testid="gpr-slice-x">
-                    X с/с с НР
+                    Себестоимость с накладными
                     {cost.totalsIncomplete || cost.resourceSlices.partial
-                      ? " · PARTIAL"
+                      ? " · расчёт неполный"
                       : ""}
                     : {formatMoney(cost.resourceSlices.costWithOh)}
                   </div>
                   <div data-testid="gpr-slice-y">
-                    Y наценка 40%
+                    Прибыль
                     {cost.totalsIncomplete || cost.resourceSlices.partial
-                      ? " · PARTIAL"
+                      ? " · расчёт неполный"
                       : ""}
                     : {formatMoney(cost.resourceSlices.profit)}
                   </div>
                   <div data-testid="gpr-slice-z">
-                    Z итого
+                    Итого
                     {cost.totalsIncomplete || cost.resourceSlices.partial
-                      ? " · PARTIAL"
+                      ? " · расчёт неполный"
                       : ""}
                     : {formatMoney(cost.resourceSlices.total)}
                   </div>
                   <div data-testid="gpr-materials-cost">
-                    S материалы:{" "}
+                    Материалы:{" "}
                     {cost.resourceSlices.materials > 0
                       ? formatMoney(cost.resourceSlices.materials)
                       : "нет данных"}
                   </div>
                   <div data-testid="gpr-labor-cost">
-                    T люди: {formatMoney(cost.resourceSlices.labor)}
+                    Люди: {formatMoney(cost.resourceSlices.labor)}
                   </div>
                   <div data-testid="gpr-equipment-cost">
-                    U техника: {formatMoney(cost.resourceSlices.equipment)}
+                    Техника: {formatMoney(cost.resourceSlices.equipment)}
                   </div>
                   {buckets && buckets.other > 0 ? (
                     <div data-testid="gpr-other-cost">
@@ -399,7 +406,7 @@ export default function GprDetailPage() {
           </>
         ) : (
           <p className="text-sm text-[var(--tk-muted)]">
-            Сводка появится после пересчёта cost-engine в связанном черновике
+            Сводка появится после пересчёта итогов в связанном черновике
             расчёта. Здесь нет угаданных Excel-формул.
           </p>
         )}

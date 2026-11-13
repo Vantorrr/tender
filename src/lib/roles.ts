@@ -90,6 +90,7 @@ export const DEFAULT_SECTIONS: Record<Role, SectionKey[]> = {
 
 export const STATUS_LABELS = {
   zagruzheno: "Загружено",
+  // Plain space for titles/ARIA; StatusBadge renders «В»+gap+«работе» for chips.
   v_rabote: "В работе",
   gotovo: "Готово",
   trebuet_proverki: "Требует проверки",

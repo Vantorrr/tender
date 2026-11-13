@@ -128,7 +128,7 @@ export function ProjectAiChat({
         </SheetHeader>
 
         <div className="border-b border-[var(--tk-line)] bg-stone-50 px-4 py-2.5 text-xs leading-relaxed text-[var(--tk-muted)]">
-          ИИ использует карточку, документы, расчёт, ГПР, риски и план/факт этого проекта. Вопрос и выдержки отправляются настроенной модели OpenRouter; ответы требуют проверки по источникам.
+          ИИ использует карточку, документы, расчёт, ГПР, риски и план/факт этого проекта. Вопрос и выдержки уходят во внешний сервис анализа; ответы нужно сверять с источниками.
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4" aria-live="polite">
