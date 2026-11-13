@@ -531,37 +531,24 @@ export function HierarchicalEstimatePanel({
                               ) : (
                                 formatNumber(leaf.rate)
                               )
-                            ) : leaf.rate == null ? (
-                              <Input
-                                className="h-8 text-right"
-                                type="number"
-                                min={0}
-                                step="any"
-                                placeholder="—"
-                                title="нет данных"
-                                aria-label={`Ставка · ${leaf.name} (нет данных)`}
-                                value=""
-                                data-testid={`estimate-rate-${leaf.id}`}
-                                onChange={(e) => {
-                                  const raw = e.target.value.trim();
-                                  const rate =
-                                    raw === "" ? null : Number(raw);
-                                  onPatchLeaf(leaf, {
-                                    rate:
-                                      rate == null || Number.isNaN(rate)
-                                        ? null
-                                        : rate,
-                                  });
-                                }}
-                              />
                             ) : (
                               <Input
                                 className="h-8 text-right"
                                 type="number"
                                 min={0}
                                 step="any"
-                                title="Ставка"
-                                value={String(leaf.rate)}
+                                placeholder="—"
+                                title={
+                                  leaf.rate == null ? "нет данных" : "Ставка"
+                                }
+                                aria-label={
+                                  leaf.rate == null
+                                    ? `Ставка · ${leaf.name} (нет данных)`
+                                    : `Ставка · ${leaf.name}`
+                                }
+                                value={
+                                  leaf.rate == null ? "" : String(leaf.rate)
+                                }
                                 data-testid={`estimate-rate-${leaf.id}`}
                                 onChange={(e) => {
                                   const raw = e.target.value.trim();

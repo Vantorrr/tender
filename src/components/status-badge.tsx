@@ -19,6 +19,34 @@ const reviewClass: Record<ReviewStatus, string> = {
   dublirovana: "bg-orange-50 text-orange-900 border-orange-200",
 };
 
+/** Visible two-word status — flex gap cannot collapse like a tight single string. */
+export function StatusLabel({
+  status,
+  className,
+}: {
+  status: CardStatus;
+  className?: string;
+}) {
+  const plain = STATUS_LABELS[status];
+  if (status === "v_rabote") {
+    return (
+      <span
+        className={cn("inline-flex items-baseline gap-[0.35em]", className)}
+        data-testid="status-label-v_rabote"
+        title="В работе"
+      >
+        <span>В</span>
+        <span>работе</span>
+      </span>
+    );
+  }
+  return (
+    <span className={className} data-testid={`status-label-${status}`} title={plain}>
+      {plain}
+    </span>
+  );
+}
+
 export function StatusBadge({
   status,
   className,
@@ -30,14 +58,14 @@ export function StatusBadge({
     <Badge
       variant="outline"
       className={cn(
-        "h-6 px-2.5 font-medium whitespace-nowrap overflow-visible",
+        "h-6 min-w-fit shrink-0 px-2.5 font-medium whitespace-nowrap overflow-visible tracking-normal",
         statusClass[status],
         className
       )}
       data-testid={`status-badge-${status}`}
       title={STATUS_LABELS[status]}
     >
-      {STATUS_LABELS[status]}
+      <StatusLabel status={status} />
     </Badge>
   );
 }
@@ -52,7 +80,7 @@ export function ReviewBadge({
   return (
     <Badge
       variant="outline"
-      className={cn("font-medium", reviewClass[status], className)}
+      className={cn("font-medium whitespace-nowrap", reviewClass[status], className)}
     >
       {REVIEW_LABELS[status]}
     </Badge>

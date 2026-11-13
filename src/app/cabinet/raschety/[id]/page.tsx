@@ -332,13 +332,21 @@ export default function RaschetDetailPage() {
     { label: "Производство", href: "/cabinet/proizvodstvo" },
   ];
 
+  const directorySubtitle = dir
+    ? `Справочник: ${dir.name} · версия ${dir.version}`
+    : "версия справочника не указана";
+  const procurementSubtitle = procurement
+    ? [procurement.number, procurement.title].filter(Boolean).join(" — ")
+    : "закупка не указана";
+  const calcKindSubtitle = locked
+    ? "оригинал сметы заказчика"
+    : "ресурсный черновик";
+
   return (
     <div>
       <PageHeader
         title={calc.title}
-        description={`Справочник: ${dir?.name ?? "—"} v${dir?.version ?? "?"} · закупка ${calc.procurementId} · ${
-          locked ? "оригинал сметы заказчика" : "ресурсный черновик"
-        }`}
+        description={`${directorySubtitle} · ${procurementSubtitle} · ${calcKindSubtitle}`}
         actions={
           <>
             {procurement && user && userHasSection(user, "raschety") ? (
@@ -593,9 +601,8 @@ export default function RaschetDetailPage() {
         </div>
       ) : (
         <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
-          Редактируемый черновик. Арифметика детерминированная; причины
-          отклонений только из сравнения полей — без выдуманных LLM-причин. Не
-          обещаем 97% точности.
+          Черновик можно редактировать. Суммы пересчитываются автоматически по
+          формулам сметы.
         </div>
       )}
 
@@ -1130,8 +1137,8 @@ export default function RaschetDetailPage() {
             </div>
           </dl>
           <p className="mt-2 text-xs text-[var(--tk-muted)]">
-            Метод {calc.costSummary.method}. Без угадывания Excel и без обещания
-            97%. Север — только подтверждённые статьи.
+            Метод {calc.costSummary.method}. Северные надбавки — только по
+            подтверждённым статьям.
           </p>
         </section>
       ) : null}
