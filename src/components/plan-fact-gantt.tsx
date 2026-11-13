@@ -443,12 +443,36 @@ export function PlanFactGantt({
                       <div className="text-right tabular-nums">
                         {resSummary.equipment ? formatNumber(resSummary.equipment) : "—"}
                       </div>
-                      <div className="text-right tabular-nums">
+                      <div
+                        className="text-right tabular-nums"
+                        data-testid={`gantt-stage-cost-${stage.id}`}
+                      >
                         {resSummary.cost == null
                           ? "нет данных"
                           : formatMoney(resSummary.cost)}
                         {resSummary.incomplete ? (
-                          <span className="mt-0.5 block text-[10px] text-amber-800">неполно</span>
+                          <span
+                            className="mt-0.5 block text-[10px] text-amber-800"
+                            data-testid={`gantt-cost-incomplete-${stage.id}`}
+                            title={
+                              resSummary.incompleteHint === "нет тарифа"
+                                ? "В сумме учтены только ресурсы с тарифом; позиции без ставки не входят в итог"
+                                : undefined
+                            }
+                          >
+                            неполно
+                            {resSummary.incompleteHint
+                              ? ` · ${resSummary.incompleteHint}`
+                              : ""}
+                          </span>
+                        ) : null}
+                        {resSummary.busCost != null ? (
+                          <span
+                            className="mt-0.5 block text-[10px] text-[var(--tk-muted)]"
+                            data-testid={`gantt-bus-cost-${stage.id}`}
+                          >
+                            автобус {formatMoney(resSummary.busCost)}
+                          </span>
                         ) : null}
                       </div>
                     </div>

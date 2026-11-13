@@ -52,42 +52,54 @@ export function DateInputRu({
       if (iso !== value) onChange(iso);
       return;
     }
+    // Keep the invalid text visible with an error (do not silently revert mid-feedback).
     setInvalid(true);
-    if (value) {
-      setText(formatDate(value));
-      setInvalid(false);
-    }
   }
 
+  const errorId = testId ? `${testId}-error` : id ? `${id}-error` : undefined;
+
   return (
-    <Input
-      id={id}
-      data-testid={testId}
-      inputMode="numeric"
-      placeholder="ДД.ММ.ГГГГ"
-      autoComplete="off"
-      lang="ru"
-      disabled={disabled}
-      className={className}
-      value={text}
-      aria-invalid={invalid || undefined}
-      onChange={(e) => {
-        const v = e.target.value;
-        setText(v);
-        if (v.trim() === "") {
-          setInvalid(false);
-          return;
-        }
-        setInvalid(parseDateRu(v) == null);
-      }}
-      onBlur={() => commit(text)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") {
-          e.preventDefault();
-          commit(text);
-          (e.currentTarget as HTMLInputElement).blur();
-        }
-      }}
-    />
+    <div className="grid gap-1">
+      <Input
+        id={id}
+        data-testid={testId}
+        inputMode="numeric"
+        placeholder="ДД.ММ.ГГГГ"
+        autoComplete="off"
+        lang="ru"
+        disabled={disabled}
+        className={className}
+        value={text}
+        aria-invalid={invalid || undefined}
+        aria-describedby={invalid && errorId ? errorId : undefined}
+        onChange={(e) => {
+          const v = e.target.value;
+          setText(v);
+          if (v.trim() === "") {
+            setInvalid(false);
+            return;
+          }
+          setInvalid(parseDateRu(v) == null);
+        }}
+        onBlur={() => commit(text)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit(text);
+            (e.currentTarget as HTMLInputElement).blur();
+          }
+        }}
+      />
+      {invalid ? (
+        <p
+          id={errorId}
+          data-testid={errorId}
+          className="text-[11px] font-medium text-rose-700"
+          role="alert"
+        >
+          Неверная дата — укажите ДД.ММ.ГГГГ
+        </p>
+      ) : null}
+    </div>
   );
 }

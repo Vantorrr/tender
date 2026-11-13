@@ -307,7 +307,13 @@ function DayDetailsInner() {
           <DateInputRu
             data-testid="day-date"
             value={date}
-            onChange={(iso) => setDate(iso)}
+            onChange={(iso) => {
+              setDate(iso);
+              // Persist calendar day in the query so reload cannot TZ-shift the field.
+              const next = new URLSearchParams(sp.toString());
+              next.set("date", iso);
+              router.replace(`?${next.toString()}`, { scroll: false });
+            }}
           />
         </div>
         <div>

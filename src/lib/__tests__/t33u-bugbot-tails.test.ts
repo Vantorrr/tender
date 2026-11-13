@@ -56,42 +56,138 @@ describe("t33u Gantt cost uses hour formula (Q×M)", () => {
     };
     const summary = stageResourceSummary(stage);
     expect(summary.cost).toBe(174_900);
+    expect(summary.busCost).toBe(174_900);
     expect(summary.incomplete).toBe(false);
     // Wrong legacy formula:
     expect(2 * 2650).toBe(5300);
   });
 
-  it("sums labor+equipment+material with resolveResourceDimensions", () => {
+  it("Демонтаж stage sum includes bus 174900 and matches line rollup", () => {
+    // Mirror t25u fixture gst-2 resources (calc model byte-identical).
     const stage: GprStage = {
-      id: "s",
-      name: "S",
+      id: "gst-2",
+      name: "Демонтаж [TEST]",
+      workName: "Демонтаж перегородок",
       start: "2026-11-01",
-      end: "2026-11-01",
-      sequence: 1,
+      end: "2026-11-20",
+      sequence: 2,
       resources: [
         {
-          id: "m",
-          kind: "material",
-          name: "Щебень",
+          id: "rst-2-labor",
+          kind: "labor",
+          name: "Демонтажник",
           quantity: 10,
-          unit: "т",
-          rate: 100,
-          quantityBasis: "material_qty",
+          unit: "чел",
+          rate: 1054,
         },
         {
-          id: "l",
+          id: "rst-2-labor-2",
           kind: "labor",
-          name: "Монтажник",
-          quantity: 66,
-          unit: "чел.-ч",
-          rate: 1400,
-          quantityBasis: "total_hours",
+          name: "Электрогазосварщик 3 разряда",
+          quantity: 2,
+          unit: "чел",
+          rate: 1376,
+        },
+        {
+          id: "rst-2-mat",
+          kind: "material",
+          name: "Контейнеры под бой",
+          quantity: 8,
+          unit: "шт",
+          rate: 4500,
+        },
+        {
+          id: "rst-2-eq",
+          kind: "equipment",
+          name: "JCB 5 CX",
+          quantity: 2,
+          unit: "маш",
+          rate: 5800,
+        },
+        {
+          id: "rst-2-bus",
+          kind: "bus",
+          name: "Автобус доставки",
+          quantity: 2,
+          unit: "ед",
+          rate: 2650,
+          quantityBasis: "count_per_shift",
+          hoursPerShift: 11,
+          shiftsPerDay: 1,
+          days: 3,
         },
       ],
     };
     const summary = stageResourceSummary(stage);
-    expect(summary.cost).toBe(10 * 100 + 66 * 1400);
-    expect(summary.labor).toBe(66);
+    expect(summary.busCost).toBe(174_900);
+    expect(summary.incomplete).toBe(false);
+    const lineSum = summary.lines.reduce(
+      (s, line) => s + (line.amount ?? 0),
+      0
+    );
+    expect(summary.cost).toBe(lineSum);
+    expect(summary.cost).toBeGreaterThan(174_900);
+    const busLine = summary.lines.find((l) => l.resourceId === "rst-2-bus");
+    expect(busLine?.amount).toBe(174_900);
+  });
+
+  it("Мобилизация «неполно» is honest missing tariff, not a cost-formula bug", () => {
+    const stage: GprStage = {
+      id: "gst-1",
+      name: "Мобилизация [TEST]",
+      workName: "Мобилизация",
+      start: "2026-10-25",
+      end: "2026-11-02",
+      sequence: 1,
+      resources: [
+        {
+          id: "rst-1-labor",
+          kind: "labor",
+          name: "Дорожный рабочий",
+          quantity: 4,
+          unit: "чел",
+          rate: 1054,
+        },
+        {
+          id: "rst-1-eq",
+          kind: "equipment",
+          name: "JCB 5 CX мобилизация",
+          quantity: 1,
+          unit: "маш",
+          rate: 5800,
+        },
+        {
+          id: "rst-1-mat",
+          kind: "material",
+          name: "Материалы мобилизации",
+          quantity: 1,
+          unit: "компл",
+          rate: null,
+        },
+        {
+          id: "rst-1-bus",
+          kind: "bus",
+          name: "Автобус мобилизации",
+          quantity: 1,
+          unit: "ед",
+          rate: 2650,
+          quantityBasis: "count_per_shift",
+          hoursPerShift: 11,
+          shiftsPerDay: 1,
+          days: 2,
+        },
+      ],
+    };
+    const summary = stageResourceSummary(stage);
+    expect(summary.incomplete).toBe(true);
+    expect(summary.incompleteHint).toBe("нет тарифа");
+    expect(summary.cost).not.toBeNull();
+    expect(summary.busCost).toBe(1 * 11 * 1 * 2 * 2650); // 58_300
+    const mat = summary.lines.find((l) => l.resourceId === "rst-1-mat");
+    expect(mat?.amount).toBeNull();
+    expect(mat?.incomplete.some((x) => x.startsWith("missing_tariff:"))).toBe(
+      true
+    );
   });
 });
 
