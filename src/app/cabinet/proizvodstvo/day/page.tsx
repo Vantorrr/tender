@@ -356,15 +356,15 @@ function DayDetailsInner() {
           className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-5"
           data-testid="day-plan-card"
         >
-          <p className="text-xs text-[var(--tk-muted)]">План (срез дня из ГПР)</p>
+          <p className="text-xs text-[var(--tk-muted)]">План</p>
           <p className="mt-1 font-[family-name:var(--font-display)] text-3xl">
-            {linkedStages.length === 0 ? (
+            {linkedStages.length === 0 || dayPlan <= 0 ? (
               <span className="text-lg text-amber-800">нет данных</span>
             ) : (
               <>
-                {formatNumber(dayPlan)}{" "}
-                <span className="text-base font-normal">
-                  {entry?.unit ?? ""}
+                {Math.round((dayPlan / Math.max(dayPlan, 1)) * 100)}%
+                <span className="ml-2 text-base font-normal text-[var(--tk-muted)]">
+                  ({formatNumber(dayPlan)} {entry?.unit ?? ""})
                 </span>
               </>
             )}
@@ -374,10 +374,21 @@ function DayDetailsInner() {
           className="rounded-2xl border border-teal-800 bg-teal-800 p-5 text-white"
           data-testid="day-fact-card"
         >
-          <p className="text-xs text-teal-100">Факт за день</p>
+          <p className="text-xs text-teal-100">Факт</p>
           <p className="mt-1 font-[family-name:var(--font-display)] text-3xl">
-            {formatNumber(factVal)}{" "}
-            <span className="text-base font-normal">{entry?.unit ?? ""}</span>
+            {dayPlan > 0 ? (
+              <>
+                {Math.round((factVal / dayPlan) * 100)}%
+                <span className="ml-2 text-base font-normal text-teal-100">
+                  ({formatNumber(factVal)} {entry?.unit ?? ""})
+                </span>
+              </>
+            ) : (
+              <>
+                {formatNumber(factVal)}{" "}
+                <span className="text-base font-normal">{entry?.unit ?? ""}</span>
+              </>
+            )}
           </p>
           <p className="mt-2 text-sm">
             Δ к плану дня:{" "}
@@ -458,12 +469,22 @@ function DayDetailsInner() {
               placeholder="подпись к снимку"
             />
           </div>
-          <Input
+          <input
             type="file"
             accept="image/*"
             ref={photoRef}
+            className="hidden"
             data-testid="day-upload-input"
           />
+          <Button
+            type="button"
+            variant="outline"
+            disabled={saving || !entry}
+            data-testid="day-upload-btn"
+            onClick={() => photoRef.current?.click()}
+          >
+            Загрузить фото
+          </Button>
           <Button disabled={saving || !entry} data-testid="day-save" onClick={() => void save(false)}>
             {saving ? "Сохранение…" : "Сохранить"}
           </Button>
@@ -490,8 +511,11 @@ function DayDetailsInner() {
           data-testid="day-photo-report"
         >
           {photos.length === 0 ? (
-            <p className="text-sm text-[var(--tk-muted)]">
-              Нет фото за этот день / вид работ
+            <p
+              className="col-span-full rounded-xl border border-dashed border-[var(--tk-line)] bg-stone-50 px-4 py-8 text-center text-sm text-[var(--tk-muted)]"
+              data-testid="day-photo-empty"
+            >
+              Фотоотчёт пуст. Нажмите «Загрузить фото», укажите подпись и сохраните «Факт + фото».
             </p>
           ) : (
             photos.map((ph) => (

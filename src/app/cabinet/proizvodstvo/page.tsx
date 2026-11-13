@@ -442,30 +442,21 @@ export default function ProizvodstvoPage() {
 
           {plan ? (
             <>
-              <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4" data-testid="prod-plan-vs-gpr">
                 {hasMixedPlanUnits ? (
-                  <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 sm:col-span-2 lg:col-span-3">
+                  <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 sm:col-span-2 lg:col-span-4">
                     Общий объём не суммируется: в проекте разные единицы или часть единиц не указана ({planUnits.join(", ") || "не указаны"}).
                     Сверяйте план, факт и остаток в таблице по каждому виду работ отдельно.
                   </div>
                 ) : <>
-                  <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                    План договора (всего): {formatNumber(totals.plan)} {planUnits[0] ?? ""}
-                  </div>
                   <div
                     className="rounded-xl border bg-white/80 p-3 text-sm"
                     data-testid="period-plan-from-gpr"
                   >
-                    План (
-                  {
-                    {
-                      day: "день",
-                      month: "месяц",
-                      period: "период",
-                      cum: "накоплено",
-                    }[period]
-                    }{" "}
-                    из ГПР): {formatNumber(periodPlan)} {planUnits[0] ?? ""}
+                    <p className="text-xs text-[var(--tk-muted)]">За период (план ГПР)</p>
+                    <p className="mt-1 text-lg font-semibold">
+                      {formatNumber(periodPlan)} {planUnits[0] ?? ""}
+                    </p>
                     <span className="mt-1 block text-[11px] text-[var(--tk-muted)]">
                       {planSlice.source === "stage_volumes"
                         ? "по объёмам этапов"
@@ -474,53 +465,71 @@ export default function ProizvodstvoPage() {
                           : "нет ГПР — срез ограничен"}
                     </span>
                   </div>
-                  <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                    Факт (
-                  {
-                    {
-                      day: "день",
-                      month: "месяц",
-                      period: "период",
-                      cum: "накоплено",
-                    }[period]
-                    }
-                    ): {formatNumber(periodFact)} {planUnits[0] ?? ""}
+                  <div className="rounded-xl border bg-white/80 p-3 text-sm" data-testid="prod-month-plan">
+                    <p className="text-xs text-[var(--tk-muted)]">За месяц</p>
+                    <p className="mt-1 text-lg font-semibold">
+                      {formatNumber(
+                        period === "month"
+                          ? periodPlan
+                          : allocatePlanForSlice(
+                              totals.plan,
+                              gprStages,
+                              "month",
+                              date,
+                              gpr?.calendar
+                            ).plan
+                      )}{" "}
+                      {planUnits[0] ?? ""}
+                    </p>
+                    <p className="mt-1 text-[11px] text-[var(--tk-muted)]">
+                      Факт месяца: {formatNumber(sumDailyQty(monthFacts))} {planUnits[0] ?? ""}
+                    </p>
                   </div>
-                  <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                    Отклонение среза (факт−план ГПР):{" "}
-                    <span
-                      className={
-                        sliceVariance < 0
-                          ? "text-rose-700"
-                          : sliceVariance > 0
-                            ? "text-emerald-700"
-                            : ""
-                      }
-                    >
-                      {formatNumber(sliceVariance)} {planUnits[0] ?? ""}
-                    </span>
+                  <div className="rounded-xl border bg-white/80 p-3 text-sm" data-testid="prod-cum-done">
+                    <p className="text-xs text-[var(--tk-muted)]">Выполнено с начала</p>
+                    <p className="mt-1 text-lg font-semibold">
+                      {formatNumber(totals.fact)} {planUnits[0] ?? ""}
+                    </p>
+                    <p className="mt-1 text-[11px] text-[var(--tk-muted)]">
+                      План договора: {formatNumber(totals.plan)} {planUnits[0] ?? ""}
+                    </p>
                   </div>
-                  <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                    Остаток договора: {formatNumber(totals.remain)} {planUnits[0] ?? ""}
-                  </div>
-                  <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                    Индекс физ. объёма (не ₽):{" "}
-                    {formatNumber(plan.pnl?.earnedValue ?? 0)} {planUnits[0] ?? ""}
+                  <div className="rounded-xl border bg-white/80 p-3 text-sm" data-testid="prod-contract-remain">
+                    <p className="text-xs text-[var(--tk-muted)]">Остаток по договору</p>
+                    <p className="mt-1 text-lg font-semibold">
+                      {formatNumber(totals.remain)} {planUnits[0] ?? ""}
+                    </p>
+                    <p className="mt-1 text-[11px] text-[var(--tk-muted)]">
+                      Отклонение среза:{" "}
+                      <span
+                        className={
+                          sliceVariance < 0
+                            ? "text-rose-700"
+                            : sliceVariance > 0
+                              ? "text-emerald-700"
+                              : ""
+                        }
+                      >
+                        {formatNumber(sliceVariance)}
+                      </span>
+                    </p>
                   </div>
                 </>}
-                <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  Экономика авто (объём×ставки):{" "}
-                  {productionEconomics == null || productionEconomics.incomplete.length > 0
-                    ? "нет данных"
-                    : formatMoney(productionEconomics.autoIncurred)}
+                <div className="rounded-xl border bg-white/80 p-3 text-sm sm:col-span-2 lg:col-span-2" data-testid="prod-earned-rub">
+                  <p className="text-xs text-[var(--tk-muted)]">Заработано ₽ (объём × ставки)</p>
+                  <p className="mt-1 text-lg font-semibold">
+                    {productionEconomics == null || productionEconomics.incomplete.length > 0
+                      ? "Расчёт неполный"
+                      : formatMoney(productionEconomics.autoIncurred)}
+                  </p>
                   {(productionEconomics?.incomplete.length ?? 0) > 0 ? (
                     <span className="mt-1 block text-[11px] text-amber-800">
-                      не хватает: {(productionEconomics?.incomplete ?? []).slice(0, 4).join(", ")}
+                      нет подтверждённых ставок: {(productionEconomics?.incomplete ?? []).slice(0, 4).join(", ")}
                     </span>
                   ) : null}
                 </div>
                 <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  Оценка выполненного по исходной смете (₽, не выручка):{" "}
+                  По смете заказчика (₽):{" "}
                   {productionEconomics?.customerEstimateValue == null
                     ? "нет данных"
                     : formatMoney(productionEconomics.customerEstimateValue)}
@@ -533,7 +542,7 @@ export default function ProizvodstvoPage() {
                   ) : null}
                 </div>
                 <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  Оценка остатка по исходной смете (₽, не прогноз оплаты):{" "}
+                  Остаток по смете заказчика (₽):{" "}
                   {productionEconomics?.customerEstimateRemainingValue == null
                     ? "нет данных"
                     : formatMoney(productionEconomics.customerEstimateRemainingValue)}

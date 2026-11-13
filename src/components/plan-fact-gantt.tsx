@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
+import { DateInputRu } from "@/components/date-input-ru";
 import { Button } from "@/components/ui/button";
 import { diffDays } from "@/lib/cost-engine";
-import { formatDate, formatDateRangeShort } from "@/lib/format";
+import { formatDate, formatDateRangeShort, formatMoney, formatNumber } from "@/lib/format";
 import { entryDisplayFact } from "@/lib/plan-fact-agg";
 import { gprCoveredDays } from "@/lib/plan-from-gpr";
 import type { DailyFact, GprStage, PlanFactEntry } from "@/lib/types";
@@ -12,7 +13,32 @@ import type { DailyFact, GprStage, PlanFactEntry } from "@/lib/types";
 const GANTT_FILTER_EVENT = "tma361:gantt-filter-change";
 const ganttFilterFallback = new Map<string, string>();
 const DAY_MS = 86_400_000;
-const LABEL_WIDTH = 280;
+const LABEL_WIDTH = 360;
+
+function stageResourceSummary(stage: GprStage) {
+  const resources = stage.resources ?? [];
+  const labor = resources
+    .filter((r) => r.kind === "labor")
+    .reduce((sum, r) => sum + (Number(r.quantity) || 0), 0);
+  const equipment = resources
+    .filter((r) => r.kind === "equipment" || r.kind === "bus")
+    .reduce((sum, r) => sum + (Number(r.quantity) || 0), 0);
+  let cost: number | null = 0;
+  let incomplete = false;
+  for (const r of resources) {
+    if (r.rate == null || !Number.isFinite(r.rate)) {
+      incomplete = true;
+      continue;
+    }
+    cost += (Number(r.quantity) || 0) * r.rate;
+  }
+  if (resources.length === 0) {
+    cost = null;
+  } else if (incomplete && cost === 0) {
+    cost = null;
+  }
+  return { labor, equipment, cost, incomplete };
+}
 
 type Scale = "day" | "week" | "month";
 type DragMode = "move" | "resize";
@@ -282,6 +308,9 @@ export function PlanFactGantt({
 
   return (
     <div className="space-y-3" data-testid="plan-fact-gantt">
+      <h3 className="font-[family-name:var(--font-display)] text-base" data-testid="gantt-title">
+        График — план и факт
+      </h3>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--tk-muted)]">
           <span className="rounded-md border border-[var(--tk-line)] bg-white px-2.5 py-1.5">
@@ -358,10 +387,20 @@ export function PlanFactGantt({
         {!sorted.length ? (
           <div className="p-8 text-center text-sm text-[var(--tk-muted)]">Добавьте этапы, чтобы построить календарный график.</div>
         ) : (
-          <div style={{ minWidth: LABEL_WIDTH + timelineWidth }}>
+          <div
+            style={{ minWidth: LABEL_WIDTH + timelineWidth }}
+            data-testid="gantt-rows"
+            data-row-count={visible.length}
+            data-resource-filter={resourceFilter}
+          >
             <div className="sticky top-0 z-20 grid border-b border-[var(--tk-line)] bg-stone-50" style={{ gridTemplateColumns: `${LABEL_WIDTH}px ${timelineWidth}px` }}>
-              <div className="sticky left-0 z-30 border-r border-[var(--tk-line)] bg-stone-50 px-4 py-3 text-xs font-semibold uppercase tracking-wide text-[var(--tk-muted)]">
-                Этап · начало · окончание
+              <div className="sticky left-0 z-30 border-r border-[var(--tk-line)] bg-stone-50 px-3 py-3 text-[11px] font-semibold text-[var(--tk-muted)]">
+                <div className="grid grid-cols-[1.4fr_0.55fr_0.55fr_0.7fr] gap-1">
+                  <span>Работа</span>
+                  <span className="text-right">Люди</span>
+                  <span className="text-right">Техника</span>
+                  <span className="text-right">Стоимость</span>
+                </div>
               </div>
               <div className="relative h-11 overflow-hidden">
                 {ticks.map((tick) => (
@@ -388,6 +427,7 @@ export function PlanFactGantt({
               const predecessor = stage.dependsOn ? stageById.get(stage.dependsOn) : undefined;
               const isSaving = savingStageId === stage.id;
               const stageFact = entry ? entryDisplayFact(entry, dailyFacts) : null;
+              const resSummary = stageResourceSummary(stage);
               const barTitle = `План ${formatDateRangeShort(stage.start, stage.end)}${factPct == null ? " · факт не привязан к этапу" : ` · факт ${Math.round(factPct * 100)}%`}`;
               return (
                 <div
@@ -400,65 +440,103 @@ export function PlanFactGantt({
                   data-testid={`gantt-row-${stage.id}`}
                 >
                   <div className="sticky left-0 z-10 border-r border-[var(--tk-line)] bg-inherit px-3 py-3">
-                    <div className="flex items-start gap-2">
-                      <span className="mt-0.5 flex h-5 min-w-5 items-center justify-center rounded bg-stone-100 px-1 text-[10px] font-semibold text-[var(--tk-muted)]">{stage.sequence}</span>
-                      <div className="min-w-0 flex-1">
-                        <div className="break-words text-sm font-semibold leading-snug text-[var(--tk-ink)]">{stage.name}</div>
-                        <div className="mt-1 text-xs text-[var(--tk-muted)]">{formatDate(stage.start)} – {formatDate(stage.end)} · {duration} кал. дн. · {gprCoveredDays([stage], { weekendDays }).length} раб. дн.</div>
+                    <div className="grid grid-cols-[1.4fr_0.55fr_0.55fr_0.7fr] gap-1 text-xs">
+                      <div className="min-w-0">
+                        <div className="break-words text-sm font-semibold leading-snug text-[var(--tk-ink)]">
+                          <span className="mr-1 text-[10px] text-[var(--tk-muted)]">{stage.sequence}.</span>
+                          {stage.name}
+                        </div>
+                        <div className="mt-1 text-[11px] text-[var(--tk-muted)]">
+                          {formatDate(stage.start)} – {formatDate(stage.end)}
+                        </div>
                         {predecessor ? (
-                          <div className="mt-1 truncate text-[11px] text-[var(--tk-muted)]" title={`Зависимость ${stage.dependencyType ?? "FS"} от ${predecessor.name}`}>
-                            После: {predecessor.name} · {stage.dependencyType ?? "FS"}{stage.lagDays ? ` · лаг ${stage.lagDays} дн.` : ""}
+                          <div className="mt-1 truncate text-[11px] text-[var(--tk-muted)]" title={`Зависимость от ${predecessor.name}`}>
+                            После: {predecessor.name}
+                            {stage.lagDays ? ` · лаг ${stage.lagDays} дн.` : ""}
                           </div>
                         ) : null}
-                        <div className="mt-2 grid grid-cols-2 gap-2">
-                          <label className="grid gap-1 text-[10px] font-medium text-[var(--tk-muted)]">
-                            Начало
-                            <input
-                              aria-label={`Начало этапа ${stage.name}`}
-                              className="h-8 min-w-0 rounded-md border border-input bg-background px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                              data-testid={`gantt-start-${stage.id}`}
-                              type="date"
-                              value={stage.start}
-                              disabled={isSaving}
-                              onChange={(event) => {
-                                const next = event.currentTarget.value;
-                                if (next) void commitShift(stage.id, diffDays(stage.start, next));
-                              }}
-                            />
-                          </label>
-                          <label className="grid gap-1 text-[10px] font-medium text-[var(--tk-muted)]">
-                            Окончание
-                            <input
-                              aria-label={`Окончание этапа ${stage.name}`}
-                              className="h-8 min-w-0 rounded-md border border-input bg-background px-2 text-xs text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                              data-testid={`gantt-end-${stage.id}`}
-                              type="date"
-                              min={stage.start}
-                              value={stage.end}
-                              disabled={isSaving}
-                              onChange={(event) => {
-                                const next = event.currentTarget.value;
-                                if (next && next >= stage.start) {
-                                  void commitShift(stage.id, 0, daysBetween(stage.start, next));
-                                }
-                              }}
-                            />
-                          </label>
-                        </div>
-                        <div className="mt-1 text-[11px] font-medium text-[var(--tk-brand)]">
-                          {factPct == null ? "Факт не привязан" : `Факт ${Math.round(factPct * 100)}%${stageFact != null ? ` · ${stageFact.toLocaleString("ru-RU")} из ${entry?.plan.toLocaleString("ru-RU")}` : ""}`}
-                        </div>
-                        {planFactId && entry ? (
-                          <Link
-                            href={`/cabinet/proizvodstvo/day?planFactId=${encodeURIComponent(planFactId)}&date=${encodeURIComponent(stage.start)}&work=${encodeURIComponent(entry.workName)}`}
-                            className="mt-1 inline-flex text-xs text-sky-800 underline decoration-sky-300 underline-offset-2 hover:text-sky-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            data-testid={`gantt-day-link-${stage.id}`}
-                          >
-                            Детали дня и фото →
-                          </Link>
+                      </div>
+                      <div className="text-right tabular-nums">
+                        {resSummary.labor ? formatNumber(resSummary.labor) : "—"}
+                      </div>
+                      <div className="text-right tabular-nums">
+                        {resSummary.equipment ? formatNumber(resSummary.equipment) : "—"}
+                      </div>
+                      <div className="text-right tabular-nums">
+                        {resSummary.cost == null
+                          ? "нет данных"
+                          : formatMoney(resSummary.cost)}
+                        {resSummary.incomplete ? (
+                          <span className="mt-0.5 block text-[10px] text-amber-800">неполно</span>
                         ) : null}
                       </div>
                     </div>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <label className="grid gap-1 text-[10px] font-medium text-[var(--tk-muted)]">
+                        Начало
+                        <DateInputRu
+                          data-testid={`gantt-start-${stage.id}`}
+                          className="h-8 text-xs"
+                          value={stage.start}
+                          disabled={isSaving}
+                          onChange={(next) => {
+                            if (next) void commitShift(stage.id, diffDays(stage.start, next));
+                          }}
+                        />
+                      </label>
+                      <label className="grid gap-1 text-[10px] font-medium text-[var(--tk-muted)]">
+                        Окончание
+                        <DateInputRu
+                          data-testid={`gantt-end-${stage.id}`}
+                          className="h-8 text-xs"
+                          value={stage.end}
+                          disabled={isSaving}
+                          onChange={(next) => {
+                            if (next && next >= stage.start) {
+                              void commitShift(stage.id, 0, daysBetween(stage.start, next));
+                            }
+                          }}
+                        />
+                      </label>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2 text-[11px]"
+                        disabled={isSaving}
+                        data-testid={`gantt-shift-left-${stage.id}`}
+                        onClick={() => void commitShift(stage.id, -1)}
+                      >
+                        −1 дн.
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2 text-[11px]"
+                        disabled={isSaving}
+                        data-testid={`gantt-shift-right-${stage.id}`}
+                        onClick={() => void commitShift(stage.id, 1)}
+                      >
+                        +1 дн.
+                      </Button>
+                      <span className="text-[11px] font-medium text-[var(--tk-brand)]">
+                        {factPct == null
+                          ? "Факт не привязан"
+                          : `Факт ${Math.round(factPct * 100)}%${stageFact != null ? ` · ${stageFact.toLocaleString("ru-RU")}` : ""}`}
+                      </span>
+                    </div>
+                    {planFactId && entry ? (
+                      <Link
+                        href={`/cabinet/proizvodstvo/day?planFactId=${encodeURIComponent(planFactId)}&date=${encodeURIComponent(stage.start)}&work=${encodeURIComponent(entry.workName)}`}
+                        className="mt-1 inline-flex text-xs text-sky-800 underline decoration-sky-300 underline-offset-2 hover:text-sky-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        data-testid={`gantt-day-link-${stage.id}`}
+                      >
+                        Детали дня и фото →
+                      </Link>
+                    ) : null}
                   </div>
 
                   <div

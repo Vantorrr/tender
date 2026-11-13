@@ -180,10 +180,12 @@ export default function ZakupkaDetailPage() {
   const canRisks = user ? userHasSection(user, "riski") : false;
   const canDocs = user ? userHasSection(user, "dokumenty") : false;
   const fileRef = useRef<HTMLInputElement>(null);
+  const customerEstimateRef = useRef<HTMLInputElement>(null);
   const [uploadCategory, setUploadCategory] =
     useState<DocumentCategory>("general");
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [customerEstimateBusy, setCustomerEstimateBusy] = useState(false);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
   const [analyticsBusy, setAnalyticsBusy] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
@@ -236,6 +238,89 @@ export default function ZakupkaDetailPage() {
   const supplies = (data.supplyRequests ?? []).filter(
     (s) => s.procurementId === params.id
   );
+  const lastExchange = useMemo(() => {
+    if (!procurement || !user) return undefined;
+    return (data.smetaExchanges ?? [])
+      .filter(
+        (x) =>
+          x.orgId === user.orgId &&
+          (x.name.includes(procurement.id) ||
+            x.name.includes(procurement.number) ||
+            Boolean(original && x.name.includes(original.id)))
+      )
+      .sort((a, b) => b.at.localeCompare(a.at))[0]
+      ?? (data.smetaExchanges ?? [])
+        .filter((x) => x.orgId === user.orgId)
+        .sort((a, b) => b.at.localeCompare(a.at))[0];
+  }, [data.smetaExchanges, procurement, user, original]);
+  const gprBuyList = useMemo(() => {
+    const linked = new Set(
+      supplies.map((s) =>
+        `${s.workName ?? ""}|${s.materialName}`.toLocaleLowerCase("ru-RU")
+      )
+    );
+    return (gpr?.stages ?? []).flatMap((stage) =>
+      (stage.resources ?? [])
+        .filter((r) => r.kind === "material" && r.quantity > 0)
+        .filter(
+          (r) =>
+            !linked.has(
+              `${stage.name}|${r.name}`.toLocaleLowerCase("ru-RU")
+            )
+        )
+        .map((r) => ({
+          key: `${stage.id}:${r.id}`,
+          workName: stage.name,
+          materialName: r.name,
+          unit: r.unit,
+          qtyNeed: r.quantity,
+          needBy: stage.end,
+        }))
+    );
+  }, [gpr?.stages, supplies]);
+
+  async function onAttachCustomerEstimate(file: File) {
+    setCustomerEstimateBusy(true);
+    setUploadError(null);
+    try {
+      await createDocumentUpload({
+        procurementId: procurement!.id,
+        title: `Смета заказчика — ${file.name}`,
+        file,
+        category: "estimate",
+      });
+      await api("/api/zakupki", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "attachCustomerEstimate",
+          id: procurement!.id,
+          fileName: file.name,
+        }),
+      });
+      await refresh();
+      toast.success("Смета заказчика прикреплена как исходный оригинал");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Не удалось добавить смету";
+      setUploadError(message);
+      toast.error(message);
+    } finally {
+      setCustomerEstimateBusy(false);
+    }
+  }
+
+  function downloadKpFile(text: string, materialName: string) {
+    const body =
+      `${text.trim()}\n\n---\nПисьмо не отправляется из сервиса (SMTP отключён). ` +
+      `Скопируйте текст или откройте файл в почтовом приложении вручную.\n`;
+    const blob = new Blob([body], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `zapros-kp-${materialName.replace(/\s+/g, "-").slice(0, 40)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
   if (!procurement) {
     return (
@@ -461,6 +546,19 @@ export default function ZakupkaDetailPage() {
           e.target.value = "";
         }}
       />
+      <input
+        ref={customerEstimateRef}
+        type="file"
+        className="sr-only"
+        accept=".xlsx,.xls,.xml,.gsfx,.gge"
+        aria-label="Добавить смету заказчика"
+        data-testid="customer-estimate-input"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) void onAttachCustomerEstimate(f);
+          e.target.value = "";
+        }}
+      />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-2">
         <TabsList className="mb-4 flex h-auto flex-wrap gap-1">
@@ -515,6 +613,14 @@ export default function ZakupkaDetailPage() {
                 <Button variant="outline" disabled={busy} onClick={() => fileRef.current?.click()}>
                   {busy ? "Загрузка…" : "Добавить файлы"}
                 </Button>
+                <Button
+                  variant="outline"
+                  disabled={customerEstimateBusy}
+                  data-testid="add-customer-estimate"
+                  onClick={() => customerEstimateRef.current?.click()}
+                >
+                  {customerEstimateBusy ? "Прикрепляю…" : "Добавить смету заказчика"}
+                </Button>
                 <Button variant="outline" disabled={analyticsBusy} onClick={() => void refreshProjectAnalytics()}>
                   {analyticsBusy ? "Обновляю…" : "Обновить сводку"}
                 </Button>
@@ -526,6 +632,34 @@ export default function ZakupkaDetailPage() {
                 <Button variant="ghost" onClick={() => setActiveTab("analytics")}>Подробная аналитика</Button>
               </div>
             </div>
+            {original ? (
+              <p className="mt-3 text-xs text-[var(--tk-muted)]" data-testid="customer-estimate-attached">
+                Исходная смета заказчика: {original.title} · позиций {original.positions.length}
+              </p>
+            ) : null}
+            {lastExchange ? (
+              <div
+                className="mt-3 rounded-lg border border-[var(--tk-line)] bg-stone-50 px-3 py-2 text-sm"
+                data-testid="obmen-result-on-card"
+              >
+                <p className="font-medium">Результат обмена со сметным ПО</p>
+                <p className="mt-1 text-xs text-[var(--tk-muted)]">
+                  {lastExchange.name} · {formatDateTime(lastExchange.at)} · позиций{" "}
+                  {lastExchange.positionsMapped}
+                  {lastExchange.confirmed ? " · подтверждён" : " · ожидает подтверждения"}
+                  {lastExchange.discrepancies.length
+                    ? ` · расхождений ${lastExchange.discrepancies.length}`
+                    : " · без расхождений"}
+                </p>
+                <Link href="/cabinet/obmen" className="mt-1 inline-block text-xs text-sky-800 underline">
+                  Открыть раздел «Обмен»
+                </Link>
+              </div>
+            ) : (
+              <p className="mt-3 text-xs text-[var(--tk-muted)]" data-testid="obmen-result-empty">
+                Результат обмена со сметным ПО пока не появлялся в этой карточке.
+              </p>
+            )}
           </section>
           <div className="grid gap-4 lg:grid-cols-3">
             <div className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5 lg:col-span-2">
@@ -802,8 +936,8 @@ export default function ZakupkaDetailPage() {
         <TabsContent value="analytics">
           <div className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-              <h2 className="font-[family-name:var(--font-display)] text-base">
-                Аналитическая сводка проекта
+              <h2 className="font-[family-name:var(--font-display)] text-base" data-testid="analytics-main-title">
+                Главное / краткие выводы
               </h2>
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" size="sm" disabled={analyticsBusy} onClick={() => void refreshProjectAnalytics()}>
@@ -824,6 +958,18 @@ export default function ZakupkaDetailPage() {
             </p>
             {analytics ? (
               <>
+                <section
+                  className="mb-4 rounded-xl border border-[var(--tk-line)] bg-stone-50 p-4"
+                  data-testid="analytics-brief"
+                  aria-label="Главное и краткие выводы"
+                >
+                  <p className="text-sm font-semibold">
+                    Рекомендация: {PARTICIPATE_LABELS[analytics.recommendation]}
+                  </p>
+                  <pre className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">
+                    {analytics.summary}
+                  </pre>
+                </section>
                 <section className="mb-4 space-y-3" aria-label="Ключевые условия закупки">
                   <h3 className="text-sm font-semibold">Ключевые условия</h3>
                   <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
@@ -901,19 +1047,12 @@ export default function ZakupkaDetailPage() {
                     {analytics.quality.rejectedClaims ? <span>Отброшено неподтверждённых: {analytics.quality.rejectedClaims}</span> : null}
                   </div>
                 ) : null}
-                <p className="mb-2 text-sm font-semibold">
-                  Рекомендация:{" "}
-                  {PARTICIPATE_LABELS[analytics.recommendation]}
-                </p>
-                <pre className="whitespace-pre-wrap rounded-lg bg-stone-50 p-3 text-sm leading-relaxed">
-                  {analytics.summary}
-                </pre>
                 <p className="mt-3 text-xs text-[var(--tk-muted)]">
                   {analytics.disclaimer} Метод: {analytics.method}. Без обещания
                   точности.
                 </p>
-                <h3 className="mt-4 text-sm font-medium">Цитаты</h3>
-                <ul className="mt-2 space-y-2">
+                <h3 className="mt-4 text-sm font-medium">Цитаты из источников</h3>
+                <ul className="mt-2 space-y-2" data-testid="analytics-citations">
                   {analytics.citations.length === 0 ? (
                     <li className="text-sm text-[var(--tk-muted)]">
                       Цитат пока нет — загрузите и разберите документы.
@@ -923,16 +1062,18 @@ export default function ZakupkaDetailPage() {
                       <li
                         key={c.id}
                         className="rounded-lg border border-[var(--tk-line)] px-3 py-2 text-sm"
+                        data-testid={`citation-${c.id}`}
                       >
-                        <blockquote className="italic">«{c.text}»</blockquote>
-                        <div className="mt-1 text-xs text-[var(--tk-muted)]">
-                          {c.sourceFile}
-                          {c.page ? `, стр. ${c.page}` : ""}
-                          {c.paragraph ? `, абз. ${c.paragraph}` : ""}
-                          {c.sheet ? `, лист ${c.sheet}` : ""}
-                          {c.cell ? `, ${c.cell}` : ""}
-                          {c.confidence ? ` · ${c.confidence}` : ""}
-                        </div>
+                        <p className="text-xs font-medium text-[var(--tk-muted)]">
+                          Источник: {c.sourceFile}
+                          {c.page != null ? ` · стр. ${c.page}` : ""}
+                          {c.paragraph ? ` · абз. ${c.paragraph}` : ""}
+                          {c.sheet ? ` · лист ${c.sheet}` : ""}
+                          {c.cell ? ` · ${c.cell}` : ""}
+                        </p>
+                        <blockquote className="mt-1 rounded-md bg-amber-50/80 px-2 py-1.5 italic leading-relaxed">
+                          «{c.text}»
+                        </blockquote>
                       </li>
                     ))
                   )}
@@ -1174,9 +1315,73 @@ export default function ZakupkaDetailPage() {
               Потребность → черновик КП → поставка
             </h3>
             <p className="text-xs text-[var(--tk-muted)]">
-              Запрос можно подготовить и открыть в почтовом приложении. Сервис
-              сам письмо не отправляет; заказ и приёмка фиксируются вручную.
+              Запрос можно подготовить и скачать файлом. Сервис сам письмо не
+              отправляет (SMTP отключён); заказ и приёмка фиксируются вручную.
             </p>
+            <section
+              className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3"
+              data-testid="supply-buy-list-gpr"
+            >
+              <h4 className="text-sm font-medium">Список закупок из ГПР</h4>
+              <p className="mt-1 text-xs text-[var(--tk-muted)]">
+                Что / сколько / когда — по материалам этапов графика.
+              </p>
+              {gprBuyList.length === 0 ? (
+                <p className="mt-2 text-sm text-[var(--tk-muted)]">
+                  {gpr
+                    ? "Все материалы ГПР уже в потребностях или в ГПР нет материалов."
+                    : "ГПР ещё не связан с закупкой — список пуст."}
+                </p>
+              ) : (
+                <ul className="mt-2 space-y-2">
+                  {gprBuyList.map((need) => (
+                    <li
+                      key={need.key}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-white px-3 py-2 text-sm"
+                      data-testid={`buy-list-${need.key}`}
+                    >
+                      <div>
+                        <div className="font-medium">
+                          {need.materialName} · {formatNumber(need.qtyNeed)}{" "}
+                          {need.unit}
+                        </div>
+                        <div className="text-xs text-[var(--tk-muted)]">
+                          Работа: {need.workName} · к {formatDate(need.needBy)}
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={async () => {
+                          try {
+                            await api("/api/supply", {
+                              method: "POST",
+                              body: JSON.stringify({
+                                procurementId: procurement.id,
+                                materialName: need.materialName,
+                                unit: need.unit,
+                                qtyNeed: need.qtyNeed,
+                                needBy: need.needBy,
+                                workName: need.workName,
+                                status: "need",
+                              }),
+                            });
+                            await refresh();
+                            toast.success("Потребность создана из ГПР");
+                          } catch (e) {
+                            toast.error(
+                              e instanceof Error ? e.message : "Ошибка"
+                            );
+                          }
+                        }}
+                      >
+                        В потребность
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
             <div className="flex flex-wrap gap-2">
               <Input
                 className="min-w-[180px]"
@@ -1229,6 +1434,26 @@ export default function ZakupkaDetailPage() {
               >
                 Сформировать запрос КП
               </Button>
+              <Button
+                variant="outline"
+                data-testid="supply-kp-download"
+                disabled={!matQuote.trim() && !matName.trim()}
+                onClick={() => {
+                  const text = matQuote.trim() || quoteText();
+                  if (!text.trim()) {
+                    toast.error("Сначала сформируйте текст запроса");
+                    return;
+                  }
+                  setMatQuote(text);
+                  downloadKpFile(text, matName.trim() || "material");
+                  toast.success("Файл запроса КП готов (SMTP не используется)");
+                }}
+              >
+                Скачать файл запроса КП
+              </Button>
+              <span className="text-xs text-amber-800" data-testid="supply-no-smtp">
+                Отправка писем из сервиса отключена
+              </span>
               <Button
                 data-testid="supply-create"
                 onClick={async () => {
@@ -1333,9 +1558,20 @@ export default function ZakupkaDetailPage() {
                     </details>
                     <SupplierQuotesEditor supply={s} onUpdated={refresh} />
                     {s.quoteDraftText ? (
-                      <pre className="mt-2 whitespace-pre-wrap rounded bg-stone-50 p-2 text-xs">
-                        {s.quoteDraftText}
-                      </pre>
+                      <div className="mt-2 space-y-2">
+                        <pre className="whitespace-pre-wrap rounded bg-stone-50 p-2 text-xs">
+                          {s.quoteDraftText}
+                        </pre>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            downloadKpFile(s.quoteDraftText!, s.materialName)
+                          }
+                        >
+                          Скачать файл запроса КП
+                        </Button>
+                      </div>
                     ) : null}
                     <div className="mt-2 flex flex-wrap items-end gap-2">
                       <label className="text-xs">

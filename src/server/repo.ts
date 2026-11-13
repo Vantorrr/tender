@@ -1368,6 +1368,151 @@ export async function analyzeProcurementPackageWithAI(
 }
 
 /**
+ * Attach uploaded estimate document as immutable customer_original on the procurement.
+ * Prefer latest estimate doc with positions; also records an exchange history row.
+ */
+export function attachCustomerEstimate(
+  actorId: string,
+  procurementId: string,
+  opts?: { fileName?: string; mappedCount?: number }
+) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const p = data.procurements.find((x) => x.id === procurementId);
+    if (!p) throw new Error("Закупка не найдена");
+    assertOrgAccess(actor, p.orgId, "закупки");
+    const now = new Date().toISOString();
+    const currentDir =
+      data.directories.find((d) => d.type === "rascenki" && d.current) ??
+      data.directories[0];
+
+    const estimateDocs = data.documents
+      .filter(
+        (d) =>
+          d.procurementId === p.id &&
+          Boolean(d.storedPath) &&
+          (d.category === "estimate" || /smeta|смет/i.test(d.fileName))
+      )
+      .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
+    const estimateDoc = estimateDocs[0];
+    if (!estimateDoc) {
+      throw new Error("Сначала загрузите файл сметы заказчика (XLSX / Grand Smeta)");
+    }
+
+    const extractedPositions = estimateDoc.estimatePositions ?? [];
+    const positionCount =
+      extractedPositions.length || estimateDoc.analysis?.positionCount || 0;
+    if (!positionCount) {
+      throw new Error(
+        "В файле не распознаны сметные позиции. Проверьте XLSX / выгрузку Grand Smeta."
+      );
+    }
+
+    const qty = Math.max(1, positionCount);
+    const rate =
+      estimateDoc.analysis?.costThousand != null
+        ? Math.round((estimateDoc.analysis.costThousand * 1000) / qty)
+        : 0;
+    const positions = extractedPositions.length
+      ? extractedPositions.map((position) => ({
+          id: position.id,
+          code: position.code,
+          name: position.name,
+          unit: position.unit,
+          quantity: position.quantity,
+          rate: position.rate,
+        }))
+      : [
+          {
+            id: `cp-orig-${Date.now()}`,
+            code: "CUST-TOTAL",
+            name: estimateDoc.analysis?.workName || "Итог сметы заказчика",
+            unit: "компл",
+            quantity: 1,
+            rate:
+              estimateDoc.analysis?.costThousand != null
+                ? Math.round(estimateDoc.analysis.costThousand * 1000)
+                : rate,
+          },
+        ];
+
+    let oid = p.originalCalculationId;
+    const existing = oid
+      ? data.calculations.find((c) => c.id === oid)
+      : undefined;
+    if (existing && existing.kind === "customer_original") {
+      existing.positions = positions;
+      existing.title = `Смета заказчика (оригинал) — ${p.title.slice(0, 40)}`;
+      existing.updatedAt = now;
+      existing.immutable = true;
+      existing.assumptions = [
+        `Неизменяемый снимок сметы заказчика: ${positions.length} позиций`,
+        `Источник: ${estimateDoc.fileName}`,
+        "Собственные ресурсы сюда не добавляются",
+      ];
+      existing.dataFlags = ["immutable_original", "from_estimate_doc", "user_attached"];
+    } else {
+      oid = `c-orig-${Date.now()}`;
+      data.calculations.unshift({
+        id: oid,
+        orgId: p.orgId,
+        procurementId: p.id,
+        title: `Смета заказчика (оригинал) — ${p.title.slice(0, 40)}`,
+        status: "gotovo",
+        positions,
+        assumptions: [
+          `Неизменяемый снимок сметы заказчика: ${positions.length} позиций`,
+          `Источник: ${estimateDoc.fileName}`,
+          "Собственные ресурсы сюда не добавляются",
+        ],
+        scenario: "bazovyy",
+        scenarioFactor: 1,
+        participateDecision: null,
+        directoryVersionId: currentDir?.id ?? "dir-rascenki-1",
+        version: 1,
+        authorId: actorId,
+        updatedAt: now,
+        kind: "customer_original",
+        immutable: true,
+        changeLog: [],
+        dataFlags: ["immutable_original", "from_estimate_doc", "user_attached"],
+        pairedCalculationId: p.calculationId,
+      });
+      p.originalCalculationId = oid;
+    }
+
+    if (p.calculationId) {
+      const draft = data.calculations.find((c) => c.id === p.calculationId);
+      if (draft && draft.kind !== "customer_original") {
+        draft.pairedCalculationId = oid;
+      }
+    }
+
+    const mappedCount = opts?.mappedCount ?? positions.length;
+    data.smetaExchanges.unshift({
+      id: `sx-${Date.now()}`,
+      orgId: p.orgId,
+      name: `Смета заказчика · ${opts?.fileName ?? estimateDoc.fileName} · ${p.number} · ${p.id}`,
+      at: now,
+      authorId: actorId,
+      positionsMapped: mappedCount,
+      discrepancies: [],
+      confirmed: true,
+    });
+
+    audit(
+      data,
+      actorId,
+      "attach_customer_estimate",
+      "procurement",
+      procurementId,
+      `Оригинал ${oid}; позиций ${positions.length}; файл ${estimateDoc.fileName}`
+    );
+    return data;
+  });
+}
+
+/**
  * «Отправить в расчёт»: resource draft + GPR, preserve docs,
  * freeze customer estimate as immutable original when present.
  */
