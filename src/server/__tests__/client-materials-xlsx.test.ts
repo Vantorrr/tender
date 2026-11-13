@@ -103,4 +103,52 @@ describe("client materials workbook import", () => {
       quantityBasis: "material_qty",
     });
   });
+
+  it("auto-matches workbook work via stage.workNames (not only workName/name)", async () => {
+    closeDb();
+    ensureReady();
+    const before = readAppData();
+    const schedule = before.schedules.find((item) => item.stages.length > 0)!;
+    const stage = schedule.stages[0];
+    const linkedWork = `Связанная работа ${stage.id}`;
+    // Persist an extra workNames link on the stage.
+    const { updateSchedule } = await import("@/server/repo");
+    updateSchedule("u-super", schedule.id, {
+      stages: schedule.stages.map((s) =>
+        s.id === stage.id
+          ? { ...s, workNames: [...(s.workNames ?? []), linkedWork] }
+          : s
+      ),
+    });
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Материалы");
+    sheet.getRow(14).values = [
+      "Работа ГПР", "Раздел", "Код ВОР", "Подраздел", "Наименование работы",
+      "Материал / конструкция", "Кол-во по ВОР", "Ед. ВОР", "Кол-во для цены",
+      "Ед. цены", "Цена за ед., руб.", "Стоимость МТР, руб.", "Новая стоимость материалов",
+    ];
+    sheet.getRow(15).values = [linkedWork, "АД", "АД-09", "", "", "Песок", 2, "м³", 3, "т", 500, 1500, 1650];
+    const bytes = new Uint8Array(await workbook.xlsx.writeBuffer());
+    const file = new File([bytes], "client-worknames.xlsx");
+    const { POST } = await import("@/app/api/gpr/materials/route");
+    const previewForm = new FormData();
+    previewForm.set("scheduleId", schedule.id);
+    previewForm.set("file", file);
+    previewForm.set("preview", "1");
+    const preview = await POST(new Request("http://local/api/gpr/materials", {
+      method: "POST",
+      headers: { authorization: `Bearer ${createSession("u-super")}` },
+      body: previewForm,
+    }));
+    expect(preview.status).toBe(200);
+    const body = await preview.json();
+    expect(body.works).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          workName: linkedWork,
+          matches: expect.arrayContaining([expect.objectContaining({ id: stage.id })]),
+        }),
+      ])
+    );
+  });
 });

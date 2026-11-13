@@ -7,6 +7,9 @@ import { formatDate, parseDateRu } from "@/lib/format";
 /**
  * Date field shown as DD.MM.YYYY (never browser US MM/DD).
  * Value prop / onChange use ISO YYYY-MM-DD.
+ *
+ * Commits only on blur (or Enter) so partial edits like «15.03.2026» → «1.03.2026»
+ * never fire an intermediate save while the user is still typing.
  */
 export function DateInputRu({
   value,
@@ -33,6 +36,29 @@ export function DateInputRu({
     setInvalid(false);
   }, [value]);
 
+  function commit(raw: string) {
+    const trimmed = raw.trim();
+    if (trimmed === "") {
+      setInvalid(false);
+      if (value) {
+        setText(formatDate(value));
+      }
+      return;
+    }
+    const iso = parseDateRu(trimmed);
+    if (iso) {
+      setText(formatDate(iso));
+      setInvalid(false);
+      if (iso !== value) onChange(iso);
+      return;
+    }
+    setInvalid(true);
+    if (value) {
+      setText(formatDate(value));
+      setInvalid(false);
+    }
+  }
+
   return (
     <Input
       id={id}
@@ -48,25 +74,18 @@ export function DateInputRu({
       onChange={(e) => {
         const v = e.target.value;
         setText(v);
-        const iso = parseDateRu(v);
-        if (iso) {
+        if (v.trim() === "") {
           setInvalid(false);
-          onChange(iso);
-        } else if (v.trim() === "") {
-          setInvalid(false);
-        } else {
-          setInvalid(true);
+          return;
         }
+        setInvalid(parseDateRu(v) == null);
       }}
-      onBlur={() => {
-        const iso = parseDateRu(text);
-        if (iso) {
-          setText(formatDate(iso));
-          setInvalid(false);
-          onChange(iso);
-        } else if (value) {
-          setText(formatDate(value));
-          setInvalid(false);
+      onBlur={() => commit(text)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          commit(text);
+          (e.currentTarget as HTMLInputElement).blur();
         }
       }}
     />

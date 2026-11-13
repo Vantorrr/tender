@@ -13,13 +13,22 @@ export function formatNumber(value: number, digits = 2): string {
   }).format(value);
 }
 
-/** Calendar day as DD.MM.YYYY (client requirement). */
+/** Calendar day as DD.MM.YYYY (client requirement). Uses UTC noon to avoid TZ shift. */
 export function formatDate(iso: string): string {
-  const d = new Date(iso.includes("T") ? iso : `${iso}T12:00:00`);
+  const raw = iso.includes("T") ? iso.slice(0, 10) : iso;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const d = new Date(`${raw}T12:00:00Z`);
+    if (Number.isNaN(d.getTime())) return iso;
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const yyyy = d.getUTCFullYear();
+    return `${dd}.${mm}.${yyyy}`;
+  }
+  const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const yyyy = d.getFullYear();
+  const dd = String(d.getUTCDate()).padStart(2, "0");
+  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const yyyy = d.getUTCFullYear();
   return `${dd}.${mm}.${yyyy}`;
 }
 
@@ -47,7 +56,7 @@ export function formatDateTime(iso: string): string {
 export function parseDateRu(text: string): string | null {
   const t = text.trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(t)) {
-    const d = new Date(`${t}T12:00:00`);
+    const d = new Date(`${t}T12:00:00Z`);
     return Number.isNaN(d.getTime()) ? null : t;
   }
   const m = /^(\d{1,2})[./](\d{1,2})[./](\d{4})$/.exec(t);
@@ -57,8 +66,12 @@ export function parseDateRu(text: string): string | null {
   const yyyy = Number(m[3]);
   if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
   const iso = `${yyyy}-${String(mm).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
-  const d = new Date(`${iso}T12:00:00`);
-  if (Number.isNaN(d.getTime()) || d.getDate() !== dd || d.getMonth() + 1 !== mm) {
+  const d = new Date(`${iso}T12:00:00Z`);
+  if (
+    Number.isNaN(d.getTime()) ||
+    d.getUTCDate() !== dd ||
+    d.getUTCMonth() + 1 !== mm
+  ) {
     return null;
   }
   return iso;

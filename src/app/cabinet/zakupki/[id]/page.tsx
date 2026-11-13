@@ -22,6 +22,7 @@ import { api } from "@/lib/api";
 import { DocumentWebPreview } from "@/components/document-web-preview";
 import { cleanLabel } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney, formatNumber } from "@/lib/format";
+import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
 import { WORK_TYPES } from "@/lib/pipeline";
 import { userHasSection } from "@/lib/acl";
@@ -240,18 +241,12 @@ export default function ZakupkaDetailPage() {
   );
   const lastExchange = useMemo(() => {
     if (!procurement || !user) return undefined;
-    return (data.smetaExchanges ?? [])
-      .filter(
-        (x) =>
-          x.orgId === user.orgId &&
-          (x.name.includes(procurement.id) ||
-            x.name.includes(procurement.number) ||
-            Boolean(original && x.name.includes(original.id)))
-      )
-      .sort((a, b) => b.at.localeCompare(a.at))[0]
-      ?? (data.smetaExchanges ?? [])
-        .filter((x) => x.orgId === user.orgId)
-        .sort((a, b) => b.at.localeCompare(a.at))[0];
+    return pickLastExchangeForProcurement(data.smetaExchanges, {
+      orgId: user.orgId,
+      procurementId: procurement.id,
+      procurementNumber: procurement.number,
+      originalCalculationId: original?.id,
+    });
   }, [data.smetaExchanges, procurement, user, original]);
   const gprBuyList = useMemo(() => {
     const linked = new Set(

@@ -7,12 +7,12 @@ import type { DailyResourceLine, GprStage } from "@/lib/types";
 export function stageMatchesWork(s: GprStage, workName: string): boolean {
   const w = workName.trim();
   if (!w) return false;
-  if ((s.workNames?.length ? s.workNames : [s.workName]).some((name) => name?.trim() === w)) return true;
-  if (s.name.trim() === w) return true;
-  // Soft includes only when workName is a clear substring of the stage name
-  // (e.g. «Демонтаж перегородок» ↔ «Демонтаж и подготовка оснований» — NOT automatic;
-  // require workName link for product correctness).
-  return false;
+  // Align with plan-from-gpr / production totals: only workName / workNames.
+  // Do not treat stage.name as a link — that made day cards disagree with
+  // period slices and variance («нет связи с ГПР» vs day plan present).
+  return (s.workNames?.length ? s.workNames : [s.workName]).some(
+    (name) => name?.trim() === w
+  );
 }
 
 export function stagesForWork(
