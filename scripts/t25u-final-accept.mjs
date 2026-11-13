@@ -120,8 +120,7 @@ async function login(page, email, password) {
     data: { email, password },
   });
   if (api.ok()) {
-    await page.goto(`${base}/cabinet`);
-    await page.waitForURL(/\/cabinet/, { timeout: 25000 });
+    await gotoStable(page, `${base}/cabinet`);
     return;
   }
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -143,6 +142,32 @@ async function login(page, email, password) {
       await page.waitForTimeout(1500 * attempt);
     }
   }
+}
+
+/** Avoid load races when Next soft-navigates mid-goto. */
+async function gotoStable(page, url) {
+  for (let attempt = 1; attempt <= 4; attempt++) {
+    try {
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.waitForTimeout(400);
+      const here = page.url();
+      if (here.includes("/login")) {
+        const api = await page.request.post(`${base}/api/auth/login`, {
+          data: { email: "ruk@alfastroy.ru", password: "Ruk123!" },
+        });
+        if (!api.ok()) throw new Error(`relogin ${api.status()}`);
+        continue;
+      }
+      const want = new URL(url).pathname;
+      if (new URL(here).pathname === want || here.startsWith(url.split("?")[0])) {
+        return;
+      }
+    } catch (err) {
+      if (attempt === 4) throw err;
+      await page.waitForTimeout(500 * attempt);
+    }
+  }
+  throw new Error(`gotoStable failed for ${url} (at ${page.url()})`);
 }
 
 async function shot(page, name) {
@@ -257,7 +282,7 @@ try {
   await login(page, "ruk@alfastroy.ru", "Ruk123!");
   act("login", "ruk@alfastroy.ru");
 
-  await page.goto(`${base}/cabinet/gpr/g-1`);
+  await gotoStable(page, `${base}/cabinet/gpr/g-1`);
   await page.waitForTimeout(600);
   assert(
     "school-g1-no-test-banner",
@@ -266,7 +291,7 @@ try {
   );
 
   // ── Estimate: mutate bus via real UI ──
-  await page.goto(`${base}/cabinet/raschety/${TEST.calcId}`);
+  await gotoStable(page, `${base}/cabinet/raschety/${TEST.calcId}`);
   await page.waitForTimeout(1200);
   assert(
     "test-banner-on-estimate",
@@ -420,7 +445,7 @@ try {
   assert("gpr-Z", EXPECTED.Z, findVal(/Итого Z/));
 
   // ── Gantt: filter effect BEFORE reload; shift +1 day persists ──
-  await page.goto(`${base}/cabinet/gpr/${TEST.scheduleId}`);
+  await gotoStable(page, `${base}/cabinet/gpr/${TEST.scheduleId}`);
   await page.waitForTimeout(1200);
   assert(
     "test-banner-on-gantt",
@@ -481,7 +506,7 @@ try {
 
   // ── Day: volume + people + photo via correct controls ──
   const dayUrl = `${base}/cabinet/proizvodstvo/day?planFactId=${TEST.planFactId}&date=${TEST.date}&work=${encodeURIComponent(TEST.work)}`;
-  await page.goto(dayUrl);
+  await gotoStable(page, dayUrl);
   await page.waitForTimeout(1200);
   assert(
     "test-banner-on-day",
@@ -527,7 +552,7 @@ try {
   await page.waitForTimeout(2000);
 
   // Ordinary reload — same work+date URL
-  await page.goto(dayUrl);
+  await gotoStable(page, dayUrl);
   await page.waitForTimeout(1200);
   assert(
     "day-work-same-after-reload",
@@ -594,7 +619,7 @@ try {
   results.shots.push(photoShot);
 
   // ── Gantt after day save: daily facts must match the same fixture ──
-  await page.goto(`${base}/cabinet/gpr/${TEST.scheduleId}`);
+  await gotoStable(page, `${base}/cabinet/gpr/${TEST.scheduleId}`);
   await page.waitForTimeout(1200);
   const dailyFactsAttr = await page
     .getByTestId("gantt-daily-facts-count")
