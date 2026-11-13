@@ -11,8 +11,9 @@ import { formatDate, parseDateRu } from "@/lib/format";
  * Commits only on blur (or Enter) so partial edits like «15.03.2026» → «1.03.2026»
  * never fire an intermediate save while the user is still typing.
  *
- * Enter commits once: we skip the subsequent blur commit, and also dedupe
- * against the last emitted ISO so Gantt relative shifts cannot double-apply.
+ * Enter commits once: the following blur is skipped so Gantt relative shifts
+ * cannot double-apply. We do NOT cache a "last emitted" ISO ahead of the parent
+ * `value` — a rejected end-before-start (or failed shift) must remain retryable.
  */
 export function DateInputRu({
   value,
@@ -31,7 +32,6 @@ export function DateInputRu({
 }) {
   const [text, setText] = useState(() => (value ? formatDate(value) : ""));
   const [invalid, setInvalid] = useState(false);
-  const lastEmittedIso = useRef(value);
   const skipNextBlurCommit = useRef(false);
 
   useEffect(() => {
@@ -39,7 +39,6 @@ export function DateInputRu({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setText(value ? formatDate(value) : "");
     setInvalid(false);
-    lastEmittedIso.current = value;
   }, [value]);
 
   function commit(raw: string) {
@@ -55,11 +54,9 @@ export function DateInputRu({
     if (iso) {
       setText(formatDate(iso));
       setInvalid(false);
-      // Dedupe: Enter then blur must not fire onChange twice before parent re-renders.
-      if (iso !== lastEmittedIso.current) {
-        lastEmittedIso.current = iso;
-        onChange(iso);
-      }
+      // Compare to the controlled prop only — so a rejected parent update
+      // (e.g. Gantt end < start) can be retried with the same ISO.
+      if (iso !== value) onChange(iso);
       return;
     }
     // Keep the invalid text visible with an error (do not silently revert mid-feedback).
@@ -122,11 +119,15 @@ export function DateInputRu({
   );
 }
 
-/** Pure helper for regression: emit only when ISO differs from last emitted. */
-export function nextEmittedIso(
-  lastEmitted: string,
-  candidate: string | null
-): string | null {
-  if (!candidate || candidate === lastEmitted) return null;
-  return candidate;
+/**
+ * Pure helpers for Enter/blur + retry semantics (no premature emit cache).
+ * - skipBlurAfterEnter: Enter already committed → blur must not commit again
+ * - shouldEmitIso: emit when candidate differs from the controlled value prop
+ */
+export function skipBlurAfterEnter(enterJustCommitted: boolean): boolean {
+  return enterJustCommitted;
+}
+
+export function shouldEmitIso(valueProp: string, candidate: string | null): boolean {
+  return Boolean(candidate && candidate !== valueProp);
 }

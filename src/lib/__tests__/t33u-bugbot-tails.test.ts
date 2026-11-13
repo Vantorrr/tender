@@ -202,12 +202,16 @@ describe("t33u DateInputRu / parseDateRu timezone + invalid", () => {
     expect(parseDateRu("2026-11-08")).toBe("2026-11-08");
   });
 
-  it("Enter+blur must not emit the same ISO twice (Gantt double-shift)", async () => {
-    const { nextEmittedIso } = await import("@/components/date-input-ru");
-    const first = nextEmittedIso("2026-11-01", "2026-11-03");
-    expect(first).toBe("2026-11-03");
-    // Second commit before parent re-renders (same as Enter then blur):
-    expect(nextEmittedIso(first!, "2026-11-03")).toBeNull();
+  it("Enter+blur skips second commit; rejected parent still allows retry", async () => {
+    const { skipBlurAfterEnter, shouldEmitIso } = await import(
+      "@/components/date-input-ru"
+    );
+    // Enter already committed → following blur must not commit again.
+    expect(skipBlurAfterEnter(true)).toBe(true);
+    expect(skipBlurAfterEnter(false)).toBe(false);
+    // Parent did not accept end-before-start: value prop unchanged → retry emits.
+    expect(shouldEmitIso("2026-11-10", "2026-11-05")).toBe(true);
+    expect(shouldEmitIso("2026-11-10", "2026-11-10")).toBe(false);
   });
 });
 
