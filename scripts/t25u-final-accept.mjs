@@ -357,11 +357,19 @@ try {
   const ptxt = pdfText(
     await downloadBuf(page, `/api/export?kind=calc-pdf&id=${TEST.calcId}`)
   );
-  assertMatch("pdf-V", ptxt, new RegExp(`V direct:\\s*${Math.round(EXPECTED.V)}`));
-  assertMatch("pdf-W", ptxt, new RegExp(`W OH43%:\\s*${Math.round(EXPECTED.W)}`));
-  assertMatch("pdf-X", ptxt, new RegExp(`X cost\\+OH:\\s*${Math.round(EXPECTED.X)}`));
-  assertMatch("pdf-Y", ptxt, new RegExp(`Y markup40%:\\s*${Math.round(EXPECTED.Y)}`));
-  assertMatch("pdf-Z", ptxt, new RegExp(`Z TOTAL:\\s*${Math.round(EXPECTED.Z)}`));
+  // PDF is Russian (Прямые затраты V / … / Итого … Z) with ru-RU spaced numbers.
+  const pdfCompact = String(ptxt ?? "").replace(/\s/g, "");
+  function pdfHas(label, amount) {
+    const formatted = (Math.round(amount * 100) / 100)
+      .toLocaleString("ru-RU", { maximumFractionDigits: 2 })
+      .replace(/\s/g, "");
+    return pdfCompact.includes(`${label.replace(/\s/g, "")}${formatted}`);
+  }
+  assert("pdf-V", true, pdfHas("Прямые затраты V:", EXPECTED.V));
+  assert("pdf-W", true, pdfHas("Накладные W:", EXPECTED.W));
+  assert("pdf-X", true, pdfHas("Себестоимость с накладными X:", EXPECTED.X));
+  assert("pdf-Y", true, pdfHas("Прибыль Y:", EXPECTED.Y));
+  assert("pdf-Z", true, pdfHas("Итого ресурсного черновика Z:", EXPECTED.Z));
 
   act("export-gpr-xlsx", "gpr-xlsx");
   const gwb = await loadXlsx(
