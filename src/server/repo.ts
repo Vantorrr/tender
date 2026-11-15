@@ -6,6 +6,7 @@ import type {
   DailyFact,
   DocumentItem,
   GprSchedule,
+  GprStage,
   GprStageResource,
   MoneyPayment,
   MoneyPlan,
@@ -61,6 +62,38 @@ import {
 } from "@/lib/unified-resource-sync";
 
 export { assertOrgAccess };
+
+function comparableUnit(value: string) {
+  return value
+    .toLocaleLowerCase("ru-RU")
+    .replace(/ё/g, "е")
+    .replace(/[\s.·]/g, "")
+    .replace(/м2/g, "м²")
+    .replace(/м3/g, "м³");
+}
+
+function matchingDirectoryRate(data: AppData, code: string, unit: string) {
+  const hit = resolveDirectoryRate(data.directories, code);
+  if (!hit) return null;
+  if (
+    hit.unit &&
+    !hit.unit.toLocaleLowerCase("ru-RU").startsWith("руб") &&
+    comparableUnit(hit.unit) !== comparableUnit(unit)
+  ) {
+    return null;
+  }
+  return hit;
+}
+
+function scheduleHasPopulatedResources(stages: GprStage[] | undefined) {
+  return Boolean(
+    stages?.some((stage) =>
+      stage.resources?.some(
+        (resource) => resource.quantity > 0 || resource.rate != null
+      )
+    )
+  );
+}
 
 function actorUser(data: AppData, actorId: string): User {
   const u = data.users.find((x) => x.id === actorId);
@@ -457,11 +490,13 @@ export function recalcCalculation(
     assertEditableCalculation(item);
     const positions = item.positions.map((p) => {
       if (p.code === "НР" || p.code === "СП") return p;
-      const hit = resolveDirectoryRate(data.directories, p.code);
+      const hit = matchingDirectoryRate(data, p.code, p.unit);
       if (!hit) return p;
       return {
         ...p,
         rate: hit.rate,
+        rateMissing: false,
+        rateSourceDirectoryId: hit.dirId,
         name: hit.name ?? p.name,
         unit: hit.unit && !hit.unit.startsWith("руб") ? hit.unit : p.unit,
       };
@@ -981,7 +1016,11 @@ export function updateSchedule(
     const updated = data.schedules.find((s) => s.id === id)!;
     if (safe.stages) {
       const calc = data.calculations.find((c) => c.id === updated.calculationId);
-      if (calc && isResourceLinkedDraft(calc)) {
+      if (
+        calc &&
+        isResourceLinkedDraft(calc) &&
+        scheduleHasPopulatedResources(updated.stages)
+      ) {
         const synced = syncDraftFromStages(calc, updated.stages, {
           replacePositions: true,
         });
@@ -1041,7 +1080,11 @@ export function patchScheduleResourceAndSync(
       input.stageId
     );
     schedule.updatedAt = new Date().toISOString();
-    if (calc && isResourceLinkedDraft(calc)) {
+    if (
+      calc &&
+      isResourceLinkedDraft(calc) &&
+      scheduleHasPopulatedResources(schedule.stages)
+    ) {
       const synced = syncDraftFromStages(calc, schedule.stages, {
         replacePositions: true,
       });
@@ -1576,19 +1619,28 @@ export function sendProcurementToCalculation(
     }
 
     // Build immutable original from estimate document positions if none
-    const estimateDoc = data.documents.find(
+    const estimateDocs = data.documents.filter(
       (d) =>
         d.procurementId === p.id &&
         Boolean(d.storedPath) &&
         (d.category === "estimate" || /smeta|смет/i.test(d.fileName))
     );
-    if (!p.originalCalculationId && estimateDoc?.analysis?.positionCount) {
+    const estimateDoc =
+      estimateDocs.find((document) => (document.estimatePositions?.length ?? 0) > 0) ??
+      estimateDocs.find((document) => (document.analysis?.positionCount ?? 0) > 0);
+    if (
+      !p.originalCalculationId &&
+      estimateDoc &&
+      ((estimateDoc.estimatePositions?.length ?? 0) > 0 ||
+        (estimateDoc.analysis?.positionCount ?? 0) > 0)
+    ) {
       const oid = `c-orig-${Date.now()}`;
       const extractedPositions = estimateDoc.estimatePositions ?? [];
-      const qty = Math.max(1, estimateDoc.analysis.positionCount);
+      const estimateAnalysis = estimateDoc.analysis;
+      const qty = Math.max(1, estimateAnalysis?.positionCount ?? extractedPositions.length);
       const rate =
-        estimateDoc.analysis.costThousand != null
-          ? Math.round((estimateDoc.analysis.costThousand * 1000) / qty)
+        estimateAnalysis?.costThousand != null
+          ? Math.round((estimateAnalysis.costThousand * 1000) / qty)
           : 0;
       data.calculations.unshift({
         id: oid,
@@ -1609,12 +1661,12 @@ export function sendProcurementToCalculation(
               {
                 id: `cp-orig-${Date.now()}`,
                 code: "CUST-TOTAL",
-                name: estimateDoc.analysis.workName || "Итог сметы заказчика",
+                name: estimateAnalysis?.workName || "Итог сметы заказчика",
                 unit: "компл",
                 quantity: 1,
                 rate:
-                  estimateDoc.analysis.costThousand != null
-                    ? Math.round(estimateDoc.analysis.costThousand * 1000)
+                  estimateAnalysis?.costThousand != null
+                    ? Math.round(estimateAnalysis.costThousand * 1000)
                     : rate,
               },
             ],
@@ -1641,6 +1693,29 @@ export function sendProcurementToCalculation(
     }
 
     // Create or refresh editable resource draft
+    const positionsFromEstimate = (estimateDoc?.estimatePositions ?? [])
+      .filter((position) =>
+        Boolean(position.code && position.name && position.unit) &&
+        Number.isFinite(position.quantity) &&
+        position.quantity > 0
+      )
+      .map((position) => {
+        const hit = matchingDirectoryRate(data, position.code, position.unit);
+        const unitCompatible = Boolean(hit);
+        return {
+          id: `draft-${position.id}`,
+          code: position.code,
+          name: position.name,
+          unit: position.unit,
+          quantity: position.quantity,
+          // The customer rate is never copied into our editable draft.
+          rate: unitCompatible ? hit!.rate : 0,
+          rateMissing: !unitCompatible,
+          sourceDocumentId: estimateDoc!.id,
+          sourcePositionId: position.id,
+          ...(unitCompatible ? { rateSourceDirectoryId: hit!.dirId } : {}),
+        };
+      });
     let draftId = p.calculationId;
     const linked = draftId
       ? data.calculations.find((c) => c.id === draftId)
@@ -1648,9 +1723,9 @@ export function sendProcurementToCalculation(
     if (!linked || linked.kind === "customer_original" || linked.immutable) {
       draftId = `c-draft-${Date.now()}`;
       const seedPositions =
-        linked && !linked.immutable
+        linked && !linked.immutable && linked.positions.length > 0
           ? structuredClone(linked.positions)
-          : [];
+          : positionsFromEstimate;
       data.calculations.unshift({
         id: draftId,
         orgId: p.orgId,
@@ -1659,8 +1734,13 @@ export function sendProcurementToCalculation(
         status: "v_rabote",
         positions: seedPositions,
         assumptions: [
-          "Ресурсный черновик создан пустым: объёмы, состав ресурсов и тарифы не подставляются без источника",
-          "Добавьте позиции из справочника или документов; подтвердите каждую ставку и формулу количества",
+          seedPositions.length
+            ? `Черновик заполнен ${seedPositions.length} распознанными строками из «${estimateDoc?.fileName ?? "сметы заказчика"}». Исходная смета сохранена отдельно и неизменна.`
+            : "Ресурсный черновик создан пустым: в документах нет распознанных строк сметы",
+          seedPositions.length
+            ? "В черновик перенесены только код, наименование, единица и количество. Ставки взяты только из точного совпадения кода и единицы в справочниках; цена заказчика не копировалась."
+            : "Загрузите смету XLSX с позициями или добавьте ресурсы из справочников; система не будет угадывать объёмы и тарифы",
+          "Проверьте состав ресурсов и каждую ставку до использования итогов",
           "Не является утверждённой нормативной сметой",
           "Цифры из справочников / объёмов; причины отклонений без выдумок",
           ...(p.nmck == null ? ["НМЦК источник не публикует"] : []),
@@ -1683,7 +1763,14 @@ export function sendProcurementToCalculation(
             detail: "Создан при «Отправить в расчёт»",
           },
         ],
-        dataFlags: ["requires_manual_check", "no_accuracy_promise"],
+        dataFlags: [
+          "requires_manual_check",
+          "no_accuracy_promise",
+          ...(seedPositions.length ? ["seeded_from_customer_estimate"] : ["awaiting_estimate_rows"]),
+        ],
+        ...(seedPositions.length
+          ? { resourceScheduleParams: EXCEL_RESOURCE_SCHEDULE_DEFAULTS }
+          : {}),
       });
       p.calculationId = draftId;
     } else {
@@ -1691,6 +1778,23 @@ export function sendProcurementToCalculation(
       linked.immutable = false;
       linked.pairedCalculationId = p.originalCalculationId;
       linked.status = "v_rabote";
+      if (linked.positions.length === 0 && positionsFromEstimate.length > 0) {
+        linked.positions = positionsFromEstimate;
+        linked.assumptions = [
+          ...(linked.assumptions ?? []).filter(
+            (assumption) => !assumption.startsWith("Ресурсный черновик создан пустым:")
+          ),
+          `Черновик заполнен ${positionsFromEstimate.length} распознанными строками из «${estimateDoc?.fileName ?? "сметы заказчика"}». Исходная смета сохранена отдельно и неизменна.`,
+          "В черновик перенесены только код, наименование, единица и количество. Ставки взяты только из точного совпадения кода и единицы в справочниках; цена заказчика не копировалась.",
+          "Проверьте состав ресурсов и каждую ставку до использования итогов",
+        ];
+        linked.dataFlags = [
+          ...(linked.dataFlags ?? []).filter((flag) => flag !== "awaiting_estimate_rows"),
+          "seeded_from_customer_estimate",
+          "requires_manual_check",
+        ];
+        linked.resourceScheduleParams ??= EXCEL_RESOURCE_SCHEDULE_DEFAULTS;
+      }
       linked.updatedAt = now;
       linked.changeLog = [
         ...(linked.changeLog ?? []),
@@ -1965,7 +2069,8 @@ export function shiftGprStage(
       calc &&
         calc.kind !== "customer_original" &&
         isResourceLinkedDraft(calc) &&
-        calc.resourceScheduleParams
+        calc.resourceScheduleParams &&
+        scheduleHasPopulatedResources(item.stages)
     );
     if (calc && syncedResourceDraft) {
       const reserve = calc.costSummary?.reserve ?? 0;
@@ -2143,7 +2248,8 @@ export function recomputeCalculationCost(
     if (
       useRs &&
       linkedSchedule?.stages?.length &&
-      isResourceLinkedDraft(item)
+      isResourceLinkedDraft(item) &&
+      scheduleHasPopulatedResources(linkedSchedule.stages)
     ) {
       const reserve = Math.max(
         0,
@@ -2233,6 +2339,10 @@ export function recomputeCalculationCost(
     });
     const incomplete = [
       ...engine.incomplete,
+      ...item.positions
+        .filter((position) => position.rateMissing)
+        .slice(0, 20)
+        .map((position) => `missing_rate:${position.code || position.id}`),
       ...(buckets.materialsUnpriced ? ["materials_positions"] : []),
       ...materialNeedsIncomplete(matNeeds).slice(0, 20),
     ];

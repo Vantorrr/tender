@@ -320,6 +320,11 @@ export interface CalcPosition {
   id: string;
   /** Stable link from an editable draft position back to its GPR resource. */
   sourceResourceId?: string;
+  /** Original uploaded estimate row; draft pricing is always resolved separately. */
+  sourceDocumentId?: string;
+  sourcePositionId?: string;
+  /** Directory version used for an exact, unit-compatible rate match. */
+  rateSourceDirectoryId?: string;
   code: string;
   name: string;
   unit: string;

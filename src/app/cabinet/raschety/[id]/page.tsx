@@ -606,6 +606,35 @@ export default function RaschetDetailPage() {
         </div>
       )}
 
+      {!locked && calc.positions.length === 0 ? (
+        <section className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950" role="status" data-testid="empty-calculation-guidance">
+          <h2 className="font-semibold">В расчёте пока нет строк</h2>
+          <p className="mt-1">
+            Документы и ИИ-сводка сами по себе не превращаются в сметные позиции. Загрузите смету с распознаваемыми строками или добавьте работы и ресурсы из справочников — без этого стоимость считать не из чего.
+          </p>
+          <Link
+            href={`/cabinet/zakupki/${calc.procurementId}`}
+            className="mt-2 inline-flex text-[var(--tk-copper-deep)] underline"
+          >
+            Вернуться в карточку закупки и загрузить смету
+          </Link>
+        </section>
+      ) : null}
+
+      {!locked && calc.dataFlags?.includes("seeded_from_customer_estimate") ? (
+        <section className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950" role="status" data-testid="estimate-seeded-guidance">
+          <h2 className="font-semibold">Черновик сформирован из распознанной сметы</h2>
+          <p className="mt-1">
+            Исходные количества и строки заказчика перенесены для проверки. Исходная смета остаётся неизменной; её цены в наш черновик не копировались. Ставки сопоставлены только по точному коду и совместимой единице.
+          </p>
+          {calc.positions.some((position) => position.rateMissing) ? (
+            <p className="mt-1 font-medium">
+              Нужны ставки для {calc.positions.filter((position) => position.rateMissing).length} строк. Они исключены из стоимости, пока не подтверждены.
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+
       <div className="mb-4 flex flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-end">
         <div>
           <label

@@ -5,6 +5,7 @@ import {
   ensureMoneyPlan,
   ensureProcurementChain,
   getBootstrap,
+  recomputeCalculationCost,
   refreshProcurementAnalytics,
   sendProcurementToCalculation,
   setProcurementReview,
@@ -82,7 +83,39 @@ export async function POST(req: Request) {
     }
     if (body.action === "sendToCalculation") {
       sendProcurementToCalculation(user.id, body.id!);
-      return json(getBootstrap(user));
+      let boot = getBootstrap(user);
+      const initialProcurement = boot.data.procurements.find((item) => item.id === body.id);
+      const initialDraft = boot.data.calculations.find(
+        (item) => item.id === initialProcurement?.calculationId
+      );
+      if (
+        initialDraft?.resourceScheduleParams &&
+        initialDraft.positions.some((position) => position.sourceDocumentId)
+      ) {
+        recomputeCalculationCost(user.id, initialDraft.id, {
+          resourceScheduleParams: initialDraft.resourceScheduleParams,
+          useResourceScheduleEconomics: true,
+          vatPercent: null,
+        });
+        boot = getBootstrap(user);
+      }
+      const procurement = boot.data.procurements.find((item) => item.id === body.id);
+      const draft = boot.data.calculations.find(
+        (item) => item.id === procurement?.calculationId
+      );
+      const sourceRows = draft?.positions.filter((position) => position.sourceDocumentId) ?? [];
+      const sourceDocument = sourceRows[0]
+        ? boot.data.documents.find((document) => document.id === sourceRows[0].sourceDocumentId)
+        : undefined;
+      return json({
+        ...boot,
+        calculationSummary: {
+          sourceFile: sourceDocument?.fileName ?? null,
+          sourceRows: sourceRows.length,
+          matchedRates: sourceRows.filter((position) => !position.rateMissing).length,
+          missingRates: sourceRows.filter((position) => position.rateMissing).length,
+        },
+      });
     }
     if (body.action === "attachCustomerEstimate") {
       attachCustomerEstimate(user.id, body.id!, {
