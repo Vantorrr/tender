@@ -123,7 +123,7 @@ describe("client corrections stage 1", () => {
     expect(draft.dataFlags?.includes("no_accuracy_promise")).toBe(true);
     expect(draft.positions).toEqual([]);
     expect(draft.assumptions).toContain(
-      "Ресурсный черновик создан пустым: объёмы, состав ресурсов и тарифы не подставляются без источника"
+      "Ресурсный черновик создан пустым: в документах нет распознанных строк сметы"
     );
     const schedule = after.schedules.find((item) => item.id === proc.gprId)!;
     expect(schedule.assumptions?.length).toBeGreaterThan(0);
@@ -135,6 +135,98 @@ describe("client corrections stage 1", () => {
       after.documents.filter((d) => d.procurementId === p.id).length
     ).toBe(docCount);
     expect(proc.reviewStatus).toBe("na_rassmotrenii");
+  });
+
+  it("builds a reviewable draft from parsed estimate rows without copying customer prices", async () => {
+    const procurement = readAppData().procurements.find((item) => item.id === "p-norilsk-1")!;
+    const sourceRows = [
+      { code: "TEST-ROCK", name: "Щебень фракции 20–40", unit: "м³", quantity: 12, rate: 900 },
+      { code: "NO-OWN-RATE", name: "Геотекстиль", unit: "м²", quantity: 80, rate: 75 },
+    ];
+    mutateAppData((data) => {
+      const laborDirectory = data.directories.find((item) => item.type === "rascenki" && item.current)!;
+      laborDirectory.rows.push({ code: "TEST-ROCK", work: "Щебень фракции 20–40", unit: "м³", rate: 125 });
+      return data;
+    });
+    // Reproduce the real sequence: user creates an empty draft, then uploads the estimate.
+    sendProcurementToCalculation("u-smet", procurement.id);
+    const doc = createDocument("u-smet", {
+      orgId: procurement.orgId,
+      procurementId: procurement.id,
+      title: "Смета для проверки",
+      fileName: "estimate.xlsx",
+      fileType: "xlsx",
+      category: "estimate",
+      storedPath: "uploads/test-estimate.xlsx",
+      prepared: {
+        title: "Смета для проверки",
+        analyticalNote: "Тестовая смета с двумя строками",
+        citations: [],
+        highlights: [],
+        status: "v_rabote",
+        analysis: {
+          vendor: "",
+          region: "",
+          zone: "",
+          estimateNumber: "QA-1",
+          workName: "Поставка материалов",
+          basis: "Тест",
+          priceLevel: "",
+          costThousand: 16.8,
+          positionCount: sourceRows.length,
+          profileMatch: false,
+        },
+        positions: sourceRows,
+      },
+    });
+    const { POST } = await import("@/app/api/zakupki/route");
+    const response = await POST(new Request("http://local/api/zakupki", {
+      method: "POST",
+      headers: { authorization: `Bearer ${createSession("u-tender")}` },
+      body: JSON.stringify({ action: "sendToCalculation", id: procurement.id }),
+    }));
+    expect(response.status).toBe(200);
+    const payload = await response.json() as {
+      calculationSummary?: { sourceFile: string | null; sourceRows: number; matchedRates: number; missingRates: number };
+    };
+    expect(payload.calculationSummary).toEqual({
+      sourceFile: "estimate.xlsx",
+      sourceRows: 2,
+      matchedRates: 1,
+      missingRates: 1,
+    });
+    const after = readAppData();
+    const updatedProcurement = after.procurements.find((item) => item.id === procurement.id)!;
+    const original = after.calculations.find((item) => item.id === updatedProcurement.originalCalculationId)!;
+    const draft = after.calculations.find((item) => item.id === updatedProcurement.calculationId)!;
+
+    expect(original.kind).toBe("customer_original");
+    expect(original.immutable).toBe(true);
+    expect(original.positions.map((position) => position.rate)).toEqual([900, 75]);
+    expect(draft.kind).toBe("resource_draft");
+    expect(draft.positions).toHaveLength(2);
+    expect(draft.positions[0]).toMatchObject({
+      code: "TEST-ROCK",
+      quantity: 12,
+      rate: 125,
+      rateMissing: false,
+      sourceDocumentId: doc.documentId,
+    });
+    expect(draft.positions[0].rateSourceDirectoryId).toBeTruthy();
+    expect(draft.positions[1]).toMatchObject({
+      code: "NO-OWN-RATE",
+      quantity: 80,
+      rate: 0,
+      rateMissing: true,
+      sourceDocumentId: doc.documentId,
+    });
+    expect(draft.assumptions.join(" ")).toMatch(/цена заказчика не копировалась/i);
+    expect(draft.dataFlags).toContain("seeded_from_customer_estimate");
+    expect(draft.resourceScheduleParams?.overheadRate).toBe(0.43);
+    expect(draft.resourceScheduleParams?.profitMarkupOnCostWithOh).toBe(0.4);
+    expect(draft.costSummary?.priceExVat).toBeGreaterThan(0);
+    expect(draft.costSummary?.totalsIncomplete).toBe(true);
+    expect(draft.costSummary?.incomplete).toContain("missing_rate:NO-OWN-RATE");
   });
 
   it("new money plan does not invent an advance from NMCK", () => {

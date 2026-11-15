@@ -39,6 +39,13 @@ interface BootstrapResponse {
   jobs?: unknown[];
 }
 
+type CalculationSummary = {
+  sourceFile: string | null;
+  sourceRows: number;
+  matchedRates: number;
+  missingRates: number;
+};
+
 interface StoreContextValue {
   ready: boolean;
   data: AppData;
@@ -122,7 +129,7 @@ interface StoreContextValue {
   importSmetaFile: (file: File, calcId?: string) => Promise<void>;
   runSyncJob: () => Promise<void>;
   ensureChain: (procurementId: string) => Promise<void>;
-  sendToCalculation: (procurementId: string) => Promise<void>;
+  sendToCalculation: (procurementId: string) => Promise<CalculationSummary>;
   refreshAnalytics: (procurementId: string) => Promise<void>;
   analyzeProjectWithAI: (procurementId: string) => Promise<void>;
   markAllNotificationsRead: () => Promise<void>;
@@ -667,7 +674,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const sendToCalculation = useCallback(
     async (procurementId: string) => {
-      const boot = await api<BootstrapResponse>("/api/zakupki", {
+      const boot = await api<BootstrapResponse & { calculationSummary: CalculationSummary }>("/api/zakupki", {
         method: "POST",
         body: JSON.stringify({
           action: "sendToCalculation",
@@ -675,6 +682,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }),
       });
       applyBoot(boot);
+      return boot.calculationSummary;
     },
     [applyBoot]
   );

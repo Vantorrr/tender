@@ -515,10 +515,20 @@ export default function ZakupkaDetailPage() {
               onClick={async () => {
                 setBusy(true);
                 try {
-                  await sendToCalculation(procurement.id);
-                  toast.success(
-                    "Ресурсный черновик и ГПР созданы; документы сохранены"
-                  );
+                    const summary = await sendToCalculation(procurement.id);
+                    if (summary.sourceRows > 0 && summary.missingRates > 0) {
+                      toast.warning(
+                        `Черновик создан из «${summary.sourceFile}»: ${summary.sourceRows} строк, ставок найдено ${summary.matchedRates}, без ставки ${summary.missingRates}. Проверьте неполные позиции.`
+                      );
+                    } else if (summary.sourceRows > 0) {
+                      toast.success(
+                        `Черновик создан из «${summary.sourceFile}»: ${summary.sourceRows} строк, ставки сопоставлены по коду и единице.`
+                      );
+                    } else {
+                      toast.warning(
+                        "Созданы расчёт и ГПР, но сметные строки не распознаны. Загрузите смету XLSX или добавьте позиции вручную."
+                      );
+                    }
                 } catch (e) {
                   toast.error(
                     e instanceof Error ? e.message : "Не удалось отправить"
@@ -528,7 +538,7 @@ export default function ZakupkaDetailPage() {
                 }
               }}
             >
-              Отправить в расчёт
+              Сформировать расчёт
             </Button>
           </div>
         }
