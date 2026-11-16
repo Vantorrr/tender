@@ -37,6 +37,7 @@ interface BootstrapResponse {
   user: PublicUser;
   data: AppData;
   jobs?: unknown[];
+  feed?: { status: string; detail: string };
 }
 
 type CalculationSummary = {
@@ -659,6 +660,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       body: JSON.stringify({ type: "procurement_sync" }),
     });
     applyBoot(boot);
+    if (boot.feed && !["ok", "demo"].includes(boot.feed.status)) {
+      throw new Error(boot.feed.detail || "Источник не выполнил синхронизацию");
+    }
   }, [applyBoot]);
 
   const ensureChain = useCallback(

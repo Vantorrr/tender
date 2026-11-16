@@ -391,7 +391,7 @@ export default function RaschetDetailPage() {
     ...(linkedSchedule
       ? [{ label: "ГПР", href: `/cabinet/gpr/${linkedSchedule.id}` }]
       : []),
-    { label: "Производство", href: "/cabinet/proizvodstvo" },
+    { label: "Производство", href: procurement?.planFactId ? `/cabinet/proizvodstvo?planFactId=${encodeURIComponent(procurement.planFactId)}` : "/cabinet/proizvodstvo" },
   ];
 
   const directorySubtitle = dir
@@ -614,7 +614,7 @@ export default function RaschetDetailPage() {
           </p>
         </Link>
         <Link
-          href={`/cabinet/zakupki/${calc.procurementId}`}
+          href={`/cabinet/zakupki/${calc.procurementId}?tab=risks`}
           className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4 hover:border-[var(--tk-copper)]"
         >
           <h2 className="font-medium">Риски контракта</h2>
@@ -635,7 +635,7 @@ export default function RaschetDetailPage() {
           )}
         </Link>
         <Link
-          href={`/cabinet/zakupki/${calc.procurementId}`}
+          href={`/cabinet/zakupki/${calc.procurementId}?tab=money`}
           className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4 hover:border-[var(--tk-copper)]"
         >
           <h2 className="font-medium">Денежный план</h2>

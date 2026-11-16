@@ -271,7 +271,7 @@ function DayDetailsInner() {
           <Button
             variant="outline"
             data-testid="day-back"
-            onClick={() => router.push("/cabinet/proizvodstvo")}
+            onClick={() => router.push(`/cabinet/proizvodstvo?planFactId=${encodeURIComponent(plan.id)}`)}
           >
             Назад
           </Button>
@@ -290,7 +290,7 @@ function DayDetailsInner() {
         className="mb-4 text-sm text-[var(--tk-muted)]"
         data-testid="day-breadcrumbs"
       >
-        <Link href="/cabinet/proizvodstvo" className="underline">
+        <Link href={`/cabinet/proizvodstvo?planFactId=${encodeURIComponent(plan.id)}`} className="underline">
           Производство
         </Link>
         {" / "}

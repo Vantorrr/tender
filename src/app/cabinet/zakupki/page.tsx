@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
@@ -39,6 +39,14 @@ export default function ZakupkiPage() {
   const [region, setRegion] = useState<string>("all");
   const [workType, setWorkType] = useState<string>("all");
   const [syncing, setSyncing] = useState(false);
+  const [source, setSource] = useState<{ status: string; detail: string } | null>(null);
+  useEffect(() => {
+    let active = true;
+    api<{ source: { status: string; detail: string } }>("/api/zakupki")
+      .then((result) => { if (active) setSource(result.source); })
+      .catch(() => { if (active) setSource({ status: "error", detail: "Не удалось получить статус источника. Повторите загрузку страницы." }); });
+    return () => { active = false; };
+  }, [syncing]);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [manualFormOpen, setManualFormOpen] = useState(false);
   const [manualCreating, setManualCreating] = useState(false);
@@ -160,7 +168,7 @@ export default function ZakupkiPage() {
     <div>
       <PageHeader
         title="Закупки"
-        description="Цветной канбан рассмотрения. Документы, расчёт, ГПР, деньги и риски — внутри карточки проекта. Источник площадки не выдумываем."
+        description="Выберите закупку, чтобы открыть документы, анализ и расчёт проекта."
         actions={
           <>
             <Button variant="outline" onClick={() => setManualFormOpen((open) => !open)}>
@@ -209,13 +217,11 @@ export default function ZakupkiPage() {
         </form>
       ) : null}
 
-      <Alert className="mb-4 border-sky-200 bg-sky-50 text-sky-950">
+      <Alert className={cn("mb-4", source?.status === "error" ? "border-amber-200 bg-amber-50 text-amber-950" : "border-sky-200 bg-sky-50 text-sky-950")}>
         <RefreshCw className="h-4 w-4" />
         <AlertTitle>Источник закупок</AlertTitle>
         <AlertDescription>
-          Сервис получает открытую ленту закупок «Норникеля» при настройке
-          PROCUREMENT_SOURCE=nornickel. Неопубликованные суммы и характеристики
-          не подменяются оценками; закрытые ЭТП подключаются отдельно по API.
+          {source?.detail ?? "Проверяем подключённый источник…"}
         </AlertDescription>
       </Alert>
 

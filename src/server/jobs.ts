@@ -179,7 +179,7 @@ export async function runProcurementSync(actorId: string) {
         id: `n-sync-${Date.now()}`,
         userId: actorId,
         title:
-          feed.status === "not_configured"
+          feed.status === "error" ? "Синхронизация: ошибка источника" : feed.status === "not_configured"
             ? "Синхронизация: источник не настроен"
             : "Синхронизация завершена",
         body: notifyBody,
@@ -203,7 +203,7 @@ export async function runProcurementSync(actorId: string) {
     updateJob(id, {
       status: feed.ok ? "done" : "error",
       detail:
-        feed.status === "not_configured"
+        feed.status === "error" ? `Ошибка источника: ${feed.detail}` : feed.status === "not_configured"
           ? `Источник «${source.id}» не подключён — без выдуманных заявок`
           : feed.status === "demo"
             ? `Демо-синхронизация «${source.id}» завершена`
