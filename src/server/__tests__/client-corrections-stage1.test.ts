@@ -7,6 +7,7 @@ import {
   joinOrganizationByCode,
   registerNewOrganization,
   recomputeCalculationCost,
+  reanalyzeDocument,
   sendProcurementToCalculation,
   updateCalculation,
   recalcCalculation,
@@ -306,8 +307,8 @@ describe("client corrections stage 1", () => {
       fileType: "pdf",
       category: "general",
       storedPath: "uploads/test-2131190.pdf",
-      prepared,
     });
+    reanalyzeDocument("u-smet", document.documentId, prepared);
     sendProcurementToCalculation("u-smet", procurement.id);
     const after = readAppData();
     const updated = after.procurements.find((item) => item.id === procurement.id)!;

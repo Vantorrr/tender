@@ -736,6 +736,18 @@ export function reanalyzeDocument(
         citations: stampCitationSourceVersion(prepared.citations, versionLabel),
         highlights: prepared.highlights,
         analysis: prepared.analysis,
+        estimatePositions: prepared.positions.map((position, index) => ({
+          id: `source-${id}-v${nextVersion}-${index + 1}`,
+          code: position.code,
+          name: position.name,
+          unit: position.unit,
+          quantity: position.quantity,
+          rate: position.rate,
+          ...(position.rateMissing ? { rateMissing: true } : {}),
+          ...(position.resourceKind ? { resourceKind: position.resourceKind } : {}),
+          ...(position.sectionName ? { sectionName: position.sectionName } : {}),
+          ...(position.workName ? { workName: position.workName } : {}),
+        })),
       };
     });
     audit(data, actorId, "reanalyze", "document", id, "Разбор по параметрам ГРАНД-Смета");
