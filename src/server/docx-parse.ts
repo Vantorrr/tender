@@ -166,13 +166,9 @@ export function analysisFromDocx(
   const cost = parseDecimal(costRaw);
 
   const citations: Citation[] = [];
-  for (const [id, para] of [
-    ["c-docx-zone", zonePara],
-    ["c-docx-volume", volumePara],
-    ["c-docx-cost", costPara],
-  ] as const) {
-    if (para) citations.push(cite(id, para, "", fileName, sourceVersion, "confirmed"));
-  }
+  if (zone && zonePara) citations.push(cite("c-docx-zone", zonePara, "", fileName, sourceVersion, "confirmed"));
+  if (volume && volumePara) citations.push(cite("c-docx-volume", volumePara, "", fileName, sourceVersion, "confirmed"));
+  if (cost != null && costPara) citations.push(cite("c-docx-cost", costPara, "", fileName, sourceVersion, "confirmed"));
 
   // Procurement documents often put a heading and its value in separate
   // paragraphs (for example, “Срок подачи предложения” followed by a date).
@@ -184,9 +180,13 @@ export function analysisFromDocx(
     const paragraph = paragraphs[i];
     if (!clausePattern.test(paragraph.text)) continue;
     const next = paragraphs[i + 1];
-    const text = paragraph.text.length < 120 && next
+    const labelOnly = /^(?:срок подачи(?: предложения| заявки)?|срок выполнения работ|дата подачи предложения|зона|регион|стоимость|место выполнения работ)\s*:?$/iu.test(paragraph.text.trim());
+    const nextIsPlaceholder = Boolean(next && /^(?:нет данных|не указан(?:а|о|ы)?|—|-)\.?$/iu.test(next.text.trim()));
+    if (labelOnly && (!next || nextIsPlaceholder)) continue;
+    const text = paragraph.text.length < 120 && next && !nextIsPlaceholder
       ? `${paragraph.text} ${next.text}`
       : paragraph.text;
+    if (/\b(?:нет данных|не указано в документе|не найдено)\b/iu.test(text)) continue;
     clauseParagraphs.set(paragraph.index, text);
   }
   for (const [index, text] of [...clauseParagraphs.entries()].slice(0, 12)) {

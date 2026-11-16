@@ -121,6 +121,15 @@ export interface ProjectAnalytics {
   missingInputs: string[];
   citationIds: string[];
   citations: Citation[];
+  /** Short, source-validated conclusions; raw source excerpts stay secondary in the UI. */
+  findings?: Array<{
+    topic: string;
+    importance: "critical" | "high" | "medium" | "info";
+    text: string;
+    quote: string;
+    citationIds: string[];
+    sourceFiles: string[];
+  }>;
   generatedAt: string;
   method: string;
   disclaimer: string;

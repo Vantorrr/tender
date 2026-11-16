@@ -413,14 +413,19 @@ export async function analyzeProjectPackageWithModel(
     summary: [
       packageBrief,
       economicSummary,
-      ...(evidence.length || fallbackEvidence.length
-        ? [
-            evidence.length ? "Выводы ИИ с проверяемыми цитатами:\n" + evidence.join("\n") : null,
-            fallbackEvidence.length ? "Ключевые условия из документов:\n" + fallbackEvidence.join("\n") : null,
-          ].filter((item): item is string => Boolean(item)).join("\n")
-        : ["Модель не вернула тезис, прошедший проверку цитаты; оставлена локальная сводка."]),
+      evidence.length
+        ? `ИИ подготовил ${evidence.length} вывода с проверяемыми источниками.`
+        : "Модель не вернула тезис, прошедший проверку цитаты; оставлена локальная сводка.",
     ].join("\n\n"),
     missingInputs,
+    findings: accepted.map(({ topic, importance, text, quote, citationIds, sourceFiles }) => ({
+      topic: TOPIC_LABELS[topic] ?? TOPIC_LABELS.other,
+      importance: importance as NonNullable<ProjectAnalytics["findings"]>[number]["importance"],
+      text,
+      quote,
+      citationIds,
+      sourceFiles,
+    })),
     generatedAt: new Date().toISOString(),
       method: "openrouter_project_package_v5_domain_coverage",
     disclaimer: "ИИ не вычисляет сметные итоги. Показаны только тезисы с цитатой из файла; риск и рекомендацию проверьте по оригиналу. Это не экспертное заключение и не обещание статистической точности.",
@@ -497,6 +502,7 @@ export function buildProjectAnalysisFallback(
   const result: ProjectAnalytics = {
     ...deterministic,
     recommendation,
+    findings: [],
     summary: [
       deterministic.summary,
       "ИИ-анализ не завершился. Ниже сохранён детерминированный расчёт; модельные тезисы и заключение по рискам не сформированы.",

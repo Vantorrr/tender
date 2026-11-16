@@ -486,7 +486,7 @@ export function analysisFromGrand(parsed: GrandParse, fileName: string): UploadA
     locatorKey?: string,
     confidence: Citation["confidence"] = "confirmed"
   ) => {
-    if (!text) return;
+    if (!text || confidence === "unconfirmed") return;
     const loc = locatorKey ? parsed.locators[locatorKey] : undefined;
     citations.push({
       id,
@@ -499,25 +499,23 @@ export function analysisFromGrand(parsed: GrandParse, fileName: string): UploadA
       confidence,
     });
   };
-  quote("c-obj", parsed.construction || "нет данных", "construction", parsed.construction ? "confirmed" : "unconfirmed");
-  quote("c-est", parsed.estimateNumber || "нет данных", "estimateNumber", parsed.estimateNumber ? "confirmed" : "unconfirmed");
-  quote("c-work", parsed.workName || "нет данных", "workName", parsed.workName ? "confirmed" : "unconfirmed");
+  if (parsed.construction) quote("c-obj", parsed.construction, "construction");
+  if (parsed.estimateNumber) quote("c-est", parsed.estimateNumber, "estimateNumber");
+  if (parsed.workName) quote("c-work", parsed.workName, "workName");
   if (parsed.basis) quote("c-basis", `Основание: ${parsed.basis}`, "basis");
-  else quote("c-basis", "Основание: нет данных", undefined, "unconfirmed");
-  quote(
-    "c-reg",
-    `Регион в смете: ${parsed.region || "не указан в файле"}; зона сметного района: ${parsed.zone || "не указана в файле"}`,
-    parsed.region ? "region" : "zone",
-    parsed.region && parsed.zone ? "confirmed" : "unconfirmed"
-  );
+  if (parsed.region || parsed.zone) {
+    const regionAndZone = [
+      parsed.region ? `Регион в смете: ${parsed.region}` : "",
+      parsed.zone ? `зона сметного района: ${parsed.zone}` : "",
+    ].filter(Boolean).join("; ");
+    quote("c-reg", regionAndZone, parsed.region ? "region" : "zone");
+  }
   if (parsed.costCurrentThousand != null) {
     quote(
       "c-cost",
       `Сметная стоимость: ${rub(parsed.costCurrentThousand)} тыс. руб.`,
       "costCurrentThousand"
     );
-  } else {
-    quote("c-cost", "Сметная стоимость: нет данных", undefined, "unconfirmed");
   }
   if (parsed.positions[0]) {
     const p = parsed.positions[0];

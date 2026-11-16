@@ -22,6 +22,7 @@ import { api } from "@/lib/api";
 import { DocumentWebPreview } from "@/components/document-web-preview";
 import { cleanLabel } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney, formatNumber } from "@/lib/format";
+import { citationTopicLabel, readableCitations, regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
 import { WORK_TYPES } from "@/lib/pipeline";
@@ -44,6 +45,11 @@ const SUPPLY_RU: Record<SupplyStatus, string> = {
 
 function citationsMatching(citations: Citation[], pattern: RegExp) {
   return citations.filter((citation) => pattern.test(citation.text));
+}
+
+function meaningfulMetadata(value?: string): string | undefined {
+  const text = value?.trim();
+  return text && !/^(?:нет данных|не указан(?:а|о|ы)?(?: в карточке.*)?|не найден(?:а|о|ы)?|—|-)$/iu.test(text) ? text : undefined;
 }
 
 function keyAnalyticsCitations(citations: Citation[]) {
@@ -350,7 +356,16 @@ export default function ZakupkaDetailPage() {
   }
 
   const analytics = procurement.analytics;
-  const keyCitations = analytics ? keyAnalyticsCitations(analytics.citations) : [];
+  const displayCitations = analytics ? readableCitations(analytics.citations) : [];
+  const renderableCitations = displayCitations.map(({ displayText, ...citation }) => ({ ...citation, text: displayText }));
+  const keyCitations = keyAnalyticsCitations(renderableCitations);
+  const documentRegion = docs.map((document) => meaningfulMetadata(document.analysis?.region)).find(Boolean);
+  const sourceRegion = meaningfulMetadata(procurement.region) || documentRegion || regionFromCitations(analytics?.citations ?? []);
+  const sourceZone = docs.map((document) => meaningfulMetadata(document.analysis?.zone)).find(Boolean);
+  const sourceDeadline = submissionDeadlineFromCitations(analytics?.citations ?? []);
+  const cardDeadline = procurement.deadline && Number.isFinite(new Date(procurement.deadline).getTime())
+    ? formatDateTime(procurement.deadline)
+    : sourceDeadline ? `${sourceDeadline} · из документа` : "Не найден в карточке и документах";
   const previewDoc = previewId
     ? docs.find((d) => d.id === previewId)
     : null;
@@ -619,7 +634,7 @@ export default function ZakupkaDetailPage() {
                 {analytics ? (
                   <div className="mt-3">
                     <p className="text-sm font-medium">Рекомендация: {PARTICIPATE_LABELS[analytics.recommendation]}</p>
-                    <p className="mt-1 line-clamp-3 text-sm text-[var(--tk-muted)]">{analytics.summary.replace(/\s+/g, " ").slice(0, 420)}</p>
+                    <p className="mt-1 line-clamp-3 text-sm text-[var(--tk-muted)]">{analytics.summary.split(/\n\n/)[0].replace(/\s+/g, " ").slice(0, 420)}</p>
                     <p className="mt-1 text-xs text-[var(--tk-muted)]">Документов: {analytics.quality?.sourceDocuments ?? docs.length} · Цитат: {analytics.citations.length} · {analytics.quality?.status === "evidence_backed" ? "есть подтверждённые источниками тезисы" : "проверьте исходные документы"}</p>
                   </div>
                 ) : (
@@ -1016,10 +1031,41 @@ export default function ZakupkaDetailPage() {
                   <p className="text-sm font-semibold">
                     Рекомендация: {PARTICIPATE_LABELS[analytics.recommendation]}
                   </p>
-                  <pre className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">
-                    {analytics.summary}
-                  </pre>
+                  <div className="mt-2 space-y-1 text-sm leading-relaxed text-[var(--tk-foreground)]">
+                    {analytics.summary.split(/\n\n/)[0].split("\n").map((line, index) => (
+                      <p key={`${index}-${line}`} className={index === 0 ? "font-medium" : "text-[var(--tk-muted)]"}>{line}</p>
+                    ))}
+                  </div>
                 </section>
+                {analytics.findings?.length ? (
+                  <section className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white p-4" data-testid="analytics-findings">
+                    <div className="mb-3 flex items-baseline justify-between gap-2">
+                      <h3 className="text-sm font-semibold">Что нашли в документах</h3>
+                      <span className="text-xs text-[var(--tk-muted)]">{analytics.findings.length} подтверждённых вывода</span>
+                    </div>
+                    <ul className="space-y-2">
+                      {analytics.findings.slice(0, 6).map((finding, index) => {
+                        const source = analytics.citations.find((citation) => finding.citationIds.includes(citation.id));
+                        return (
+                          <li key={`${finding.topic}-${index}`} className="rounded-lg border border-[var(--tk-line)] px-3 py-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-xs font-semibold text-[var(--tk-muted)]">{finding.topic}</span>
+                              {finding.importance === "critical" || finding.importance === "high" ? (
+                                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-900">{finding.importance === "critical" ? "Критично" : "Важно"}</span>
+                              ) : null}
+                            </div>
+                            <p className="mt-1 text-sm leading-relaxed">{finding.text}</p>
+                            <details className="mt-2">
+                              <summary className="w-fit cursor-pointer text-xs font-medium text-[var(--tk-muted)]">Показать фрагмент и источник</summary>
+                              <blockquote className="mt-2 break-words rounded-md bg-stone-50 px-3 py-2 text-sm leading-relaxed [overflow-wrap:anywhere]">«{finding.quote}»</blockquote>
+                              {source ? <p className="mt-1 text-xs text-[var(--tk-muted)]">{source.sourceFile}{source.page ? ` · стр. ${source.page}` : ""}{source.paragraph ? ` · абз. ${source.paragraph}` : ""}{source.sheet ? ` · лист ${source.sheet}` : ""}{source.cell ? ` · ${source.cell}` : ""}</p> : null}
+                            </details>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </section>
+                ) : null}
                 {analytics.economics ? (
                   <section className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white p-4" data-testid="analytics-economics">
                     <h3 className="text-sm font-semibold">Себестоимость и рентабельность</h3>
@@ -1054,12 +1100,18 @@ export default function ZakupkaDetailPage() {
                   <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                     <div className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3">
                       <dt className="text-xs text-[var(--tk-muted)]">Заказчик</dt>
-                      <dd className="mt-1 text-sm font-medium">{procurement.customer || "Нет данных"}</dd>
+                      <dd className="mt-1 text-sm font-medium">{procurement.customer || "Не указан в карточке"}</dd>
                     </div>
                     <div className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3">
                       <dt className="text-xs text-[var(--tk-muted)]">Срок подачи</dt>
-                      <dd className="mt-1 text-sm font-medium">{formatDateTime(procurement.deadline)}</dd>
+                      <dd className="mt-1 text-sm font-medium">{cardDeadline}</dd>
                     </div>
+                    {sourceRegion ? (
+                      <div className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3">
+                        <dt className="text-xs text-[var(--tk-muted)]">Регион</dt>
+                        <dd className="mt-1 text-sm font-medium">{sourceRegion}{sourceZone ? ` · зона ${sourceZone}` : ""}</dd>
+                      </div>
+                    ) : null}
                     <div className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3 sm:col-span-2">
                       <dt className="text-xs text-[var(--tk-muted)]">Предмет закупки</dt>
                       <dd className="mt-1 text-sm font-medium">{procurement.title}</dd>
@@ -1068,8 +1120,8 @@ export default function ZakupkaDetailPage() {
                   </dl>
                   <div className="grid gap-3 lg:grid-cols-2">
                     {([
-                      { label: "Оплата и аванс", citations: citationsMatching(analytics.citations, /оплат|аванс|отсроч|расч[её]т[а-яё]* по контракту/i) },
-                      { label: "Штрафы и неустойки", citations: citationsMatching(analytics.citations, /штраф|пени|неустойк|санкци/i) },
+                      { label: "Оплата и аванс", citations: citationsMatching(renderableCitations, /оплат|аванс|отсроч|расч[её]т[а-яё]* по контракту/i) },
+                      { label: "Штрафы и неустойки", citations: citationsMatching(renderableCitations, /штраф|пени|неустойк|санкци/i) },
                     ] as const).map((group) => (
                       <div key={group.label} className="rounded-lg border border-[var(--tk-line)] p-3">
                         <h4 className="text-sm font-medium">{group.label}</h4>
@@ -1077,8 +1129,8 @@ export default function ZakupkaDetailPage() {
                           <ul className="mt-2 space-y-2">
                             {group.citations.slice(0, 4).map((citation) => (
                               <li key={citation.id} className="text-sm leading-relaxed">
-                                <blockquote>«{citation.text}»</blockquote>
-                                <p className="mt-1 text-xs text-[var(--tk-muted)]">
+                                <p className="break-words leading-relaxed [overflow-wrap:anywhere]">{citation.text}</p>
+                                <p className="mt-1 break-words text-xs text-[var(--tk-muted)] [overflow-wrap:anywhere]">
                                   {citation.sourceFile}{citation.page ? `, стр. ${citation.page}` : ""}{citation.paragraph ? `, абз. ${citation.paragraph}` : ""}{citation.sheet ? `, лист ${citation.sheet}` : ""}{citation.cell ? `, ${citation.cell}` : ""}
                                 </p>
                               </li>
@@ -1141,46 +1193,40 @@ export default function ZakupkaDetailPage() {
                   {analytics.disclaimer} Метод: {analytics.method}. Без обещания
                   точности.
                 </p>
-                <h3 className="mt-4 text-sm font-medium">Ключевые выдержки из документов</h3>
-                {analytics.citations.length === 0 ? (
+                <h3 className="mt-4 text-sm font-medium">Подтверждения из документов</h3>
+                {displayCitations.length === 0 ? (
                   <p className="mt-2 text-sm text-[var(--tk-muted)]">
-                    Цитат пока нет — загрузите и разберите документы.
+                    В документах пока нет проверяемых фрагментов с заполненными значениями.
                   </p>
                 ) : (
                   <>
-                    {keyCitations.length === 0 ? <p className="mt-2 rounded-lg bg-stone-50 px-3 py-2 text-sm text-[var(--tk-muted)]">Не найдены выдержки о сроках, оплате, ответственности, заказчике или объёме работ. Остальные цитаты доступны в полном списке.</p> : null}
-                    <ul className="mt-2 space-y-2" data-testid="analytics-citations">
-                    {keyCitations.map((c) => (
-                      <li
-                        key={c.id}
-                        className="rounded-lg border border-[var(--tk-line)] px-3 py-2 text-sm"
-                        data-testid={`citation-${c.id}`}
-                      >
-                        <p className="text-xs font-medium text-[var(--tk-muted)]">
-                          Источник: {c.sourceFile}
-                          {c.page != null ? ` · стр. ${c.page}` : ""}
-                          {c.paragraph ? ` · абз. ${c.paragraph}` : ""}
-                          {c.sheet ? ` · лист ${c.sheet}` : ""}
-                          {c.cell ? ` · ${c.cell}` : ""}
-                        </p>
-                        <blockquote className="mt-1 rounded-md bg-amber-50/80 px-2 py-1.5 italic leading-relaxed">
-                          «{c.text}»
-                        </blockquote>
-                      </li>
-                    ))}
+                    <ul className="mt-2 grid gap-2 sm:grid-cols-2" data-testid="analytics-citations">
+                    {keyCitations.map((c) => {
+                      const source = displayCitations.find((citation) => citation.id === c.id);
+                      return (
+                        <li key={c.id} className="min-w-0 rounded-lg border border-[var(--tk-line)] bg-white px-3 py-3 text-sm" data-testid={`citation-${c.id}`}>
+                          <span className="inline-flex rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-medium text-[var(--tk-muted)]">{citationTopicLabel(c.text)}</span>
+                          <p className="mt-2 line-clamp-4 break-words leading-relaxed [overflow-wrap:anywhere]">{source?.displayText ?? c.text}</p>
+                          <p className="mt-2 break-words text-xs text-[var(--tk-muted)] [overflow-wrap:anywhere]">
+                            {c.sourceFile}{c.page ? ` · стр. ${c.page}` : ""}{c.paragraph ? ` · абз. ${c.paragraph}` : ""}{c.sheet ? ` · лист ${c.sheet}` : ""}{c.cell ? ` · ${c.cell}` : ""}
+                          </p>
+                        </li>
+                      );
+                    })}
                     </ul>
-                    {analytics.citations.length > keyCitations.length ? (
+                    {displayCitations.length > keyCitations.length ? (
                       <details className="mt-3 rounded-lg border border-[var(--tk-line)] bg-stone-50 px-3 py-2">
                         <summary className="cursor-pointer text-sm font-medium">
-                          Все выдержки ({analytics.citations.length})
+                          Показать остальные фрагменты ({displayCitations.length - keyCitations.length})
                         </summary>
-                        <ul className="mt-3 space-y-2">
-                          {analytics.citations.filter((c) => !keyCitations.some((keyCitation) => keyCitation.id === c.id)).map((c) => (
-                            <li key={c.id} className="rounded-lg border border-[var(--tk-line)] bg-white px-3 py-2 text-sm">
-                              <p className="text-xs font-medium text-[var(--tk-muted)]">
-                                Источник: {c.sourceFile}{c.page != null ? ` · стр. ${c.page}` : ""}{c.paragraph ? ` · абз. ${c.paragraph}` : ""}{c.sheet ? ` · лист ${c.sheet}` : ""}{c.cell ? ` · ${c.cell}` : ""}
+                        <ul className="mt-3 space-y-2" data-testid="analytics-all-citations">
+                          {displayCitations.filter((citation) => !keyCitations.some((keyCitation) => keyCitation.id === citation.id)).map((c) => (
+                            <li key={c.id} className="min-w-0 rounded-lg border border-[var(--tk-line)] bg-white px-3 py-2 text-sm">
+                              <p className="flex flex-wrap items-center gap-2 text-xs font-medium text-[var(--tk-muted)]">
+                                <span className="rounded-full bg-stone-100 px-2 py-0.5">{c.topicLabel}</span>
+                                <span className="break-all">{c.sourceFile}{c.page != null ? ` · стр. ${c.page}` : ""}{c.paragraph ? ` · абз. ${c.paragraph}` : ""}{c.sheet ? ` · лист ${c.sheet}` : ""}{c.cell ? ` · ${c.cell}` : ""}</span>
                               </p>
-                              <blockquote className="mt-1 rounded-md bg-amber-50/80 px-2 py-1.5 italic leading-relaxed">«{c.text}»</blockquote>
+                              <p className="mt-1 break-words leading-relaxed [overflow-wrap:anywhere]">{c.displayText}</p>
                             </li>
                           ))}
                         </ul>

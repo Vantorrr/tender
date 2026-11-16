@@ -582,7 +582,8 @@ describe("golden DOCX contract-terms (hand-expected)", () => {
     expect(analysis.analysis.zone).toBe("");
     expect(analysis.analysis.costThousand).toBeNull();
     expect(analysis.analyticalNote).not.toMatch(/Зона: нет данных|Стоимость: нет данных/);
-    expect(analysis.status).toBe("gotovo");
+    expect(analysis.status).toBe("trebuet_proverki");
+    expect(analysis.citations).toHaveLength(0);
   });
 
   it("DOCX invitation cites headings with values in the following paragraph", () => {
