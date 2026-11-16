@@ -34,18 +34,25 @@ export function startBackgroundJobs() {
   }
 
   console.log(
-    `[истройка] автосинхронизация каждые ${Math.round(config.syncIntervalMs / 1000)}с (${source.status}/${source.id})`
+    `[истройка] проверка источника закупок при запуске (${source.status}/${source.id}); периодическая синхронизация включится после успешного ответа`
   );
 
   let syncInFlight = false;
+  let interval: ReturnType<typeof setInterval> | undefined;
   const sync = () => {
     if (syncInFlight) return;
     syncInFlight = true;
     void runProcurementSync(SYSTEM_ACTOR)
       .then((result) => {
         console.log(
-          `[истройка] sync job ${result.jobId} ok, закупок: ${result.data.procurements.length}`
+          `[истройка] sync job ${result.jobId} ${result.feed.ok ? "ok" : "ошибка"}, закупок: ${result.data.procurements.length}`
         );
+        if (result.feed.ok && !interval) {
+          interval = setInterval(sync, config.syncIntervalMs);
+          console.log(
+            `[истройка] периодическая синхронизация каждые ${Math.round(config.syncIntervalMs / 1000)}с (${source.id})`
+          );
+        }
       })
       .catch((e) => {
         console.error("[истройка] sync failed", e);
@@ -56,7 +63,6 @@ export function startBackgroundJobs() {
   };
 
   // Run once on boot so a configured live source is actually verified before
-  // waiting a full six-hour interval for its first request.
+  // waiting a full six-hour interval; only a successful response enables polling.
   sync();
-  setInterval(sync, config.syncIntervalMs);
 }
