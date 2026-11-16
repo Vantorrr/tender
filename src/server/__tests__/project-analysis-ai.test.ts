@@ -44,6 +44,8 @@ describe("grounded project analysis", () => {
       missingInputs: [],
       evidence: [
         {
+          topic: "payment",
+          importance: "high",
           text: "Срок оплаты составляет 60 дней.",
           quote: "Заказчик оплачивает работы в течение 60 календарных дней",
           citationIds: ["c-contract-1"],
@@ -63,7 +65,31 @@ describe("grounded project analysis", () => {
 
     const checked = validateProjectEvidence(result, citations, new Set(["c-contract-1"]));
     expect(checked.accepted.map((item) => item.text)).toEqual(["Срок оплаты составляет 60 дней."]);
+    expect(checked.accepted[0]).toMatchObject({ topic: "payment", importance: "high" });
     expect(checked.rejected).toBe(2);
+  });
+
+  it("normalizes percent words and decimal commas without weakening source matching", () => {
+    const source = [{
+      id: "penalty-1",
+      text: "Штраф: 0,1 процента за каждый день просрочки.",
+      page: 4,
+      sourceFile: "Договор.pdf",
+    }];
+    const result = parseProjectAnalysisResult(JSON.stringify({
+      recommendation: "insufficient_data",
+      missingInputs: [],
+      evidence: [{
+        topic: "liability",
+        importance: "high",
+        text: "За каждый день просрочки начисляется штраф 0.1%.",
+        quote: "Штраф: 0,1 процента за каждый день просрочки.",
+        citationIds: ["penalty-1"],
+      }],
+    }));
+    const checked = validateProjectEvidence(result, source);
+    expect(checked.accepted).toHaveLength(1);
+    expect(checked.rejected).toBe(0);
   });
 
   it("never lets the model upgrade an incomplete local analysis", () => {

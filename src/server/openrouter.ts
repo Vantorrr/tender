@@ -19,7 +19,9 @@ export async function completeJson(system: string, user: string, retryEmpty = tr
     body: JSON.stringify({
       model: config.openRouterModel,
       temperature: 0.2,
-      max_tokens: retryEmpty ? 1400 : 2400,
+      // Tender analyses contain source quotes; 1,400 tokens cut valid JSON in
+      // the middle of a citation on the configured model.
+      max_tokens: retryEmpty ? 3200 : 4000,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: retryEmpty
@@ -35,10 +37,21 @@ export async function completeJson(system: string, user: string, retryEmpty = tr
     throw new Error(`Модель ответила ${response.status}: ${detail.slice(0, 240)}`);
   }
   const payload = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
+    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
   };
   const content = payload.choices?.[0]?.message?.content?.trim();
+  const finishReason = payload.choices?.[0]?.finish_reason;
   if (!content && retryEmpty) return completeJson(system, user, false);
   if (!content) throw new Error("Модель дважды вернула пустой ответ. Повторите анализ позже.");
+  let validJson = false;
+  try {
+    JSON.parse(content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));
+    validJson = true;
+  } catch {
+    // Providers may stop mid-quote despite JSON mode. Retry once with a larger
+    // completion budget before surfacing a confusing JSON parser error to users.
+  }
+  if ((!validJson || finishReason === "length") && retryEmpty) return completeJson(system, user, false);
+  if (!validJson) throw new Error("Модель вернула неполный ответ. Повторите анализ позже.");
   return content;
 }

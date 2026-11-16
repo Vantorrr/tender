@@ -591,6 +591,7 @@ export function analysisFromScan(
   ocr: {
     status: string;
     text: string | null;
+    pages?: string[];
     pageCount: number | null;
     provider?: string | null;
     reason?: string;
@@ -599,18 +600,38 @@ export function analysisFromScan(
   const pages = ocr.pageCount ?? 1;
   const text = (ocr.text ?? "").trim();
   const hasText = text.length > 0;
-  const citations: Citation[] = hasText
-    ? [
-        {
-          id: "c-ocr",
-          text: text.slice(0, 240),
-          page: 1,
-          sourceFile: fileName,
-          sourceVersion: "ocr-extract",
-          confidence: "ocr",
-        },
-      ]
-    : [];
+  const pageTexts = (ocr.pages?.length ? ocr.pages : hasText ? [text] : []).slice(0, 200);
+  const citations: Citation[] = pageTexts.flatMap((pageText, pageIndex) => {
+    const sentences = pageText.match(/[^.!?]+(?:[.!?]+|$)/gu) ?? [pageText];
+    const chunks: string[] = [];
+    let current = "";
+    for (const sentence of sentences) {
+      const words = sentence.trim().split(/\s+/u);
+      for (let offset = 0; offset < words.length;) {
+        let piece = "";
+        while (offset < words.length && `${piece} ${words[offset]}`.trim().length <= 700) {
+          piece = `${piece} ${words[offset++]}`.trim();
+        }
+        if (!piece && words[offset]) piece = words[offset++].slice(0, 700);
+        const candidate = `${current} ${piece}`.trim();
+        if (current && candidate.length > 700) {
+          chunks.push(current);
+          current = piece;
+        } else {
+          current = candidate;
+        }
+      }
+    }
+    if (current) chunks.push(current);
+    return chunks.slice(0, 8).map((chunk, chunkIndex) => ({
+      id: `c-ocr-p${pageIndex + 1}-${chunkIndex + 1}`,
+      text: chunk,
+      page: pageIndex + 1,
+      sourceFile: fileName,
+      sourceVersion: "ocr-extract",
+      confidence: "ocr" as const,
+    }));
+  });
   const highlights: Highlight[] = [
     {
       id: "h-scan",
@@ -631,6 +652,7 @@ export function analysisFromScan(
     ? [
         `PDF принят как скан/документ (${pages} стр.). Имя файла не обязано совпадать с шифром КМ.`,
         `OCR (${ocr.provider ?? "local"}): ${text.slice(0, 800)}`,
+        ocr.reason?.includes("проверьте остаток") ? ocr.reason : null,
         "Цифры и марки из OCR требуют ручной проверки. Сметный разбор ГРАНД-Сметы к произвольному скану не применяется.",
       ].join("\n")
     : [
@@ -864,15 +886,7 @@ export async function analyzeUpload(
         ];
       } else if (ocr.text) {
         analysis.analyticalNote = `${analysis.analyticalNote}\nOCR (${ocr.provider}): ${ocr.text.slice(0, 400)}`;
-        analysis.citations = [
-          ...analysis.citations,
-          {
-            id: "c-ocr",
-            text: ocr.text.slice(0, 160),
-            page: 1,
-            sourceFile: fileName,
-          },
-        ];
+        analysis.citations = [...analysis.citations, ...analysisFromScan(fileName, ocr).citations];
       }
       return maybeRefineNote(
         analysis,

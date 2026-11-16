@@ -90,7 +90,7 @@ describe("B2 OCR ordinary scans", () => {
       { useLlm: false }
     );
     expect(analysis.analyticalNote).toMatch(/TMA361 OCR TEST/);
-    expect(analysis.citations.some((c) => c.id === "c-ocr")).toBe(true);
+    expect(analysis.citations.some((c) => c.id.startsWith("c-ocr-p1-"))).toBe(true);
     expect(analysis.citations[0].confidence).toBe("ocr");
     expect(analysis.analysis.profileMatch).toBe(false);
     expect(analysis.noteByModel).toBeFalsy();
@@ -105,7 +105,7 @@ describe("B2 OCR ordinary scans", () => {
       { useLlm: false }
     );
     expect(analysis.analyticalNote).toMatch(/КП заказчика/);
-    expect(analysis.citations.some((citation) => citation.id === "c-ocr")).toBe(true);
+    expect(analysis.citations.some((citation) => citation.id.startsWith("c-ocr-p1-"))).toBe(true);
     expect(analysis.status).not.toBe("oshibka");
   });
 
@@ -119,6 +119,20 @@ describe("B2 OCR ordinary scans", () => {
     expect(a.citations).toHaveLength(0);
     expect(a.analyticalNote).toMatch(/не дали содержимого|пусто/i);
     expect(a.status).toBe("trebuet_proverki");
+  });
+
+  it("keeps separate OCR citations and real page numbers across the document", () => {
+    const a = analysisFromScan("contract.pdf", {
+      status: "ok",
+      text: "Работы выполняются до 31 марта. Оплата после акта.",
+      pages: ["Работы выполняются до 31 марта.", "Оплата после акта в течение 30 дней."],
+      pageCount: 2,
+      reason: "тест",
+    });
+    expect(a.citations).toHaveLength(2);
+    expect(a.citations[0]).toMatchObject({ id: "c-ocr-p1-1", page: 1 });
+    expect(a.citations[1]).toMatchObject({ id: "c-ocr-p2-1", page: 2 });
+    expect(a.citations[1].text).toContain("30 дней");
   });
 });
 

@@ -14,6 +14,8 @@ export type OcrStatus = "not_configured" | "unavailable" | "ok" | "empty";
 export type OcrResult = {
   status: OcrStatus;
   text: string | null;
+  /** Text kept separately by page so citations never invent locations. */
+  pages?: string[];
   pageCount: number | null;
   reason: string;
   provider: string | null;
@@ -146,12 +148,17 @@ export class TesseractOcrProvider implements OcrProvider {
           const pdfPath = path.join(tmp, "doc.pdf");
           fs.writeFileSync(pdfPath, input.buffer);
           const textLayer = run(tools.pdftotext, ["-layout", pdfPath, "-"]);
-          const layered = textLayer.stdout.replace(/\s+/g, " ").trim();
+          const pages = textLayer.stdout
+            .split("\f")
+            .map((page) => page.replace(/\s+/g, " ").trim())
+            .filter(Boolean);
+          const layered = pages.join(" ").trim();
           if (textLayer.ok && layered.length >= 24) {
             return {
               status: "ok",
               text: layered.slice(0, 8000),
-              pageCount: null,
+              pages: pages.map((page) => page.slice(0, 8000)),
+              pageCount: pages.length,
               provider: this.id,
               reason: "pdftotext (текстовый слой PDF)",
             };
@@ -177,7 +184,7 @@ export class TesseractOcrProvider implements OcrProvider {
           "-f",
           "1",
           "-l",
-          "2",
+          "20",
           pdfPath,
           prefix,
         ]);
@@ -228,9 +235,12 @@ export class TesseractOcrProvider implements OcrProvider {
         return {
           status: "ok",
           text: text.slice(0, 8000),
+          pages: chunks.map((chunk) => chunk.replace(/\s+/g, " ").trim()),
           pageCount: pages.length,
           provider: this.id,
-          reason: "tesseract+pdftoppm (локальный OCR)",
+          reason: pages.length === 20
+            ? "tesseract+pdftoppm (локальный OCR; проверено до 20 страниц, проверьте остаток длинного скана вручную)"
+            : "tesseract+pdftoppm (локальный OCR)",
         };
       }
 

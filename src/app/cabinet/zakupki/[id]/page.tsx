@@ -609,8 +609,8 @@ export default function ZakupkaDetailPage() {
 
         <TabsContent value="overview">
           <section className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4" data-testid="procurement-overview-analysis">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="min-w-0 flex-1">
+            <div className="grid min-w-0 gap-3">
+              <div className="min-w-0">
                 <h2 className="font-[family-name:var(--font-display)] text-base">Аналитика и документы проекта</h2>
                 <p className="mt-1 text-xs text-[var(--tk-muted)]">
                   Загрузите файл или архив — система сохранит его в карточке, обновит сводку и разберёт доступные источники.
@@ -618,14 +618,14 @@ export default function ZakupkaDetailPage() {
                 {analytics ? (
                   <div className="mt-3">
                     <p className="text-sm font-medium">Рекомендация: {PARTICIPATE_LABELS[analytics.recommendation]}</p>
-                    <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-sm text-[var(--tk-muted)]">{analytics.summary}</p>
+                    <p className="mt-1 line-clamp-3 text-sm text-[var(--tk-muted)]">{analytics.summary.replace(/\s+/g, " ").slice(0, 420)}</p>
                     <p className="mt-1 text-xs text-[var(--tk-muted)]">Документов: {analytics.quality?.sourceDocuments ?? docs.length} · Цитат: {analytics.citations.length} · {analytics.quality?.status === "evidence_backed" ? "есть подтверждённые источниками тезисы" : "проверьте исходные документы"}</p>
                   </div>
                 ) : (
                   <p className="mt-3 text-sm text-[var(--tk-muted)]">Сводки пока нет. После загрузки документа она появится здесь.</p>
                 )}
               </div>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <label className="sr-only" htmlFor="overview-upload-category">Тип загружаемого файла</label>
                 <select
                   id="overview-upload-category"
