@@ -168,7 +168,28 @@ try {
     fullPage: true,
   });
 
-  // E) Dengi denied as tender
+  // E) Spreadsheet preview keeps sheet coordinates and supports finding rows.
+  const estimatePath = path.join(
+    process.cwd(),
+    "fixtures/grand-smeta/ls-01-02-01-demontazh.xlsx"
+  );
+  await page.setInputFiles('[data-testid="doc-file-input"]', estimatePath);
+  await page.waitForTimeout(2500);
+  await page.goto(`${base}/cabinet/dokumenty`);
+  const estimateCard = page.getByRole("link").filter({ hasText: "ls-01-02-01-demontazh.xlsx" }).first();
+  await estimateCard.click();
+  await page.getByRole("button", { name: "Открыть в веб" }).click();
+  const spreadsheet = page.getByTestId("spreadsheet-document-preview");
+  await spreadsheet.waitFor();
+  const rowsBeforeSearch = await page.getByTestId("spreadsheet-preview-row").count();
+  if (rowsBeforeSearch > 0) pass("XLSX preview renders rows with coordinates");
+  else fail("XLSX preview renders rows with coordinates", "no preview rows");
+  await page.screenshot({ path: path.join(mediaDir, "26-xlsx-preview.png"), fullPage: true });
+  await page.getByRole("searchbox", { name: "Поиск по ячейкам листа" }).fill("tma361-no-match-2099");
+  if (await page.getByText("Совпадений не найдено.").count()) pass("XLSX preview search filters rows");
+  else fail("XLSX preview search filters rows", "expected empty search state");
+
+  // F) Dengi denied as tender
   await page.goto(`${base}/cabinet/dengi`);
   await page.waitForTimeout(400);
   if (await page.getByText(/Нет доступа к разделу/i).count()) {

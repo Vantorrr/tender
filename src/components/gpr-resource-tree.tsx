@@ -115,7 +115,17 @@ function FragmentRows({
   onToggle: () => void;
   onPatch: (leaf: EstimateLeaf, values: LeafPatch) => void;
 }) {
+  const [expandedDuplicates, setExpandedDuplicates] = useState<Record<string, boolean>>({});
   const hasNestedRows = node.groups.some((group) => group.leaves.length > 0);
+  const repeatedResources = new Map<string, EstimateLeaf[]>();
+  for (const group of node.groups) {
+    for (const leaf of group.leaves) {
+      const key = `${group.kind}|${leaf.name.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ").trim()}|${leaf.unit.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").trim()}`;
+      const matches = repeatedResources.get(key) ?? [];
+      matches.push(leaf);
+      repeatedResources.set(key, matches);
+    }
+  }
   return (
     <>
       <tr className="border-t border-[var(--tk-line)] bg-stone-50 font-medium" data-testid={`gpr-work-${node.id}`}>
@@ -135,31 +145,69 @@ function FragmentRows({
         <Fragment key={`${node.id}-${group.kind}`}>
           <tr className="bg-stone-50/60 text-xs font-medium text-[var(--tk-muted)]" data-testid={`gpr-resource-group-${node.id}-${group.kind}`}>
             <td className="py-1 pl-8 pr-3">↳ {group.label}{group.incomplete ? " · частично" : ""}</td>
-            <td colSpan={3} className="px-3 py-1">{group.leaves.length} поз.</td>
+            <td colSpan={3} className="px-3 py-1">{group.leaves.length} поз. · {new Set(group.leaves.map((leaf) => `${group.kind}|${leaf.name.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ").trim()}|${leaf.unit.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").trim()}`)).size} наимен.</td>
             <td className="px-3 py-1 text-right">{group.subtotal == null ? "неполно" : formatMoney(group.subtotal)}</td>
             <td />
           </tr>
-          {group.leaves.map((leaf) => (
-            <tr key={`${leaf.source}-${leaf.id}`} className="border-t border-[var(--tk-line)]/50 hover:bg-amber-50/40" data-testid={`gpr-resource-row-${leaf.id}`}>
-              <td className="py-1.5 pl-12 pr-3">{leaf.name}</td>
-              <td className="px-3 py-1.5">{leaf.unit || "—"}</td>
-              <td className="px-3 py-1.5">
-                <Input className="ml-auto h-8 w-28 text-right" type="number" min={0} step="any" aria-label={`Количество · ${leaf.name}`} data-testid={`res-qty-${leaf.id}`} value={String(leaf.quantity)} onChange={(event) => onPatch(leaf, { quantity: Number(event.target.value) || 0 })} />
-              </td>
-              <td className="px-3 py-1.5">
-                <Input className="ml-auto h-8 w-32 text-right" type="number" min={0} step="any" aria-label={`Ставка · ${leaf.name}`} data-testid={`res-rate-${leaf.id}`} placeholder="—" title="нет данных" value={leaf.rate == null ? "" : String(leaf.rate)} onChange={(event) => {
-                  const raw = event.target.value.trim();
-                  const rate = raw === "" ? null : Number(raw);
-                  onPatch(leaf, { rate: rate == null || !Number.isFinite(rate) ? null : rate });
-                }} />
-              </td>
-              <td className={`px-3 py-1.5 text-right ${leaf.amount == null ? "text-amber-800" : ""}`} title={leaf.amount == null ? "нет данных" : undefined}>{leaf.amount == null ? "—" : formatMoney(leaf.amount)}</td>
-              <td className="px-3 py-1.5 text-xs text-[var(--tk-muted)]">{stage ? `${stage.start} — ${stage.end}` : "—"}</td>
-            </tr>
-          ))}
+          {group.leaves.map((leaf) => {
+            const key = `${group.kind}|${leaf.name.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ").trim()}|${leaf.unit.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").trim()}`;
+            const sameResource = repeatedResources.get(key) ?? [leaf];
+            if (sameResource.length > 1 && sameResource[0].id === leaf.id) {
+              const expanded = expandedDuplicates[key] ?? false;
+              const totalQuantity = sameResource.reduce((sum, item) => sum + item.quantity, 0);
+              const priced = sameResource.every((item) => item.amount != null);
+              const totalAmount = priced ? sameResource.reduce((sum, item) => sum + (item.amount ?? 0), 0) : null;
+              const rates = new Set(sameResource.map((item) => item.rate));
+              const rateSummary = rates.size === 1 ? sameResource[0].rate : null;
+              return <Fragment key={`repeat-${key}`}>
+                <tr className="border-t border-[var(--tk-line)]/50 bg-amber-50/40" data-testid={`gpr-resource-summary-${node.id}-${group.kind}-${sameResource[0].id}`}>
+                  <td className="py-1.5 pl-12 pr-3">
+                    <button type="button" aria-expanded={expanded} onClick={() => setExpandedDuplicates((current) => ({ ...current, [key]: !expanded }))} className="rounded-sm text-left font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--tk-copper)]">
+                      {expanded ? "▾" : "▸"} {leaf.name} <span className="font-normal text-[var(--tk-muted)]">· {sameResource.length} строки</span>
+                    </button>
+                  </td>
+                  <td className="px-3 py-1.5">{leaf.unit || "—"}</td>
+                  <td className="px-3 py-1.5 text-right font-medium">{formatNumber(totalQuantity)}</td>
+                  <td className="px-3 py-1.5 text-right text-[var(--tk-muted)]">{rateSummary != null ? formatMoney(rateSummary) : rates.size > 1 ? "разные ставки" : "—"}</td>
+                  <td className={`px-3 py-1.5 text-right font-medium ${totalAmount == null ? "text-amber-800" : ""}`}>{totalAmount == null ? "частично" : formatMoney(totalAmount)}</td>
+                  <td className="px-3 py-1.5 text-xs text-[var(--tk-muted)]">{stage ? `${stage.start} — ${stage.end}` : "—"}</td>
+                </tr>
+                {expanded ? sameResource.map((item) => <ResourceLeafRow key={`${item.source}-${item.id}`} leaf={item} onPatch={onPatch} stage={stage} />) : null}
+              </Fragment>;
+            }
+            if (sameResource.length > 1) return null;
+            return <ResourceLeafRow key={`${leaf.source}-${leaf.id}`} leaf={leaf} onPatch={onPatch} stage={stage} />;
+          })}
         </Fragment>
       )) : null}
     </>
   );
+}
+
+function ResourceLeafRow({
+  leaf,
+  onPatch,
+  stage,
+}: {
+  leaf: EstimateLeaf;
+  onPatch: (leaf: EstimateLeaf, values: LeafPatch) => void;
+  stage?: GprStage;
+}) {
+  return <tr className="border-t border-[var(--tk-line)]/50 bg-white hover:bg-amber-50/40" data-testid={`gpr-resource-row-${leaf.id}`}>
+    <td className="py-1.5 pl-16 pr-3 text-[var(--tk-muted)]">{leaf.name}</td>
+    <td className="px-3 py-1.5">{leaf.unit || "—"}</td>
+    <td className="px-3 py-1.5">
+      <Input className="ml-auto h-8 w-28 text-right" type="number" min={0} step="any" aria-label={`Количество · ${leaf.name}`} data-testid={`res-qty-${leaf.id}`} value={String(leaf.quantity)} onChange={(event) => onPatch(leaf, { quantity: Number(event.target.value) || 0 })} />
+    </td>
+    <td className="px-3 py-1.5">
+      <Input className="ml-auto h-8 w-32 text-right" type="number" min={0} step="any" aria-label={`Ставка · ${leaf.name}`} data-testid={`res-rate-${leaf.id}`} placeholder="—" title="нет данных" value={leaf.rate == null ? "" : String(leaf.rate)} onChange={(event) => {
+        const raw = event.target.value.trim();
+        const rate = raw === "" ? null : Number(raw);
+        onPatch(leaf, { rate: rate == null || !Number.isFinite(rate) ? null : rate });
+      }} />
+    </td>
+    <td className={`px-3 py-1.5 text-right ${leaf.amount == null ? "text-amber-800" : ""}`} title={leaf.amount == null ? "нет данных" : undefined}>{leaf.amount == null ? "—" : formatMoney(leaf.amount)}</td>
+    <td className="px-3 py-1.5 text-xs text-[var(--tk-muted)]">{stage ? `${stage.start} — ${stage.end}` : "—"}</td>
+  </tr>;
 }
 

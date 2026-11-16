@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
 import type { DocumentItem } from "@/lib/types";
 
@@ -17,6 +18,7 @@ export function DocumentWebPreview({ document }: { document: DocumentItem }) {
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const [error, setError] = useState("");
   const [sheet, setSheet] = useState(0);
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -27,6 +29,12 @@ export function DocumentWebPreview({ document }: { document: DocumentItem }) {
       });
     return () => { alive = false; };
   }, [document.id]);
+
+  const currentSheet = preview?.kind === "xlsx" ? preview.sheets[sheet] : undefined;
+  const query = search.trim().toLocaleLowerCase("ru-RU");
+  const visibleRows = useMemo(() => (currentSheet?.rows ?? [])
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => !query || row.some((cell) => cell.toLocaleLowerCase("ru-RU").includes(query))), [currentSheet, query]);
 
   if (error) return <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>;
   if (!preview) return <p className="p-4 text-sm text-[var(--tk-muted)]">Открываем файл…</p>;
@@ -50,17 +58,46 @@ export function DocumentWebPreview({ document }: { document: DocumentItem }) {
     </div>;
   }
   if (preview.kind === "xlsx") {
-    const currentSheet = preview.sheets[sheet];
+    const columnName = (index: number) => {
+      let value = index + 1;
+      let label = "";
+      while (value > 0) {
+        value -= 1;
+        label = String.fromCharCode(65 + (value % 26)) + label;
+        value = Math.floor(value / 26);
+      }
+      return label;
+    };
     return <div className="overflow-hidden rounded-lg border bg-white">
-      <div className="flex gap-1 overflow-x-auto border-b p-2">
-        {preview.sheets.map((item, index) => <button key={item.name} type="button" onClick={() => setSheet(index)} className={`rounded-md px-3 py-1.5 text-sm ${sheet === index ? "bg-slate-900 text-white" : "hover:bg-stone-100"}`}>{item.name}</button>)}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-stone-50 p-3">
+        <div className="flex min-w-0 gap-1 overflow-x-auto" role="tablist" aria-label="Листы таблицы">
+          {preview.sheets.map((item, index) => <button key={item.name} type="button" role="tab" aria-selected={sheet === index} onClick={() => setSheet(index)} className={`shrink-0 rounded-md px-3 py-1.5 text-sm ${sheet === index ? "bg-slate-900 text-white" : "hover:bg-stone-200"}`}>{item.name}</button>)}
+        </div>
+        <label className="flex min-w-[15rem] flex-1 items-center gap-2 sm:max-w-sm">
+          <span className="sr-only">Поиск по ячейкам листа</span>
+          <Input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Найти в листе…" aria-label="Поиск по ячейкам листа" className="h-9 bg-white" />
+        </label>
       </div>
       <div className="max-h-[65vh] overflow-auto">
-        <table className="min-w-full border-collapse text-xs">
-          <tbody>{currentSheet?.rows.map((row, rowIndex) => <tr key={rowIndex} className="border-b even:bg-stone-50">{row.map((cell, colIndex) => <td key={colIndex} className="max-w-[24rem] whitespace-pre-wrap border-r px-2 py-1.5 align-top">{cell}</td>)}</tr>)}</tbody>
+        <table className="min-w-full border-collapse text-xs tabular-nums" data-testid="spreadsheet-document-preview">
+          <caption className="sr-only">Предпросмотр листа {currentSheet?.name ?? ""}</caption>
+          <thead className="sticky top-0 z-20 bg-slate-100 text-[var(--tk-muted)] shadow-sm">
+            <tr>
+              <th scope="col" className="sticky left-0 z-30 min-w-12 border-b border-r bg-slate-100 px-2 py-2 text-center font-medium">№</th>
+              {Array.from({ length: Math.max(0, ...((currentSheet?.rows ?? []).map((row) => row.length))) }, (_, colIndex) => <th key={colIndex} scope="col" className="min-w-24 border-b border-r px-2 py-2 text-center font-medium">{columnName(colIndex)}</th>)}
+            </tr>
+          </thead>
+          <tbody>{visibleRows.map(({ row, index }) => <tr key={index} className="border-b even:bg-stone-50 hover:bg-amber-50/70" data-testid="spreadsheet-preview-row">
+            <th scope="row" className="sticky left-0 z-10 border-r bg-stone-100 px-2 py-1.5 text-center font-medium text-[var(--tk-muted)]">{index + 1}</th>
+            {row.map((cell, colIndex) => {
+              const displayValue = cell.trim();
+              return <td key={colIndex} title={displayValue || undefined} className={`max-w-[24rem] border-r px-2 py-1.5 align-top ${/^-?\d[\d\s.,]*%?$/.test(displayValue) ? "whitespace-nowrap text-right" : "min-w-32 whitespace-pre-wrap"}`}><span className="block max-h-12 overflow-y-auto">{displayValue || <span aria-hidden="true" className="text-stone-300">&nbsp;</span>}</span></td>;
+            })}
+          </tr>)}</tbody>
         </table>
+        {!visibleRows.length ? <p className="px-4 py-8 text-center text-sm text-[var(--tk-muted)]">{query ? "Совпадений не найдено." : "На листе нет заполненных строк."}</p> : null}
       </div>
-      <p className="border-t px-3 py-2 text-xs text-[var(--tk-muted)]">Показаны первые 500 строк и 30 столбцов листа.</p>
+      <p className="border-t bg-stone-50 px-3 py-2 text-xs text-[var(--tk-muted)]" aria-live="polite">Лист «{currentSheet?.name ?? "—"}» · строк в предпросмотре: {visibleRows.length}{query ? ` из ${currentSheet?.rows.length ?? 0}` : ""} · максимум 500 строк и 30 столбцов.</p>
     </div>;
   }
   if (preview.kind === "archive") return <div className="space-y-3">
