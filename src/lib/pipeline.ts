@@ -83,7 +83,7 @@ export const KANBAN_COLUMNS: Array<{
   },
   {
     id: "closed_not_realized",
-    label: "Закрыто без реализации",
+    label: "Закрыто и не реализовано",
     reviewStatuses: [],
     lifecycle: "closed",
     outcome: "not_realized",
