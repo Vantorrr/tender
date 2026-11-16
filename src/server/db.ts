@@ -107,6 +107,42 @@ function metaSet(db: DatabaseSync, key: string, value: string) {
   ).run(key, value);
 }
 
+type PersistedProcurementSync = {
+  sourceId: string;
+  status: "ok" | "not_configured" | "error" | "demo";
+  detail: string;
+  at: string;
+};
+
+export function saveProcurementSyncStatus(
+  sourceId: string,
+  status: PersistedProcurementSync["status"],
+  detail: string
+) {
+  metaSet(
+    getDb(),
+    "procurement_sync_status",
+    JSON.stringify({ sourceId, status, detail, at: new Date().toISOString() } satisfies PersistedProcurementSync)
+  );
+}
+
+function readProcurementSyncStatus(): PersistedProcurementSync | null {
+  const value = metaGet(getDb(), "procurement_sync_status");
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<PersistedProcurementSync>;
+    if (
+      typeof parsed.sourceId !== "string" ||
+      !["ok", "not_configured", "error", "demo"].includes(parsed.status ?? "") ||
+      typeof parsed.detail !== "string" ||
+      typeof parsed.at !== "string"
+    ) return null;
+    return parsed as PersistedProcurementSync;
+  } catch {
+    return null;
+  }
+}
+
 function hashSeedUsers(data: AppData): AppData {
   return {
     ...data,
@@ -518,23 +554,19 @@ export function listJobs(limit = 20) {
 export function procurementStatusSnapshot() {
   const source = procurementSourceStatus();
   if (!source.configured) return source;
-  const latestKonturSync = listJobs(200).find(
-    (job) =>
-      job.type === "procurement_sync" &&
-      /kontur-external-api|Контур API:/i.test(job.detail)
-  );
-  if (!latestKonturSync || latestKonturSync.status === "running") return source;
-  if (latestKonturSync.status === "error") {
+  const lastSync = readProcurementSyncStatus();
+  if (!lastSync || lastSync.sourceId !== source.id) return source;
+  if (lastSync.status === "error") {
     return {
       ...source,
       status: "error" as const,
-      detail: latestKonturSync.detail.replace(/^Ошибка источника:\s*/i, ""),
+      detail: lastSync.detail,
     };
   }
-  if (latestKonturSync.status === "done") {
-    return { ...source, status: "ok" as const, detail: latestKonturSync.detail };
+  if (lastSync.status === "ok" || lastSync.status === "demo") {
+    return { ...source, status: lastSync.status, detail: lastSync.detail };
   }
-  return source;
+  return { ...source, status: lastSync.status, detail: lastSync.detail };
 }
 
 export function healthSnapshot() {

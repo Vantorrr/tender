@@ -1,5 +1,5 @@
 import { assertOrgAccess } from "@/server/acl";
-import { insertJob, listJobs, mutateAppData, readAppData, updateJob } from "@/server/db";
+import { insertJob, listJobs, mutateAppData, readAppData, saveProcurementSyncStatus, updateJob } from "@/server/db";
 import { analyzeUpload } from "@/server/grand-smeta";
 import {
   getProcurementSource,
@@ -134,6 +134,7 @@ export async function runProcurementSync(actorId: string) {
     const orgId = actor?.orgId ?? "org-alfa";
     const source = getProcurementSource();
     const feed = await source.fetchNotices(orgId);
+    saveProcurementSyncStatus(source.id, feed.status, feed.detail);
 
     const result = mutateAppData((data) => {
       const now = new Date().toISOString();
