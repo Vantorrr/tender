@@ -15,6 +15,10 @@ export type GrandPosition = {
   unit: string;
   quantity: number;
   rate: number;
+  /** Name of the estimate section this line appears under. */
+  sectionName?: string;
+  /** Parent work item whose direct resources follow this line in Grand Smeta. */
+  workName?: string;
 };
 
 export type FieldLocator = {
@@ -132,7 +136,11 @@ function rub(n: number) {
 }
 
 function isRateCode(text: string) {
-  return /^(ФЕР|ТЕР|ГЭСН|ФССЦ|ТССЦ|ФСБЦ|ФСЭМ|ТСЭМ|ТЦ|ФЕРм|ТЕРм)/i.test(text);
+  return /^(ЕНиР|ФЕР|ТЕР|ГЭСН|ФССЦ|ТССЦ|ФСБЦ|ФСЭМ|ТСЭМ|ТЦ|ФЕРм|ТЕРм)/i.test(text);
+}
+
+function isWorkRateCode(text: string) {
+  return /^(?:ЕНиР|ФЕР|ТЕР|ГЭСН)(?:м)?/iu.test(text.trim());
 }
 
 export function estimateKey(estimateNumber: string) {
@@ -185,6 +193,8 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
   };
 
   let lastPosition: GrandPosition | null = null;
+  let currentSectionName = "";
+  let currentWorkName = "";
 
   let headerRow = 0;
   let seenEstimate = false;
@@ -266,11 +276,13 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
     if (label === "№ п/п" && cells.some((cell) => cell.text === "Обоснование")) {
       headerRow = rowNumber;
     }
+    if (label.startsWith("Раздел ")) {
+      currentSectionName = label;
+      currentWorkName = "";
+      if (parsed.sections.length < 12) parsed.sections.push(label);
+    }
     if (!headerRow || rowNumber <= headerRow + 2) return;
 
-    if (label.startsWith("Раздел ") && parsed.sections.length < 12) {
-      parsed.sections.push(label);
-    }
     const name = cells.find((cell) => cell.col === 3)?.text ?? "";
     if (name === "Итого по расценке" && lastPosition && lastPosition.quantity) {
       const current = asNumber(row.getCell(14).value);
@@ -299,16 +311,21 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
     if (/приказ/i.test(code) && parsed.coefficientNotes.length < 4) {
       parsed.coefficientNotes.push(`${code}. ${name}`.slice(0, 280));
     }
-    if (!/^\d+$/.test(label) || !isRateCode(code)) return;
     const unit = cells.find((cell) => cell.col === 6)?.text ?? "";
+    const namedLaborResource = /^(?:чел\.?\s*[-.]?\s*час|чел\.?\s*[-.]?\s*ч|н\s*[-.]\s*ч)$/iu.test(unit.trim()) &&
+      Boolean(code) && !/^(?:затраты труда|трудозатраты|всего по позиции|итого)/iu.test(name);
+    if ((!/^\d+$/.test(label) && !namedLaborResource) || (!isRateCode(code) && !namedLaborResource)) return;
     const quantity = asNumber(row.getCell(9).value) ?? asNumber(row.getCell(7).value);
     if (!name || quantity == null || quantity === 0) return;
+    if (isWorkRateCode(code)) currentWorkName = name;
     lastPosition = {
       code,
       name: name.slice(0, 240),
       unit,
       quantity,
       rate: asNumber(row.getCell(10).value) ?? 0,
+      ...(currentSectionName ? { sectionName: currentSectionName } : {}),
+      ...(currentWorkName ? { workName: currentWorkName } : {}),
     };
     if (!parsed.locators.firstPosition) {
       mark("firstPosition", rowNumber, 2);
@@ -330,27 +347,7 @@ function statusFrom(highlights: Highlight[]): CardStatus {
 
 export function analysisFromGrand(parsed: GrandParse, fileName: string): UploadAnalysis {
   const highlights: Highlight[] = [];
-  const regionOk = parsed.region.includes("Красноярск");
-  const zoneOk = parsed.zone === GRAND_PROFILE.zone;
   const vendorOk = parsed.product.includes(GRAND_PROFILE.vendor);
-  if (!regionOk) {
-    highlights.push({
-      id: "h-region",
-      text: parsed.region || "Субъект не указан",
-      reason: `Эталон объекта ${GRAND_PROFILE.cipher}: ${GRAND_PROFILE.region}`,
-      severity: "critical",
-      page: 1,
-    });
-  }
-  if (!zoneOk) {
-    highlights.push({
-      id: "h-zone",
-      text: parsed.zone ? `Зона ${parsed.zone}` : "Зона субъекта не указана",
-      reason: `Для ${GRAND_PROFILE.cipher} ожидается зона ${GRAND_PROFILE.zone}`,
-      severity: "warning",
-      page: 1,
-    });
-  }
   if (!vendorOk) {
     highlights.push({
       id: "h-vendor",
@@ -437,7 +434,7 @@ export function analysisFromGrand(parsed: GrandParse, fileName: string): UploadA
   else quote("c-basis", "Основание: нет данных", undefined, "unconfirmed");
   quote(
     "c-reg",
-    [parsed.region || "нет данных", parsed.zone ? `зона ${parsed.zone}` : "зона: нет данных"].join(", "),
+    `Регион в смете: ${parsed.region || "не указан в файле"}; зона сметного района: ${parsed.zone || "не указана в файле"}`,
     parsed.region ? "region" : "zone",
     parsed.region && parsed.zone ? "confirmed" : "unconfirmed"
   );
@@ -473,9 +470,7 @@ export function analysisFromGrand(parsed: GrandParse, fileName: string): UploadA
     `Объект: ${parsed.construction || "нет данных"}.`,
     parsed.objectName ? `Площадка: ${parsed.objectName}.` : "Площадка: нет данных.",
     `Смета: ${parsed.estimateNumber || "нет данных"}. Работы: ${parsed.workName || "нет данных"}.`,
-    `Регион: ${parsed.region || "нет данных"}, зона ${parsed.zone || "нет данных"}. ${
-      regionOk && zoneOk ? "Совпадает с эталоном " + GRAND_PROFILE.cipher + "." : "Отличается от эталона " + GRAND_PROFILE.cipher + "."
-    }`,
+    `Регион в смете: ${parsed.region || "не указан"}; зона: ${parsed.zone || "не указана"}. Эти значения взяты из загруженного файла; они не сравниваются с демонстрационным объектом.`,
     `Нормативы: ${parsed.normatives || "нет данных"}.`,
     parsed.orders ? `Дополнения: ${parsed.orders}.` : "",
     `Метод: ${parsed.method || "нет данных"}. Уровень цен: ${parsed.priceYear || "нет данных"}.`,
@@ -511,7 +506,9 @@ export function analysisFromGrand(parsed: GrandParse, fileName: string): UploadA
       priceLevel: parsed.priceYear,
       costThousand: parsed.costCurrentThousand,
       positionCount: parsed.positions.length,
-      profileMatch: regionOk && zoneOk && vendorOk,
+      // This flag means the file matches the supported Grand Smeta format,
+      // not that its project region matches the demo fixture's location.
+      profileMatch: vendorOk,
     },
   };
 }

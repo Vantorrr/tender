@@ -46,6 +46,26 @@ function citationsMatching(citations: Citation[], pattern: RegExp) {
   return citations.filter((citation) => pattern.test(citation.text));
 }
 
+function keyAnalyticsCitations(citations: Citation[]) {
+  const patterns = [
+    /штраф|пени|неустойк|ответственност/iu,
+    /оплат|аванс|отсроч|расч[её]т[а-яё]* по контракту/iu,
+    /срок|дата подачи|период выполнен|начало работ|окончание работ/iu,
+    /заказчик|организатор закупки/iu,
+    /объ[её]м работ|предмет закупки|место выполнен/iu,
+  ];
+  return citations
+    .map((citation, index) => ({
+      citation,
+      index,
+      score: patterns.reduce((score, pattern, weight) => score + (pattern.test(citation.text) ? patterns.length - weight : 0), 0),
+    }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, 6)
+    .map(({ citation }) => citation);
+}
+
 function SupplierQuotesEditor({
   supply,
   onUpdated,
@@ -330,6 +350,7 @@ export default function ZakupkaDetailPage() {
   }
 
   const analytics = procurement.analytics;
+  const keyCitations = analytics ? keyAnalyticsCitations(analytics.citations) : [];
   const previewDoc = previewId
     ? docs.find((d) => d.id === previewId)
     : null;
@@ -1068,8 +1089,9 @@ export default function ZakupkaDetailPage() {
                   </p>
                 ) : (
                   <>
+                    {keyCitations.length === 0 ? <p className="mt-2 rounded-lg bg-stone-50 px-3 py-2 text-sm text-[var(--tk-muted)]">Не найдены выдержки о сроках, оплате, ответственности, заказчике или объёме работ. Остальные цитаты доступны в полном списке.</p> : null}
                     <ul className="mt-2 space-y-2" data-testid="analytics-citations">
-                    {analytics.citations.slice(0, 8).map((c) => (
+                    {keyCitations.map((c) => (
                       <li
                         key={c.id}
                         className="rounded-lg border border-[var(--tk-line)] px-3 py-2 text-sm"
@@ -1088,13 +1110,13 @@ export default function ZakupkaDetailPage() {
                       </li>
                     ))}
                     </ul>
-                    {analytics.citations.length > 8 ? (
+                    {analytics.citations.length > keyCitations.length ? (
                       <details className="mt-3 rounded-lg border border-[var(--tk-line)] bg-stone-50 px-3 py-2">
                         <summary className="cursor-pointer text-sm font-medium">
-                          Показать все выдержки ({analytics.citations.length})
+                          Все выдержки ({analytics.citations.length})
                         </summary>
                         <ul className="mt-3 space-y-2">
-                          {analytics.citations.slice(8).map((c) => (
+                          {analytics.citations.filter((c) => !keyCitations.some((keyCitation) => keyCitation.id === c.id)).map((c) => (
                             <li key={c.id} className="rounded-lg border border-[var(--tk-line)] bg-white px-3 py-2 text-sm">
                               <p className="text-xs font-medium text-[var(--tk-muted)]">
                                 Источник: {c.sourceFile}{c.page != null ? ` · стр. ${c.page}` : ""}{c.paragraph ? ` · абз. ${c.paragraph}` : ""}{c.sheet ? ` · лист ${c.sheet}` : ""}{c.cell ? ` · ${c.cell}` : ""}

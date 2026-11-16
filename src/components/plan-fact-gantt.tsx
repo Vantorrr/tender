@@ -399,6 +399,10 @@ export function PlanFactGantt({
               const preview = dragPreview?.stageId === stage.id ? dragPreview : null;
               const offset = baseOffset + (preview?.mode === "move" ? preview.delta : 0);
               const widthDays = preview?.mode === "resize" ? Math.max(1, duration + preview.delta) : duration;
+              const previewStart = preview?.mode === "move" ? addDays(stage.start, preview.delta) : stage.start;
+              const previewEnd = preview?.mode === "resize"
+                ? addDays(previewStart, widthDays - 1)
+                : preview?.mode === "move" ? addDays(stage.end, preview.delta) : stage.end;
               const left = offset * dayWidth;
               const width = Math.max(7, widthDays * dayWidth - 3);
               const entry = entryForStage(stage, entries);
@@ -427,6 +431,7 @@ export function PlanFactGantt({
                           <span className="mr-1 text-[10px] text-[var(--tk-muted)]">{stage.sequence}.</span>
                           {stage.name}
                         </div>
+                        {stage.sectionName ? <div className="mt-0.5 truncate text-[10px] text-[var(--tk-muted)]" title={stage.sectionName}>{stage.sectionName}</div> : null}
                         <div className="mt-1 text-[11px] text-[var(--tk-muted)]">
                           {formatDate(stage.start)} – {formatDate(stage.end)}
                         </div>
@@ -615,8 +620,8 @@ export function PlanFactGantt({
                       </span>
                     ) : null}
                     {dragPreview?.stageId === stage.id ? (
-                      <span className="absolute bottom-2 rounded bg-white/95 px-2 py-1 text-[10px] font-medium text-[var(--tk-ink)] shadow" style={{ left: Math.max(4, left) }}>
-                        {preview?.mode === "resize" ? `${widthDays} дн.` : `${preview?.delta && preview.delta > 0 ? "+" : ""}${preview?.delta ?? 0} дн.`}
+                      <span aria-live="polite" className="absolute bottom-2 rounded bg-white/95 px-2 py-1 text-[10px] font-medium text-[var(--tk-ink)] shadow" style={{ left: Math.max(4, left) }}>
+                        {formatDate(previewStart)} – {formatDate(previewEnd)} · {widthDays} дн.
                       </span>
                     ) : null}
                     {isSaving ? <span className="absolute bottom-2 right-3 text-[10px] text-[var(--tk-muted)]">Сохраняю и пересчитываю…</span> : null}

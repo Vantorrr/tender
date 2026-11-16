@@ -15,6 +15,7 @@ import {
 } from "@/server/ocr";
 import {
   analyzeUpload,
+  analysisFromGrand,
   analysisFromScan,
   isKmDrawingFileName,
   parseGrandBuffer,
@@ -215,6 +216,7 @@ describe("golden XLSX burenie (hand-expected)", () => {
     expect(parsed!.workName).toMatch(/Бурение/i);
     expect(parsed!.costCurrentThousand).toBeCloseTo(469269.22, 2);
     expect(parsed!.positions.length).toBeGreaterThan(0);
+    expect(parsed!.positions.some((position) => Boolean(position.sectionName))).toBe(true);
     expect(parsed!.sheetName.length).toBeGreaterThan(0);
     expect(parsed!.locators.region?.cell).toMatch(/^[A-Z]+\d+$/);
     expect(parsed!.locators.zone?.cell).toMatch(/^[A-Z]+\d+$/);
@@ -236,6 +238,18 @@ describe("golden XLSX burenie (hand-expected)", () => {
     expect(costCite?.confidence).toBe("confirmed");
     // Arithmetic identity: шапка vs positions is highlighted if divergent — cost exists.
     expect(analysis.analyticalNote).toMatch(/469[\s]?269/);
+  });
+
+  it("does not compare another project's region and zone to the demo fixture", async () => {
+    const parsed = await parseGrandBuffer(fs.readFileSync(fixture));
+    expect(parsed).toBeTruthy();
+    parsed!.region = "Ямало-Ненецкий автономный округ";
+    parsed!.zone = "3";
+    const analysis = analysisFromGrand(parsed!, path.basename(fixture));
+    expect(analysis.analysis.profileMatch).toBe(true);
+    expect(analysis.highlights.some((item) => item.id === "h-region" || item.id === "h-zone")).toBe(false);
+    expect(analysis.analyticalNote).toContain("Регион в смете: Ямало-Ненецкий автономный округ; зона: 3");
+    expect(analysis.citations.find((item) => item.id === "c-reg")?.text).not.toMatch(/зона: нет данных/i);
   });
 });
 

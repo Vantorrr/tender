@@ -166,8 +166,8 @@ describe("client corrections stage 1", () => {
   it("builds a reviewable draft from parsed estimate rows without copying customer prices", async () => {
     const procurement = readAppData().procurements.find((item) => item.id === "p-norilsk-1")!;
     const sourceRows = [
-      { code: "TEST-ROCK", name: "Щебень фракции 20–40", unit: "м³", quantity: 12, rate: 900 },
-      { code: "NO-OWN-RATE", name: "Геотекстиль", unit: "м²", quantity: 80, rate: 75 },
+      { code: "TEST-ROCK", name: "Щебень фракции 20–40", unit: "м³", quantity: 12, rate: 900, sectionName: "Раздел 1. Земляные работы" },
+      { code: "NO-OWN-RATE", name: "Арматура", unit: "т", quantity: 80, rate: 75, sectionName: "Раздел 2. Монтаж конструкций" },
     ];
     mutateAppData((data) => {
       const laborDirectory = data.directories.find((item) => item.type === "rascenki" && item.current)!;
@@ -226,21 +226,24 @@ describe("client corrections stage 1", () => {
     const updatedProcurement = after.procurements.find((item) => item.id === procurement.id)!;
     const original = after.calculations.find((item) => item.id === updatedProcurement.originalCalculationId)!;
     const draft = after.calculations.find((item) => item.id === updatedProcurement.calculationId)!;
+    const schedule = after.schedules.find((item) => item.id === updatedProcurement.gprId)!;
+    const rockDraftPosition = draft.positions.find((position) => position.name === "Щебень фракции 20–40")!;
+    const rebarDraftPosition = draft.positions.find((position) => position.name === "Арматура")!;
 
     expect(original.kind).toBe("customer_original");
     expect(original.immutable).toBe(true);
     expect(original.positions.map((position) => position.rate)).toEqual([900, 75]);
     expect(draft.kind).toBe("resource_draft");
     expect(draft.positions).toHaveLength(2);
-    expect(draft.positions[0]).toMatchObject({
+    expect(rockDraftPosition).toMatchObject({
       code: "TEST-ROCK",
       quantity: 12,
       rate: 125,
       rateMissing: false,
       sourceDocumentId: doc.documentId,
     });
-    expect(draft.positions[0].rateSourceDirectoryId).toBeTruthy();
-    expect(draft.positions[1]).toMatchObject({
+    expect(rockDraftPosition.rateSourceDirectoryId).toBeTruthy();
+    expect(rebarDraftPosition).toMatchObject({
       code: "NO-OWN-RATE",
       quantity: 80,
       rate: 0,
@@ -253,7 +256,17 @@ describe("client corrections stage 1", () => {
     expect(draft.resourceScheduleParams?.profitMarkupOnCostWithOh).toBe(0.4);
     expect(draft.costSummary?.priceExVat).toBeGreaterThan(0);
     expect(draft.costSummary?.totalsIncomplete).toBe(true);
-    expect(draft.costSummary?.incomplete).toContain("missing_rate:NO-OWN-RATE");
+    expect(draft.costSummary?.incomplete).toContain("rate:Арматура");
+    expect(schedule.stages.map((stage) => stage.name)).toEqual([
+      "Раздел 1. Земляные работы",
+      "Раздел 2. Монтаж конструкций",
+    ]);
+    expect(schedule.stages[0].resources).toMatchObject([
+      { name: "Щебень фракции 20–40", quantity: 12, rate: 125, kind: "material", sourceKey: rockDraftPosition.id },
+    ]);
+    expect(schedule.stages[1].resources).toMatchObject([
+      { name: "Арматура", quantity: 80, rate: null, kind: "material", sourceKey: rebarDraftPosition.id },
+    ]);
 
     recomputeCalculationCost("u-smet", draft.id, { vatPercent: 20, useResourceScheduleEconomics: true });
     const recalculated = readAppData().calculations.find((item) => item.id === draft.id)!;

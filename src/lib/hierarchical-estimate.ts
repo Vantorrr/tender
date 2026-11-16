@@ -169,12 +169,15 @@ export function buildHierarchicalEstimate(opts: {
     !q || text.toLowerCase().includes(q);
 
   const nodes: EstimateStageNode[] = [];
+  const representedWorkPositionIds = new Set<string>();
 
   for (const st of opts.stages.slice().sort((a, b) => a.sequence - b.sequence)) {
     const leaves: EstimateLeaf[] = [];
+    const linkedSourceKeys = new Set<string>();
     for (const r of st.resources ?? []) {
       const resolved = resolveResourceDimensions(r, st, params);
       const leaf = leafFromResolved(r, st, resolved);
+      if (r.sourceKey) linkedSourceKeys.add(r.sourceKey);
       if (
         match(st.name) ||
         match(leaf.name) ||
@@ -182,6 +185,35 @@ export function buildHierarchicalEstimate(opts: {
       ) {
         leaves.push(leaf);
       }
+    }
+    for (const p of opts.positions ?? []) {
+      const parentWorkCode = /^(?:ЕНИР|ФЕР|ТЕР|ГЭСН)(?:М)?/iu.test(p.code.trim());
+      const belongsToStage = (p.sourceWorkName?.trim() || p.sourceSectionName?.trim()) === (st.workName?.trim() || st.name);
+      if (
+        !belongsToStage ||
+        (parentWorkCode && p.name.trim() === (st.workName?.trim() || st.name) && representedWorkPositionIds.add(p.id)) ||
+        linkedSourceKeys.has(p.id) ||
+        (st.resources ?? []).some((resource) => resource.name.toLocaleLowerCase("ru-RU") === p.name.toLocaleLowerCase("ru-RU"))
+      ) continue;
+      const kind = estimateKindFromPosition(p);
+      const rate = p.rateMissing || !(Number.isFinite(p.rate) && p.rate > 0) ? null : p.rate;
+      const amount = rate == null ? null : roundMoney(p.quantity * rate);
+      const leaf: EstimateLeaf = {
+        id: p.id,
+        source: "calc_position",
+        kind,
+        name: p.name,
+        unit: p.unit,
+        quantity: p.quantity,
+        rate,
+        amount,
+        positionId: p.id,
+        incomplete: rate == null ? ["rate"] : [],
+        basis: kind === "material" ? "material_qty" : "uncertain",
+        hoursQ: null,
+      };
+      if (match(st.name) || match(leaf.name) || match(KIND_LABEL[kind])) leaves.push(leaf);
+      linkedSourceKeys.add(p.id);
     }
     if (leaves.length === 0 && q && !match(st.name)) continue;
     const groups = groupLeaves(leaves);
@@ -198,9 +230,16 @@ export function buildHierarchicalEstimate(opts: {
   const named = new Set(
     nodes.flatMap((n) => n.groups.flatMap((g) => g.leaves.map((l) => l.name.toLowerCase())))
   );
+  const sectionedNames = new Set(
+    nodes.flatMap((node) => node.groups.flatMap((group) => group.leaves
+      .filter((leaf) => leaf.source === "calc_position")
+      .map((leaf) => leaf.id)))
+  );
   const unbound: EstimateLeaf[] = [];
   for (const p of opts.positions ?? []) {
     if (p.code === "НР" || p.code === "СП") continue;
+    if (representedWorkPositionIds.has(p.id)) continue;
+    if (sectionedNames.has(p.id)) continue;
     if (named.has(p.name.toLowerCase())) continue;
     const kind = estimateKindFromPosition(p);
     const rate =

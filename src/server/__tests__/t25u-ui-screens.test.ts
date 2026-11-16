@@ -78,6 +78,55 @@ describe("t25u hierarchical estimate (PDF UI / Excel arithmetic)", () => {
     expect(cards.equipment).toBe(40000);
     expect(cards.incomplete).toBe(true);
   });
+
+  it("keeps sectioned estimate resources inside their GPR section and avoids the unbound duplicate", () => {
+    const stages: GprStage[] = [{
+      id: "section-2",
+      name: "Раздел 2. Монтаж конструкций",
+      sequence: 1,
+      start: "2026-11-16",
+      end: "2026-11-16",
+      resources: [{
+        id: "resource-saw",
+        sourceKey: "calc-saw",
+        kind: "equipment",
+        name: "Пила с карбюраторным двигателем",
+        unit: "маш.-ч",
+        quantity: 5,
+        rate: 700,
+      }],
+    }];
+    const positions: CalcPosition[] = [
+      {
+        id: "calc-saw",
+        sourceResourceId: "resource-saw",
+        sourceSectionName: "Раздел 2. Монтаж конструкций",
+        code: "EQ-1",
+        name: "Пила с карбюраторным двигателем",
+        unit: "маш.-ч",
+        quantity: 5,
+        rate: 700,
+      },
+      {
+        id: "calc-rebar",
+        sourceSectionName: "Раздел 2. Монтаж конструкций",
+        code: "MAT-1",
+        name: "Арматура",
+        unit: "т",
+        quantity: 2,
+        rate: 0,
+        rateMissing: true,
+      },
+    ];
+
+    const nodes = buildHierarchicalEstimate({ stages, positions });
+    expect(nodes.map((node) => node.id)).toEqual(["section-2"]);
+    expect(nodes[0].groups.find((group) => group.kind === "equipment")?.leaves).toHaveLength(1);
+    expect(nodes[0].groups.find((group) => group.kind === "material")?.leaves[0]).toMatchObject({
+      id: "calc-rebar",
+      amount: null,
+    });
+  });
 });
 
 describe("t25u day resource scoping", () => {

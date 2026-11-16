@@ -230,6 +230,11 @@ export function positionsFromStages(
         quantity,
         rate: rateMissing ? 0 : (resolved.rate as number),
         rateMissing,
+        sourceDocumentId: prev?.sourceDocumentId,
+        sourcePositionId: prev?.sourcePositionId,
+        sourceSectionName: prev?.sourceSectionName,
+        sourceWorkName: prev?.sourceWorkName,
+        rateSourceDirectoryId: prev?.rateSourceDirectoryId,
         normId: prev?.normId,
         priceId: prev?.priceId,
       });

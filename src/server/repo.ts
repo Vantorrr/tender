@@ -27,6 +27,7 @@ import { analyzeProjectPackageWithModel } from "@/server/project-analysis-ai";
 import {
   bucketsFromPositions,
   busCost,
+  classifyDirectCostBucket,
   runCostEngine,
   shiftStages,
   workingDaysBetween,
@@ -818,6 +819,8 @@ export function createDocument(
         unit: position.unit,
         quantity: position.quantity,
         rate: position.rate,
+        ...(position.sectionName ? { sectionName: position.sectionName } : {}),
+        ...(position.workName ? { workName: position.workName } : {}),
       })),
       uploadedBy: actorId,
       uploadedAt: new Date().toISOString(),
@@ -1014,12 +1017,18 @@ function productionEntriesFromCustomerEstimate(data: AppData, procurementId: str
     item.procurementId === procurementId && item.kind === "customer_original"
   );
   if (!original) return [];
+  const hasRecognizedWorkRows = original.positions.some((position) =>
+    /^(?:ЕНИР|ФЕР|ТЕР|ГЭСН)(?:М)?/iu.test(position.code.trim())
+  );
   const grouped = new Map<string, { workName: string; unit: string; plan: number }>();
   for (const position of original.positions) {
     const workName = position.name.trim();
     const unit = position.unit.trim();
     const code = position.code.trim().toUpperCase();
-    if (!workName || !unit || /^(НР|СП)(?:$|[-.\s])/i.test(code) || !Number.isFinite(position.quantity) || position.quantity <= 0) continue;
+    const resourceCode = /^(?:ФССЦ|ТССЦ|ФСБЦ|ФСЭМ|ТСЭМ|ТЦ)(?:[-.\s]|$)/iu.test(code);
+    const workRate = /^(?:ЕНИР|ФЕР|ТЕР|ГЭСН)(?:М)?/iu.test(code);
+    if (!workName || !unit || /^(НР|СП)(?:$|[-.\s])/i.test(code) || resourceCode ||
+      (hasRecognizedWorkRows && !workRate) || !Number.isFinite(position.quantity) || position.quantity <= 0) continue;
     const key = `${workName.toLocaleLowerCase("ru-RU")}\u0000${unit.toLocaleLowerCase("ru-RU")}`;
     const row = grouped.get(key) ?? { workName, unit, plan: 0 };
     row.plan += position.quantity;
@@ -1530,6 +1539,8 @@ export function attachCustomerEstimate(
           unit: position.unit,
           quantity: position.quantity,
           rate: position.rate,
+            ...(position.sectionName ? { sourceSectionName: position.sectionName } : {}),
+            ...(position.workName ? { sourceWorkName: position.workName } : {}),
         }))
       : [
           {
@@ -1631,6 +1642,83 @@ export function attachCustomerEstimate(
     );
     return data;
   });
+}
+
+/** Build work stages from parsed estimate sections and work-item parent rows. */
+function buildDraftStagesFromEstimate(
+  positions: Calculation["positions"],
+  now: string
+): GprStage[] {
+  const sections = new Map<string, { sectionName: string; workName: string; positions: Calculation["positions"] }>();
+  for (const position of positions) {
+    const section = position.sourceSectionName?.trim();
+    if (!section) continue;
+    const workName = position.sourceWorkName?.trim() || section;
+    const key = `${section}\u0000${workName}`;
+    const group = sections.get(key) ?? { sectionName: section, workName, positions: [] };
+    group.positions.push(position);
+    sections.set(key, group);
+  }
+
+  return [...sections.values()].map(({ sectionName, workName, positions: rows }, index) => {
+    const stageId = `gs-${Date.now()}-${index + 1}`;
+    const workPosition = rows.find((position) =>
+      position.name === workName && /^(?:ЕНИР|ФЕР|ТЕР|ГЭСН)(?:М)?/iu.test(position.code.trim())
+    );
+    const resources: GprStageResource[] = rows.flatMap((position) => {
+      const code = position.code.toLocaleUpperCase("ru-RU");
+      const unit = position.unit.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+      let kind: GprStageResource["kind"] | null = null;
+      if (/автобус|bus|^BUS(?:[-\s]|$)/iu.test(`${code} ${position.name}`)) kind = "bus";
+      else if (/^(?:ФСЭМ|ТСЭМ|EQ(?:-|\s|$))/iu.test(code) || classifyDirectCostBucket(position) === "equipment") kind = "equipment";
+      else if (/^ФССЦПГ/iu.test(code)) kind = "other";
+      else if (/^(?:ФССЦ|ТССЦ|ФСБЦ|MAT(?:-|\s|$))/iu.test(code) || /щебен|геотекстил|песок|грунт|цемент/iu.test(position.name) || classifyDirectCostBucket(position) === "materials") kind = "material";
+      else if (/^(?:LAB(?:-|\s|$)|ОТ|ЗП)/iu.test(code) || classifyDirectCostBucket(position) === "labor") kind = "labor";
+      if (!kind) return [];
+
+      const quantityBasis: GprStageResource["quantityBasis"] = kind === "material"
+        ? "material_qty"
+        : /(?:маш|чел|н)[\s.-]*ч/u.test(unit)
+          ? "total_hours"
+          : "uncertain";
+      return [{
+        id: `res-${stageId}-${position.id}`,
+        sourceKey: position.id,
+        kind,
+        name: position.name,
+        quantity: position.quantity,
+        unit: position.unit,
+        rate: position.rateMissing || !(Number.isFinite(position.rate) && position.rate > 0)
+          ? null
+          : position.rate,
+        quantityBasis,
+      }];
+    });
+
+    return {
+      id: stageId,
+      name: workName,
+      ...(workName !== sectionName ? { sectionName } : {}),
+      start: now.slice(0, 10),
+      end: now.slice(0, 10),
+      sequence: index + 1,
+      crewSize: 0,
+      ...(workName !== sectionName ? { workName } : {}),
+      ...(workPosition ? { planVolume: workPosition.quantity, planUnit: workPosition.unit } : {}),
+      resources,
+    };
+  });
+}
+
+function mergeEstimateRowsIntoDraft(
+  existing: Calculation["positions"],
+  imported: Calculation["positions"]
+): Calculation["positions"] {
+  const known = new Set(existing.map((position) => position.sourcePositionId).filter(Boolean));
+  return [
+    ...existing,
+    ...imported.filter((position) => !position.sourcePositionId || !known.has(position.sourcePositionId)),
+  ];
 }
 
 /**
@@ -1763,6 +1851,8 @@ export function sendProcurementToCalculation(
           // The customer rate is never copied into our editable draft.
           rate: unitCompatible ? hit!.rate : 0,
           rateMissing: !unitCompatible,
+          ...(position.sectionName ? { sourceSectionName: position.sectionName } : {}),
+          ...(position.workName ? { sourceWorkName: position.workName } : {}),
           sourceDocumentId: estimateDoc!.id,
           sourcePositionId: position.id,
           ...(unitCompatible ? { rateSourceDirectoryId: hit!.dirId } : {}),
@@ -1830,14 +1920,24 @@ export function sendProcurementToCalculation(
       linked.immutable = false;
       linked.pairedCalculationId = p.originalCalculationId;
       linked.status = "v_rabote";
-      if (linked.positions.length === 0 && positionsFromEstimate.length > 0) {
-        linked.positions = positionsFromEstimate;
+      if (positionsFromEstimate.length > 0) {
+        const previousCount = linked.positions.length;
+        linked.positions = mergeEstimateRowsIntoDraft(linked.positions, positionsFromEstimate);
+        const addedCount = linked.positions.length - previousCount;
+        if (addedCount > 0 && previousCount > 0) {
+          linked.assumptions = [
+            ...(linked.assumptions ?? []),
+            `Добавлено ${addedCount} распознанных строк сметы заказчика; существующие ручные позиции сохранены.`,
+          ];
+        }
+      }
+      if (linked.positions.length > 0 && positionsFromEstimate.length > 0) {
         linked.assumptions = [
           ...(linked.assumptions ?? []).filter(
             (assumption) => !assumption.startsWith("Ресурсный черновик создан пустым:")
           ),
-          `Черновик заполнен ${positionsFromEstimate.length} распознанными строками из «${estimateDoc?.fileName ?? "сметы заказчика"}». Исходная смета сохранена отдельно и неизменна.`,
-          "В черновик перенесены только код, наименование, единица и количество. Ставки взяты только из точного совпадения кода и единицы в справочниках; цена заказчика не копировалась.",
+          `Черновик содержит распознанные строки из «${estimateDoc?.fileName ?? "сметы заказчика"}». Исходная смета сохранена отдельно и неизменна.`,
+          "Для импортированных строк перенесены только код, наименование, единица и количество. Ставки взяты только из точного совпадения кода и единицы в справочниках; цена заказчика не копировалась.",
           "Проверьте состав ресурсов и каждую ставку до использования итогов",
         ];
         linked.dataFlags = [
@@ -1872,10 +1972,32 @@ export function sendProcurementToCalculation(
       }
     }
 
-    // GPR stub linked to draft
+    const derivedGprStages = buildDraftStagesFromEstimate(positionsFromEstimate, now);
+
+    // GPR scaffold from explicitly parsed estimate sections; unknown dates and rates stay unconfirmed.
     if (!p.gprId) {
       const gid = `g-${Date.now()}`;
       const stage1 = `gs-${Date.now()}`;
+      const placeholderStages: GprStage[] = [
+        ensureStageResources({
+          id: stage1,
+          name: "Подготовка / мобилизация",
+          start: now.slice(0, 10),
+          end: now.slice(0, 10),
+          sequence: 1,
+          crewSize: 0,
+        }),
+        ensureStageResources({
+          id: `gs-${Date.now() + 1}`,
+          name: "Основные работы",
+          start: now.slice(0, 10),
+          end: now.slice(0, 10),
+          sequence: 2,
+          dependsOn: stage1,
+          dependencyType: "FS",
+          crewSize: 0,
+        }),
+      ];
       data.schedules.unshift({
         id: gid,
         orgId: p.orgId,
@@ -1886,37 +2008,45 @@ export function sendProcurementToCalculation(
         version: 1,
         authorId: actorId,
         assumptions: [
-          "Начальные даты и этапы — только навигационная заготовка; замените их по ТЗ, производительности и календарю объекта",
-          "Состав и количество ресурсов не подтверждены: заполните строки перед использованием итогов",
+          ...(derivedGprStages.length
+            ? [
+                "Виды работ и вложенные ресурсы сгруппированы по разделам распознанной сметы. Проверьте состав строк и сопоставьте их с видами работ объекта.",
+                "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.",
+                "Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.",
+              ]
+            : [
+                "Начальные даты и этапы — только навигационная заготовка; замените их по ТЗ, производительности и календарю объекта",
+                "Состав и количество ресурсов не подтверждены: заполните строки перед использованием итогов",
+              ]),
         ],
-        stages: [
-          ensureStageResources({
-            id: stage1,
-            name: "Подготовка / мобилизация",
-            start: now.slice(0, 10),
-            end: now.slice(0, 10),
-            sequence: 1,
-            crewSize: 0,
-          }),
-          ensureStageResources({
-            id: `gs-${Date.now() + 1}`,
-            name: "Основные работы",
-            start: now.slice(0, 10),
-            end: now.slice(0, 10),
-            sequence: 2,
-            dependsOn: stage1,
-            dependencyType: "FS",
-            crewSize: 0,
-          }),
-        ],
+        stages: derivedGprStages.length ? derivedGprStages : placeholderStages,
         updatedAt: now,
       });
       p.gprId = gid;
     } else {
       data.schedules = data.schedules.map((s) =>
-        s.id === p.gprId
-          ? { ...s, calculationId: draftId!, updatedAt: now }
-          : s
+        s.id !== p.gprId
+          ? s
+          : {
+              ...s,
+              calculationId: draftId!,
+              updatedAt: now,
+              ...(derivedGprStages.length > 0 &&
+                s.stages.every((stage) =>
+                  ["Подготовка / мобилизация", "Основные работы"].includes(stage.name) &&
+                  (stage.resources ?? []).every((resource) => resource.quantity === 0)
+                )
+                ? {
+                    stages: derivedGprStages,
+                    assumptions: [
+                      ...(s.assumptions ?? []).filter((item) => !item.startsWith("Начальные даты и этапы")),
+                      "Виды работ и вложенные ресурсы сгруппированы по разделам распознанной сметы. Проверьте состав строк и сопоставьте их с видами работ объекта.",
+                      "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.",
+                      "Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.",
+                    ],
+                  }
+                : {}),
+            }
       );
     }
 

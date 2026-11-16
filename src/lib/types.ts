@@ -312,6 +312,8 @@ export interface DocumentItem {
     unit: string;
     quantity: number;
     rate: number;
+    sectionName?: string;
+    workName?: string;
   }>;
   /** Visible archive / parse failures — never silent. */
   extractionErrors?: string[];
@@ -325,6 +327,10 @@ export interface CalcPosition {
   /** Original uploaded estimate row; draft pricing is always resolved separately. */
   sourceDocumentId?: string;
   sourcePositionId?: string;
+  /** Parsed Grand Smeta section used to seed the draft GPR hierarchy. */
+  sourceSectionName?: string;
+  /** Parsed parent work item used to nest resources under a work row. */
+  sourceWorkName?: string;
   /** Directory version used for an exact, unit-compatible rate match. */
   rateSourceDirectoryId?: string;
   code: string;
@@ -478,6 +484,8 @@ export interface GprStageResource {
 export interface GprStage {
   id: string;
   name: string;
+  /** Parent estimate section for a work-level stage. */
+  sectionName?: string;
   start: string;
   end: string;
   sequence: number;
@@ -495,6 +503,8 @@ export interface GprStage {
    * allocatePlanForSlice uses stage volumes when any are set.
    */
   planVolume?: number | null;
+  /** Unit of the physical work volume when imported from an estimate. */
+  planUnit?: string;
   /** Optional link to plan/fact or calc work name. */
   workName?: string;
   /** A GPR stage can cover several production work types. */

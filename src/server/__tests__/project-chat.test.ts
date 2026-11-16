@@ -35,7 +35,7 @@ describe("grounded procurement chat", () => {
     expect(result.answer).toContain("Не нашёл");
   });
 
-  it("keeps the procurement card and ranks the requested project sources first", () => {
+  it("prefers a relevant document over an unrelated procurement card", () => {
     const sources = [
       card,
       { id: "S002", label: "Документ · Общие условия", sourceText: "Общие сведения о компании и объекте." },
@@ -45,8 +45,13 @@ describe("grounded procurement chat", () => {
 
     const selected = selectRelevantProjectChatSources("Какие штрафы за просрочку по договору?", sources);
 
-    expect(selected[0].id).toBe("S001");
-    expect(selected[1].id).toBe("S003");
+    expect(selected[0].id).toBe("S003");
+    expect(selected).not.toContainEqual(expect.objectContaining({ id: "S001" }));
     expect(selected).not.toContainEqual(expect.objectContaining({ id: "S002" }));
+  });
+
+  it("includes the card when the user asks for its deadline", () => {
+    const selected = selectRelevantProjectChatSources("Какой срок подачи?", [card]);
+    expect(selected.map((source) => source.id)).toEqual(["S001"]);
   });
 });

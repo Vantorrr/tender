@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createSession } from "@/server/auth";
 import { closeDb, ensureReady, readAppData } from "@/server/db";
 import { analyzeUpload } from "@/server/grand-smeta";
+import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
+import { createManualProcurement } from "@/server/repo";
 import { detectArchiveFormat } from "@/server/safe-archive";
 import "./setup";
 
@@ -73,5 +75,63 @@ describe("manual procurement file upload", () => {
     expect(uploaded?.citations.some((citation) => citation.sheet === "Материалы")).toBe(true);
     expect(uploaded?.estimatePositions).toHaveLength(1);
     expect(readAppData().procurements.find((item) => item.id === procurement.id)?.analytics?.citations.length).toBeGreaterThan(0);
+  });
+
+  it("builds sectioned GPR resources from a real Grand Smeta estimate without copying its rates", async () => {
+    const procurement = createManualProcurement("u-tender", {
+      title: "Приёмочная проверка разбора сметы",
+      region: "ЯНАО",
+    });
+    const fileName = "ls-01-02-01-demontazh.xlsx";
+    const bytes = fs.readFileSync(path.join(process.cwd(), "fixtures/grand-smeta", fileName));
+    const form = new FormData();
+    form.set("procurementId", procurement.id);
+    form.set("category", "general");
+    form.set("file", new File([bytes], fileName));
+    const { POST: upload } = await import("@/app/api/dokumenty/route");
+    const uploaded = await upload(new Request("http://local/api/dokumenty", {
+      method: "POST",
+      headers: { authorization: `Bearer ${createSession("u-tender")}` },
+      body: form,
+    }));
+    expect(uploaded.status).toBe(200);
+
+    const document = readAppData().documents.find((item) => item.procurementId === procurement.id && item.fileName === fileName)!;
+    expect(document.estimatePositions?.some((position) => position.sectionName)).toBe(true);
+    expect(document.estimatePositions?.some((position) => position.workName)).toBe(true);
+
+    const { POST: zakupkiPost } = await import("@/app/api/zakupki/route");
+    const sent = await zakupkiPost(new Request("http://local/api/zakupki", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${createSession("u-tender")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ action: "sendToCalculation", id: procurement.id }),
+    }));
+    expect(sent.status).toBe(200);
+
+    const after = readAppData();
+    const savedProcurement = after.procurements.find((item) => item.id === procurement.id)!;
+    const schedule = after.schedules.find((item) => item.id === savedProcurement.gprId)!;
+    const draft = after.calculations.find((item) => item.id === savedProcurement.calculationId)!;
+    const saw = schedule.stages.flatMap((stage) => stage.resources ?? []).find((resource) => /пил[аы].*карбюраторн/i.test(resource.name));
+    expect(schedule.stages.length).toBeGreaterThan(1);
+    expect(schedule.stages.some((stage) => /^Раздел \d+/i.test(stage.sectionName ?? ""))).toBe(true);
+    expect(schedule.stages.some((stage) => Boolean(stage.workName))).toBe(true);
+    expect(schedule.stages.some((stage) => Boolean(stage.planVolume && stage.planUnit))).toBe(true);
+    expect(saw).toMatchObject({ kind: "equipment", quantityBasis: "total_hours", rate: null });
+    expect(saw?.sourceKey).toBeTruthy();
+    expect(schedule.stages.some((stage) => stage.resources?.some((resource) => resource.kind === "labor"))).toBe(true);
+    expect(schedule.stages.some((stage) => stage.resources?.some((resource) => resource.kind === "material"))).toBe(true);
+
+    const sawPositions = draft.positions.filter((position) => /пил[аы].*карбюраторн/i.test(position.name));
+    expect(sawPositions.some((position) => position.sourceDocumentId === document.id && position.sourceWorkName)).toBe(true);
+    expect(sawPositions.every((position) => position.rateMissing)).toBe(true);
+    const tree = buildHierarchicalEstimate({ stages: schedule.stages, positions: draft.positions, params: draft.resourceScheduleParams });
+    expect(tree.some((node) => node.id === "_unbound")).toBe(false);
+    expect(tree.some((node) => node.groups.some((group) => group.leaves.some((leaf) => leaf.name === saw?.name)))).toBe(true);
+    const displayedLeaves = tree.flatMap((node) => node.groups.flatMap((group) => group.leaves));
+    expect(displayedLeaves.every((leaf) => !/^(?:ЕНИР|ФЕР|ТЕР|ГЭСН)/iu.test(leaf.name))).toBe(true);
   });
 });
