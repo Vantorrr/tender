@@ -141,19 +141,6 @@ export async function POST(req: Request) {
       return json(getBootstrap(user));
     }
     if (body.action === "analyzeProject") {
-      sendProcurementToCalculation(user.id, body.id!);
-      const boot = getBootstrap(user);
-      const procurement = boot.data.procurements.find((item) => item.id === body.id);
-      const draft = boot.data.calculations.find((item) => item.id === procurement?.calculationId);
-      if (
-        draft?.resourceScheduleParams &&
-        draft.positions.some((position) => position.sourceDocumentId)
-      ) {
-        recomputeCalculationCost(user.id, draft.id, {
-          resourceScheduleParams: draft.resourceScheduleParams,
-          useResourceScheduleEconomics: true,
-        });
-      }
       await analyzeProcurementPackageWithAI(user.id, body.id!);
       return json(getBootstrap(user));
     }

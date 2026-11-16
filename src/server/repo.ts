@@ -1538,6 +1538,18 @@ export async function analyzeProcurementPackageWithAI(
   actorId: string,
   procurementId: string
 ) {
+  // Every entry point (including automatic upload analysis) needs the same
+  // current resource draft. Previously only the explicit UI action prepared it.
+  sendProcurementToCalculation(actorId, procurementId);
+  const prepared = readAppData();
+  const preparedProcurement = prepared.procurements.find((item) => item.id === procurementId);
+  const preparedDraft = prepared.calculations.find((item) => item.id === preparedProcurement?.calculationId);
+  if (preparedDraft?.resourceScheduleParams && preparedDraft.positions.some((position) => position.sourceDocumentId)) {
+    recomputeCalculationCost(actorId, preparedDraft.id, {
+      resourceScheduleParams: preparedDraft.resourceScheduleParams,
+      useResourceScheduleEconomics: true,
+    });
+  }
   const snapshot = readAppData();
   const actor = actorUser(snapshot, actorId);
   const procurement = snapshot.procurements.find((item) => item.id === procurementId);
@@ -1550,7 +1562,8 @@ export async function analyzeProcurementPackageWithAI(
   const economics = draft ? {
     cost: draft.costSummary?.resourceSlices?.costWithOh ?? draft.costSummary?.C0 ?? null,
     priceWithVat: draft.costSummary?.priceIncVat ?? null,
-    incomplete: Boolean(draft.costSummary?.totalsIncomplete || missingRates),
+    incomplete: Boolean(!draft.costSummary || draft.positions.length === 0 ||
+      draft.costSummary.totalsIncomplete || draft.costSummary.incomplete?.length || missingRates),
     missingRates,
   } : undefined;
   const generated = await analyzeProjectPackageWithModel(procurement, documents, deterministic, economics);
