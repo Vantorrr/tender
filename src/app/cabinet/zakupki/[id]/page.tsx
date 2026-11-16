@@ -371,17 +371,30 @@ export default function ZakupkaDetailPage() {
   const keyCitations = keyAnalyticsCitations(renderableCitations);
   const findingCitationIds = new Set(analytics?.findings?.flatMap((finding) => finding.citationIds) ?? []);
   const hasFindingTopic = (topic: string) => Boolean(analytics?.findings?.some((finding) => finding.topic === topic));
-  const paymentCitations = hasFindingTopic("Оплата") ? [] : distinctCitations(citationsMatching(renderableCitations, /оплат|аванс|отсроч|расч[её]т[а-яё]* по контракту/i)).slice(0, 2);
-  const liabilityCitations = hasFindingTopic("Ответственность") ? [] : distinctCitations(citationsMatching(renderableCitations, /штраф|пени|неустойк|санкци/i)).slice(0, 2);
-  const conditionCitationIds = new Set([...paymentCitations, ...liabilityCitations].map((citation) => citation.id));
+  const allPaymentCitations = citationsMatching(renderableCitations, /оплат|аванс|отсроч|расч[её]т[а-яё]* по контракту/i);
+  const allLiabilityCitations = citationsMatching(renderableCitations, /штраф|пени|неустойк|санкци/i);
+  const paymentCitations = hasFindingTopic("Оплата") ? [] : distinctCitations(allPaymentCitations).slice(0, 2);
+  const liabilityCitations = hasFindingTopic("Ответственность") ? [] : distinctCitations(allLiabilityCitations).slice(0, 2);
+  const conditionCitationIds = new Set([...allPaymentCitations, ...allLiabilityCitations].map((citation) => citation.id));
   const remainingKeyCitations = keyCitations.filter((citation) => !conditionCitationIds.has(citation.id) && !findingCitationIds.has(citation.id));
+  const primaryCitationTexts = new Set([
+    ...[...findingCitationIds].map((id) => displayCitations.find((citation) => citation.id === id)?.displayText),
+    ...paymentCitations.map((citation) => citation.text),
+    ...liabilityCitations.map((citation) => citation.text),
+  ].filter(Boolean).map((text) => text!.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ").replace(/[.!?]+$/g, "").trim()));
   const primaryCitationIds = new Set([
     ...findingCitationIds,
     ...keyCitations.filter((citation) => !conditionCitationIds.has(citation.id)).map((citation) => citation.id),
-    ...paymentCitations.map((citation) => citation.id),
-    ...liabilityCitations.map((citation) => citation.id),
+    ...conditionCitationIds,
   ]);
-  const remainingCitations = displayCitations.filter((citation) => !primaryCitationIds.has(citation.id));
+  const remainingCitations = displayCitations.filter((citation) => {
+    const key = citation.displayText.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ").replace(/[.!?]+$/g, "").trim();
+    return !primaryCitationIds.has(citation.id) && !primaryCitationTexts.has(key);
+  });
+  const conditionGroups = [
+    { label: "Оплата и аванс", citations: paymentCitations },
+    { label: "Штрафы и неустойки", citations: liabilityCitations },
+  ].filter((group) => group.citations.length > 0);
   const documentRegion = docs.map((document) => meaningfulMetadata(document.analysis?.region)).find(Boolean);
   const sourceRegion = meaningfulMetadata(procurement.region) || documentRegion || regionFromCitations(analytics?.citations ?? []);
   const sourceZone = docs.map((document) => meaningfulMetadata(document.analysis?.zone)).find(Boolean);
@@ -1141,11 +1154,8 @@ export default function ZakupkaDetailPage() {
                       {procurement.workType ? <dd className="mt-1 text-xs text-[var(--tk-muted)]">Вид работ: {procurement.workType}</dd> : null}
                     </div>
                   </dl>
-                  <div className="grid gap-3 lg:grid-cols-2">
-                    {([
-                      { label: "Оплата и аванс", citations: paymentCitations },
-                      { label: "Штрафы и неустойки", citations: liabilityCitations },
-                    ] as const).map((group) => (
+                  {conditionGroups.length ? <div className="grid gap-3 lg:grid-cols-2">
+                    {conditionGroups.map((group) => (
                       <div key={group.label} className="rounded-lg border border-[var(--tk-line)] p-3">
                         <h4 className="text-sm font-medium">{group.label}</h4>
                         {group.citations.length ? (
@@ -1162,7 +1172,7 @@ export default function ZakupkaDetailPage() {
                         ) : <p className="mt-2 text-sm text-[var(--tk-muted)]">В извлечённых цитатах не найдено. Проверьте оригинал договора.</p>}
                       </div>
                     ))}
-                  </div>
+                  </div> : null}
                   <div className="rounded-lg border border-[var(--tk-line)] p-3">
                     <h4 className="text-sm font-medium">Объём работ из загруженной сметы</h4>
                     {estimateRows.length ? (
@@ -1212,14 +1222,9 @@ export default function ZakupkaDetailPage() {
                   {analytics.disclaimer} Метод: {analytics.method}. Без обещания
                   точности.
                 </p>
-                <h3 className="mt-4 text-sm font-medium">Подтверждения из документов</h3>
-                {displayCitations.length === 0 ? (
-                  <p className="mt-2 text-sm text-[var(--tk-muted)]">
-                    В документах пока нет проверяемых фрагментов с заполненными значениями.
-                  </p>
-                ) : (
-                  <>
-                    {remainingKeyCitations.length === 0 ? <p className="mt-2 text-sm text-[var(--tk-muted)]">Других ключевых условий в документах не найдено.</p> : null}
+                {remainingKeyCitations.length || remainingCitations.length ? (
+                  <section className="mt-4" aria-label="Дополнительные подтверждения из документов">
+                    <h3 className="text-sm font-medium">Дополнительные подтверждения из документов</h3>
                     <ul className="mt-2 grid gap-2 sm:grid-cols-2" data-testid="analytics-citations">
                     {remainingKeyCitations.map((c) => {
                       const source = displayCitations.find((citation) => citation.id === c.id);
@@ -1252,8 +1257,8 @@ export default function ZakupkaDetailPage() {
                         </ul>
                       </details>
                     ) : null}
-                  </>
-                )}
+                  </section>
+                ) : null}
               </>
             ) : (
               <p className="text-sm text-[var(--tk-muted)]">
