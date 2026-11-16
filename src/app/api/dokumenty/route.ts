@@ -5,7 +5,7 @@ import {
   refreshProcurementAnalytics,
   updateDocument,
 } from "@/server/repo";
-import { refreshAndMaybeAnalyzePackage } from "@/server/upload-package-analysis";
+import { archiveResultStatus, refreshAndMaybeAnalyzePackage } from "@/server/upload-package-analysis";
 import { analyzeUpload } from "@/server/grand-smeta";
 import { config } from "@/server/config";
 import {
@@ -53,15 +53,22 @@ async function processArchiveFiles(
         extractedFiles: childExtracted.files.map((f) => ({ name: f.name, size: f.size, relativePath: f.relativePath })),
       });
       analyzedFiles.push({ name: extractedFile.relativePath, documentId: archive.documentId, status: childExtracted.ok ? "archive_extracted" : "archive_partial" });
+      let nestedErrors: string[] = [];
       if (childExtracted.files.length) {
         const nested = await processArchiveFiles(userId, orgId, procurementId, childExtracted.files, useLlm, depth + 1);
         analyzedFiles.push(...nested.analyzedFiles);
+        nestedErrors = nested.errors;
         errors.push(...nested.errors);
       }
-      if (childExtracted.errors.length) {
-        errors.push(...childExtracted.errors.map((message) => `${extractedFile.relativePath}: ${message}`));
-        updateDocument(userId, archive.documentId, { status: "trebuet_proverki" });
-      }
+      const archiveErrors = [
+        ...childExtracted.errors.map((message) => `${extractedFile.relativePath}: ${message}`),
+        ...nestedErrors,
+      ];
+      errors.push(...childExtracted.errors.map((message) => `${extractedFile.relativePath}: ${message}`));
+      updateDocument(userId, archive.documentId, {
+        extractionErrors: archiveErrors,
+        status: archiveResultStatus(childExtracted.ok, archiveErrors),
+      });
       continue;
     }
     if (childExt !== "pdf" && childExt !== "doc" && childExt !== "docx" && childExt !== "xlsx" && !IMAGE_EXTENSIONS.has(childExt)) {
@@ -179,12 +186,11 @@ export async function POST(req: Request) {
         const { analyzedFiles, errors: childErrors } = await processArchiveFiles(
           user.id, user.orgId, procurementId, extracted.files, useLlm, 0
         );
-        if (childErrors.length) {
-          updateDocument(user.id, archiveDoc.documentId, {
-            extractionErrors: [...extracted.errors, ...childErrors],
-            status: "trebuet_proverki",
-          });
-        }
+        const archiveErrors = [...extracted.errors, ...childErrors];
+        updateDocument(user.id, archiveDoc.documentId, {
+          extractionErrors: archiveErrors,
+          status: archiveResultStatus(extracted.ok, archiveErrors),
+        });
         await refreshAndMaybeAnalyzePackage(user.id, procurementId);
         return json({
           ...getBootstrap(user),

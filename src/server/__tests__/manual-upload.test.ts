@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import ExcelJS from "exceljs";
+import JSZip from "jszip";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createSession } from "@/server/auth";
 import { closeDb, ensureReady, readAppData } from "@/server/db";
@@ -75,6 +76,36 @@ describe("manual procurement file upload", () => {
     expect(uploaded?.citations.some((citation) => citation.sheet === "Материалы")).toBe(true);
     expect(uploaded?.estimatePositions).toHaveLength(1);
     expect(readAppData().procurements.find((item) => item.id === procurement.id)?.analytics?.citations.length).toBeGreaterThan(0);
+  });
+
+  it("marks a successfully unpacked and analyzed archive as complete", async () => {
+    const procurement = readAppData().procurements.find((item) => item.orgId === "org-alfa")!;
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Смета");
+    sheet.addRow(["Работа", "Материал", "Количество", "Ед.", "Цена"]);
+    sheet.addRow(["Устройство основания", "Щебень С4", 10, "м³", 2400]);
+    const zip = new JSZip();
+    zip.file("estimate.xlsx", Buffer.from(await workbook.xlsx.writeBuffer()));
+    const archiveBytes = await zip.generateAsync({ type: "nodebuffer", compression: "STORE" });
+    const form = new FormData();
+    form.set("procurementId", procurement.id);
+    form.set("file", new File([new Uint8Array(archiveBytes)], "package.zip", { type: "application/zip" }));
+    const { POST } = await import("@/app/api/dokumenty/route");
+    const response = await POST(new Request("http://local/api/dokumenty", {
+      method: "POST",
+      headers: { authorization: `Bearer ${createSession("u-super")}` },
+      body: form,
+    }));
+    expect(response.status).toBe(200);
+    const body = await response.json() as { archive: { documentId: string; ok: boolean } };
+    expect(body.archive.ok).toBe(true);
+    const data = readAppData();
+    expect(data.documents.find((document) => document.id === body.archive.documentId)).toMatchObject({
+      status: "gotovo",
+      extractedFiles: [{ name: "estimate.xlsx" }],
+      extractionErrors: [],
+    });
+    expect(data.documents.some((document) => document.procurementId === procurement.id && document.fileName === "estimate.xlsx")).toBe(true);
   });
 
   it("builds sectioned GPR resources from a real Grand Smeta estimate without copying its rates", async () => {
