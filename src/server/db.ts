@@ -510,6 +510,33 @@ export function listJobs(limit = 20) {
   }>;
 }
 
+/**
+ * The source adapter is process-local, while API routes can run in separate
+ * Next.js workers. Use the persisted sync job to make the last live result
+ * consistent across health/admin/procurement requests.
+ */
+export function procurementStatusSnapshot() {
+  const source = procurementSourceStatus();
+  if (!source.configured) return source;
+  const latestKonturSync = listJobs(200).find(
+    (job) =>
+      job.type === "procurement_sync" &&
+      /kontur-external-api|Контур API:/i.test(job.detail)
+  );
+  if (!latestKonturSync || latestKonturSync.status === "running") return source;
+  if (latestKonturSync.status === "error") {
+    return {
+      ...source,
+      status: "error" as const,
+      detail: latestKonturSync.detail.replace(/^Ошибка источника:\s*/i, ""),
+    };
+  }
+  if (latestKonturSync.status === "done") {
+    return { ...source, status: "ok" as const, detail: latestKonturSync.detail };
+  }
+  return source;
+}
+
 export function healthSnapshot() {
   const db = getDb();
   const blob = db
@@ -524,7 +551,7 @@ export function healthSnapshot() {
   const data = readAppData();
   // Public /api/health must stay non-recon: no secret presence, missing SMTP_*
   // names, model id, or transport inventory. Coarse readiness only.
-  const procurement = procurementSourceStatus();
+  const procurement = procurementStatusSnapshot();
   const mail = mailStatus();
   return {
     ok: true,
@@ -559,7 +586,7 @@ export function healthSnapshot() {
 /** Authenticated admin diagnostics — may include non-secret config inventory. */
 export function integrationSnapshot() {
   const tools = detectLocalOcrTools();
-  const procurement = procurementSourceStatus();
+  const procurement = procurementStatusSnapshot();
   const mail = mailStatus();
   return {
     procurement,

@@ -17,7 +17,7 @@ import {
 import { assertSection } from "@/server/acl";
 import { withSection, json } from "@/server/http";
 import type { MoneyPayment, MoneyPlan, ReviewStatus } from "@/lib/types";
-import { procurementSourceStatus } from "@/server/procurement-source";
+import { procurementStatusSnapshot } from "@/server/db";
 
 const MONEY_ACTIONS = new Set([
   "ensureMoney",
@@ -27,7 +27,7 @@ const MONEY_ACTIONS = new Set([
 
 export async function GET(req: Request) {
   return withSection(req, "zakupki", (user) =>
-    json({ items: getBootstrap(user).data.procurements, source: procurementSourceStatus() })
+    json({ items: getBootstrap(user).data.procurements, source: procurementStatusSnapshot() })
   );
 }
 
