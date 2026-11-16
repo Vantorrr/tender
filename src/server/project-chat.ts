@@ -62,7 +62,7 @@ function isExplicitCardQuestion(question: string) {
 
 function isProcurementCardDump(answer: string) {
   const fields = answer.split("\n").filter((line) => /^\s*(?:(?:[-*•])\s*|\d+[.)]\s*)?(?:название|номер|заказчик|регион|вид работ|нмцк|срок подачи|решение об участии|стадия проекта)\s*:/iu.test(line));
-  return fields.length >= 2 || /^\s*(?:карточка закупки|данные закупки)\s*[:—-]/iu.test(answer);
+  return fields.length >= 2 || /^\s*(?:\*\*)?(?:карточка закупки|данные закупки|сводка закупки)(?:\*\*)?\s*[:—-]?\s*(?:\n|$)/iu.test(answer);
 }
 
 /** Keep the project card and the sources that actually match the question. */
@@ -347,7 +347,15 @@ export function getProjectChat(user: User, procurementId: string) {
   const stored = readAppData().projectChatMessages ?? [];
   return {
     modelAvailable: modelConfigured(),
-    messages: stored.filter((item) => item.userId === user.id && item.procurementId === procurementId),
+    messages: stored
+      .filter((item) => item.userId === user.id && item.procurementId === procurementId)
+      .map((item) => item.role === "assistant" && isProcurementCardDump(item.content)
+        ? {
+            ...item,
+            content: "Старый ответ пересказывал карточку вместо ответа на вопрос. Задайте этот вопрос ещё раз — теперь чат ищет подтверждение в документах и материалах закупки.",
+            sources: [],
+          }
+        : item),
   };
 }
 
@@ -366,6 +374,7 @@ export async function sendProjectChatMessage(
   const history = (readAppData().projectChatMessages ?? [])
     .filter((item) => item.userId === user.id && item.procurementId === procurement.id)
     .slice(-MAX_HISTORY_MESSAGES)
+    .filter((item) => item.role !== "assistant" || !isProcurementCardDump(item.content))
     .map(({ role, content }) => ({ role, content: content.slice(0, 1000) }));
 
   let answer: string;

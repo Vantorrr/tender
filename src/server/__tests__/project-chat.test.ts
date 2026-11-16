@@ -1,7 +1,15 @@
-import { describe, expect, it } from "vitest";
-import { selectRelevantProjectChatSources, validateProjectChatResult } from "@/server/project-chat";
+import { beforeEach, describe, expect, it } from "vitest";
+import { selectRelevantProjectChatSources, validateProjectChatResult, getProjectChat } from "@/server/project-chat";
+import { closeDb, ensureReady, mutateAppData, readAppData } from "@/server/db";
+import { createManualProcurement } from "@/server/repo";
+import "./setup";
 
 describe("grounded procurement chat", () => {
+  beforeEach(() => {
+    closeDb();
+    ensureReady();
+  });
+
   const card = {
     id: "S001",
     label: "Карточка закупки",
@@ -73,5 +81,27 @@ describe("grounded procurement chat", () => {
 
     expect(result.sources).toEqual([]);
     expect(result.answer).toContain("не нашёл ответа на этот вопрос");
+  });
+
+  it("marks persisted card dumps as stale when reopening chat history", () => {
+    const procurement = createManualProcurement("u-tender", { title: "Тестовая закупка", region: "ЯНАО" });
+    const user = readAppData().users.find((item) => item.id === "u-tender")!;
+    mutateAppData((data) => {
+      data.projectChatMessages = [{
+        id: "chat-old",
+        orgId: user.orgId,
+        procurementId: procurement.id,
+        userId: user.id,
+        role: "assistant",
+        content: "Карточка закупки:\nЗаказчик: Компания\nРегион: ЯНАО",
+        screen: "procurement",
+        createdAt: new Date().toISOString(),
+      }];
+      return data;
+    });
+
+    const history = getProjectChat(user, procurement.id);
+    expect(history.messages[0].content).toContain("Старый ответ пересказывал карточку");
+    expect(history.messages[0].sources).toEqual([]);
   });
 });
