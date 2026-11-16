@@ -39,35 +39,61 @@ export interface ProcurementSource {
 /** Kontur external API. The key is server-only and never included in diagnostics. */
 export class KonturProcurementSource implements ProcurementSource {
   readonly id = "kontur-external-api";
+  lastResult: ProcurementFetchResult | null = null;
 
   async fetchNotices(): Promise<ProcurementFetchResult> {
+    const result = await this.fetchPages();
+    this.lastResult = result;
+    return result;
+  }
+
+  private async fetchPages(): Promise<ProcurementFetchResult> {
     const key = process.env.KONTUR_API_KEY?.trim();
     if (!key) return { ok: false, stub: false, status: "not_configured", notices: [], detail: "Не задан серверный ключ API Контура." };
     try {
       const now = new Date();
-      const response = await fetch("https://api-zakupki.kontur.ru/external/v1/search", {
-        method: "POST",
-        headers: { "X-Kontur-Apikey": key, "Content-Type": "application/json" },
-        body: JSON.stringify({ DateTimeFrom: new Date(now.getTime() - 86400000).toISOString(), DateTimeTo: now.toISOString(), PageNumber: 0 }),
-        signal: AbortSignal.timeout(20000),
-        redirect: "error",
-        cache: "no-store",
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const payload = await response.json() as { Items?: Array<Record<string, unknown>>; TotalCount?: number };
-      if (!Array.isArray(payload.Items)) throw new Error("неожиданный формат поиска");
-      // Restricted subscriptions return apparently valid records with redacted
-      // identifiers, customers and URLs. Do not persist them as real evidence.
-      if (payload.Items.some((item) => /░/.test(JSON.stringify(item)))) {
-        return { ok: false, stub: false, status: "error", notices: [], detail: "Ключ Контура принят, но API маскирует реквизиты и ссылки на документы символами ░. Проверьте доступ к полным данным по API-лицензии; скрытые записи не импортированы." };
+      const items: Array<Record<string, unknown>> = [];
+      const seen = new Set<string>();
+      let total = 0;
+      let completed = false;
+      const requestedPages = Number(process.env.KONTUR_MAX_PAGES ?? 5);
+      const maxPages = Number.isFinite(requestedPages) ? Math.max(1, Math.min(20, Math.floor(requestedPages))) : 5;
+      for (let page = 0; page < maxPages; page += 1) {
+        const response = await fetch("https://api-zakupki.kontur.ru/external/v1/search", {
+          method: "POST",
+          headers: { "X-Kontur-Apikey": key, "Content-Type": "application/json" },
+          body: JSON.stringify({ DateTimeFrom: new Date(now.getTime() - 86400000).toISOString(), DateTimeTo: now.toISOString(), PageNumber: page }),
+          signal: AbortSignal.timeout(20000),
+          redirect: "error",
+          cache: "no-store",
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json() as { Items?: Array<Record<string, unknown>>; TotalCount?: number };
+        if (!Array.isArray(payload.Items)) throw new Error("неожиданный формат поиска");
+        // Restricted subscriptions return apparently valid records with redacted
+        // identifiers, customers and URLs. Do not persist them as real evidence.
+        if (payload.Items.some((item) => /░/.test(JSON.stringify(item)))) {
+          return { ok: false, stub: false, status: "error", notices: [], detail: "Ключ Контура принят, но API маскирует реквизиты и ссылки на документы символами ░. Проверьте доступ к полным данным по API-лицензии; скрытые записи не импортированы." };
+        }
+        total = typeof payload.TotalCount === "number" ? payload.TotalCount : 0;
+        if (!payload.Items.length) { completed = true; break; }
+        let added = 0;
+        for (const item of payload.Items) {
+          if (typeof item.Id !== "string" || seen.has(item.Id)) continue;
+          seen.add(item.Id);
+          items.push(item);
+          added += 1;
+        }
+        if (items.length >= total && total > 0) { completed = true; break; }
+        if (!added) throw new Error("повтор страницы источника");
       }
-      const notices = payload.Items.flatMap((item): ProcurementNoticeDraft[] => {
+      const notices = items.flatMap((item): ProcurementNoticeDraft[] => {
         if (typeof item.Id !== "string" || typeof item.OrderName !== "string" || item.IsCancelled === true) return [];
         const customers = Array.isArray(item.Customers) ? item.Customers as Array<{ FullName?: string }> : [];
         const places = Array.isArray(item.DeliveryPlaces) ? item.DeliveryPlaces.filter((place): place is string => typeof place === "string") : [];
         return [{ number: item.Id, title: item.OrderName, customer: customers.map((customer) => customer.FullName).filter(Boolean).join("; ") || "Заказчик не указан", region: places.join("; ") || "Регион не указан", nmck: item.Currency === "RUB" && typeof item.MaxPrice === "number" ? item.MaxPrice : null, deadline: typeof item.ApplicationDeadline === "string" ? item.ApplicationDeadline : "", source: "Контур.Закупки API", tags: ["Контур API"] }];
       });
-      return { ok: true, stub: false, status: "ok", notices, detail: `Контур API: получено ${notices.length} закупок первой страницы из ${payload.TotalCount ?? "неизвестного количества"}.` };
+      return { ok: true, stub: false, status: "ok", notices, detail: `Контур API: получено ${notices.length} закупок из ${total || "неизвестного количества"}. ${completed ? "Все страницы получены." : `Выборка неполная: достигнут лимит ${maxPages} страниц за синхронизацию.`}` };
     } catch (error) {
       const detail = error instanceof Error && /^HTTP \d+$/.test(error.message) ? error.message : "сетевая ошибка или неверный формат ответа";
       return { ok: false, stub: false, status: "error", notices: [], detail: `Контур API: ${detail}.` };
@@ -364,7 +390,7 @@ export function procurementSourceStatus(): {
   stub: boolean;
   demo: boolean;
   configured: boolean;
-  status: "ok" | "not_configured" | "demo";
+  status: "ok" | "not_configured" | "demo" | "error";
   detail: string;
 } {
   const source = getProcurementSource();
@@ -381,8 +407,8 @@ export function procurementSourceStatus(): {
     stub: !configured && !livePublic && !liveKontur,
     demo,
     configured: livePublic || liveKontur,
-    status: demo ? "demo" : livePublic || liveKontur ? "ok" : "not_configured",
-    detail: liveKontur ? "Настроен API Контура; доступность полных данных проверяется при синхронизации" : livePublic
+    status: demo ? "demo" : liveKontur && source instanceof KonturProcurementSource ? source.lastResult?.status ?? "not_configured" : livePublic ? "ok" : "not_configured",
+    detail: liveKontur && source instanceof KonturProcurementSource ? source.lastResult?.detail ?? "Ключ Контура настроен; первая синхронизация ещё не выполнена" : livePublic
       ? "Подключена открытая публичная лента закупок «Норникеля»"
       : configured
       ? "Адаптер вендора ожидает согласования"
