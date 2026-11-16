@@ -866,13 +866,9 @@ export default function ZakupkaDetailPage() {
                 {procurement.attachments.filter((attachment) => attachment.sourceUrl).map((attachment) => (
                   <li key={attachment.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 text-sm">
                     <span>{attachment.name} · {attachment.size}</span>
-                    {procurement.source === "Контур.Закупки API" ? (
-                      <a href={attachment.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center rounded-md border px-3 text-xs font-medium hover:bg-stone-50">Открыть документ источника</a>
-                    ) : (
-                      <Button size="sm" variant="outline" disabled={busy} onClick={() => void onImportSourceAttachment(attachment)}>
-                        Скачать и разобрать
-                      </Button>
-                    )}
+                    <Button size="sm" variant="outline" disabled={busy} onClick={() => void onImportSourceAttachment(attachment)}>
+                      Скачать и разобрать
+                    </Button>
                   </li>
                 ))}
               </ul>

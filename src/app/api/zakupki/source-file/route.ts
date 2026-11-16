@@ -5,7 +5,23 @@ import { config } from "@/server/config";
 
 export const runtime = "nodejs";
 
-/** Fetch a linked public Nornickel attachment for the signed-in user's card. */
+const KONTUR_DOCUMENT_HOSTS = [
+  "kontur.ru", "zakupki.gov.ru", "roseltorg.ru", "rts-tender.ru",
+  "sberbank-ast.ru", "etp-ets.ru", "zakazrf.ru", "tektorg.ru",
+  "fabrikant.ru", "lot-online.ru", "gz.lot-online.ru", "rosneft.ru",
+];
+
+function allowedKonturDocumentHost(hostname: string) {
+  const configured = (process.env.KONTUR_DOCUMENT_ALLOWED_HOSTS ?? "")
+    .split(",")
+    .map((host) => host.trim().toLowerCase())
+    .filter(Boolean);
+  const allowed = [...KONTUR_DOCUMENT_HOSTS, ...configured];
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  return allowed.some((domain) => host === domain || host.endsWith(`.${domain}`));
+}
+
+/** Fetch a linked public source document for the signed-in user's procurement. */
 export async function POST(req: Request) {
   return withSection(req, "zakupki", async (user) => {
     const body = (await req.json()) as {
@@ -29,12 +45,17 @@ export async function POST(req: Request) {
     } catch {
       return json({ error: "Некорректная ссылка на файл источника" }, 400);
     }
-    const allowedSource = source.protocol === "https:" && (
+    const nornickelSource =
       (source.hostname === "nornickel.ru" && source.pathname.startsWith("/upload/")) ||
-      (source.hostname === "nornik-upload.storage.yandexcloud.net" && source.pathname.startsWith("/iblock/"))
-    );
+      (source.hostname === "nornik-upload.storage.yandexcloud.net" && source.pathname.startsWith("/iblock/"));
+    const konturSource = procurement?.source === "Контур.Закупки API" &&
+      Boolean(procurement.externalId) &&
+      procurement.attachments.some((item) => item.id === attachment.id) &&
+      allowedKonturDocumentHost(source.hostname);
+    const allowedSource = source.protocol === "https:" && !source.port && !source.username && !source.password &&
+      (nornickelSource || konturSource);
     if (!allowedSource) {
-      return json({ error: "Разрешены только файлы с публичного сайта «Норникеля»" }, 400);
+      return json({ error: "Для этой закупки скачивание с домена источника не разрешено" }, 400);
     }
 
     try {
@@ -48,7 +69,26 @@ export async function POST(req: Request) {
       if (declaredSize > config.maxUploadBytes) {
         return json({ error: "Файл превышает лимит загрузки приложения" }, 413);
       }
-      const bytes = Buffer.from(await response.arrayBuffer());
+      if (!response.body) return json({ error: "Источник вернул пустой файл" }, 502);
+      const chunks: Uint8Array[] = [];
+      let totalBytes = 0;
+      const reader = response.body.getReader();
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const part = Buffer.from(value);
+          totalBytes += part.length;
+          if (totalBytes > config.maxUploadBytes) {
+            await reader.cancel();
+            return json({ error: "Файл превышает лимит загрузки приложения" }, 413);
+          }
+          chunks.push(part);
+        }
+      } finally {
+        reader.releaseLock();
+      }
+      const bytes = Buffer.concat(chunks, totalBytes);
       if (bytes.length > config.maxUploadBytes) {
         return json({ error: "Файл превышает лимит загрузки приложения" }, 413);
       }
