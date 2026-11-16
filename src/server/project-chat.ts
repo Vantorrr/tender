@@ -28,15 +28,41 @@ const SYSTEM = `Ты — помощник только по одной стро�
 
 type Source = ProjectChatSource & { sourceText: string };
 type ChatResult = { answer: string; outOfScope: boolean; sources: Array<{ sourceId: string; quote: string }> };
+const NO_EVIDENCE_ANSWER = "В материалах этой закупки не нашёл ответа на этот вопрос. Добавьте нужный документ или уточните, где искать: в договоре, смете, ГПР или плане/факте.";
 
 function normalize(value: string) {
   return value.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ").trim();
 }
 
+const RU_ENDINGS = ["иями", "ями", "ами", "ого", "ему", "ыми", "ими", "ее", "ые", "ая", "яя", "ое", "ий", "ый", "ой", "ым", "им", "ом", "ем", "ых", "их", "ах", "ях", "ам", "ям", "ов", "ев", "ей", "ою", "ею", "а", "я", "о", "е", "ы", "и", "у", "ю", "ь", "й"];
+
+function stemTerm(value: string) {
+  const term = normalize(value);
+  if (!/^[а-я]+$/u.test(term)) return term;
+  for (const ending of RU_ENDINGS) {
+    if (term.endsWith(ending) && term.length - ending.length >= 3) return term.slice(0, -ending.length);
+  }
+  return term;
+}
+
 function questionTerms(question: string) {
   return normalize(question)
     .split(/[^а-яa-z0-9]+/u)
-    .filter((term) => term.length >= 3 && !/^(?:какие|какой|какая|какое|этот|этого|почему|сколько|можно|нужно|есть|будет|тогда|чтобы|проект|закупка)$/u.test(term));
+    .filter((term) => term.length >= 3 && !/^(?:какие|какой|какая|какое|этот|этого|почему|сколько|можно|нужно|есть|будет|тогда|чтобы|проект|закупка)$/u.test(term))
+    .map(stemTerm);
+}
+
+function textHasTerm(text: string, term: string) {
+  return normalize(text).split(/[^а-яa-z0-9]+/u).some((word) => stemTerm(word) === term);
+}
+
+function isExplicitCardQuestion(question: string) {
+  return /заказчик|кто разместил|организатор|срок подачи|дата подачи|дедлайн|до какого числа|прием заявок|приём заявок|нмцк|начальн\p{L}* цен|стартов\p{L}* цен|регион|где расположен|место выполнения|номер закупки|номер извещения|реестров\p{L}* номер|название закупки|наименование закупки|что за закупка|реквизит\p{L}* закупки|данные закупки/iu.test(question);
+}
+
+function isProcurementCardDump(answer: string) {
+  const fields = answer.split("\n").filter((line) => /^\s*(?:(?:[-*•])\s*|\d+[.)]\s*)?(?:название|номер|заказчик|регион|вид работ|нмцк|срок подачи|решение об участии|стадия проекта)\s*:/iu.test(line));
+  return fields.length >= 2 || /^\s*(?:карточка закупки|данные закупки)\s*[:—-]/iu.test(answer);
 }
 
 /** Keep the project card and the sources that actually match the question. */
@@ -46,29 +72,21 @@ export function selectRelevantProjectChatSources<T extends { id: string; label: 
   limit = MAX_PROMPT_SOURCES
 ) {
   const card = sources.find((source) => source.label === "Карточка закупки");
+  const includeCard = Boolean(card && isExplicitCardQuestion(question));
   const terms = questionTerms(question);
-  const cardScore = card ? terms.reduce((total, term) => {
-    const label = normalize(card.label);
-    const text = normalize(card.sourceText);
-    return total + (label.includes(term) ? 4 : 0) + (text.includes(term) ? 1 : 0);
-  }, 0) : 0;
   const ranked = sources
     .filter((source) => source !== card)
     .map((source, index) => {
-      const label = normalize(source.label);
-      const text = normalize(source.sourceText);
       const score = terms.reduce((total, term) =>
-        total + (label.includes(term) ? 4 : 0) + (text.includes(term) ? 1 : 0), 0);
+        total + (textHasTerm(source.label, term) ? 4 : 0) + (textHasTerm(source.sourceText, term) ? 1 : 0), 0);
       return { source, index, score };
     })
     .filter((item) => item.score > 0)
     .sort((a, b) => b.score - a.score || a.index - b.index)
-    .slice(0, Math.max(0, limit - (card && cardScore > 0 ? 1 : 0)))
+    .slice(0, Math.max(0, limit - (includeCard ? 1 : 0)))
     .map(({ source }) => source);
-  // The procurement card is useful for explicit metadata questions only.
-  // Adding it as a fallback when no document matched caused the model to
-  // answer unrelated questions with a generic card summary.
-  const includeCard = card && cardScore > 0;
+  // The procurement card is only supplied for explicit metadata questions.
+  // Token overlap with generic terms like "работы" made the model dump its fields.
   return [...ranked, ...(includeCard ? [card] : [])].filter((source): source is T => Boolean(source));
 }
 
@@ -132,7 +150,7 @@ export function parseProjectChatResult(raw: string): ChatResult {
   };
 }
 
-export function validateProjectChatResult(result: ChatResult, sources: Source[]) {
+export function validateProjectChatResult(result: ChatResult, sources: Source[], question = "") {
   const byId = new Map(sources.map((source) => [source.id, source]));
   const accepted: ProjectChatSource[] = [];
   for (const candidate of result.sources) {
@@ -145,9 +163,9 @@ export function validateProjectChatResult(result: ChatResult, sources: Source[])
   const answerNumbers = result.answer.match(/\d+(?:[.,]\d+)?\s*%?/g) ?? [];
   const quoted = normalize(accepted.map((source) => source.quote).join(" "));
   const numbersGrounded = answerNumbers.every((number) => quoted.includes(normalize(number)));
-  if (!result.outOfScope && (!accepted.length || !numbersGrounded)) {
+  if (!result.outOfScope && (isProcurementCardDump(result.answer) && !isExplicitCardQuestion(question) || !accepted.length || !numbersGrounded)) {
     return {
-      answer: "Не нашёл в доступных материалах закупки цитату, которая надёжно подтверждает ответ. Проверьте исходный документ или уточните вопрос.",
+      answer: NO_EVIDENCE_ANSWER,
       outOfScope: false,
       sources: [] as ProjectChatSource[],
     };
@@ -358,27 +376,32 @@ export async function sendProjectChatMessage(
   } else {
     const direct = directCardFacts(question, allSources[0]);
     if (direct) {
-      const validated = validateProjectChatResult(direct, allSources);
+      const validated = validateProjectChatResult(direct, allSources, question);
       answer = validated.answer;
       citations = validated.sources;
     } else {
       if (!modelConfigured()) throw new Error("ИИ-чат не настроен: администратору нужно подключить модель");
       const promptSources = selectRelevantProjectChatSources(question, allSources);
-      const userPrompt = JSON.stringify({
-        project: { title: procurement.title, number: procurement.number },
-        currentBlock: input.screen,
-        history,
-        question,
-        sources: promptSources.map(({ id, label, sourceText }) => ({
-          id,
-          label,
-          text: sourceText.slice(0, MAX_PROMPT_SOURCE_LENGTH),
-        })),
-      });
-      const parsed = parseProjectChatResult(await completeJson(SYSTEM, userPrompt));
-      const validated = validateProjectChatResult(parsed, allSources);
-      answer = validated.answer;
-      citations = validated.sources;
+      if (!promptSources.length) {
+        // Don't call the model with an empty evidence set: it tended to fill
+        // the gap by repeating procurement metadata instead of answering.
+        answer = NO_EVIDENCE_ANSWER;
+      } else {
+        const userPrompt = JSON.stringify({
+          currentBlock: input.screen,
+          history,
+          question,
+          sources: promptSources.map(({ id, label, sourceText }) => ({
+            id,
+            label,
+            text: sourceText.slice(0, MAX_PROMPT_SOURCE_LENGTH),
+          })),
+        });
+        const parsed = parseProjectChatResult(await completeJson(SYSTEM, userPrompt));
+        const validated = validateProjectChatResult(parsed, allSources, question);
+        answer = validated.answer;
+        citations = validated.sources;
+      }
     }
   }
 

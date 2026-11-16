@@ -18,7 +18,7 @@ describe("grounded procurement chat", () => {
         { sourceId: "S001", quote: "Заказчик: ГБУ «Дирекция образования»" },
         { sourceId: "S001", quote: "Срок подачи: 15 ноября 2026 г., 15:00" },
       ],
-    }, [card]);
+    }, [card], "Кто заказчик и какой срок подачи?");
 
     expect(result.sources).toHaveLength(2);
     expect(result.answer).toContain("15 ноября 2026 г., 15:00");
@@ -32,7 +32,7 @@ describe("grounded procurement chat", () => {
     }, [card]);
 
     expect(result.sources).toEqual([]);
-    expect(result.answer).toContain("Не нашёл");
+    expect(result.answer).toContain("не нашёл ответа на этот вопрос");
   });
 
   it("prefers a relevant document over an unrelated procurement card", () => {
@@ -53,5 +53,25 @@ describe("grounded procurement chat", () => {
   it("includes the card when the user asks for its deadline", () => {
     const selected = selectRelevantProjectChatSources("Какой срок подачи?", [card]);
     expect(selected.map((source) => source.id)).toEqual(["S001"]);
+  });
+
+  it("does not send the procurement card for a work question", () => {
+    const selected = selectRelevantProjectChatSources("Какой объём работы предусмотрен?", [
+      card,
+      { id: "S002", label: "Документ · Техническое задание", sourceText: "Объем работ: выполнить ремонт кровли здания." },
+    ]);
+
+    expect(selected.map((source) => source.id)).toEqual(["S002"]);
+  });
+
+  it("rejects a card dump when the user asked a different question", () => {
+    const result = validateProjectChatResult({
+      answer: "Заказчик: ГБУ «Дирекция образования»\nСрок подачи: 15 ноября 2026 г., 15:00",
+      outOfScope: false,
+      sources: [{ sourceId: "S001", quote: "Заказчик: ГБУ «Дирекция образования»" }],
+    }, [card], "Какой объем работ?");
+
+    expect(result.sources).toEqual([]);
+    expect(result.answer).toContain("не нашёл ответа на этот вопрос");
   });
 });
