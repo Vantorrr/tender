@@ -1,4 +1,4 @@
-import type { DocumentItem, ProjectAnalytics, Procurement } from "@/lib/types";
+import type { Citation, DocumentItem, ProjectAnalytics, Procurement } from "@/lib/types";
 import { completeJson } from "@/server/openrouter";
 
 const SYSTEM = `Ты специалист по анализу строительных тендеров. Анализируй пакет закупки как единый проект.
@@ -17,6 +17,51 @@ type ModelResult = {
   missingInputs: string[];
   evidence: Array<{ text: string; quote: string; citationIds: string[] }>;
 };
+
+type AnalysisEconomics = {
+  cost: number | null;
+  priceWithVat: number | null;
+  incomplete: boolean;
+  missingRates: number;
+  missingRateNames?: string[];
+  incompleteReasons?: string[];
+};
+
+/** Cover important subjects across the document instead of only its first rows. */
+export function selectAnalysisCitations(citations: Citation[], limit = 40): Citation[] {
+  const selected = new Set<Citation>();
+  const topics = [/объ[её]м|количеств|перечень работ|ведомость/iu, /срок|календар|начал|окончан/iu,
+    /оплат|аванс|отсроч/iu, /штраф|пен[яи]|неустойк|ответственност/iu,
+    /север|вахт|доставк|проживан|транспорт/iu, /требован|допуск|лицензи|обеспечен/iu];
+  for (const topic of topics) {
+    for (const citation of citations.filter((item) => topic.test(item.text)).slice(0, 4)) {
+      if (selected.size < limit) selected.add(citation);
+    }
+  }
+  for (const citation of citations) {
+    if (selected.size >= limit) break;
+    selected.add(citation);
+  }
+  return [...selected];
+}
+
+export function economicMissingInputs(economics?: AnalysisEconomics): string[] {
+  if (!economics) return ["Создать черновой ресурсный расчёт по документам проекта."];
+  const missing: string[] = [];
+  if (economics.missingRates) missing.push(`Заполнить собственные ставки для ${economics.missingRates} строк${economics.missingRateNames?.length ? `: ${economics.missingRateNames.slice(0, 8).join("; ")}` : ""}.`);
+  if (economics.cost == null) missing.push("Рассчитать себестоимость: подтверждённый итог черновика отсутствует.");
+  if (economics.priceWithVat == null) missing.push("Подтвердить ставку НДС и получить сопоставимую итоговую цену проекта.");
+  const labels: Record<string, string> = {
+    vat_percent: "Указать применимую ставку НДС в расчёте.",
+    "margin_rate_must_be_in_[0,1)": "Исправить ставку маржи: она должна быть от 0 до 100% исключительно.",
+  };
+  for (const reason of economics.incompleteReasons ?? []) {
+    if (labels[reason]) missing.push(labels[reason]);
+    else if (reason.startsWith("north:")) missing.push(`Подтвердить северные расходы: ${reason.split(":").slice(2).join(":") || "не заполнены исходные данные"}.`);
+  }
+  if (economics.incomplete && !missing.length) missing.push("Заполнить неполные входные данные черновика в разделе «Что учтено и что проверить».");
+  return [...new Set(missing)];
+}
 
 export function parseProjectAnalysisResult(raw: string): ModelResult {
   const text = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
@@ -101,16 +146,12 @@ export async function analyzeProjectPackageWithModel(
   procurement: Procurement,
   documents: DocumentItem[],
   deterministic: ProjectAnalytics,
-  economics?: {
-    cost: number | null;
-    priceWithVat: number | null;
-    incomplete: boolean;
-    missingRates: number;
-  }
+  economics?: AnalysisEconomics
 ): Promise<ProjectAnalytics> {
   const packageDocuments = documents.filter((document) => document.procurementId === procurement.id);
   const citationsById = new Map(deterministic.citations.map((citation) => [citation.id, citation]));
-  const visibleCitationIds = new Set(packageDocuments.flatMap((document) => document.citations.slice(0, 20).map(({ id }) => id)));
+  const documentCitations = new Map(packageDocuments.map((document) => [document.id, selectAnalysisCitations(document.citations)]));
+  const visibleCitationIds = new Set([...documentCitations.values()].flatMap((citations) => citations.map(({ id }) => id)));
   const inputs = {
     procurement: {
       number: procurement.number,
@@ -131,6 +172,7 @@ export async function analyzeProjectPackageWithModel(
       priceWithVat: economics.priceWithVat,
       incomplete: economics.incomplete,
       missingOwnRates: economics.missingRates,
+      missingInputs: economicMissingInputs(economics),
       note: "Это результат отдельного детерминированного расчёта по справочникам компании. Не придумывай значения. Если расчёт неполный или цена/НМЦК не сопоставимы по НДС, рекомендация должна быть insufficient_data.",
     } : {
       procurementMaximumPrice: procurement.nmck,
@@ -146,7 +188,7 @@ export async function analyzeProjectPackageWithModel(
       extractionErrors: document.extractionErrors ?? [],
       highlights: document.highlights.slice(0, 8).map(({ text, reason, severity, page }) => ({ text, reason, severity, page })),
       estimatePositions: (document.estimatePositions ?? []).slice(0, 30),
-      citations: document.citations.slice(0, 20).map(({ id, sourceFile, page, paragraph, sheet, cell, text, confidence }) => ({ id, sourceFile, page, paragraph, sheet, cell, confidence, text: text.slice(0, 320) })),
+      citations: (documentCitations.get(document.id) ?? []).map(({ id, sourceFile, page, paragraph, sheet, cell, text, confidence }) => ({ id, sourceFile, page, paragraph, sheet, cell, confidence, text: text.slice(0, 1200) })),
     })),
   };
 
@@ -168,7 +210,7 @@ export async function analyzeProjectPackageWithModel(
 
   // Missing inputs come from deterministic package coverage. Model-authored items
   // are not source-grounded and must not be presented as verified gaps.
-  const missingInputs = deterministic.missingInputs.slice(0, 40);
+  const missingInputs = [...new Set([...deterministic.missingInputs, ...economicMissingInputs(economics)])].slice(0, 40);
   const hasCriticalEvidence = accepted.some((item) => item.citationIds.some((id) => {
     const citation = citationsById.get(id);
     return packageDocuments.some((document) => document.highlights.some((highlight) =>

@@ -3,6 +3,8 @@ import {
   gateModelRecommendation,
   parseProjectAnalysisResult,
   validateProjectEvidence,
+  selectAnalysisCitations,
+  economicMissingInputs,
 } from "@/server/project-analysis-ai";
 import type { ProjectAnalytics } from "@/lib/types";
 
@@ -16,6 +18,26 @@ const citations: ProjectAnalytics["citations"] = [
 ];
 
 describe("grounded project analysis", () => {
+  it("keeps payment and penalty clauses after a long estimate table within the source budget", () => {
+    const rows = Array.from({ length: 100 }, (_, index) => ({ id: `row-${index}`, text: `Сметная строка ${index}`, page: index + 1, sourceFile: "Пакет.pdf" }));
+    const selected = selectAnalysisCitations([...rows,
+      { id: "payment", text: "Оплата после подписания акта в течение 60 дней.", page: 101, sourceFile: "Пакет.pdf" },
+      { id: "penalty", text: "Неустойка за каждый день просрочки исполнения обязательств.", page: 102, sourceFile: "Пакет.pdf" },
+    ]);
+    expect(selected).toHaveLength(40);
+    expect(selected.map((item) => item.id)).toContain("payment");
+    expect(selected.map((item) => item.id)).toContain("penalty");
+    expect(new Set(selected.map((item) => item.id)).size).toBe(selected.length);
+  });
+
+  it("explains actual missing calculation inputs using resource names", () => {
+    const missing = economicMissingInputs({ cost: null, priceWithVat: null, incomplete: true, missingRates: 2, missingRateNames: ["Автобус", "Бетон"], incompleteReasons: ["vat_percent", "north:camp:Проживание"] });
+    expect(missing.join(" ")).toContain("Автобус; Бетон");
+    expect(missing.join(" ")).toContain("НДС");
+    expect(missing.join(" ")).toContain("Проживание");
+    expect(economicMissingInputs({ cost: 100, priceWithVat: 120, incomplete: false, missingRates: 0 })).toEqual([]);
+  });
+
   it("accepts only a paraphrase with an exact quote, valid source, and matching numbers", () => {
     const result = parseProjectAnalysisResult(JSON.stringify({
       recommendation: "participate",

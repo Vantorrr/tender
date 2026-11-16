@@ -1565,6 +1565,8 @@ export async function analyzeProcurementPackageWithAI(
     incomplete: Boolean(!draft.costSummary || draft.positions.length === 0 ||
       draft.costSummary.totalsIncomplete || draft.costSummary.incomplete?.length || missingRates),
     missingRates,
+    missingRateNames: draft.positions.filter((position) => position.rateMissing).map((position) => position.name),
+    incompleteReasons: draft.costSummary?.incomplete ?? [],
   } : undefined;
   const generated = await analyzeProjectPackageWithModel(procurement, documents, deterministic, economics);
   mutateAppData((data) => {
