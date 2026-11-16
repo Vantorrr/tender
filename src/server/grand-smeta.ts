@@ -604,7 +604,6 @@ export function analysisFromScan(
   const citations: Citation[] = pageTexts.flatMap((pageText, pageIndex) => {
     const sentences = pageText.match(/[^.!?]+(?:[.!?]+|$)/gu) ?? [pageText];
     const chunks: string[] = [];
-    let current = "";
     for (const sentence of sentences) {
       const words = sentence.trim().split(/\s+/u);
       for (let offset = 0; offset < words.length;) {
@@ -613,16 +612,9 @@ export function analysisFromScan(
           piece = `${piece} ${words[offset++]}`.trim();
         }
         if (!piece && words[offset]) piece = words[offset++].slice(0, 700);
-        const candidate = `${current} ${piece}`.trim();
-        if (current && candidate.length > 700) {
-          chunks.push(current);
-          current = piece;
-        } else {
-          current = candidate;
-        }
+        if (piece) chunks.push(piece);
       }
     }
-    if (current) chunks.push(current);
     return chunks.slice(0, 8).map((chunk, chunkIndex) => ({
       id: `c-ocr-p${pageIndex + 1}-${chunkIndex + 1}`,
       text: chunk,
