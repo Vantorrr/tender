@@ -176,8 +176,8 @@ export async function POST(req: Request) {
       return json(getBootstrap(user));
     }
     if (body.action === "analyzeProject") {
-      await analyzeProcurementPackageWithAI(user.id, body.id!);
-      return json(getBootstrap(user));
+      const result = await analyzeProcurementPackageWithAI(user.id, body.id!);
+      return json({ ...getBootstrap(user), analysisWarning: result.warning });
     }
     if (body.action === "transferToProduction") {
       transferProcurementToProduction(user.id, body.id!);

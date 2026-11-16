@@ -58,47 +58,53 @@ export function buildProjectAnalytics(
   );
 
   const missing: string[] = [];
-  if (!sourceDocs.length) missing.push("нет доступных исходных файлов пакета");
+  const blockers: string[] = [];
+  if (!sourceDocs.length) blockers.push("нет доступных исходных файлов пакета");
   for (const d of unavailableDocs) {
-    missing.push(`файл «${d.fileName}» не приложен или недоступен — загрузите оригинал повторно`);
+    blockers.push(`файл «${d.fileName}» не приложен или недоступен — загрузите оригинал повторно`);
   }
-  if (!hasEstimate) missing.push("нет сметы заказчика");
-  if (!hasContract) missing.push("нет проекта договора");
-  if (!hasTz) missing.push("нет ТЗ / извещения");
+  if (!hasEstimate) missing.push("смета заказчика не приложена — сравнение с её расценками невозможно; нужна собственная ресурсная калькуляция");
+  if (!hasContract) blockers.push("не найден проект договора — условия оплаты, ответственности и расторжения не проверены");
+  if (!hasTz) blockers.push("не найдено ТЗ / извещение — объём и границы работ не подтверждены");
   if (extractionErrors.length) {
-    missing.push(
+    blockers.push(
       `ошибки извлечения: ${extractionErrors.slice(0, 3).join("; ")}`
     );
   }
   for (const d of sourceDocs) {
-    if (d.status === "oshibka" || d.status === "trebuet_proverki") {
-      missing.push(`документ «${d.title}» требует проверки (${d.status})`);
+    if (d.status === "oshibka" || (d.status === "trebuet_proverki" && d.citations.length === 0)) {
+      blockers.push(`документ «${d.fileName}» не дал проверяемых выдержек — проверьте извлечение и оригинал`);
     }
   }
+  const reviewNotes = sourceDocs.flatMap((d) =>
+    (d.highlights ?? [])
+      .filter((highlight) => highlight.severity === "critical" || highlight.severity === "warning")
+      .slice(0, 3)
+      .map((highlight) => `${d.fileName}: ${highlight.reason || highlight.text}`)
+  );
+  missing.push(...blockers, ...reviewNotes.slice(0, 8));
 
   const stopHits = highlights.filter((h) => h.severity === "critical");
   let recommendation: ParticipateRecommendation = "insufficient_data";
   let rationale: string;
 
-  if (missing.length >= 3 || sourceDocs.length === 0) {
+  if (blockers.length > 0) {
     recommendation = "insufficient_data";
     rationale =
-      "Недостаточно исходников для рекомендации: заполните пакет документов и устраните ошибки извлечения.";
+      "Рекомендацию пока нельзя обосновать: см. конкретные отсутствующие документы и ошибки извлечения ниже.";
   } else if (stopHits.length >= 1) {
     recommendation = "do_not_participate";
     rationale =
       "В пакете найдено критичное замечание. Рекомендация условная — проверьте источник и примите решение вручную.";
   } else if (
-    hasEstimate &&
     hasContract &&
     hasTz &&
-    analyzed.length === docs.length &&
-    missing.length === 0 &&
-    extractionErrors.length === 0
+    analyzed.length === sourceDocs.length &&
+    blockers.length === 0
   ) {
     recommendation = "participate";
     rationale =
-      "Все обязательные типы документов разобраны, извлечение без ошибок, критичных замечаний не найдено. Это предварительная рекомендация, не гарантия выигрыша.";
+      "Договор и описание работ найдены, извлечение дало проверяемые выдержки, критичных замечаний не найдено. Для решения нужна полная ресурсная калькуляция; это предварительная рекомендация.";
   } else {
     recommendation = "insufficient_data";
     rationale =
@@ -110,8 +116,14 @@ export function buildProjectAnalytics(
     `Доступных исходных файлов: ${sourceDocs.length} из ${docs.length}; цитат: ${citations.length}; критичных подсветок: ${stopHits.length}.`,
     rationale,
   ];
-  if (missing.length) {
-    summaryParts.push(`Требует уточнения: ${missing.join("; ")}.`);
+  if (blockers.length) {
+    summaryParts.push(`Блокирует рекомендацию: ${blockers.join("; ")}.`);
+  }
+  if (!hasEstimate) {
+    summaryParts.push("Сметы заказчика нет: это не блокирует собственный расчёт себестоимости, но сравнить расценки заказчика не получится.");
+  }
+  if (reviewNotes.length) {
+    summaryParts.push(`Конкретные замечания парсера/документов: ${reviewNotes.slice(0, 8).join("; ")}.`);
   }
   for (const d of analyzed.slice(0, 3)) {
     summaryParts.push(`«${d.title}»: ${d.analyticalNote.slice(0, 220)}`);
@@ -128,9 +140,9 @@ export function buildProjectAnalytics(
     disclaimer:
       "Записка собрана из загруженных документов по правилам сервиса. Это не ИИ-экспертное заключение и не обещание точности.",
     quality: {
-      status: sourceDocs.length === 0 || missing.length >= 3
+      status: blockers.length > 0
         ? "insufficient_sources"
-        : missing.length || extractionErrors.length || stopHits.length
+        : reviewNotes.length || stopHits.length
           ? "needs_review"
           : "evidence_backed",
       sourceDocuments: sourceDocs.length,

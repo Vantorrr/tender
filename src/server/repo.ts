@@ -12,6 +12,7 @@ import type {
   MoneyPlan,
   PlanFact,
   PlanFactEntry,
+  ProjectAnalytics,
   ReviewStatus,
   RiskRegistry,
   Role,
@@ -23,7 +24,11 @@ import type {
 } from "@/lib/types";
 import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
-import { analyzeProjectPackageWithModel } from "@/server/project-analysis-ai";
+import {
+  analyzeProjectPackageWithModel,
+  buildProjectAnalysisFallback,
+  type AnalysisCompanyContext,
+} from "@/server/project-analysis-ai";
 import {
   bucketsFromPositions,
   busCost,
@@ -1565,7 +1570,7 @@ export function refreshProcurementAnalytics(
 export async function analyzeProcurementPackageWithAI(
   actorId: string,
   procurementId: string
-) {
+): Promise<{ warning?: string; usedAi: boolean }> {
   // Every entry point (including automatic upload analysis) needs the same
   // current resource draft. Previously only the explicit UI action prepared it.
   sendProcurementToCalculation(actorId, procurementId);
@@ -1587,25 +1592,83 @@ export async function analyzeProcurementPackageWithAI(
   const deterministic = buildProjectAnalytics(procurement, documents);
   const draft = snapshot.calculations.find((item) => item.id === procurement.calculationId && item.kind === "resource_draft");
   const missingRates = draft?.positions.filter((position) => position.rateMissing && !position.isWorkItem).length ?? 0;
+  const directCost = draft?.costSummary?.resourceSlices?.costWithOh ?? draft?.costSummary?.C0 ?? null;
+  const priceExVat = draft?.costSummary?.priceExVat ?? null;
+  const profit = draft?.costSummary?.profit ?? draft?.costSummary?.resourceSlices?.profit ?? null;
   const economics = draft ? {
-    cost: draft.costSummary?.resourceSlices?.costWithOh ?? draft.costSummary?.C0 ?? null,
+    cost: directCost,
+    priceExVat,
     priceWithVat: draft.costSummary?.priceIncVat ?? null,
+    profit,
+    profitabilityPercent: directCost != null && directCost > 0 && profit != null
+      ? Math.round((profit / directCost) * 10000) / 100
+      : null,
+    revenueMarginPercent: priceExVat != null && priceExVat > 0 && profit != null
+      ? Math.round((profit / priceExVat) * 10000) / 100
+      : null,
     incomplete: Boolean(!draft.costSummary || draft.positions.length === 0 ||
       draft.costSummary.totalsIncomplete || draft.costSummary.incomplete?.length || missingRates),
     missingRates,
     missingRateNames: draft.positions.filter((position) => position.rateMissing && !position.isWorkItem).map((position) => position.name),
     incompleteReasons: draft.costSummary?.incomplete ?? [],
   } : undefined;
-  const generated = await analyzeProjectPackageWithModel(procurement, documents, deterministic, economics);
+  const currentDirectories = snapshot.directories.filter((directory) => directory.current);
+  const profile = currentDirectories.find((directory) => directory.type === "profil");
+  const fleet = currentDirectories.find((directory) => directory.type === "park");
+  const labor = currentDirectories.find((directory) => directory.type === "rascenki");
+  const hasValue = (row: Record<string, string | number>, keys: string[]) =>
+    keys.some((key) => String(row[key] ?? "").trim().length > 0);
+  const companyContext: AnalysisCompanyContext = {
+    profileRows: (profile?.rows ?? []).slice(0, 100).map((row) => ({
+      ...(row.region ? { region: String(row.region) } : {}),
+      ...(row.okpd ? { okpd: String(row.okpd) } : {}),
+      ...(row.services || row.service || row.workTypes || row.specialization
+        ? { services: String(row.services ?? row.service ?? row.workTypes ?? row.specialization) }
+        : {}),
+      ...(typeof row.maxNmck === "number" ? { maxNmck: row.maxNmck } : {}),
+    })),
+    laborRates: (labor?.rows ?? []).slice(0, 100).map((row) => ({
+      work: String(row.work ?? row.name ?? row.code ?? ""),
+      ...(typeof row.rate === "number" ? { rate: row.rate } : {}),
+      ...(row.unit ? { unit: String(row.unit) } : {}),
+    })).filter((row) => row.work),
+    fleet: (fleet?.rows ?? []).slice(0, 120).map((row) => ({
+      ...(row.category ? { category: String(row.category) } : {}),
+      name: String(row.name ?? row.code ?? ""),
+      ...(typeof row.qty === "number" ? { quantity: row.qty } : {}),
+      ...(row.unit ? { unit: String(row.unit) } : {}),
+    })).filter((row) => row.name),
+    serviceCatalogPresent: Boolean(profile?.rows.some((row) => hasValue(row, ["okpd", "services", "service", "workTypes", "specialization"]))),
+    resourceAvailabilityTracked: Boolean(fleet?.rows.some((row) => hasValue(row, ["availableFrom", "availableTo", "availableQty", "freeQty"]))),
+    riskRemarks: (snapshot.risks.find((item) => item.procurementId === procurement.id)?.remarks ?? []).slice(0, 40).map((risk) => ({
+      severity: risk.severity,
+      status: risk.status,
+      text: risk.text,
+      ...(risk.sourceExcerpt ? { sourceExcerpt: risk.sourceExcerpt } : {}),
+    })),
+  };
+  let generated: ProjectAnalytics;
+  let warning: string | undefined;
+  let usedAi = true;
+  try {
+    generated = await analyzeProjectPackageWithModel(procurement, documents, deterministic, economics, companyContext);
+  } catch (error) {
+    usedAi = false;
+    warning = "ИИ-модель не вернула полный ответ. Сохранил расчёт, источники и конкретный список того, что нужно подтвердить.";
+    const failure = error instanceof Error ? error.message : "Неизвестная ошибка модели";
+    generated = buildProjectAnalysisFallback(procurement, deterministic, economics, companyContext, failure);
+  }
   mutateAppData((data) => {
     const currentActor = actorUser(data, actorId);
     const current = data.procurements.find((item) => item.id === procurementId);
     if (!current) throw new Error("Закупка не найдена");
     assertOrgAccess(currentActor, current.orgId, "закупки");
     current.analytics = generated;
-    audit(data, actorId, "analyze_ai", "procurement", procurementId, "ИИ-анализ полного пакета документов");
+    audit(data, actorId, usedAi ? "analyze_ai" : "analyze_fallback", "procurement", procurementId,
+      usedAi ? "ИИ-анализ полного пакета документов" : "Сохранена локальная аналитика после ошибки модели");
     return data;
   });
+  return { warning, usedAi };
 }
 
 /**

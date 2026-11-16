@@ -132,7 +132,7 @@ interface StoreContextValue {
   ensureChain: (procurementId: string) => Promise<void>;
   sendToCalculation: (procurementId: string) => Promise<CalculationSummary>;
   refreshAnalytics: (procurementId: string) => Promise<void>;
-  analyzeProjectWithAI: (procurementId: string) => Promise<void>;
+  analyzeProjectWithAI: (procurementId: string) => Promise<string | undefined>;
   markAllNotificationsRead: () => Promise<void>;
   setOrganizationActive: (orgId: string, active: boolean) => Promise<void>;
   importClientXlsx: () => Promise<{
@@ -707,11 +707,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const analyzeProjectWithAI = useCallback(
     async (procurementId: string) => {
-      const boot = await api<BootstrapResponse>("/api/zakupki", {
+      const boot = await api<BootstrapResponse & { analysisWarning?: string }>("/api/zakupki", {
         method: "POST",
         body: JSON.stringify({ action: "analyzeProject", id: procurementId }),
       });
       applyBoot(boot);
+      return boot.analysisWarning;
     },
     [applyBoot]
   );

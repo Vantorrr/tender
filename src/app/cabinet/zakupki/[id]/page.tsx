@@ -439,8 +439,9 @@ export default function ZakupkaDetailPage() {
   async function analyzeProjectPackage() {
     setAiAnalyzing(true);
     try {
-      await analyzeProjectWithAI(procurement!.id);
-      toast.success("ИИ подготовил сводный анализ всего пакета");
+      const warning = await analyzeProjectWithAI(procurement!.id);
+      if (warning) toast.warning(warning);
+      else toast.success("ИИ подготовил сводный анализ всего пакета");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось проанализировать пакет");
     } finally {
@@ -1019,6 +1020,35 @@ export default function ZakupkaDetailPage() {
                     {analytics.summary}
                   </pre>
                 </section>
+                {analytics.economics ? (
+                  <section className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white p-4" data-testid="analytics-economics">
+                    <h3 className="text-sm font-semibold">Себестоимость и рентабельность</h3>
+                    <dl className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+                      {([
+                        ["Себестоимость", analytics.economics.cost],
+                        ["Цена без НДС", analytics.economics.priceExVat],
+                        ["Цена с НДС", analytics.economics.priceWithVat],
+                        ["Расчётная прибыль", analytics.economics.profit],
+                      ] as const).map(([label, value]) => (
+                        <div key={label} className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3">
+                          <dt className="text-xs text-[var(--tk-muted)]">{label}</dt>
+                          <dd className="mt-1 text-sm font-semibold tabular-nums">{value == null ? "Не рассчитано" : formatMoney(value)}</dd>
+                        </div>
+                      ))}
+                      <div className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3">
+                        <dt className="text-xs text-[var(--tk-muted)]">Рентабельность / маржа</dt>
+                        <dd className="mt-1 text-sm font-semibold tabular-nums">
+                          {analytics.economics.profitabilityPercent == null ? "—" : `${analytics.economics.profitabilityPercent}%`}
+                          {analytics.economics.revenueMarginPercent == null ? "" : ` / ${analytics.economics.revenueMarginPercent}%`}
+                        </dd>
+                        <dd className="mt-1 text-[10px] text-[var(--tk-muted)]">к себестоимости / в цене</dd>
+                      </div>
+                    </dl>
+                    {!analytics.economics.complete ? (
+                      <p className="mt-2 text-xs text-amber-900">Расчёт неполный. Причины перечислены ниже; неполные суммы не считаются подтверждённой экономикой.</p>
+                    ) : null}
+                  </section>
+                ) : null}
                 <section className="mb-4 space-y-3" aria-label="Ключевые условия закупки">
                   <h3 className="text-sm font-semibold">Ключевые условия</h3>
                   <dl className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
@@ -1088,13 +1118,24 @@ export default function ZakupkaDetailPage() {
                 </section>
                 {analytics.quality ? (
                   <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 rounded-lg border border-[var(--tk-line)] bg-stone-50 px-3 py-2 text-xs" data-testid="analytics-quality">
-                    <span>{analytics.quality.status === "evidence_backed" ? "Источники разобраны" : analytics.quality.status === "needs_review" ? "Нужна проверка источников" : "Недостаточно источников"}</span>
+                    <span>{analytics.quality.status === "evidence_backed" ? "Источники разобраны" : analytics.quality.status === "needs_review" ? "Есть замечания — смотрите список действий ниже" : "Не хватает проверяемых исходников"}</span>
                     <span>Документов: {analytics.quality.sourceDocuments}</span>
-                    <span>Обязательных типов: {analytics.quality.requiredDocumentsFound}/3</span>
+                    <span>Распознаны типы смета / договор / ТЗ: {analytics.quality.requiredDocumentsFound}/3</span>
                     <span>Цитат: {analytics.quality.citationCount}</span>
                     {analytics.quality.acceptedClaims != null ? <span>Тезисов с цитатой: {analytics.quality.acceptedClaims}</span> : null}
                     {analytics.quality.rejectedClaims ? <span>Отброшено неподтверждённых: {analytics.quality.rejectedClaims}</span> : null}
                   </div>
+                ) : null}
+                {analytics.missingInputs.length ? (
+                  <section className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4" data-testid="analytics-action-items">
+                    <h3 className="text-sm font-semibold text-amber-950">Что именно проверить или подтвердить</h3>
+                    <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-950">
+                      {analytics.missingInputs.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}
+                    </ul>
+                    {analytics.economics?.missingInputs.length ? (
+                      <p className="mt-3 text-xs text-amber-950">По расчёту: {analytics.economics.missingInputs.join("; ")}</p>
+                    ) : null}
+                  </section>
                 ) : null}
                 <p className="mt-3 text-xs text-[var(--tk-muted)]">
                   {analytics.disclaimer} Метод: {analytics.method}. Без обещания

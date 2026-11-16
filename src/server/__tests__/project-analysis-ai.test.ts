@@ -5,8 +5,10 @@ import {
   validateProjectEvidence,
   selectAnalysisCitations,
   economicMissingInputs,
+  companyAnalysisMissingInputs,
+  buildProjectAnalysisFallback,
 } from "@/server/project-analysis-ai";
-import type { ProjectAnalytics } from "@/lib/types";
+import type { ProjectAnalytics, Procurement } from "@/lib/types";
 
 const citations: ProjectAnalytics["citations"] = [
   {
@@ -35,7 +37,40 @@ describe("grounded project analysis", () => {
     expect(missing.join(" ")).toContain("Автобус; Бетон");
     expect(missing.join(" ")).toContain("НДС");
     expect(missing.join(" ")).toContain("Проживание");
-    expect(economicMissingInputs({ cost: 100, priceWithVat: 120, incomplete: false, missingRates: 0 })).toEqual([]);
+    expect(economicMissingInputs({ cost: 100, priceExVat: 100, priceWithVat: 120, incomplete: false, missingRates: 0 })).toEqual([]);
+  });
+
+  it("calls out missing company service and availability registers rather than inventing fit", () => {
+    expect(companyAnalysisMissingInputs({
+      profileRows: [], laborRates: [], fleet: [], serviceCatalogPresent: false,
+      resourceAvailabilityTracked: false, riskRemarks: [],
+    })).toHaveLength(2);
+  });
+
+  it("keeps economics and a conservative recommendation when the model fails", () => {
+    const procurement = {
+      id: "p-1", orgId: "org-1", number: "T-1", title: "Ремонт", customer: "Заказчик",
+      region: "ЯНАО", nmck: 2000, deadline: "", source: "test", status: "zagruzheno",
+      reviewStatus: "novaya", syncStatus: "aktualno", syncAt: "", attachments: [],
+      documentIds: [], tags: [], createdAt: "",
+    } as unknown as Procurement;
+    const deterministic: ProjectAnalytics = {
+      recommendation: "participate", summary: "Покрытие документов проверено.", missingInputs: [],
+      citationIds: [], citations, generatedAt: "", method: "test", disclaimer: "",
+      quality: { status: "evidence_backed", sourceDocuments: 2, requiredDocumentsFound: 2, citationCount: 1 },
+    };
+    const fallback = buildProjectAnalysisFallback(procurement, deterministic, {
+      cost: 1000, priceExVat: 1200, priceWithVat: 1440, profit: 200,
+      profitabilityPercent: 20, revenueMarginPercent: 16.67, incomplete: false, missingRates: 0,
+    }, {
+      profileRows: [{ okpd: "41.20" }], laborRates: [], fleet: [{ name: "Экскаватор", quantity: 1 }],
+      serviceCatalogPresent: true, resourceAvailabilityTracked: false, riskRemarks: [],
+    }, "пустой ответ");
+
+    expect(fallback.recommendation).toBe("insufficient_data");
+    expect(fallback.economics).toMatchObject({ cost: 1000, profit: 200, profitabilityPercent: 20, complete: true });
+    expect(fallback.summary).toContain("ИИ-анализ не завершился");
+    expect(fallback.missingInputs.join(" ")).toContain("календарь занятости");
   });
 
   it("accepts only a paraphrase with an exact quote, valid source, and matching numbers", () => {

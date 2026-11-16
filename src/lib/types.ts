@@ -133,6 +133,17 @@ export interface ProjectAnalytics {
     acceptedClaims?: number;
     rejectedClaims?: number;
   };
+  /** Same-procurement cost model, separate from customer-estimate values. */
+  economics?: {
+    cost: number | null;
+    priceExVat: number | null;
+    priceWithVat: number | null;
+    profit: number | null;
+    profitabilityPercent: number | null;
+    revenueMarginPercent: number | null;
+    complete: boolean;
+    missingInputs: string[];
+  };
 }
 
 export type ProjectLifecycle =

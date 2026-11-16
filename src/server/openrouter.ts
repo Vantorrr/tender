@@ -6,8 +6,10 @@ export function modelConfigured() {
   return Boolean(config.openRouterKey);
 }
 
-export async function completeJson(system: string, user: string, retryEmpty = true): Promise<string> {
+export async function completeJson(system: string, user: string, attempt = 0): Promise<string> {
   if (!config.openRouterKey) throw new Error("Ключ модели не задан");
+  const retrying = attempt > 0;
+  const tokenBudgets = [4000, 6000, 8000];
   const response = await fetch(ENDPOINT, {
     method: "POST",
     headers: {
@@ -19,14 +21,12 @@ export async function completeJson(system: string, user: string, retryEmpty = tr
     body: JSON.stringify({
       model: config.openRouterModel,
       temperature: 0.2,
-      // Tender analyses contain source quotes; 1,400 tokens cut valid JSON in
-      // the middle of a citation on the configured model.
-      max_tokens: retryEmpty ? 3200 : 4000,
+      max_tokens: tokenBudgets[Math.min(attempt, tokenBudgets.length - 1)],
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: retryEmpty
+        { role: "system", content: !retrying
           ? system
-          : `${system}\nЕсли предыдущая попытка вернула пустой ответ, сформируй полный ответ сейчас. Верни непустой JSON строго по заданной схеме.` },
+          : `${system}\nПредыдущая попытка вернула пустой или неполный ответ. Сформируй полный ответ без рассуждений вне JSON, проверь что JSON непустой и содержит обязательные поля.` },
         { role: "user", content: user },
       ],
     }),
@@ -37,12 +37,21 @@ export async function completeJson(system: string, user: string, retryEmpty = tr
     throw new Error(`Модель ответила ${response.status}: ${detail.slice(0, 240)}`);
   }
   const payload = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string }; finish_reason?: string }>;
+    choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> | null; refusal?: string | null }; finish_reason?: string }>;
   };
-  const content = payload.choices?.[0]?.message?.content?.trim();
-  const finishReason = payload.choices?.[0]?.finish_reason;
-  if (!content && retryEmpty) return completeJson(system, user, false);
-  if (!content) throw new Error("Модель дважды вернула пустой ответ. Повторите анализ позже.");
+  const choice = payload.choices?.[0];
+  const rawContent = choice?.message?.content;
+  const content = (typeof rawContent === "string"
+    ? rawContent
+    : Array.isArray(rawContent)
+      ? rawContent.map((part) => part.text ?? "").join("\n")
+      : "").trim();
+  const finishReason = choice?.finish_reason;
+  if (!content && attempt < tokenBudgets.length - 1) return completeJson(system, user, attempt + 1);
+  if (!content) {
+    if (choice?.message?.refusal) throw new Error(`Модель отказала в анализе: ${choice.message.refusal.slice(0, 180)}`);
+    throw new Error(`Модель вернула пустой ответ после ${attempt + 1} попыток (finish_reason: ${finishReason ?? "не указан"}).`);
+  }
   let validJson = false;
   try {
     JSON.parse(content.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));
@@ -51,7 +60,7 @@ export async function completeJson(system: string, user: string, retryEmpty = tr
     // Providers may stop mid-quote despite JSON mode. Retry once with a larger
     // completion budget before surfacing a confusing JSON parser error to users.
   }
-  if ((!validJson || finishReason === "length") && retryEmpty) return completeJson(system, user, false);
-  if (!validJson) throw new Error("Модель вернула неполный ответ. Повторите анализ позже.");
+  if ((!validJson || finishReason === "length") && attempt < tokenBudgets.length - 1) return completeJson(system, user, attempt + 1);
+  if (!validJson) throw new Error(`Модель вернула неполный JSON после ${attempt + 1} попыток.`);
   return content;
 }
