@@ -6,6 +6,7 @@ import {
 import { assertSection } from "@/server/acl";
 import { getBootstrap } from "@/server/repo";
 import { withUser, json } from "@/server/http";
+import { getProcurementSource, KonturProcurementSource, validateKonturSearchFilters } from "@/server/procurement-source";
 
 export async function GET(req: Request) {
   return withUser(req, (user) => {
@@ -26,10 +27,23 @@ export async function POST(req: Request) {
       documentId?: string;
       /** Explicit paid model refine — off unless client opts in. */
       useLlm?: boolean;
+      /** Optional full Kontur search filter set; each result page is an API call. */
+      filters?: unknown;
     };
     if (body.type === "procurement_sync") {
       assertSection(user, "zakupki");
-      const result = await runProcurementSync(user.id);
+      let filters;
+      if (body.filters != null) {
+        if (!(getProcurementSource() instanceof KonturProcurementSource)) {
+          return json({ error: "Расширенные фильтры доступны при источнике Контур.Закупки" }, 409);
+        }
+        try {
+          filters = validateKonturSearchFilters(body.filters);
+        } catch (error) {
+          return json({ error: error instanceof Error ? error.message : "Некорректные фильтры Контура" }, 400);
+        }
+      }
+      const result = await runProcurementSync(user.id, filters);
       return json({
         ...getBootstrap(user),
         jobs: result.jobs,

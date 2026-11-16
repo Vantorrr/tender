@@ -146,12 +146,15 @@ export interface Procurement {
   id: string;
   orgId: string;
   number: string;
+  externalId?: string;
   title: string;
   customer: string;
   region: string;
   nmck: number | null;
   deadline: string;
   source: string;
+  /** External source card link; opens the original procurement source. */
+  sourceUrl?: string;
   status: CardStatus;
   reviewStatus: ReviewStatus;
   syncStatus: "aktualno" | "ustarelo" | "oshibka_sinhronizacii";

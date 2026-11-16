@@ -31,6 +31,8 @@ import { kanbanToReview } from "@/lib/pipeline";
 import type { Procurement } from "@/lib/types";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
+import { KonturSearchPanel } from "@/components/kontur-search-panel";
+import type { KonturSearchFilters } from "@/server/procurement-source";
 
 export default function ZakupkiPage() {
   const router = useRouter();
@@ -39,10 +41,10 @@ export default function ZakupkiPage() {
   const [region, setRegion] = useState<string>("all");
   const [workType, setWorkType] = useState<string>("all");
   const [syncing, setSyncing] = useState(false);
-  const [source, setSource] = useState<{ status: string; detail: string } | null>(null);
+  const [source, setSource] = useState<{ id?: string; status: string; detail: string } | null>(null);
   useEffect(() => {
     let active = true;
-    api<{ source: { status: string; detail: string } }>("/api/zakupki")
+    api<{ source: { id: string; status: string; detail: string } }>("/api/zakupki")
       .then((result) => { if (active) setSource(result.source); })
       .catch(() => { if (active) setSource({ status: "error", detail: "Не удалось получить статус источника. Повторите загрузку страницы." }); });
     return () => { active = false; };
@@ -55,6 +57,23 @@ export default function ZakupkiPage() {
   const [manualRegion, setManualRegion] = useState("");
   const [manualNmck, setManualNmck] = useState("");
   const [manualDeadline, setManualDeadline] = useState("");
+
+  async function searchKontur(filters: KonturSearchFilters) {
+    setSyncing(true);
+    try {
+      const result = await api<{ feed?: { status?: string; detail?: string; insertedHint?: number } }>("/api/jobs", {
+        method: "POST",
+        body: JSON.stringify({ type: "procurement_sync", filters }),
+      });
+      await refresh();
+      if (result.feed?.status === "error") toast.error(result.feed.detail ?? "Контур вернул ошибку при поиске");
+      else toast.success(result.feed?.detail ?? "Поиск завершён. Обновите карточки на доске.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось выполнить поиск в Контуре");
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   const regions = useMemo(() => {
     const fromData = [...new Set(orgProcurements.map((p) => p.region))];
@@ -224,6 +243,8 @@ export default function ZakupkiPage() {
           {source?.detail ?? "Проверяем подключённый источник…"}
         </AlertDescription>
       </Alert>
+
+      {source?.id === "kontur-external-api" ? <KonturSearchPanel busy={syncing} onSearch={(filters) => void searchKontur(filters)} /> : null}
 
       {syncIssues.length > 0 ? (
         <Alert className="mb-6 border-amber-200 bg-amber-50 text-amber-950">

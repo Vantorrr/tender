@@ -18,6 +18,7 @@ import { assertSection } from "@/server/acl";
 import { withSection, json } from "@/server/http";
 import type { MoneyPayment, MoneyPlan, ReviewStatus } from "@/lib/types";
 import { procurementStatusSnapshot } from "@/server/db";
+import { getProcurementSource, KonturProcurementSource } from "@/server/procurement-source";
 
 const MONEY_ACTIONS = new Set([
   "ensureMoney",
@@ -69,7 +70,8 @@ export async function POST(req: Request) {
         | "transferToProduction"
         | "ensureMoney"
         | "saveMoney"
-        | "addMoneyPayment";
+        | "addMoneyPayment"
+        | "refreshKonturDetails";
       id?: string;
       moneyId?: string;
       patch?: Partial<MoneyPlan>;
@@ -87,6 +89,38 @@ export async function POST(req: Request) {
         deadline: body.manual?.deadline,
       });
       return json({ ...getBootstrap(user), createdProcurementId: created.id });
+    }
+    if (body.action === "refreshKonturDetails") {
+      if (!body.id) return json({ error: "Не указана закупка" }, 400);
+      if (!(getProcurementSource() instanceof KonturProcurementSource)) {
+        return json({ error: "Источник Контур.Закупки не активен" }, 409);
+      }
+      const procurement = getBootstrap(user).data.procurements.find(
+        (item) => item.id === body.id && item.orgId === user.orgId
+      );
+      if (!procurement || procurement.source !== "Контур.Закупки API" || !procurement.externalId) {
+        return json({ error: "Для этой карточки нет подтверждённого ID закупки Контура" }, 404);
+      }
+      const result = await (getProcurementSource() as KonturProcurementSource).purchaseDetails(procurement.externalId);
+      if (!result.ok || !result.purchase) return json({ error: result.detail }, result.status === "not_configured" ? 503 : 502);
+      const details = result.purchase;
+      updateProcurement(user.id, procurement.id, {
+        number: details.number,
+        externalId: details.externalId,
+        title: details.title,
+        customer: details.customer,
+        nmck: details.nmck,
+        deadline: details.deadline,
+        ...(details.sourceUrl ? { sourceUrl: details.sourceUrl } : {}),
+        attachments: details.attachments.map((attachment, index) => ({
+          id: `a-kontur-${procurement.externalId}-${index}`,
+          name: attachment.name,
+          type: "Документ API",
+          size: "—",
+          sourceUrl: attachment.url,
+        })),
+      });
+      return json({ ...getBootstrap(user), konturDetails: { detail: result.detail, attachmentCount: details.attachments.length } });
     }
     if (!body.id && body.action !== "saveMoney" && body.action !== "addMoneyPayment") {
       return json({ error: "Не указан id" }, 400);

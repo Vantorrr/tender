@@ -3,6 +3,7 @@ import { insertJob, listJobs, mutateAppData, readAppData, saveProcurementSyncSta
 import { analyzeUpload } from "@/server/grand-smeta";
 import {
   getProcurementSource,
+  type KonturSearchFilters,
   type ProcurementNoticeDraft,
 } from "@/server/procurement-source";
 import { reanalyzeDocument, refreshProcurementAnalytics } from "@/server/repo";
@@ -78,10 +79,12 @@ function insertNotice(
   );
   if (imported) {
     imported.number = notice.number;
+    if (notice.externalId) imported.externalId = notice.externalId;
     imported.title = notice.title;
     imported.customer = notice.customer;
     imported.region = notice.region;
     imported.deadline = notice.deadline;
+    if (notice.sourceUrl) imported.sourceUrl = notice.sourceUrl;
     if (imported.nmck == null) imported.nmck = notice.nmck;
     imported.attachments = [
       ...imported.attachments.filter((attachment) => !attachment.id.startsWith("a-auto-")),
@@ -98,12 +101,14 @@ function insertNotice(
     id: `p-auto-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     orgId,
     number: notice.number,
+    ...(notice.externalId ? { externalId: notice.externalId } : {}),
     title: notice.title,
     customer: notice.customer,
     region: notice.region,
     nmck: notice.nmck,
     deadline: notice.deadline,
     source: notice.source,
+    ...(notice.sourceUrl ? { sourceUrl: notice.sourceUrl } : {}),
     status: "zagruzheno",
     reviewStatus: "novaya",
     syncStatus: "aktualno",
@@ -116,7 +121,7 @@ function insertNotice(
   return true;
 }
 
-export async function runProcurementSync(actorId: string) {
+export async function runProcurementSync(actorId: string, filters?: KonturSearchFilters) {
   const id = `job-sync-${Date.now()}`;
   const createdAt = new Date().toISOString();
   insertJob({
@@ -133,7 +138,7 @@ export async function runProcurementSync(actorId: string) {
     const isSuper = actor?.role === "superadmin";
     const orgId = actor?.orgId ?? "org-alfa";
     const source = getProcurementSource();
-    const feed = await source.fetchNotices(orgId);
+    const feed = await source.fetchNotices(orgId, filters);
     saveProcurementSyncStatus(source.id, feed.status, feed.detail);
 
     const result = mutateAppData((data) => {

@@ -721,7 +721,8 @@ export default function ZakupkaDetailPage() {
                 <div>
                   <dt className="text-[var(--tk-muted)]">Источник</dt>
                   <dd className="font-semibold">
-                    {cleanLabel(procurement.source)}
+                    {cleanLabel(procurement.source)}{" "}
+                    {procurement.sourceUrl ? <a href={procurement.sourceUrl} target="_blank" rel="noreferrer" className="ml-1 text-xs font-normal underline">Открыть карточку источника</a> : null}
                   </dd>
                 </div>
                 <div>
@@ -829,6 +830,23 @@ export default function ZakupkaDetailPage() {
         </TabsContent>
 
         <TabsContent value="docs">
+          {procurement.source === "Контур.Закупки API" && procurement.externalId ? (
+            <section className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4">
+              <div><h2 className="font-medium">Данные и документы Контура</h2><p className="mt-1 text-xs text-[var(--tk-muted)]">Запросит полную карточку и список файлов по ID закупки. Метод может расходовать лимит группы purchase.</p></div>
+              <Button variant="outline" disabled={busy} onClick={async () => {
+                setBusy(true);
+                try {
+                  await api("/api/zakupki", { method: "POST", body: JSON.stringify({ action: "refreshKonturDetails", id: procurement.id }) });
+                  await refresh();
+                  toast.success("Данные и ссылки на документы обновлены");
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : "Не удалось получить карточку Контура");
+                } finally {
+                  setBusy(false);
+                }
+              }}>Получить из API</Button>
+            </section>
+          ) : null}
           {uploadError ? (
             <Alert
               className="mb-4 border-rose-200 bg-rose-50 text-rose-950"
@@ -848,9 +866,13 @@ export default function ZakupkaDetailPage() {
                 {procurement.attachments.filter((attachment) => attachment.sourceUrl).map((attachment) => (
                   <li key={attachment.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 text-sm">
                     <span>{attachment.name} · {attachment.size}</span>
-                    <Button size="sm" variant="outline" disabled={busy} onClick={() => void onImportSourceAttachment(attachment)}>
-                      Скачать и разобрать
-                    </Button>
+                    {procurement.source === "Контур.Закупки API" ? (
+                      <a href={attachment.sourceUrl} target="_blank" rel="noreferrer" className="inline-flex h-8 items-center rounded-md border px-3 text-xs font-medium hover:bg-stone-50">Открыть документ источника</a>
+                    ) : (
+                      <Button size="sm" variant="outline" disabled={busy} onClick={() => void onImportSourceAttachment(attachment)}>
+                        Скачать и разобрать
+                      </Button>
+                    )}
                   </li>
                 ))}
               </ul>
