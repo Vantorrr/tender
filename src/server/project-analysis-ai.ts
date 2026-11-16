@@ -265,6 +265,35 @@ export async function analyzeProjectPackageWithModel(
     return `• ${importance} · ${topic}: ${item.text.trim()} — «${item.quote.trim()}» [${sources.join("; ")}]`;
   });
 
+  // The model can still omit a high-impact clause even when OCR found it. Keep
+  // payment and liability coverage complete with a conservative, citation-only
+  // fallback; never infer a rate, amount, or missing contractual term here.
+  const requiredTopicFallbacks = [
+    {
+      topic: "Ответственность",
+      pattern: /штраф|пен[яи]|неустойк|удержан|обеспечен|расторжен/iu,
+      text: "В источнике найдено условие об ответственности; проверьте основание и порядок его применения.",
+    },
+    {
+      topic: "Оплата",
+      pattern: /оплат|аванс|отсроч|при[её]мк|удержан/iu,
+      text: "В источнике найдено условие оплаты; проверьте срок, основание оплаты и авансирование.",
+    },
+  ];
+  const fallbackEvidence = requiredTopicFallbacks.flatMap(({ topic, pattern, text }) => {
+    if (accepted.some((item) => TOPIC_LABELS[item.topic] === topic)) return [];
+    const citation = deterministic.citations.find(({ id, text: citationText }) =>
+      visibleCitationIds.has(id) && pattern.test(citationText)
+    );
+    if (!citation) return [];
+    const location = citation.sheet
+      ? `лист ${citation.sheet}${citation.cell ? `, ${citation.cell}` : ""}`
+      : citation.paragraph != null
+        ? `абз. ${citation.paragraph}`
+        : `стр. ${citation.page}`;
+    return [`• Условие из источника · ${topic}: ${text} — «${citation.text.trim()}» [${citation.sourceFile}, ${location}]`];
+  });
+
   // Missing inputs come from deterministic package coverage. Model-authored items
   // are not source-grounded and must not be presented as verified gaps.
   const missingInputs = [...new Set([...deterministic.missingInputs, ...economicMissingInputs(economics)])].slice(0, 40);
@@ -319,16 +348,19 @@ export async function analyzeProjectPackageWithModel(
     summary: [
       packageBrief,
       economicSummary,
-      ...(evidence.length
-        ? ["Выводы модели с проверяемыми цитатами:\n" + evidence.join("\n")]
+      ...(evidence.length || fallbackEvidence.length
+        ? [
+            evidence.length ? "Выводы ИИ с проверяемыми цитатами:\n" + evidence.join("\n") : null,
+            fallbackEvidence.length ? "Ключевые условия из документов:\n" + fallbackEvidence.join("\n") : null,
+          ].filter((item): item is string => Boolean(item)).join("\n")
         : ["Модель не вернула тезис, прошедший проверку цитаты; оставлена локальная сводка."]),
     ].join("\n\n"),
     missingInputs,
     generatedAt: new Date().toISOString(),
-    method: "openrouter_project_package_v4_domain_coverage",
+      method: "openrouter_project_package_v5_domain_coverage",
     disclaimer: "ИИ не вычисляет сметные итоги. Показаны только тезисы с цитатой из файла; риск и рекомендацию проверьте по оригиналу. Это не экспертное заключение и не обещание статистической точности.",
     quality: {
-      status: deterministic.quality?.status === "insufficient_sources" || evidence.length === 0
+      status: deterministic.quality?.status === "insufficient_sources" || (evidence.length === 0 && fallbackEvidence.length === 0)
         ? "insufficient_sources"
         : deterministic.quality?.status === "needs_review" || rejected > 0
           ? "needs_review"
@@ -336,7 +368,7 @@ export async function analyzeProjectPackageWithModel(
       sourceDocuments: packageDocuments.length,
       requiredDocumentsFound: deterministic.quality?.requiredDocumentsFound ?? 0,
       citationCount: deterministic.citations.length,
-      acceptedClaims: accepted.length,
+      acceptedClaims: accepted.length + fallbackEvidence.length,
       rejectedClaims: rejected,
     },
   };
