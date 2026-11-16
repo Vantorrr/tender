@@ -36,10 +36,27 @@ export function citationTopicLabel(text: string): string {
   return "Условие закупки";
 }
 
+function relevantClause(text: string): string {
+  const clauses = text.split(/(?<=[.!?;])\s+(?=[А-ЯЁA-Z«])/u).map((item) => item.trim()).filter(Boolean);
+  if (clauses.length < 2) return text;
+  const patterns = [
+    [/штраф|пени|неустойк|удержан|ответствен/iu, /штраф|пени|неустойк|удержан|ответствен/iu],
+    [/оплат|аванс|отсроч|при[её]мк/iu, /оплат|аванс|отсроч|при[её]мк/iu],
+    [/срок подачи|подач[аи] предложен|окончан.{0,16}заяв/iu, /срок подачи|подач[аи] предложен|окончан.{0,16}заяв/iu],
+    [/срок|календар|начало работ|окончание работ/iu, /срок|календар|начало работ|окончание работ/iu],
+    [/материал|комплект|поставк/iu, /материал|комплект|поставк/iu],
+    [/объ[её]м|количеств|перечень работ|предмет закуп/iu, /объ[её]м|количеств|перечень работ|предмет закуп/iu],
+  ];
+  const topic = patterns.find(([topicPattern]) => topicPattern.test(text));
+  const matching = topic ? clauses.filter((clause) => topic[1].test(clause)) : [];
+  return (matching.length ? matching : clauses).join(" ");
+}
+
 export function readableCitations(citations: Citation[]): Array<Citation & { displayText: string; topicLabel: string }> {
   return citations.flatMap((citation) => {
-    const displayText = citationTextForDisplay(citation);
-    return displayText ? [{ ...citation, displayText, topicLabel: citationTopicLabel(displayText) }] : [];
+    const rawText = citationTextForDisplay(citation);
+    const displayText = rawText ? relevantClause(rawText) : null;
+    return displayText ? [{ ...citation, displayText, topicLabel: citationTopicLabel(citation.text) }] : [];
   });
 }
 

@@ -47,6 +47,16 @@ function citationsMatching(citations: Citation[], pattern: RegExp) {
   return citations.filter((citation) => pattern.test(citation.text));
 }
 
+function distinctCitations(citations: Citation[]): Citation[] {
+  const seen = new Set<string>();
+  return citations.filter((citation) => {
+    const key = citation.text.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ").trim();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 function meaningfulMetadata(value?: string): string | undefined {
   const text = value?.trim();
   return text && !/^(?:нет данных|не указан(?:а|о|ы)?(?: в карточке.*)?|не найден(?:а|о|ы)?|—|-)$/iu.test(text) ? text : undefined;
@@ -359,6 +369,12 @@ export default function ZakupkaDetailPage() {
   const displayCitations = analytics ? readableCitations(analytics.citations) : [];
   const renderableCitations = displayCitations.map(({ displayText, ...citation }) => ({ ...citation, text: displayText }));
   const keyCitations = keyAnalyticsCitations(renderableCitations);
+  const paymentCitations = distinctCitations(citationsMatching(renderableCitations, /оплат|аванс|отсроч|расч[её]т[а-яё]* по контракту/i)).slice(0, 2);
+  const liabilityCitations = distinctCitations(citationsMatching(renderableCitations, /штраф|пени|неустойк|санкци/i)).slice(0, 2);
+  const conditionCitationIds = new Set([...paymentCitations, ...liabilityCitations].map((citation) => citation.id));
+  const remainingKeyCitations = keyCitations.filter((citation) => !conditionCitationIds.has(citation.id));
+  const primaryCitationIds = new Set([...keyCitations, ...paymentCitations, ...liabilityCitations].map((citation) => citation.id));
+  const remainingCitations = displayCitations.filter((citation) => !primaryCitationIds.has(citation.id));
   const documentRegion = docs.map((document) => meaningfulMetadata(document.analysis?.region)).find(Boolean);
   const sourceRegion = meaningfulMetadata(procurement.region) || documentRegion || regionFromCitations(analytics?.citations ?? []);
   const sourceZone = docs.map((document) => meaningfulMetadata(document.analysis?.zone)).find(Boolean);
@@ -1120,14 +1136,14 @@ export default function ZakupkaDetailPage() {
                   </dl>
                   <div className="grid gap-3 lg:grid-cols-2">
                     {([
-                      { label: "Оплата и аванс", citations: citationsMatching(renderableCitations, /оплат|аванс|отсроч|расч[её]т[а-яё]* по контракту/i) },
-                      { label: "Штрафы и неустойки", citations: citationsMatching(renderableCitations, /штраф|пени|неустойк|санкци/i) },
+                      { label: "Оплата и аванс", citations: paymentCitations },
+                      { label: "Штрафы и неустойки", citations: liabilityCitations },
                     ] as const).map((group) => (
                       <div key={group.label} className="rounded-lg border border-[var(--tk-line)] p-3">
                         <h4 className="text-sm font-medium">{group.label}</h4>
                         {group.citations.length ? (
                           <ul className="mt-2 space-y-2">
-                            {group.citations.slice(0, 4).map((citation) => (
+                            {group.citations.map((citation) => (
                               <li key={citation.id} className="text-sm leading-relaxed">
                                 <p className="break-words leading-relaxed [overflow-wrap:anywhere]">{citation.text}</p>
                                 <p className="mt-1 break-words text-xs text-[var(--tk-muted)] [overflow-wrap:anywhere]">
@@ -1137,7 +1153,6 @@ export default function ZakupkaDetailPage() {
                             ))}
                           </ul>
                         ) : <p className="mt-2 text-sm text-[var(--tk-muted)]">В извлечённых цитатах не найдено. Проверьте оригинал договора.</p>}
-                        {group.citations.length > 4 ? <p className="mt-2 text-xs text-[var(--tk-muted)]">Показаны первые 4 из {group.citations.length} цитат; полный список ниже.</p> : null}
                       </div>
                     ))}
                   </div>
@@ -1200,8 +1215,9 @@ export default function ZakupkaDetailPage() {
                   </p>
                 ) : (
                   <>
+                    {remainingKeyCitations.length === 0 ? <p className="mt-2 text-sm text-[var(--tk-muted)]">Других ключевых условий в документах не найдено.</p> : null}
                     <ul className="mt-2 grid gap-2 sm:grid-cols-2" data-testid="analytics-citations">
-                    {keyCitations.map((c) => {
+                    {remainingKeyCitations.map((c) => {
                       const source = displayCitations.find((citation) => citation.id === c.id);
                       return (
                         <li key={c.id} className="min-w-0 rounded-lg border border-[var(--tk-line)] bg-white px-3 py-3 text-sm" data-testid={`citation-${c.id}`}>
@@ -1214,13 +1230,13 @@ export default function ZakupkaDetailPage() {
                       );
                     })}
                     </ul>
-                    {displayCitations.length > keyCitations.length ? (
+                    {remainingCitations.length ? (
                       <details className="mt-3 rounded-lg border border-[var(--tk-line)] bg-stone-50 px-3 py-2">
                         <summary className="cursor-pointer text-sm font-medium">
-                          Показать остальные фрагменты ({displayCitations.length - keyCitations.length})
+                          Показать остальные фрагменты ({remainingCitations.length})
                         </summary>
                         <ul className="mt-3 space-y-2" data-testid="analytics-all-citations">
-                          {displayCitations.filter((citation) => !keyCitations.some((keyCitation) => keyCitation.id === citation.id)).map((c) => (
+                          {remainingCitations.map((c) => (
                             <li key={c.id} className="min-w-0 rounded-lg border border-[var(--tk-line)] bg-white px-3 py-2 text-sm">
                               <p className="flex flex-wrap items-center gap-2 text-xs font-medium text-[var(--tk-muted)]">
                                 <span className="rounded-full bg-stone-100 px-2 py-0.5">{c.topicLabel}</span>

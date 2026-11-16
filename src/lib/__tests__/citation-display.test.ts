@@ -29,4 +29,11 @@ describe("readable source citations", () => {
     expect(citationTextForDisplay(item)).toBe("Монтаж кабеля — 120 м");
     expect(readableCitations([citation("зона: нет данных", "unconfirmed"), item])).toHaveLength(1);
   });
+
+  it("keeps the sentence that supports the topic instead of repeating a whole document paragraph", () => {
+    const long = citation("ТЕСТОВАЯ ЗАКУПКА QA-003 Объем работ: ремонт здания, 240 квадратных метров. Срок выполнения: до 31 марта 2027 года. Оплата: в течение 30 календарных дней после приемки работ. Штраф: 0,1 процента за каждый день просрочки. Материал: утеплитель, 120 квадратных метров.");
+    const [readable] = readableCitations([long]);
+    expect(readable.topicLabel).toBe("Ответственность");
+    expect(readable.displayText).toBe("Штраф: 0,1 процента за каждый день просрочки.");
+  });
 });
