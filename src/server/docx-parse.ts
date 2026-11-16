@@ -165,44 +165,46 @@ export function analysisFromDocx(
   )?.[1];
   const cost = parseDecimal(costRaw);
 
-  const citations: Citation[] = [
-    cite(
-      "c-docx-zone",
-      zonePara,
-      "зона: нет данных",
-      fileName,
+  const citations: Citation[] = [];
+  for (const [id, para] of [
+    ["c-docx-zone", zonePara],
+    ["c-docx-volume", volumePara],
+    ["c-docx-cost", costPara],
+  ] as const) {
+    if (para) citations.push(cite(id, para, "", fileName, sourceVersion, "confirmed"));
+  }
+
+  // Procurement documents often put a heading and its value in separate
+  // paragraphs (for example, “Срок подачи предложения” followed by a date).
+  // Cite only source text, and include the following paragraph when the
+  // matched paragraph is a short label rather than a complete clause.
+  const clausePattern = /заказчик|предмет закуп|место выполн|адрес|срок|дата|аванс|оплат|расчет[аы]?|удержан|обеспечен|штраф|пен[яи]|неусто|гарант|материал|командир|проезд|расход.{0,12}предложен|подач[аи]/iu;
+  const clauseParagraphs = new Map<number, string>();
+  for (let i = 0; i < paragraphs.length; i += 1) {
+    const paragraph = paragraphs[i];
+    if (!clausePattern.test(paragraph.text)) continue;
+    const next = paragraphs[i + 1];
+    const text = paragraph.text.length < 120 && next
+      ? `${paragraph.text} ${next.text}`
+      : paragraph.text;
+    clauseParagraphs.set(paragraph.index, text);
+  }
+  for (const [index, text] of [...clauseParagraphs.entries()].slice(0, 12)) {
+    citations.push({
+      id: `c-docx-clause-${index}`,
+      text: text.slice(0, 400),
+      page: 1,
+      sourceFile: fileName,
+      paragraph: index,
       sourceVersion,
-      "confirmed"
-    ),
-    cite(
-      "c-docx-volume",
-      volumePara,
-      "объём: нет данных",
-      fileName,
-      sourceVersion,
-      "confirmed"
-    ),
-    cite(
-      "c-docx-cost",
-      costPara,
-      "стоимость: нет данных",
-      fileName,
-      sourceVersion,
-      "confirmed"
-    ),
-    cite(
-      "c-docx-terms",
-      termPara,
-      "сроки/условия: нет данных",
-      fileName,
-      sourceVersion,
-      "heuristic"
-    ),
-  ];
+      confidence: "heuristic",
+    });
+  }
 
   const risks = parseContractRisksDetailed(plainText);
   const highlights: Highlight[] = [];
-  if (!zone) {
+  const estimateDocument = /смет|ведомост.{0,15}объем|ведомость.{0,15}объем/iu.test(fileName);
+  if (!zone && estimateDocument) {
     highlights.push({
       id: "h-docx-zone",
       text: "Зона не найдена",
@@ -211,7 +213,7 @@ export function analysisFromDocx(
       page: 1,
     });
   }
-  if (!volume) {
+  if (!volume && estimateDocument) {
     highlights.push({
       id: "h-docx-vol",
       text: "Объём не найден",
@@ -220,7 +222,7 @@ export function analysisFromDocx(
       page: 1,
     });
   }
-  if (cost == null) {
+  if (cost == null && estimateDocument) {
     highlights.push({
       id: "h-docx-cost",
       text: "Стоимость не найдена",
@@ -262,19 +264,25 @@ export function analysisFromDocx(
     });
   }
 
-  const analyticalNote = [
-    `Разбор DOCX: ${paragraphs.length} абз. Источник версий: ${sourceVersion}.`,
-    `Зона: ${zone || "нет данных"}.`,
-    `Объём: ${volume || "нет данных"}.`,
-    `Стоимость: ${cost != null ? `${cost} (из текста)` : "нет данных"}.`,
-    termPara
-      ? `Условия (абз. ${termPara.index}): ${termPara.text.slice(0, 200)}`
-      : "Сроки/условия: нет данных.",
-    risks.status === "ok"
-      ? `Риски (эвристика, не юрэкспертиза): ${risks.remarks.map((r) => r.text).join("; ")}.`
-      : "Риски по тексту: нет данных.",
-    RISK_HELPER_DISCLAIMER,
-  ].join("\n");
+  const noteParts = [`Разбор DOCX: ${paragraphs.length} абз.`];
+  if (paragraphs.length === 0) noteParts.push("Нет данных: в DOCX не извлечён текст.");
+  if (zone) noteParts.push(`Зона: ${zone}.`);
+  if (volume) noteParts.push(`Объём: ${volume}.`);
+  if (cost != null) noteParts.push(`Стоимость: ${cost} (из текста).`);
+  const keyClauses = [...clauseParagraphs.values()].slice(0, 5);
+  if (keyClauses.length) {
+    noteParts.push(`Сроки и условия: ${keyClauses.map((text) => text.slice(0, 180)).join("; ")}.`);
+  } else if (termPara) {
+    noteParts.push(`Условия (абз. ${termPara.index}): ${termPara.text.slice(0, 200)}`);
+  }
+  if (risks.remarks.length) {
+    noteParts.push(`Риски (эвристика, не юрэкспертиза): ${risks.remarks.map((r) => r.text).join("; ")}.`);
+  }
+  if (estimateDocument && (!zone || !volume || cost == null)) {
+    noteParts.push("Для проверки сметы нужны явно распознанные зона, объём и стоимость.");
+  }
+  noteParts.push(RISK_HELPER_DISCLAIMER);
+  const analyticalNote = noteParts.join("\n");
 
   return {
     title: fileName.replace(/\.[^.]+$/, "") || fileName,
@@ -283,7 +291,7 @@ export function analysisFromDocx(
     highlights,
     status: highlights.some((h) => h.severity === "critical")
       ? "trebuet_proverki"
-      : zone && volume && cost != null
+      : paragraphs.length > 0 && (zone || volume || cost != null || citations.length > 0 || risks.remarks.length > 0) && (!estimateDocument || (zone && volume && cost != null))
         ? "gotovo"
         : "trebuet_proverki",
     positions: [],

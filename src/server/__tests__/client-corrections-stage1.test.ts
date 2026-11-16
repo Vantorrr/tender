@@ -17,6 +17,7 @@ import { createSession } from "@/server/auth";
 import { overheadsFromWorks, worksSubtotal } from "@/lib/calc-math";
 import { compareCalculations } from "@/lib/calc-compare";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
+import { analysisFromScan } from "@/server/grand-smeta";
 import {
   archiveExtractDir,
   extractArchiveSafely,
@@ -272,6 +273,59 @@ describe("client corrections stage 1", () => {
     const recalculated = readAppData().calculations.find((item) => item.id === draft.id)!;
     expect(recalculated.vatPercent).toBe(20);
     expect(recalculated.costSummary?.priceIncVat).toBeCloseTo((recalculated.costSummary?.priceExVat ?? 0) * 1.2, 2);
+  });
+
+  it("turns a text-layer estimate PDF into resource draft rows and GPR stages", () => {
+    const created = createManualProcurement("u-smet", {
+      title: "PDF estimate parser QA",
+      customer: "ООО QA",
+      region: "Норильск",
+    });
+    const procurement = readAppData().procurements.find((item) => item.id === created.id)!;
+    sendProcurementToCalculation("u-smet", procurement.id);
+    const text = [
+      "Смета №2131190",
+      "На Капитальный ремонт столовой",
+      "Всего по смете 7 595 709",
+      "Индекс=1 01. Земляные работы. Зимние условия.",
+      "  5 ФирЕР         Разработка грунта с погрузкой               1000 м3 0,2284 120 572,00",
+      "     01-01-013-02 экскаваторами",
+      "  8 ФирСЦт        Перевозка грунта автомобилями                 1т   690,84 484,13",
+      "     310-3013-1",
+      "  9 ФирСЦ4        Бетон тяжелый, класс В 12,5                  м3 16,218 16 694,39",
+      "     01-0005",
+    ].join("\n");
+    const prepared = analysisFromScan("2131190.pdf", {
+      status: "ok", text, pages: [text], pageCount: 1, provider: "pdftotext",
+    });
+    const document = createDocument("u-smet", {
+      orgId: procurement.orgId,
+      procurementId: procurement.id,
+      title: prepared.title,
+      fileName: "2131190.pdf",
+      fileType: "pdf",
+      category: "general",
+      storedPath: "uploads/test-2131190.pdf",
+      prepared,
+    });
+    sendProcurementToCalculation("u-smet", procurement.id);
+    const after = readAppData();
+    const updated = after.procurements.find((item) => item.id === procurement.id)!;
+    const draft = after.calculations.find((item) => item.id === updated.calculationId)!;
+    const original = after.calculations.find((item) => item.id === updated.originalCalculationId)!;
+    const schedule = after.schedules.find((item) => item.id === updated.gprId)!;
+    const importedRows = draft.positions.filter((position) => position.sourceDocumentId === document.documentId);
+
+    expect(document.documentId).toBeTruthy();
+    expect(importedRows).toHaveLength(3);
+    expect(importedRows.find((position) => position.name.startsWith("Бетон"))).toMatchObject({
+      resourceKind: "material",
+      sourceWorkName: "Разработка грунта с погрузкой",
+    });
+    expect(original.positions).toHaveLength(1);
+    expect(original.positions[0]).toMatchObject({ code: "CUST-TOTAL", rate: 7595709 });
+    expect(schedule.stages.some((stage) => stage.name === "Разработка грунта с погрузкой")).toBe(true);
+    expect(schedule.stages.flatMap((stage) => stage.resources ?? []).some((resource) => resource.kind === "material")).toBe(true);
   });
 
   it("new money plan does not invent an advance from NMCK", () => {

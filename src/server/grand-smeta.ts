@@ -15,11 +15,73 @@ export type GrandPosition = {
   unit: string;
   quantity: number;
   rate: number;
+  /** Source row was read, but its price could not be extracted reliably. */
+  rateMissing?: boolean;
+  resourceKind?: "labor" | "equipment" | "material" | "bus" | "other";
   /** Name of the estimate section this line appears under. */
   sectionName?: string;
   /** Parent work item whose direct resources follow this line in Grand Smeta. */
   workName?: string;
 };
+
+/** Conservative parser for text-layer FastReport estimates exported as PDF. */
+export function parseTextEstimateRows(text: string): {
+  estimateNumber: string;
+  workName: string;
+  total: number | null;
+  positions: GrandPosition[];
+} {
+  const lines = text.split(/\r?\n/u);
+  const estimateNumber = text.match(/Смета\s*№\s*([\w/-]+)/iu)?.[1] ?? "";
+  const workName = text.match(/На\s+(.{8,180}?)(?:\n|Заказчик)/iu)?.[1]?.replace(/\s+/gu, " ").trim() ?? "";
+  const totalText = text.match(/Всего\s+по\s+смете\s+([\d\s]+(?:[,.]\d+)?)/iu)?.[1];
+  const total = totalText ? asNumber(totalText) : null;
+  const unitQuantity = /(?:^|\s)((?:(?:1000|100|10|1)\s*)?(?:м3|м2|м²|м|т|кг|шт|отверсти\w*|чел\.?-?ч|маш\.?-?ч))\s+([0-9]+(?:[,.][0-9]+)?)(?=\s|$)/iu;
+  const positions: GrandPosition[] = [];
+  let sectionName = "";
+  let currentWork = "";
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const sectionMatch = lines[i].match(/^\s*Индекс\s*=\s*\d+\s+\d+\.\s+(.{3,180})/iu);
+    if (sectionMatch) {
+      sectionName = sectionMatch[1].replace(/\s+/gu, " ").trim();
+      currentWork = "";
+    }
+    const row = lines[i].match(/^\s*(\d{1,4})\s+(Фир[\wА-Яа-я]+|SAP)\s+(.+)$/iu);
+    if (!row) continue;
+    const match = row[3].match(unitQuantity);
+    if (!match) continue;
+    const unit = match[1].replace(/\s+/gu, " ").trim();
+    const quantity = asNumber(match[2]);
+    if (quantity == null || quantity <= 0) continue;
+    const name = row[3].slice(0, match.index).replace(/\s+/gu, " ").trim();
+    if (!name) continue;
+    const nextLines = lines.slice(i + 1, Math.min(lines.length, i + 4));
+    const codeLine = nextLines.find((line) => /^\s+(?:\d{2}(?:-[\wА-Яа-я]+){1,}|[A-ZА-Я]+-[\wА-Яа-я-]+)\b/iu.test(line));
+    const code = codeLine?.match(/^\s*([\wА-Яа-я]+(?:-[\wА-Яа-я]+)+)/iu)?.[1] ?? `${row[2]}-${row[1]}`;
+    const isWork = /^ФирЕР/iu.test(row[2]);
+    if (isWork) currentWork = name;
+    const resourceKind: GrandPosition["resourceKind"] = isWork
+      ? "labor"
+      : /фирсцт|перевоз|самосвал|автомобил|техник/iu.test(`${row[2]} ${name}`)
+        ? "equipment"
+        : /фирсц|\bsap\b|бетон|арматур|сталь|раствор|материал|грунт|щебен|подушк|лакокрас/iu.test(`${row[2]} ${name}`)
+          ? "material"
+          : "other";
+    positions.push({
+      code,
+      name,
+      unit,
+      quantity,
+      rate: 0,
+      rateMissing: true,
+      resourceKind,
+      ...(sectionName ? { sectionName } : {}),
+      ...(currentWork ? { workName: currentWork } : {}),
+    });
+  }
+  return { estimateNumber, workName, total, positions };
+}
 
 export type FieldLocator = {
   sheet: string;
@@ -600,6 +662,10 @@ export function analysisFromScan(
   const pages = ocr.pageCount ?? 1;
   const text = (ocr.text ?? "").trim();
   const hasText = text.length > 0;
+  const estimate = parseTextEstimateRows(text);
+  const looksLikeEstimate = Boolean(
+    estimate.positions.length >= 3 && /смет|локальн/iu.test(text.slice(0, 2500))
+  );
   const pageTexts = (ocr.pages?.length ? ocr.pages : hasText ? [text] : []).slice(0, 200);
   const citations: Citation[] = pageTexts.flatMap((pageText, pageIndex) => {
     const sentences = pageText.match(/[^.!?]+(?:[.!?]+|$)/gu) ?? [pageText];
@@ -643,6 +709,12 @@ export function analysisFromScan(
   const analyticalNote = hasText
     ? [
         `PDF принят как скан/документ (${pages} стр.). Имя файла не обязано совпадать с шифром КМ.`,
+        looksLikeEstimate
+          ? `Смета ${estimate.estimateNumber || "без номера"}${estimate.workName ? `: ${estimate.workName}` : ""}. Найдено строк с количеством: ${estimate.positions.length}. Итог по источнику: ${estimate.total != null ? `${estimate.total.toLocaleString("ru-RU")} ₽` : "не извлечён"}.`
+          : null,
+        looksLikeEstimate
+          ? "Позиции перенесены в черновик по коду, наименованию и количеству. Тарифы из сметы заказчика не копируются; ставка черновика берётся только из точного совпадения справочника."
+          : null,
         `OCR (${ocr.provider ?? "local"}): ${text.slice(0, 800)}`,
         ocr.reason?.includes("проверьте остаток") ? ocr.reason : null,
         "Цифры и марки из OCR требуют ручной проверки. Сметный разбор ГРАНД-Сметы к произвольному скану не применяется.",
@@ -653,22 +725,26 @@ export function analysisFromScan(
         "Файл сохранён. Повторите разбор после настройки tesseract/poppler или проверьте вручную.",
       ].join("\n");
   return {
-    title: fileName.replace(/\.[^.]+$/, "") || fileName,
+    title: looksLikeEstimate
+      ? [estimate.estimateNumber, estimate.workName || fileName.replace(/\.[^.]+$/, "")].filter(Boolean).join(" — ")
+      : fileName.replace(/\.[^.]+$/, "") || fileName,
     analyticalNote,
     citations,
     highlights,
     status: "trebuet_proverki",
-    positions: [],
+    positions: looksLikeEstimate ? estimate.positions : [],
     analysis: {
-      vendor: "",
+      vendor: looksLikeEstimate ? "Смета заказчика · PDF" : "",
       region: "",
       zone: "",
-      estimateNumber: "",
-      workName: "",
+      estimateNumber: looksLikeEstimate ? estimate.estimateNumber : "",
+      workName: looksLikeEstimate ? estimate.workName : "",
       basis: hasText ? `OCR ${ocr.provider ?? "local"}` : `OCR ${ocr.status}`,
       priceLevel: "",
-      costThousand: null,
-      positionCount: 0,
+      costThousand: looksLikeEstimate && estimate.total != null
+        ? estimate.total / 1000
+        : null,
+      positionCount: looksLikeEstimate ? estimate.positions.length : 0,
       profileMatch: false,
     },
   };

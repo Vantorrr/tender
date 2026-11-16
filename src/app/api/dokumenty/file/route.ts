@@ -1,6 +1,7 @@
 import { readAppData } from "@/server/db";
 import { readUpload } from "@/server/uploads";
 import { withAnySection, json } from "@/server/http";
+import { contentDisposition } from "@/server/content-disposition";
 import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
@@ -25,7 +26,7 @@ export async function GET(req: Request) {
         status: 200,
         headers: {
           "Content-Type": "text/plain; charset=utf-8",
-          "Content-Disposition": `${disposition}; filename="${doc.fileName}.txt"`,
+          "Content-Disposition": contentDisposition(disposition, `${doc.fileName}.txt`),
           "Cache-Control": "no-store",
         },
       });
@@ -58,7 +59,7 @@ export async function GET(req: Request) {
       status: 200,
       headers: {
         "Content-Type": type,
-        "Content-Disposition": `${disposition}; filename="${doc.fileName}"`,
+        "Content-Disposition": contentDisposition(disposition, doc.fileName),
         "Cache-Control": "no-store",
           "X-Content-Type-Options": "nosniff",
       },

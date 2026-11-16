@@ -19,6 +19,7 @@ import {
   analysisFromScan,
   isKmDrawingFileName,
   parseGrandBuffer,
+  parseTextEstimateRows,
   stampCitationSourceVersion,
 } from "@/server/grand-smeta";
 import {
@@ -75,6 +76,49 @@ describe("B1 procurement honesty", () => {
 });
 
 describe("B2 OCR ordinary scans", () => {
+  it("reads quantities from a text-layer FastReport estimate PDF without inventing rates", () => {
+    const text = [
+      "ПАО Норильский никель",
+      "Смета №2131190",
+      "На Капитальный ремонт столовой",
+      "Всего по смете 7 595 709",
+      "Индекс=1 01. Разработка грунта. Зимние условия.",
+      "  5 ФирЕР         Разработка грунта с погрузкой               1000 м3 0,2284 120 572,00",
+      "     01-01-013-02 экскаваторами",
+      "  8 ФирСЦт        Перевозка грунта автомобилями                 1т   690,84 484,13",
+      "     310-3013-1",
+      "  9 ФирСЦ4        Бетон тяжелый, класс В 12,5                  м3 16,218 16 694,39",
+      "     01-0005",
+      "Всего по смете 7 595 709",
+    ].join("\n");
+    expect(parseTextEstimateRows(text)).toMatchObject({
+      estimateNumber: "2131190",
+      positions: expect.arrayContaining([expect.objectContaining({ name: "Разработка грунта с погрузкой" })]),
+    });
+    const analysis = analysisFromScan("2131190.pdf", {
+      status: "ok",
+      text,
+      pages: [text],
+      pageCount: 1,
+      provider: "pdftotext",
+    });
+    expect(analysis.analysis.estimateNumber).toBe("2131190");
+    expect(analysis.analysis.positionCount).toBe(3);
+    expect(analysis.analysis.costThousand).toBe(7595.709);
+    expect(analysis.positions[0]).toMatchObject({
+      code: "01-01-013-02",
+      name: "Разработка грунта с погрузкой",
+      unit: "1000 м3",
+      quantity: 0.2284,
+      rate: 0,
+      rateMissing: true,
+      resourceKind: "labor",
+    });
+    expect(analysis.positions[1].resourceKind).toBe("equipment");
+    expect(analysis.positions[2].resourceKind).toBe("material");
+    expect(analysis.analyticalNote).toMatch(/Тарифы из сметы заказчика не копируются/);
+  });
+
   it("KM matcher is not triggered by bare КМ substring", () => {
     expect(isKmDrawingFileName("random-КМ-scan.pdf")).toBe(false);
     expect(isKmDrawingFileName("III-Д-101-3103-КМ.Л2.pdf")).toBe(true);
@@ -492,15 +536,36 @@ describe("golden DOCX contract-terms (hand-expected)", () => {
     expect(analysis.analysis.zone).toBe("5");
   });
 
-  it("empty DOCX → нет данных, no invented volumes", async () => {
+  it("partially extracted DOCX does not invent missing cost", async () => {
     const empty = path.join(process.cwd(), "fixtures/docx/empty-terms.docx");
     const buf = fs.readFileSync(empty);
     const parsed = await parseDocxBuffer(buf);
     const analysis = analysisFromDocx("empty-terms.docx", parsed!);
     expect(analysis.analysis.zone).toBe("");
     expect(analysis.analysis.costThousand).toBeNull();
-    expect(analysis.analyticalNote).toMatch(/нет данных/);
-    expect(analysis.status).toBe("trebuet_proverki");
+    expect(analysis.analyticalNote).not.toMatch(/Зона: нет данных|Стоимость: нет данных/);
+    expect(analysis.status).toBe("gotovo");
+  });
+
+  it("DOCX invitation cites headings with values in the following paragraph", () => {
+    const analysis = analysisFromDocx("Приглашение к участию.docx", {
+      paragraphs: [
+        { index: 1, text: "Заказчик" },
+        { index: 2, text: "ООО Пример" },
+        { index: 3, text: "Срок выполнения работ" },
+        { index: 4, text: "с 01.04.2027 по 31.07.2027" },
+        { index: 5, text: "Авансирование не предусмотрено." },
+        { index: 6, text: "Удержание 5% от стоимости выполненных работ." },
+      ],
+      plainText: "Заказчик\nООО Пример\nСрок выполнения работ\nс 01.04.2027 по 31.07.2027\nАвансирование не предусмотрено.\nУдержание 5% от стоимости выполненных работ.",
+      sourceVersion: "docx-body",
+    });
+    expect(analysis.status).toBe("gotovo");
+    expect(analysis.highlights.some((highlight) => /зона|объём|стоимость не найдена/i.test(highlight.text))).toBe(false);
+    expect(analysis.analyticalNote).not.toMatch(/Зона: нет данных|Стоимость: нет данных/);
+    expect(analysis.analyticalNote).toMatch(/01\.04\.2027 по 31\.07\.2027/);
+    expect(analysis.analyticalNote).toMatch(/Удержание 5%/);
+    expect(analysis.citations.some((citation) => /срок выполнения работ.*01\.04\.2027/i.test(citation.text))).toBe(true);
   });
 });
 

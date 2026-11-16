@@ -312,6 +312,9 @@ export interface DocumentItem {
     unit: string;
     quantity: number;
     rate: number;
+    /** Original PDF/XLSX row was recognized, but its source rate was not. */
+    rateMissing?: boolean;
+    resourceKind?: "labor" | "equipment" | "material" | "bus" | "other";
     sectionName?: string;
     workName?: string;
   }>;
@@ -343,6 +346,7 @@ export interface CalcPosition {
    * Confirmed totals must exclude this line — missing rate ≠ 0 ₽.
    */
   rateMissing?: boolean;
+  resourceKind?: GprStageResource["kind"];
   normId?: string;
   priceId?: string;
 }

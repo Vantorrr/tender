@@ -819,6 +819,8 @@ export function createDocument(
         unit: position.unit,
         quantity: position.quantity,
         rate: position.rate,
+        ...(position.rateMissing ? { rateMissing: true } : {}),
+        ...(position.resourceKind ? { resourceKind: position.resourceKind } : {}),
         ...(position.sectionName ? { sectionName: position.sectionName } : {}),
         ...(position.workName ? { workName: position.workName } : {}),
       })),
@@ -1613,6 +1615,9 @@ export function attachCustomerEstimate(
     }
 
     const extractedPositions = estimateDoc.estimatePositions ?? [];
+    const completeSourceRates = extractedPositions.length > 0 && extractedPositions.every(
+      (position) => !position.rateMissing && Number.isFinite(position.rate) && position.rate > 0
+    );
     const positionCount =
       extractedPositions.length || estimateDoc.analysis?.positionCount || 0;
     if (!positionCount) {
@@ -1626,7 +1631,7 @@ export function attachCustomerEstimate(
       estimateDoc.analysis?.costThousand != null
         ? Math.round((estimateDoc.analysis.costThousand * 1000) / qty)
         : 0;
-    const positions = extractedPositions.length
+    const positions = completeSourceRates
       ? extractedPositions.map((position) => ({
           id: position.id,
           code: position.code,
@@ -1763,12 +1768,12 @@ function buildDraftStagesFromEstimate(
     const resources: GprStageResource[] = rows.flatMap((position) => {
       const code = position.code.toLocaleUpperCase("ru-RU");
       const unit = position.unit.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
-      let kind: GprStageResource["kind"] | null = null;
-      if (/автобус|bus|^BUS(?:[-\s]|$)/iu.test(`${code} ${position.name}`)) kind = "bus";
-      else if (/^(?:ФСЭМ|ТСЭМ|EQ(?:-|\s|$))/iu.test(code) || classifyDirectCostBucket(position) === "equipment") kind = "equipment";
-      else if (/^ФССЦПГ/iu.test(code)) kind = "other";
-      else if (/^(?:ФССЦ|ТССЦ|ФСБЦ|MAT(?:-|\s|$))/iu.test(code) || /щебен|геотекстил|песок|грунт|цемент/iu.test(position.name) || classifyDirectCostBucket(position) === "materials") kind = "material";
-      else if (/^(?:LAB(?:-|\s|$)|ОТ|ЗП)/iu.test(code) || classifyDirectCostBucket(position) === "labor") kind = "labor";
+      let kind: GprStageResource["kind"] | null = position.resourceKind ?? null;
+      if (!kind && /автобус|bus|^BUS(?:[-\s]|$)/iu.test(`${code} ${position.name}`)) kind = "bus";
+      else if (!kind && (/^(?:ФСЭМ|ТСЭМ|EQ(?:-|\s|$))/iu.test(code) || classifyDirectCostBucket(position) === "equipment")) kind = "equipment";
+      else if (!kind && /^ФССЦПГ/iu.test(code)) kind = "other";
+      else if (!kind && (/^(?:ФССЦ|ТССЦ|ФСБЦ|MAT(?:-|\s|$))/iu.test(code) || /щебен|геотекстил|песок|грунт|цемент/iu.test(position.name) || classifyDirectCostBucket(position) === "materials")) kind = "material";
+      else if (!kind && (/^(?:LAB(?:-|\s|$)|ОТ|ЗП)/iu.test(code) || classifyDirectCostBucket(position) === "labor")) kind = "labor";
       if (!kind) return [];
 
       const quantityBasis: GprStageResource["quantityBasis"] = kind === "material"
@@ -1871,6 +1876,9 @@ export function sendProcurementToCalculation(
     ) {
       const oid = `c-orig-${Date.now()}`;
       const extractedPositions = estimateDoc.estimatePositions ?? [];
+      const completeSourceRates = extractedPositions.length > 0 && extractedPositions.every(
+        (position) => !position.rateMissing && Number.isFinite(position.rate) && position.rate > 0
+      );
       const estimateAnalysis = estimateDoc.analysis;
       const qty = Math.max(1, estimateAnalysis?.positionCount ?? extractedPositions.length);
       const rate =
@@ -1883,7 +1891,7 @@ export function sendProcurementToCalculation(
         procurementId: p.id,
         title: `Смета заказчика (оригинал) — ${p.title.slice(0, 40)}`,
         status: "gotovo",
-        positions: extractedPositions.length
+        positions: completeSourceRates
           ? extractedPositions.map((position) => ({
               id: position.id,
               code: position.code,
@@ -1906,9 +1914,11 @@ export function sendProcurementToCalculation(
               },
             ],
         assumptions: [
-          extractedPositions.length
+          completeSourceRates
             ? `Неизменяемый снимок сметы заказчика: ${extractedPositions.length} распознанных позиций`
-            : "Неизменяемый снимок сметы заказчика; построчная выгрузка недоступна, показан только итог",
+            : extractedPositions.length
+              ? `В документе найдено ${extractedPositions.length} строк, но исходные построчные ставки не извлечены надёжно; в оригинале показан подтверждённый итог сметы без подмены ставок нулями.`
+              : "Неизменяемый снимок сметы заказчика; построчная выгрузка недоступна, показан только итог",
           `Источник: ${estimateDoc.fileName}`,
           "Собственные ресурсы сюда не добавляются",
         ],
@@ -1946,6 +1956,7 @@ export function sendProcurementToCalculation(
           // The customer rate is never copied into our editable draft.
           rate: unitCompatible ? hit!.rate : 0,
           rateMissing: !unitCompatible,
+          ...(position.resourceKind ? { resourceKind: position.resourceKind } : {}),
           ...(position.sectionName ? { sourceSectionName: position.sectionName } : {}),
           ...(position.workName ? { sourceWorkName: position.workName } : {}),
           sourceDocumentId: estimateDoc!.id,
