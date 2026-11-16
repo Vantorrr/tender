@@ -65,7 +65,10 @@ export function selectRelevantProjectChatSources<T extends { id: string; label: 
     .sort((a, b) => b.score - a.score || a.index - b.index)
     .slice(0, Math.max(0, limit - (card && cardScore > 0 ? 1 : 0)))
     .map(({ source }) => source);
-  const includeCard = card && (cardScore > 0 || ranked.length === 0);
+  // The procurement card is useful for explicit metadata questions only.
+  // Adding it as a fallback when no document matched caused the model to
+  // answer unrelated questions with a generic card summary.
+  const includeCard = card && cardScore > 0;
   return [...ranked, ...(includeCard ? [card] : [])].filter((source): source is T => Boolean(source));
 }
 

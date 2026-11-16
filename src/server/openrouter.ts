@@ -19,10 +19,12 @@ export async function completeJson(system: string, user: string, retryEmpty = tr
     body: JSON.stringify({
       model: config.openRouterModel,
       temperature: 0.2,
-      max_tokens: 1400,
+      max_tokens: retryEmpty ? 1400 : 2400,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: system },
+        { role: "system", content: retryEmpty
+          ? system
+          : `${system}\nЕсли предыдущая попытка вернула пустой ответ, сформируй полный ответ сейчас. Верни непустой JSON строго по заданной схеме.` },
         { role: "user", content: user },
       ],
     }),
