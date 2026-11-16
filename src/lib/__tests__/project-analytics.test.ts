@@ -62,4 +62,21 @@ describe("procurement analytics coverage", () => {
     expect(analytics.missingInputs).toContain("не найдено ТЗ / извещение — объём и границы работ не подтверждены");
     expect(analytics.summary).toContain("Блокирует рекомендацию");
   });
+
+  it("uses a measured scope in an invitation when there is no separate TZ file", () => {
+    const invitation = document("invitation", "Приглашение к участию.docx", "general");
+    invitation.citations = [{
+      id: "invitation-scope",
+      text: "Объем работ: ремонт здания, 240 квадратных метров.",
+      page: 1,
+      sourceFile: invitation.fileName,
+    }];
+    const analytics = buildProjectAnalytics(procurement, [
+      document("contract", "Проект договора.pdf", "contract"),
+      invitation,
+    ]);
+
+    expect(analytics.missingInputs).not.toContain("не найдено ТЗ / извещение — объём и границы работ не подтверждены");
+    expect(analytics.quality?.requiredDocumentsFound).toBe(2);
+  });
 });

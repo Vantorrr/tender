@@ -1,4 +1,5 @@
 import type { Citation, DocumentItem, ProjectAnalytics, Procurement } from "@/lib/types";
+import { regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
 import { completeJson } from "@/server/openrouter";
 
 const SYSTEM = `Ты — специалист тендерного отдела строительного подрядчика. Разбери все переданные документы как один пакет закупки и помоги руководителю принять проверяемое решение. Выделяй условия, которые меняют объём, сроки, цену, возможность выполнить работы и ответственность подрядчика; не пересказывай документы подряд.
@@ -234,6 +235,8 @@ export async function analyzeProjectPackageWithModel(
   company?: AnalysisCompanyContext
 ): Promise<ProjectAnalytics> {
   const packageDocuments = documents.filter((document) => document.procurementId === procurement.id);
+  const packageRegion = procurement.region.trim() || packageDocuments.map((document) => document.analysis?.region.trim()).find(Boolean) || regionFromCitations(deterministic.citations) || "не указан";
+  const packageDeadline = procurement.deadline.trim() || submissionDeadlineFromCitations(deterministic.citations) || "не найден в загруженных документах";
   const citationsById = new Map(deterministic.citations.map((citation) => [citation.id, citation]));
   const selectedPackageCitations = selectAnalysisCitations(deterministic.citations, 60);
   const selectedIds = new Set(selectedPackageCitations.map(({ id }) => id));
@@ -247,10 +250,10 @@ export async function analyzeProjectPackageWithModel(
       number: procurement.number,
       title: procurement.title,
       customer: procurement.customer,
-      region: procurement.region,
+      region: packageRegion,
       workType: procurement.workType,
       nmck: procurement.nmck,
-      deadline: procurement.deadline,
+      deadline: packageDeadline,
     },
     coverage: {
       missingInputs: deterministic.missingInputs,
@@ -399,11 +402,10 @@ export async function analyzeProjectPackageWithModel(
     : deterministic.quality?.status === "needs_review"
       ? "Часть источников требует ручной проверки."
       : "Источников недостаточно для окончательной рекомендации.";
-  const missingPreview = missingInputs.slice(0, 6).join("; ");
   const packageBrief = [
-    `Закупка: ${procurement.title}${procurement.number ? ` · ${procurement.number}` : ""}. Заказчик: ${procurement.customer || "не указан"}. Регион: ${procurement.region || "не указан"}.`,
+    `Закупка: ${procurement.title}${procurement.number ? ` · ${procurement.number}` : ""}. Заказчик: ${procurement.customer || "не указан"}. Регион: ${packageRegion}. Срок подачи: ${packageDeadline}.`,
     `Пакет: ${packageDocuments.length} документов, ${selectedPackageCitations.length} из ${deterministic.citations.length} выдержек передано модели. ${sourceStatus}`,
-    missingPreview ? `Что конкретно блокирует или требует подтверждения: ${missingPreview}${missingInputs.length > 6 ? `; ещё ${missingInputs.length - 6} пунктов` : ""}.` : "Блокирующих пробелов по покрытию не отмечено.",
+    missingInputs.length ? "Есть пункты для проверки; они перечислены ниже." : "Блокирующих пробелов по покрытию не отмечено.",
     decisionReady && !company?.resourceAvailabilityTracked ? "Решение по экономике и профилю предварительное: календарь фактической загрузки техники/бригад не подключён." : null,
   ].filter(Boolean).join("\n");
 

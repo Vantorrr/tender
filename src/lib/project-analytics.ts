@@ -53,6 +53,12 @@ export function buildProjectAnalytics(
   const hasTz = sourceDocs.some((d) =>
     d.category === "tz" || /(?:^|[^а-яёa-z0-9])(?:tz|тз)(?=$|[^а-яёa-z0-9])|извещ|техническ.{0,12}задан|ведомост.{0,12}об[ъь]?ем/iu.test(searchable(d))
   );
+  // Some owners publish the full scope directly in an invitation or appendix
+  // and do not provide a separately named "ТЗ" file. Treat an explicit work
+  // description with a measured quantity as scope evidence, not as a missing TZ.
+  const hasMeasuredScope = sourceDocs.some((document) => document.citations.some((citation) =>
+    /(?:объ[её]м работ|предмет закупки|перечень работ)\s*[:—-]?\s*[^.]{1,160}\d[\d\s,.]*\s*(?:кв\.?\s*м|квадратн[а-яё]*\s+метр[а-яё]*|м²|м2|пог\.?\s*м|шт\.?|штук|тонн|т\b|м3|м³)/iu.test(citation.text)
+  ));
   const analyzed = sourceDocs.filter(
     (d) => (d.analyticalNote && d.analyticalNote.length > 40) || d.analysis
   );
@@ -65,7 +71,7 @@ export function buildProjectAnalytics(
   }
   if (!hasEstimate) missing.push("смета заказчика не приложена — сравнение с её расценками невозможно; нужна собственная ресурсная калькуляция");
   if (!hasContract) blockers.push("не найден проект договора — условия оплаты, ответственности и расторжения не проверены");
-  if (!hasTz) blockers.push("не найдено ТЗ / извещение — объём и границы работ не подтверждены");
+  if (!hasTz && !hasMeasuredScope) blockers.push("не найдено ТЗ / извещение — объём и границы работ не подтверждены");
   if (extractionErrors.length) {
     blockers.push(
       `ошибки извлечения: ${extractionErrors.slice(0, 3).join("; ")}`
@@ -146,7 +152,7 @@ export function buildProjectAnalytics(
           ? "needs_review"
           : "evidence_backed",
       sourceDocuments: sourceDocs.length,
-      requiredDocumentsFound: [hasEstimate, hasContract, hasTz].filter(Boolean).length,
+      requiredDocumentsFound: [hasEstimate, hasContract, hasTz || hasMeasuredScope].filter(Boolean).length,
       citationCount: citations.length,
     },
   };

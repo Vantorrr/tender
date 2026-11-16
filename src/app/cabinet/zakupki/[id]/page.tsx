@@ -1188,7 +1188,7 @@ export default function ZakupkaDetailPage() {
                     <span>{analytics.quality.status === "evidence_backed" ? "Источники разобраны" : analytics.quality.status === "needs_review" ? "Есть замечания — смотрите список действий ниже" : "Не хватает проверяемых исходников"}</span>
                     <span>Документов: {analytics.quality.sourceDocuments}</span>
                     <span>Распознаны типы смета / договор / ТЗ: {analytics.quality.requiredDocumentsFound}/3</span>
-                    <span>Цитат: {analytics.quality.citationCount}</span>
+                    <span>Проверяемых фрагментов: {displayCitations.length}</span>
                     {analytics.quality.acceptedClaims != null ? <span>Тезисов с цитатой: {analytics.quality.acceptedClaims}</span> : null}
                     {analytics.quality.rejectedClaims ? <span>Отброшено неподтверждённых: {analytics.quality.rejectedClaims}</span> : null}
                   </div>
@@ -1199,9 +1199,6 @@ export default function ZakupkaDetailPage() {
                     <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-950">
                       {analytics.missingInputs.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}
                     </ul>
-                    {analytics.economics?.missingInputs.length ? (
-                      <p className="mt-3 text-xs text-amber-950">По расчёту: {analytics.economics.missingInputs.join("; ")}</p>
-                    ) : null}
                   </section>
                 ) : null}
                 <p className="mt-3 text-xs text-[var(--tk-muted)]">
