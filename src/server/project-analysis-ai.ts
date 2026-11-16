@@ -82,6 +82,15 @@ export type AnalysisCompanyContext = {
   riskRemarks: Array<{ severity: string; status: string; text: string; sourceExcerpt?: string }>;
 };
 
+function formatDeadlineForBrief(value: string): string {
+  const date = new Date(value);
+  if (!/^\d{4}-\d{2}-\d{2}/u.test(value) || Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("ru-RU", {
+    day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+    timeZone: "Europe/Moscow",
+  }).format(date);
+}
+
 /** Cover important subjects across the document instead of only its first rows. */
 export function selectAnalysisCitations(citations: Citation[], limit = 40): Citation[] {
   const selected = new Set<Citation>();
@@ -236,7 +245,7 @@ export async function analyzeProjectPackageWithModel(
 ): Promise<ProjectAnalytics> {
   const packageDocuments = documents.filter((document) => document.procurementId === procurement.id);
   const packageRegion = procurement.region.trim() || packageDocuments.map((document) => document.analysis?.region.trim()).find(Boolean) || regionFromCitations(deterministic.citations) || "не указан";
-  const packageDeadline = procurement.deadline.trim() || submissionDeadlineFromCitations(deterministic.citations) || "не найден в загруженных документах";
+  const packageDeadline = formatDeadlineForBrief(procurement.deadline.trim() || submissionDeadlineFromCitations(deterministic.citations) || "не найден в загруженных документах");
   const citationsById = new Map(deterministic.citations.map((citation) => [citation.id, citation]));
   const selectedPackageCitations = selectAnalysisCitations(deterministic.citations, 60);
   const selectedIds = new Set(selectedPackageCitations.map(({ id }) => id));

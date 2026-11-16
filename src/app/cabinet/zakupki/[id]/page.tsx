@@ -50,7 +50,7 @@ function citationsMatching(citations: Citation[], pattern: RegExp) {
 function distinctCitations(citations: Citation[]): Citation[] {
   const seen = new Set<string>();
   return citations.filter((citation) => {
-    const key = citation.text.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ").trim();
+    const key = citation.text.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ").replace(/[.!?]+$/g, "").trim();
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
@@ -369,11 +369,18 @@ export default function ZakupkaDetailPage() {
   const displayCitations = analytics ? readableCitations(analytics.citations) : [];
   const renderableCitations = displayCitations.map(({ displayText, ...citation }) => ({ ...citation, text: displayText }));
   const keyCitations = keyAnalyticsCitations(renderableCitations);
-  const paymentCitations = distinctCitations(citationsMatching(renderableCitations, /оплат|аванс|отсроч|расч[её]т[а-яё]* по контракту/i)).slice(0, 2);
-  const liabilityCitations = distinctCitations(citationsMatching(renderableCitations, /штраф|пени|неустойк|санкци/i)).slice(0, 2);
+  const findingCitationIds = new Set(analytics?.findings?.flatMap((finding) => finding.citationIds) ?? []);
+  const hasFindingTopic = (topic: string) => Boolean(analytics?.findings?.some((finding) => finding.topic === topic));
+  const paymentCitations = hasFindingTopic("Оплата") ? [] : distinctCitations(citationsMatching(renderableCitations, /оплат|аванс|отсроч|расч[её]т[а-яё]* по контракту/i)).slice(0, 2);
+  const liabilityCitations = hasFindingTopic("Ответственность") ? [] : distinctCitations(citationsMatching(renderableCitations, /штраф|пени|неустойк|санкци/i)).slice(0, 2);
   const conditionCitationIds = new Set([...paymentCitations, ...liabilityCitations].map((citation) => citation.id));
-  const remainingKeyCitations = keyCitations.filter((citation) => !conditionCitationIds.has(citation.id));
-  const primaryCitationIds = new Set([...keyCitations, ...paymentCitations, ...liabilityCitations].map((citation) => citation.id));
+  const remainingKeyCitations = keyCitations.filter((citation) => !conditionCitationIds.has(citation.id) && !findingCitationIds.has(citation.id));
+  const primaryCitationIds = new Set([
+    ...findingCitationIds,
+    ...keyCitations.filter((citation) => !conditionCitationIds.has(citation.id)).map((citation) => citation.id),
+    ...paymentCitations.map((citation) => citation.id),
+    ...liabilityCitations.map((citation) => citation.id),
+  ]);
   const remainingCitations = displayCitations.filter((citation) => !primaryCitationIds.has(citation.id));
   const documentRegion = docs.map((document) => meaningfulMetadata(document.analysis?.region)).find(Boolean);
   const sourceRegion = meaningfulMetadata(procurement.region) || documentRegion || regionFromCitations(analytics?.citations ?? []);
