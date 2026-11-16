@@ -177,6 +177,8 @@ export interface Procurement {
   analytics?: ProjectAnalytics;
   createdAt: string;
   lifecycle?: ProjectLifecycle;
+  lifecycleOutcome?: "successful" | "not_realized";
+  closedAt?: string;
   wonAt?: string;
   /** Materials / supply cycle (need → quote draft → delivery) — no auto-send. */
   supplyRequestIds?: string[];
@@ -401,6 +403,8 @@ export interface Calculation {
   costSummary?: CostSummarySnapshot;
   /** Separately confirmed office overhead; not folded into Excel V/W/Z. */
   officeOverhead?: number;
+  /** Explicitly configured VAT rate; null means tax basis is not confirmed. */
+  vatPercent?: number | null;
   /**
    * Excel «Ресурсный_график» B4–B9 style params when used.
    * profitMarkupOnCostWithOh is markup on (D+НР), not revenue margin.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateProjectChatResult } from "@/server/project-chat";
+import { selectRelevantProjectChatSources, validateProjectChatResult } from "@/server/project-chat";
 
 describe("grounded procurement chat", () => {
   const card = {
@@ -33,5 +33,20 @@ describe("grounded procurement chat", () => {
 
     expect(result.sources).toEqual([]);
     expect(result.answer).toContain("Не нашёл");
+  });
+
+  it("keeps the procurement card and ranks the requested project sources first", () => {
+    const sources = [
+      card,
+      { id: "S002", label: "Документ · Общие условия", sourceText: "Общие сведения о компании и объекте." },
+      { id: "S003", label: "Риски · Договор", sourceText: "Штраф за просрочку срока выполнения работ по договору." },
+      { id: "S004", label: "План/факт · Производство", sourceText: "План и факт работ на площадке." },
+    ];
+
+    const selected = selectRelevantProjectChatSources("Какие штрафы за просрочку по договору?", sources);
+
+    expect(selected[0].id).toBe("S001");
+    expect(selected[1].id).toBe("S003");
+    expect(selected).not.toContainEqual(expect.objectContaining({ id: "S002" }));
   });
 });

@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { closeDb, ensureReady, mutateAppData, readAppData } from "@/server/db";
 import {
   createDocument,
+  createManualProcurement,
   ensureProcurementChain,
   joinOrganizationByCode,
   registerNewOrganization,
+  recomputeCalculationCost,
   sendProcurementToCalculation,
   updateCalculation,
   recalcCalculation,
@@ -67,6 +69,30 @@ function zipDeflateTraversal(): Buffer {
 }
 
 describe("client corrections stage 1", () => {
+  it("creates a manual procurement inside the actor organization for later document upload", () => {
+    const result = createManualProcurement("u-tender", {
+      title: "Переустройство участка трубопровода",
+      customer: "АО Заказчик",
+      region: "ЯНАО",
+      nmck: 2450000,
+      deadline: "2026-12-15",
+    });
+    const created = readAppData().procurements.find((item) => item.id === result.id)!;
+
+    expect(created).toMatchObject({
+      orgId: "org-alfa",
+      title: "Переустройство участка трубопровода",
+      customer: "АО Заказчик",
+      region: "ЯНАО",
+      nmck: 2450000,
+      source: "manual",
+      reviewStatus: "novaya",
+      lifecycle: "procurement",
+      attachments: [],
+      documentIds: [],
+    });
+  });
+
   beforeEach(() => {
     closeDb();
     ensureReady();
@@ -79,7 +105,7 @@ describe("client corrections stage 1", () => {
       true
     );
     expect(data.procurements.some((p) => /ямал/i.test(p.region))).toBe(true);
-    expect(data.procurements.every((p) => p.workType)).toBe(true);
+    expect(data.procurements.filter((p) => p.source !== "manual").every((p) => p.workType)).toBe(true);
   });
 
   it("sidebar hides nested Documents/GPR/Money/Risks/Obmen", () => {
@@ -154,9 +180,10 @@ describe("client corrections stage 1", () => {
       orgId: procurement.orgId,
       procurementId: procurement.id,
       title: "Смета для проверки",
-      fileName: "estimate.xlsx",
+      fileName: "workscope.xlsx",
       fileType: "xlsx",
-      category: "estimate",
+      // Parsed positions must be recognized even when a manual upload was left in the default category.
+      category: "general",
       storedPath: "uploads/test-estimate.xlsx",
       prepared: {
         title: "Смета для проверки",
@@ -190,7 +217,7 @@ describe("client corrections stage 1", () => {
       calculationSummary?: { sourceFile: string | null; sourceRows: number; matchedRates: number; missingRates: number };
     };
     expect(payload.calculationSummary).toEqual({
-      sourceFile: "estimate.xlsx",
+      sourceFile: "workscope.xlsx",
       sourceRows: 2,
       matchedRates: 1,
       missingRates: 1,
@@ -227,6 +254,11 @@ describe("client corrections stage 1", () => {
     expect(draft.costSummary?.priceExVat).toBeGreaterThan(0);
     expect(draft.costSummary?.totalsIncomplete).toBe(true);
     expect(draft.costSummary?.incomplete).toContain("missing_rate:NO-OWN-RATE");
+
+    recomputeCalculationCost("u-smet", draft.id, { vatPercent: 20, useResourceScheduleEconomics: true });
+    const recalculated = readAppData().calculations.find((item) => item.id === draft.id)!;
+    expect(recalculated.vatPercent).toBe(20);
+    expect(recalculated.costSummary?.priceIncVat).toBeCloseTo((recalculated.costSummary?.priceExVat ?? 0) * 1.2, 2);
   });
 
   it("new money plan does not invent an advance from NMCK", () => {
@@ -549,6 +581,36 @@ describe("client corrections stage 1", () => {
       uploadedAt: new Date().toISOString(),
       storedPath: "uploads/technical-spec.docx",
     }]);
+    expect(note.missingInputs).not.toContain("нет ТЗ / извещения");
+  });
+
+  it("detects estimate, contract, and specification evidence in manually categorized package files", () => {
+    const data = readAppData();
+    const p = data.procurements.find((item) => item.id === "p-norilsk-1")!;
+    const seedDoc = data.documents.find((item) => item.orgId === p.orgId)!;
+    const packageFile = {
+      ...seedDoc,
+      id: "doc-manual-package",
+      procurementId: p.id,
+      title: "Пакет работ",
+      fileName: "пакет-работ.bin",
+      category: "general" as const,
+      storedPath: "uploads/package.bin",
+      analyticalNote: "Распознаны условия проекта и ведомость работ.",
+      citations: [
+        { id: "c-contract", text: "Проект договора предусматривает порядок оплаты." , page: 1, sourceFile: "пакет-работ.bin" },
+        { id: "c-tz", text: "Техническое задание содержит перечень работ." , page: 2, sourceFile: "пакет-работ.bin" },
+      ],
+      estimatePositions: [{ id: "estimate-row", code: "W-1", name: "Монтаж", unit: "м²", quantity: 10, rate: 0 }],
+      analysis: {
+        vendor: "", region: "", zone: "", estimateNumber: "", workName: "Монтаж",
+        basis: "", priceLevel: "", costThousand: null, positionCount: 1, profileMatch: false,
+      },
+    };
+    const note = buildProjectAnalytics(p, [packageFile]);
+
+    expect(note.missingInputs).not.toContain("нет сметы заказчика");
+    expect(note.missingInputs).not.toContain("нет проекта договора");
     expect(note.missingInputs).not.toContain("нет ТЗ / извещения");
   });
 

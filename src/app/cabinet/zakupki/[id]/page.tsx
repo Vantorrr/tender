@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
@@ -160,6 +160,7 @@ function SupplierQuotesEditor({
 export default function ZakupkaDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const {
     data,
     user,
@@ -189,7 +190,9 @@ export default function ZakupkaDetailPage() {
   const [customerEstimateBusy, setCustomerEstimateBusy] = useState(false);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
   const [analyticsBusy, setAnalyticsBusy] = useState(false);
-  const [activeTab, setActiveTab] = useState("overview");
+  const [selectedTab, setSelectedTab] = useState<string | null>(null);
+  const requestedTab = searchParams.get("tab");
+  const activeTab = selectedTab ?? (requestedTab && ["overview", "docs", "analytics", "calc", "gpr", "money", "supply", "risks"].includes(requestedTab) ? requestedTab : "overview");
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [payTitle, setPayTitle] = useState("Аванс");
   const [payAmount, setPayAmount] = useState("0");
@@ -565,7 +568,7 @@ export default function ZakupkaDetailPage() {
         }}
       />
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="mt-2">
+      <Tabs value={activeTab} onValueChange={setSelectedTab} className="mt-2">
         <TabsList className="mb-4 flex h-auto flex-wrap gap-1">
           <TabsTrigger value="overview">Карточка</TabsTrigger>
           {canDocs ? (
@@ -634,7 +637,7 @@ export default function ZakupkaDetailPage() {
                     {aiAnalyzing ? "ИИ анализирует…" : "ИИ-анализ пакета"}
                   </Button>
                 ) : null}
-                <Button variant="ghost" onClick={() => setActiveTab("analytics")}>Подробная аналитика</Button>
+                <Button variant="ghost" onClick={() => setSelectedTab("analytics")}>Подробная аналитика</Button>
               </div>
             </div>
             {original ? (
@@ -1058,14 +1061,15 @@ export default function ZakupkaDetailPage() {
                   {analytics.disclaimer} Метод: {analytics.method}. Без обещания
                   точности.
                 </p>
-                <h3 className="mt-4 text-sm font-medium">Цитаты из источников</h3>
-                <ul className="mt-2 space-y-2" data-testid="analytics-citations">
-                  {analytics.citations.length === 0 ? (
-                    <li className="text-sm text-[var(--tk-muted)]">
-                      Цитат пока нет — загрузите и разберите документы.
-                    </li>
-                  ) : (
-                    analytics.citations.map((c) => (
+                <h3 className="mt-4 text-sm font-medium">Ключевые выдержки из документов</h3>
+                {analytics.citations.length === 0 ? (
+                  <p className="mt-2 text-sm text-[var(--tk-muted)]">
+                    Цитат пока нет — загрузите и разберите документы.
+                  </p>
+                ) : (
+                  <>
+                    <ul className="mt-2 space-y-2" data-testid="analytics-citations">
+                    {analytics.citations.slice(0, 8).map((c) => (
                       <li
                         key={c.id}
                         className="rounded-lg border border-[var(--tk-line)] px-3 py-2 text-sm"
@@ -1082,9 +1086,27 @@ export default function ZakupkaDetailPage() {
                           «{c.text}»
                         </blockquote>
                       </li>
-                    ))
-                  )}
-                </ul>
+                    ))}
+                    </ul>
+                    {analytics.citations.length > 8 ? (
+                      <details className="mt-3 rounded-lg border border-[var(--tk-line)] bg-stone-50 px-3 py-2">
+                        <summary className="cursor-pointer text-sm font-medium">
+                          Показать все выдержки ({analytics.citations.length})
+                        </summary>
+                        <ul className="mt-3 space-y-2">
+                          {analytics.citations.slice(8).map((c) => (
+                            <li key={c.id} className="rounded-lg border border-[var(--tk-line)] bg-white px-3 py-2 text-sm">
+                              <p className="text-xs font-medium text-[var(--tk-muted)]">
+                                Источник: {c.sourceFile}{c.page != null ? ` · стр. ${c.page}` : ""}{c.paragraph ? ` · абз. ${c.paragraph}` : ""}{c.sheet ? ` · лист ${c.sheet}` : ""}{c.cell ? ` · ${c.cell}` : ""}
+                              </p>
+                              <blockquote className="mt-1 rounded-md bg-amber-50/80 px-2 py-1.5 italic leading-relaxed">«{c.text}»</blockquote>
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : null}
+                  </>
+                )}
               </>
             ) : (
               <p className="text-sm text-[var(--tk-muted)]">

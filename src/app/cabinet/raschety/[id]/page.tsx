@@ -43,6 +43,57 @@ import type { CalcCompareAiReport } from "@/server/calc-compare-ai";
 import { ProjectAiChat } from "@/components/project-ai-chat";
 import { userHasSection } from "@/lib/acl";
 
+function VatRateEditor({
+  calculationId,
+  value,
+  onSaved,
+}: {
+  calculationId: string;
+  value: number | null;
+  onSaved: () => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(value == null ? "" : String(value));
+  const [saving, setSaving] = useState(false);
+
+  async function save() {
+    const rate = draft.trim() ? Number(draft.replace(",", ".")) : null;
+    if (rate != null && (!Number.isFinite(rate) || rate < 0 || rate > 100)) {
+      toast.error("Укажите ставку НДС от 0 до 100% или оставьте поле пустым");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api("/api/raschety", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id: calculationId,
+          recomputeCost: true,
+          costPatch: { vatPercent: rate, useResourceScheduleEconomics: true },
+        }),
+      });
+      await onSaved();
+      toast.success("НДС учтён, расчёт и сравнение с НМЦК обновлены");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось пересчитать НДС");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 flex flex-wrap items-end gap-2 rounded-lg bg-stone-50 p-3" data-testid="vat-rate-editor">
+      <label className="text-xs text-[var(--tk-muted)]">
+        Ставка НДС для сравнения с НМЦК, %
+        <Input className="mt-1 w-36" type="number" min="0" max="100" step="0.1" value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Нет данных" />
+      </label>
+      <Button size="sm" variant="outline" disabled={saving} onClick={() => void save()}>
+        {saving ? "Пересчёт…" : "Сохранить и пересчитать"}
+      </Button>
+      <p className="basis-full text-xs text-[var(--tk-muted)]">Ставка не подставляется автоматически. Укажите налоговый режим проекта, чтобы сравнить итоговую цену с НМЦК на одной базе.</p>
+    </div>
+  );
+}
+
 function NorthernCostEditor({
   calculationId,
   value,
@@ -130,6 +181,17 @@ function NorthernCostEditor({
     </div>
   );
 }
+
+const DATA_FLAG_LABELS: Record<string, string> = {
+  requires_manual_check: "Проверьте объёмы, состав ресурсов и ставки перед использованием итога.",
+  no_accuracy_promise: "Результат зависит от качества исходных документов; процент точности не заявляется.",
+  seeded_from_customer_estimate: "Строки черновика перенесены из распознанной сметы заказчика.",
+  awaiting_estimate_rows: "В исходных документах пока не распознаны строки сметы.",
+  unified_resource_tree: "Итог рассчитан по ресурсам, сгруппированным по работам ГПР.",
+  synced_from_gpr_stages: "Позиции расчёта синхронизированы с ресурсами этапов ГПР.",
+  resource_schedule_excel_economics: "Применены параметры ресурсной модели Excel.",
+  gpr_dates_shifted: "Даты этапов ГПР изменены; график и производные показатели пересчитаны.",
+};
 
 export default function RaschetDetailPage() {
   const params = useParams<{ id: string }>();
@@ -409,7 +471,7 @@ export default function RaschetDetailPage() {
                           id: calc.id,
                           recomputeCost: true,
                           costPatch: {
-                            vatPercent: null,
+                            vatPercent: calc.vatPercent ?? null,
                             profitMethod: "markup",
                             // Excel Ресурсный_график: НР 43% от прямых, прибыль = наценка 40% на с/с с НР
                             useResourceScheduleEconomics: true,
@@ -761,7 +823,7 @@ export default function RaschetDetailPage() {
                 id: calc.id,
                 recomputeCost: true,
                 costPatch: {
-                  vatPercent: null,
+                  vatPercent: calc.vatPercent ?? null,
                   profitMethod: "markup",
                   profitRate: params.profitMarkupOnCostWithOh,
                   officeOverhead,
@@ -1158,6 +1220,13 @@ export default function RaschetDetailPage() {
                 ? "нет данных"
                 : formatMoney(calc.costSummary.vatAmount)}
             </div>
+            <div>Цена с НДС: {formatMoney(calc.costSummary.priceIncVat)}</div>
+            <div>
+              Запас до НМЦК:{" "}
+              {procurement?.nmck != null && calc.costSummary.priceIncVat != null
+                ? `${formatMoney(procurement.nmck - calc.costSummary.priceIncVat)} (${formatNumber(((procurement.nmck - calc.costSummary.priceIncVat) / Math.max(1, procurement.nmck)) * 100)}%)`
+                : "не рассчитан: укажите НДС и проверьте НМЦК"}
+            </div>
             <div>
               Неполнота:{" "}
               {calc.costSummary.incomplete.length
@@ -1169,6 +1238,14 @@ export default function RaschetDetailPage() {
             Метод {calc.costSummary.method}. Северные надбавки — только по
             подтверждённым статьям.
           </p>
+          {!locked && calc.kind === "resource_draft" ? (
+            <VatRateEditor
+              key={`${calc.id}:${calc.vatPercent ?? "unknown"}`}
+              calculationId={calc.id}
+              value={calc.vatPercent ?? null}
+              onSaved={refresh}
+            />
+          ) : null}
         </section>
       ) : null}
 
@@ -1309,18 +1386,22 @@ export default function RaschetDetailPage() {
         </div>
       </section>
 
-      <section className="mt-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
+      <section className="mt-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5" data-testid="calculation-assumptions">
         <h2 className="font-[family-name:var(--font-display)] text-base">
-          Допущения и флаги
+          Что учтено и что проверить
         </h2>
-        <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-[var(--tk-ink-soft)]">
-          {calc.assumptions.map((a) => (
-            <li key={a}>{a}</li>
-          ))}
-          {(calc.dataFlags ?? []).map((f) => (
-            <li key={f}>флаг: {f}</li>
-          ))}
-        </ul>
+        {calc.assumptions.length || calc.dataFlags?.length ? (
+          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-[var(--tk-ink-soft)]">
+            {calc.assumptions.map((assumption, index) => (
+              <li key={`${index}:${assumption}`}>{assumption}</li>
+            ))}
+            {(calc.dataFlags ?? []).map((flag) => (
+              <li key={flag}>{DATA_FLAG_LABELS[flag] ?? "Требуется дополнительная проверка исходных данных."}</li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-2 text-sm text-[var(--tk-muted)]">Допущений и открытых проверок нет.</p>
+        )}
       </section>
     </div>
   );

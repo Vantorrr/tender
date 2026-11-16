@@ -7,7 +7,10 @@ export type KanbanColumnId =
   | "v_rabote"
   | "uchastvuem"
   | "ne_uchastvuem"
-  | "dublikat";
+  | "dublikat"
+  | "in_production"
+  | "realized"
+  | "closed_not_realized";
 
 export const KANBAN_COLUMNS: Array<{
   id: KanbanColumnId;
@@ -16,6 +19,8 @@ export const KANBAN_COLUMNS: Array<{
   tone: string;
   headerClass: string;
   cardClass: string;
+  lifecycle?: "production" | "closed";
+  outcome?: "successful" | "not_realized";
 }> = [
   {
     id: "novaya",
@@ -56,6 +61,35 @@ export const KANBAN_COLUMNS: Array<{
     tone: "#57534e",
     headerClass: "bg-stone-100 text-stone-800 border-stone-200",
     cardClass: "border-l-stone-400",
+  },
+  {
+    id: "in_production",
+    label: "В производстве",
+    reviewStatuses: [],
+    lifecycle: "production",
+    tone: "#0369a1",
+    headerClass: "bg-cyan-100 text-cyan-950 border-cyan-200",
+    cardClass: "border-l-cyan-600",
+  },
+  {
+    id: "realized",
+    label: "Успешно реализовано",
+    reviewStatuses: [],
+    lifecycle: "closed",
+    outcome: "successful",
+    tone: "#047857",
+    headerClass: "bg-emerald-100 text-emerald-950 border-emerald-200",
+    cardClass: "border-l-emerald-700",
+  },
+  {
+    id: "closed_not_realized",
+    label: "Закрыто без реализации",
+    reviewStatuses: [],
+    lifecycle: "closed",
+    outcome: "not_realized",
+    tone: "#6b7280",
+    headerClass: "bg-slate-100 text-slate-900 border-slate-200",
+    cardClass: "border-l-slate-500",
   },
 ];
 

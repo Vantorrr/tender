@@ -424,6 +424,47 @@ export function updateProcurement(
   });
 }
 
+export function createManualProcurement(
+  actorId: string,
+  input: { title: string; customer?: string; region: string; nmck?: number | null; deadline?: string }
+) {
+  let createdId = "";
+  mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const title = input.title.trim();
+    const region = input.region.trim();
+    if (!title || !region) throw new Error("Укажите название закупки и регион");
+    if (input.nmck != null && (!Number.isFinite(input.nmck) || input.nmck < 0)) {
+      throw new Error("НМЦК должна быть неотрицательным числом");
+    }
+    const now = new Date().toISOString();
+    createdId = `p-manual-${crypto.randomUUID()}`;
+    data.procurements.unshift({
+      id: createdId,
+      orgId: actor.orgId,
+      number: `РУЧНАЯ-${now.slice(0, 10).replace(/-/g, "")}-${createdId.slice(-6)}`,
+      title,
+      customer: input.customer?.trim() ?? "",
+      region,
+      nmck: input.nmck ?? null,
+      deadline: input.deadline?.trim() ?? "",
+      source: "manual",
+      status: "zagruzheno",
+      reviewStatus: "novaya",
+      syncStatus: "aktualno",
+      syncAt: now,
+      attachments: [],
+      documentIds: [],
+      tags: ["Создано вручную"],
+      lifecycle: "procurement",
+      createdAt: now,
+    });
+    audit(data, actorId, "create_manual", "procurement", createdId, "Создана вручную");
+    return data;
+  });
+  return { id: createdId };
+}
+
 function assertEditableCalculation(item: Calculation) {
   if (item.immutable || item.kind === "customer_original") {
     throw new Error(
@@ -1415,7 +1456,15 @@ export async function analyzeProcurementPackageWithAI(
   assertOrgAccess(actor, procurement.orgId, "закупки");
   const documents = snapshot.documents.filter((document) => document.procurementId === procurement.id && document.storedPath);
   const deterministic = buildProjectAnalytics(procurement, documents);
-  const generated = await analyzeProjectPackageWithModel(procurement, documents, deterministic);
+  const draft = snapshot.calculations.find((item) => item.id === procurement.calculationId && item.kind === "resource_draft");
+  const missingRates = draft?.positions.filter((position) => position.rateMissing).length ?? 0;
+  const economics = draft ? {
+    cost: draft.costSummary?.resourceSlices?.costWithOh ?? draft.costSummary?.C0 ?? null,
+    priceWithVat: draft.costSummary?.priceIncVat ?? null,
+    incomplete: Boolean(draft.costSummary?.totalsIncomplete || missingRates),
+    missingRates,
+  } : undefined;
+  const generated = await analyzeProjectPackageWithModel(procurement, documents, deterministic, economics);
   mutateAppData((data) => {
     const currentActor = actorUser(data, actorId);
     const current = data.procurements.find((item) => item.id === procurementId);
@@ -1623,7 +1672,10 @@ export function sendProcurementToCalculation(
       (d) =>
         d.procurementId === p.id &&
         Boolean(d.storedPath) &&
-        (d.category === "estimate" || /smeta|смет/i.test(d.fileName))
+        (d.category === "estimate" ||
+          /smeta|смет/i.test(d.fileName) ||
+          Boolean(d.estimatePositions?.length) ||
+          (d.analysis?.positionCount ?? 0) > 0)
     );
     const estimateDoc =
       estimateDocs.find((document) => (document.estimatePositions?.length ?? 0) > 0) ??
@@ -2124,7 +2176,7 @@ export function shiftGprStage(
           profitMethod: "markup",
           profitRate: useRs ? rs!.profitMarkupOnCostWithOh : 0.08,
           includeReserveInPriceBase: useRs ? false : true,
-          vatPercent: null,
+          vatPercent: calc.vatPercent ?? null,
           northern,
         });
         calc.costSummary = {
@@ -2178,7 +2230,7 @@ function applyResourceDraftAdjustments(calc: Calculation) {
     profitRate: params.profitMarkupOnCostWithOh,
     // Preserve the Excel formula: contingency is separate from the markup base.
     includeReserveInPriceBase: false,
-    vatPercent: null,
+    vatPercent: calc.vatPercent ?? null,
     northern: calc.northern ?? {
       applicable: false,
       confirmedItems: [],
@@ -2228,6 +2280,9 @@ export function recomputeCalculationCost(
     assertEditableCalculation(item);
     if (patch?.northern) item.northern = patch.northern;
     if (patch?.busRoutes) item.busRoutes = patch.busRoutes;
+    if (patch && Object.prototype.hasOwnProperty.call(patch, "vatPercent")) {
+      item.vatPercent = patch.vatPercent ?? null;
+    }
     if (patch?.resourceScheduleParams) {
       item.resourceScheduleParams = patch.resourceScheduleParams;
     }
@@ -2330,7 +2385,7 @@ export function recomputeCalculationCost(
       // Excel marks up cost-with-OH; contingency (if any) stays separate unless confirmed.
       includeReserveInPriceBase:
         patch?.includeReserveInPriceBase ?? (useRs ? false : true),
-      vatPercent: patch?.vatPercent ?? null,
+      vatPercent: item.vatPercent ?? null,
       northern,
     });
     const matNeeds = buildMaterialNeeds({

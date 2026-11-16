@@ -6,7 +6,7 @@ export function modelConfigured() {
   return Boolean(config.openRouterKey);
 }
 
-export async function completeJson(system: string, user: string): Promise<string> {
+export async function completeJson(system: string, user: string, retryEmpty = true): Promise<string> {
   if (!config.openRouterKey) throw new Error("Ключ модели не задан");
   const response = await fetch(ENDPOINT, {
     method: "POST",
@@ -36,6 +36,7 @@ export async function completeJson(system: string, user: string): Promise<string
     choices?: Array<{ message?: { content?: string } }>;
   };
   const content = payload.choices?.[0]?.message?.content?.trim();
-  if (!content) throw new Error("Пустой ответ модели");
+  if (!content && retryEmpty) return completeJson(system, user, false);
+  if (!content) throw new Error("Модель дважды вернула пустой ответ. Повторите анализ позже.");
   return content;
 }

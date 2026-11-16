@@ -9,7 +9,8 @@ const SYSTEM = `Ты специалист по анализу строитель
 Верни только JSON: {"recommendation":"participate|do_not_participate|insufficient_data","missingInputs":["что нужно подтвердить"],"evidence":[{"text":"короткий тезис только из источника","quote":"дословная непрерывная цитата из переданного источника","citationIds":["id из источника"]}]}.
 Не возвращай свободное резюме. Каждый тезис обязан содержать минимум одно общее предметное слово; все числа тезиса должны буквально присутствовать в цитате. Цитата должна быть дословной и достаточной для проверки.
 Каждый evidence ссылается минимум на один существующий citationId. Не создавай новые id. Если дословной опоры нет — пропусти тезис.
-Не повышай рекомендацию до participate, если в coverage уже указано insufficient_data. Не скрывай критичный риск общими преимуществами.`;
+Не повышай рекомендацию до participate, если в coverage уже указано insufficient_data. Не скрывай критичный риск общими преимуществами.
+Учитывай блок economics: это детерминированные цифры чернового расчёта, не результат твоей оценки. Если расчёт неполный, нет сопоставимой цены с НДС или нет НМЦК — рекомендация должна быть insufficient_data. Если полная цена с НДС выше НМЦК — не рекомендуй участие. Не называй разницу до НМЦК прибылью; это только запас до максимальной цены. Не включай производные финансовые числа в evidence, потому что они не являются цитатами из документов.`;
 
 type ModelResult = {
   recommendation: ProjectAnalytics["recommendation"];
@@ -99,7 +100,13 @@ export function gateModelRecommendation(
 export async function analyzeProjectPackageWithModel(
   procurement: Procurement,
   documents: DocumentItem[],
-  deterministic: ProjectAnalytics
+  deterministic: ProjectAnalytics,
+  economics?: {
+    cost: number | null;
+    priceWithVat: number | null;
+    incomplete: boolean;
+    missingRates: number;
+  }
 ): Promise<ProjectAnalytics> {
   const packageDocuments = documents.filter((document) => document.procurementId === procurement.id);
   const citationsById = new Map(deterministic.citations.map((citation) => [citation.id, citation]));
@@ -117,6 +124,17 @@ export async function analyzeProjectPackageWithModel(
     coverage: {
       missingInputs: deterministic.missingInputs,
       localRecommendation: deterministic.recommendation,
+    },
+    economics: economics ? {
+      procurementMaximumPrice: procurement.nmck,
+      contractorCost: economics.cost,
+      priceWithVat: economics.priceWithVat,
+      incomplete: economics.incomplete,
+      missingOwnRates: economics.missingRates,
+      note: "Это результат отдельного детерминированного расчёта по справочникам компании. Не придумывай значения. Если расчёт неполный или цена/НМЦК не сопоставимы по НДС, рекомендация должна быть insufficient_data.",
+    } : {
+      procurementMaximumPrice: procurement.nmck,
+      note: "Черновой ресурсный расчёт отсутствует. Не выдавай рекомендацию участвовать без него; верни insufficient_data.",
     },
     documents: packageDocuments.map((document) => ({
       title: document.title,
@@ -159,13 +177,38 @@ export async function analyzeProjectPackageWithModel(
   }));
 
   // The model may lower confidence, but cannot turn an incomplete package into a positive bid recommendation.
-  const recommendation = gateModelRecommendation(deterministic.recommendation, result.recommendation, hasCriticalEvidence);
+  let recommendation = gateModelRecommendation(deterministic.recommendation, result.recommendation, hasCriticalEvidence);
+  if (
+    deterministic.recommendation === "participate" &&
+    (!economics || economics.incomplete || economics.priceWithVat == null || procurement.nmck == null)
+  ) {
+    recommendation = "insufficient_data";
+  } else if (
+    recommendation === "participate" &&
+    economics?.priceWithVat != null &&
+    procurement.nmck != null &&
+    economics.priceWithVat > procurement.nmck
+  ) {
+    recommendation = "do_not_participate";
+  }
+
+  const economicSummary = !economics
+    ? "Черновая себестоимость не рассчитана."
+    : [
+        `Черновая себестоимость по справочникам компании: ${economics.cost == null ? "нет подтверждённого итога" : `${economics.cost} ₽`}.`,
+        economics.missingRates ? `Не найдены собственные ставки для ${economics.missingRates} строк.` : "Ставки по строкам черновика найдены.",
+        economics.incomplete ? "Ресурсный расчёт неполный, поэтому решение об участии пока не подтверждено." : null,
+        economics.priceWithVat == null || procurement.nmck == null
+          ? "Рентабельность относительно НМЦК не рассчитана: нет сопоставимого итога с подтверждённым НДС и/или НМЦК."
+          : `Предельная разница между НМЦК и расчётной ценой с НДС: ${Math.round((procurement.nmck - economics.priceWithVat) * 100) / 100} ₽. Это запас до предельной цены, а не обещанная прибыль.`
+      ].filter(Boolean).join(" ");
 
   return {
     ...deterministic,
     recommendation,
     summary: [
       deterministic.summary,
+      economicSummary,
       ...(evidence.length
         ? ["Выводы модели с проверяемыми цитатами:\n" + evidence.join("\n")]
         : ["Модель не вернула тезис, прошедший проверку цитаты; оставлена локальная сводка."]),

@@ -37,13 +37,22 @@ export function buildProjectAnalytics(
   const citations = uniqueCitations(sourceDocs);
   const highlights = sourceDocs.flatMap((d) => d.highlights ?? []);
   const extractionErrors = sourceDocs.flatMap((d) => d.extractionErrors ?? []);
+  const searchable = (d: DocumentItem) => [
+    d.fileName,
+    d.title,
+    d.analyticalNote,
+    ...d.citations.map((citation) => citation.text),
+  ].join(" ").toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
   const hasEstimate = sourceDocs.some(
-    (d) => d.category === "estimate" || /\bsmeta\b|смет/i.test(d.fileName)
+    (d) => d.category === "estimate" || /\bsmeta\b|смет/i.test(d.fileName) ||
+      (d.estimatePositions?.length ?? 0) > 0 || (d.analysis?.positionCount ?? 0) > 0
   );
   const hasContract = sourceDocs.some(
-    (d) => d.category === "contract" || /dogovor|договор/i.test(d.fileName)
+    (d) => d.category === "contract" || /dogovor|договор|контракт/i.test(searchable(d))
   );
-  const hasTz = sourceDocs.some((d) => /tz|тз|извещ|техническ.{0,12}задан/i.test(d.fileName + d.title));
+  const hasTz = sourceDocs.some((d) =>
+    d.category === "tz" || /\btz\b|\bтз\b|извещ|техническ.{0,12}задан|ведомост.{0,12}объем/i.test(searchable(d))
+  );
   const analyzed = sourceDocs.filter(
     (d) => (d.analyticalNote && d.analyticalNote.length > 40) || d.analysis
   );

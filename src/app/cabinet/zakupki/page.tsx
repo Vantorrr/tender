@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useMemo, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
@@ -18,6 +19,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { formatDate, formatMoney } from "@/lib/format";
+import { api } from "@/lib/api";
 import {
   KANBAN_COLUMNS,
   REGION_PRESETS,
@@ -31,12 +33,20 @@ import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 
 export default function ZakupkiPage() {
-  const { orgProcurements, runSyncJob, setProcurementReview } = useStore();
+  const router = useRouter();
+  const { orgProcurements, runSyncJob, setProcurementReview, refresh } = useStore();
   const [q, setQ] = useState("");
   const [region, setRegion] = useState<string>("all");
   const [workType, setWorkType] = useState<string>("all");
   const [syncing, setSyncing] = useState(false);
   const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [manualFormOpen, setManualFormOpen] = useState(false);
+  const [manualCreating, setManualCreating] = useState(false);
+  const [manualTitle, setManualTitle] = useState("");
+  const [manualCustomer, setManualCustomer] = useState("");
+  const [manualRegion, setManualRegion] = useState("");
+  const [manualNmck, setManualNmck] = useState("");
+  const [manualDeadline, setManualDeadline] = useState("");
 
   const regions = useMemo(() => {
     const fromData = [...new Set(orgProcurements.map((p) => p.region))];
@@ -65,19 +75,84 @@ export default function ZakupkiPage() {
       uchastvuem: [],
       ne_uchastvuem: [],
       dublikat: [],
+      in_production: [],
+      realized: [],
+      closed_not_realized: [],
     };
     for (const p of filtered) {
-      map[reviewToKanban(p.reviewStatus)].push(p);
+      const column = p.lifecycle === "production"
+        ? "in_production"
+        : p.lifecycle === "closed"
+          ? p.lifecycleOutcome === "successful" ? "realized" : "closed_not_realized"
+          : reviewToKanban(p.reviewStatus);
+      map[column].push(p);
     }
     return map;
   }, [filtered]);
 
   async function moveCard(id: string, column: KanbanColumnId) {
     try {
-      await setProcurementReview(id, kanbanToReview(column));
+      const card = orgProcurements.find((item) => item.id === id);
+      if (!card) throw new Error("Карточка закупки не найдена");
+      if (column === "in_production") {
+        await api("/api/zakupki", {
+          method: "POST",
+          body: JSON.stringify({ action: "transferToProduction", id }),
+        });
+        await refresh();
+      } else if (column === "realized" || column === "closed_not_realized") {
+        await api("/api/zakupki", {
+          method: "PATCH",
+          body: JSON.stringify({
+            id,
+            patch: {
+              lifecycle: "closed",
+              lifecycleOutcome: column === "realized" ? "successful" : "not_realized",
+              closedAt: new Date().toISOString(),
+            },
+          }),
+        });
+        await refresh();
+      } else {
+        await setProcurementReview(id, kanbanToReview(column));
+        if (card.lifecycle === "production" || card.lifecycle === "closed") {
+          await api("/api/zakupki", {
+            method: "PATCH",
+            body: JSON.stringify({ id, patch: { lifecycle: "procurement" } }),
+          });
+          await refresh();
+        }
+      }
       toast.success("Статус канбана обновлён");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка статуса");
+    }
+  }
+
+  async function createManual(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setManualCreating(true);
+    try {
+      const result = await api<{ createdProcurementId: string }>("/api/zakupki", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "createManual",
+          manual: {
+            title: manualTitle,
+            customer: manualCustomer,
+            region: manualRegion,
+            nmck: manualNmck.trim() ? Number(manualNmck.replace(",", ".")) : null,
+            deadline: manualDeadline,
+          },
+        }),
+      });
+      await refresh();
+      router.push(`/cabinet/zakupki/${result.createdProcurementId}`);
+      toast.success("Закупка создана. Добавьте документы в карточку.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось создать закупку");
+    } finally {
+      setManualCreating(false);
     }
   }
 
@@ -87,10 +162,14 @@ export default function ZakupkiPage() {
         title="Закупки"
         description="Цветной канбан рассмотрения. Документы, расчёт, ГПР, деньги и риски — внутри карточки проекта. Источник площадки не выдумываем."
         actions={
-          <Button
-            variant="outline"
-            disabled={syncing}
-            onClick={async () => {
+          <>
+            <Button variant="outline" onClick={() => setManualFormOpen((open) => !open)}>
+              {manualFormOpen ? "Закрыть форму" : "Создать вручную"}
+            </Button>
+            <Button
+              variant="outline"
+              disabled={syncing}
+              onClick={async () => {
               setSyncing(true);
               try {
                 await runSyncJob();
@@ -102,13 +181,33 @@ export default function ZakupkiPage() {
               } finally {
                 setSyncing(false);
               }
-            }}
-          >
-            <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-            {syncing ? "Синхронизация…" : "Синхронизировать"}
-          </Button>
+              }}
+            >
+              <RefreshCw className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+              {syncing ? "Синхронизация…" : "Синхронизировать"}
+            </Button>
+          </>
         }
       />
+
+      {manualFormOpen ? (
+        <form onSubmit={(event) => void createManual(event)} className="mb-5 rounded-xl border border-[var(--tk-line)] bg-white p-4" data-testid="manual-procurement-form">
+          <h2 className="font-semibold">Новая закупка</h2>
+          <p className="mt-1 text-sm text-[var(--tk-muted)]">Создайте проект вручную, затем загрузите комплект документов в его карточку.</p>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+            <Input required aria-label="Название закупки" placeholder="Название объекта / закупки" value={manualTitle} onChange={(event) => setManualTitle(event.target.value)} />
+            <Input aria-label="Заказчик" placeholder="Заказчик" value={manualCustomer} onChange={(event) => setManualCustomer(event.target.value)} />
+            <Input required aria-label="Регион закупки" placeholder="Регион / площадка" value={manualRegion} onChange={(event) => setManualRegion(event.target.value)} />
+            <Input aria-label="НМЦК" type="number" min="0" step="0.01" placeholder="НМЦК, ₽" value={manualNmck} onChange={(event) => setManualNmck(event.target.value)} />
+            <Input aria-label="Срок подачи заявки" type="date" value={manualDeadline} onChange={(event) => setManualDeadline(event.target.value)} />
+          </div>
+          <div className="mt-3 flex justify-end">
+            <Button type="submit" disabled={manualCreating || !manualTitle.trim() || !manualRegion.trim()}>
+              {manualCreating ? "Создаю…" : "Создать и открыть карточку"}
+            </Button>
+          </div>
+        </form>
+      ) : null}
 
       <Alert className="mb-4 border-sky-200 bg-sky-50 text-sky-950">
         <RefreshCw className="h-4 w-4" />

@@ -2,6 +2,7 @@ import {
   addMoneyPayment,
   analyzeProcurementPackageWithAI,
   attachCustomerEstimate,
+  createManualProcurement,
   ensureMoneyPlan,
   ensureProcurementChain,
   getBootstrap,
@@ -59,6 +60,7 @@ export async function POST(req: Request) {
     const body = (await req.json()) as {
       action?:
         | "ensureChain"
+        | "createManual"
         | "sendToCalculation"
         | "attachCustomerEstimate"
         | "refreshAnalytics"
@@ -73,7 +75,18 @@ export async function POST(req: Request) {
       payment?: Omit<MoneyPayment, "id">;
       fileName?: string;
       mappedCount?: number;
+      manual?: { title?: string; customer?: string; region?: string; nmck?: number | null; deadline?: string };
     };
+    if (body.action === "createManual") {
+      const created = createManualProcurement(user.id, {
+        title: body.manual?.title ?? "",
+        customer: body.manual?.customer,
+        region: body.manual?.region ?? "",
+        nmck: body.manual?.nmck,
+        deadline: body.manual?.deadline,
+      });
+      return json({ ...getBootstrap(user), createdProcurementId: created.id });
+    }
     if (!body.id && body.action !== "saveMoney" && body.action !== "addMoneyPayment") {
       return json({ error: "Не указан id" }, 400);
     }
@@ -95,7 +108,6 @@ export async function POST(req: Request) {
         recomputeCalculationCost(user.id, initialDraft.id, {
           resourceScheduleParams: initialDraft.resourceScheduleParams,
           useResourceScheduleEconomics: true,
-          vatPercent: null,
         });
         boot = getBootstrap(user);
       }
@@ -129,6 +141,19 @@ export async function POST(req: Request) {
       return json(getBootstrap(user));
     }
     if (body.action === "analyzeProject") {
+      sendProcurementToCalculation(user.id, body.id!);
+      const boot = getBootstrap(user);
+      const procurement = boot.data.procurements.find((item) => item.id === body.id);
+      const draft = boot.data.calculations.find((item) => item.id === procurement?.calculationId);
+      if (
+        draft?.resourceScheduleParams &&
+        draft.positions.some((position) => position.sourceDocumentId)
+      ) {
+        recomputeCalculationCost(user.id, draft.id, {
+          resourceScheduleParams: draft.resourceScheduleParams,
+          useResourceScheduleEconomics: true,
+        });
+      }
       await analyzeProcurementPackageWithAI(user.id, body.id!);
       return json(getBootstrap(user));
     }

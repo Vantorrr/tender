@@ -764,7 +764,7 @@ export default function ProizvodstvoPage() {
                   </div>
                   {canViewProcurement && procurement ? (
                     <Link
-                      href={`/cabinet/zakupki/${procurement.id}`}
+                      href={`/cabinet/zakupki/${procurement.id}?tab=supply`}
                       className="text-sm text-[var(--tk-copper-deep)] underline underline-offset-2"
                     >
                       Поставщики и запрос КП →
@@ -876,7 +876,7 @@ export default function ProizvodstvoPage() {
                       </p>
                     </div>
                     <Link
-                      href={`/cabinet/zakupki/${procurement!.id}`}
+                      href={`/cabinet/zakupki/${procurement!.id}?tab=money`}
                       className="text-sm text-[var(--tk-copper-deep)] underline underline-offset-2"
                     >
                       Платежи и условия →

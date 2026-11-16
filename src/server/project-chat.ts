@@ -10,8 +10,10 @@ import { getBootstrap } from "@/server/repo";
 import { mutateAppData, readAppData } from "@/server/db";
 
 const MAX_QUESTION_LENGTH = 1200;
-const MAX_HISTORY_MESSAGES = 12;
+const MAX_HISTORY_MESSAGES = 6;
 const MAX_SOURCES = 120;
+const MAX_PROMPT_SOURCES = 10;
+const MAX_PROMPT_SOURCE_LENGTH = 1800;
 const CHAT_CAP = 40;
 
 const SYSTEM = `Ты — помощник только по одной строительной закупке и связанному проекту.
@@ -28,6 +30,36 @@ type ChatResult = { answer: string; outOfScope: boolean; sources: Array<{ source
 
 function normalize(value: string) {
   return value.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ").trim();
+}
+
+function questionTerms(question: string) {
+  return normalize(question)
+    .split(/[^а-яa-z0-9]+/u)
+    .filter((term) => term.length >= 3 && !/^(?:какие|какой|какая|какое|этот|этого|почему|сколько|можно|нужно|есть|будет|тогда|чтобы|проект|закупка)$/u.test(term));
+}
+
+/** Keep the project card and the sources that actually match the question. */
+export function selectRelevantProjectChatSources<T extends { id: string; label: string; sourceText: string }>(
+  question: string,
+  sources: T[],
+  limit = MAX_PROMPT_SOURCES
+) {
+  const card = sources.find((source) => source.label === "Карточка закупки");
+  const terms = questionTerms(question);
+  const ranked = sources
+    .filter((source) => source !== card)
+    .map((source, index) => {
+      const label = normalize(source.label);
+      const text = normalize(source.sourceText);
+      const score = terms.reduce((total, term) =>
+        total + (label.includes(term) ? 4 : 0) + (text.includes(term) ? 1 : 0), 0);
+      return { source, index, score };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, Math.max(0, limit - (card ? 1 : 0)))
+    .map(({ source }) => source);
+  return [card, ...ranked].filter((source): source is T => Boolean(source));
 }
 
 function isClearlyOutOfScope(question: string) {
@@ -306,7 +338,7 @@ export async function sendProjectChatMessage(
   const history = (readAppData().projectChatMessages ?? [])
     .filter((item) => item.userId === user.id && item.procurementId === procurement.id)
     .slice(-MAX_HISTORY_MESSAGES)
-    .map(({ role, content }) => ({ role, content }));
+    .map(({ role, content }) => ({ role, content: content.slice(0, 1000) }));
 
   let answer: string;
   let citations: ProjectChatSource[] = [];
@@ -321,12 +353,17 @@ export async function sendProjectChatMessage(
       citations = validated.sources;
     } else {
       if (!modelConfigured()) throw new Error("ИИ-чат не настроен: администратору нужно подключить модель");
+      const promptSources = selectRelevantProjectChatSources(question, allSources);
       const userPrompt = JSON.stringify({
         project: { title: procurement.title, number: procurement.number },
         currentBlock: input.screen,
         history,
         question,
-        sources: allSources.map(({ id, label, sourceText }) => ({ id, label, text: sourceText })),
+        sources: promptSources.map(({ id, label, sourceText }) => ({
+          id,
+          label,
+          text: sourceText.slice(0, MAX_PROMPT_SOURCE_LENGTH),
+        })),
       });
       const parsed = parseProjectChatResult(await completeJson(SYSTEM, userPrompt));
       const validated = validateProjectChatResult(parsed, allSources);

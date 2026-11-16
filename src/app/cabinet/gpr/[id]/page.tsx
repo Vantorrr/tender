@@ -1,6 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
@@ -164,6 +165,15 @@ export default function GprDetailPage() {
 
   return (
     <div>
+      <nav aria-label="Навигация проекта" className="mb-3 text-sm text-[var(--tk-muted)]">
+        <ol className="flex flex-wrap items-center gap-2">
+          <li><Link className="underline underline-offset-2 hover:text-[var(--tk-ink)]" href={`/cabinet/zakupki/${schedule.procurementId}`}>Заявка</Link></li>
+          <li aria-hidden="true">›</li>
+          <li><Link className="underline underline-offset-2 hover:text-[var(--tk-ink)]" href={`/cabinet/raschety/${schedule.calculationId}`}>Расчёт</Link></li>
+          <li aria-hidden="true">›</li>
+          <li aria-current="page" className="font-medium text-[var(--tk-ink)]">ГПР</li>
+        </ol>
+      </nav>
       <PageHeader
         title={schedule.title}
         description={`Расчёт «${
