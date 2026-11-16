@@ -309,23 +309,51 @@ describe("client corrections stage 1", () => {
       storedPath: "uploads/test-2131190.pdf",
     });
     reanalyzeDocument("u-smet", document.documentId, prepared);
+    const metalText = [
+      "Смета №2131196",
+      "На Капитальный ремонт столовой. Конструкции металлические.",
+      "Всего по смете 19 779 660",
+      "Индекс=1 01. Металлоконструкции.",
+      "  1 ФирЕР         Монтаж металлоконструкций                 1т 2,5 459 446,57",
+      "     09-05-306-04 монтаж",
+      "  2 ФирСЦт        Работа автокрана                           маш.-ч 12 3 500",
+      "     310-001 crane",
+      "  3 SAP           Болты высокопрочные                        кг 40 250,00",
+      "     SAP-METAL-1",
+    ].join("\n");
+    const metalPrepared = analysisFromScan("2131196.pdf", {
+      status: "ok", text: metalText, pages: [metalText], pageCount: 1, provider: "pdftotext",
+    });
+    const metalDocument = createDocument("u-smet", {
+      orgId: procurement.orgId,
+      procurementId: procurement.id,
+      title: metalPrepared.title,
+      fileName: "2131196.pdf",
+      fileType: "pdf",
+      category: "general",
+      storedPath: "uploads/test-2131196.pdf",
+    });
+    reanalyzeDocument("u-smet", metalDocument.documentId, metalPrepared);
     sendProcurementToCalculation("u-smet", procurement.id);
     const after = readAppData();
     const updated = after.procurements.find((item) => item.id === procurement.id)!;
     const draft = after.calculations.find((item) => item.id === updated.calculationId)!;
     const original = after.calculations.find((item) => item.id === updated.originalCalculationId)!;
     const schedule = after.schedules.find((item) => item.id === updated.gprId)!;
-    const importedRows = draft.positions.filter((position) => position.sourceDocumentId === document.documentId);
+    const importedRows = draft.positions.filter((position) =>
+      position.sourceDocumentId === document.documentId || position.sourceDocumentId === metalDocument.documentId
+    );
 
     expect(document.documentId).toBeTruthy();
-    expect(importedRows).toHaveLength(3);
+    expect(importedRows).toHaveLength(6);
     expect(importedRows.find((position) => position.name.startsWith("Бетон"))).toMatchObject({
       resourceKind: "material",
       sourceWorkName: "Разработка грунта с погрузкой",
     });
-    expect(original.positions).toHaveLength(1);
-    expect(original.positions[0]).toMatchObject({ code: "CUST-TOTAL", rate: 7595709 });
+    expect(original.positions).toHaveLength(2);
+    expect(original.positions.map((position) => position.rate)).toEqual([19779660, 7595709]);
     expect(schedule.stages.some((stage) => stage.name === "Разработка грунта с погрузкой")).toBe(true);
+    expect(schedule.stages.some((stage) => stage.name === "Монтаж металлоконструкций")).toBe(true);
     expect(schedule.stages.flatMap((stage) => stage.resources ?? []).some((resource) => resource.kind === "material")).toBe(true);
   });
 

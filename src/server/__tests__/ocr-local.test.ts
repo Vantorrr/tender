@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { PDFDocument, StandardFonts } from "pdf-lib";
 import {
   NotConfiguredOcrProvider,
   TesseractOcrProvider,
@@ -65,6 +66,22 @@ describe("local OCR (tesseract)", () => {
     if (result.status === "ok") {
       expect(result.text?.toUpperCase()).toMatch(/TMA361|OCR|OPORA|ZONA/);
     }
+  });
+
+  it("preserves PDF text-layer line breaks needed for estimate tables", async () => {
+    expect(tools.pdftotext).toBeTruthy();
+    const pdf = await PDFDocument.create();
+    const page = pdf.addPage([612, 792]);
+    const font = await pdf.embedFont(StandardFonts.Helvetica);
+    page.drawText("ESTIMATE ROW 01", { x: 48, y: 700, font, size: 12 });
+    page.drawText("ESTIMATE ROW 02", { x: 48, y: 680, font, size: 12 });
+    const result = await extractDocumentText({
+      fileName: "table.pdf",
+      buffer: Buffer.from(await pdf.save()),
+      mimeHint: "application/pdf",
+    });
+    expect(result.reason).toMatch(/pdftotext/i);
+    expect(result.text).toMatch(/ESTIMATE ROW 01\s*\n\s*ESTIMATE ROW 02/);
   });
 
   it("NotConfiguredOcrProvider reports not_configured when forced", async () => {

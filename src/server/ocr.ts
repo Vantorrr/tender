@@ -9,6 +9,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+const MAX_PDF_TEXT_CHARS = 200_000;
+
 export type OcrStatus = "not_configured" | "unavailable" | "ok" | "empty";
 
 export type OcrResult = {
@@ -150,13 +152,18 @@ export class TesseractOcrProvider implements OcrProvider {
           const textLayer = run(tools.pdftotext, ["-layout", pdfPath, "-"]);
           const pages = textLayer.stdout
             .split("\f")
-            .map((page) => page.replace(/\s+/g, " ").trim())
+            .map((page) => page
+              .replace(/\r/g, "")
+              .split("\n")
+              .map((line) => line.replace(/[\t ]+/g, " ").trimEnd())
+              .join("\n")
+              .trim())
             .filter(Boolean);
-          const layered = pages.join(" ").trim();
+          const layered = pages.join("\n").trim();
           if (textLayer.ok && layered.length >= 24) {
             return {
               status: "ok",
-              text: layered.slice(0, 8000),
+              text: layered.slice(0, MAX_PDF_TEXT_CHARS),
               pages: pages.map((page) => page.slice(0, 8000)),
               pageCount: pages.length,
               provider: this.id,

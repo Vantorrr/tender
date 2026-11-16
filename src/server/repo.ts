@@ -1877,61 +1877,67 @@ export function sendProcurementToCalculation(
           Boolean(d.estimatePositions?.length) ||
           (d.analysis?.positionCount ?? 0) > 0)
     );
-    const estimateDoc =
-      estimateDocs.find((document) => (document.estimatePositions?.length ?? 0) > 0) ??
-      estimateDocs.find((document) => (document.analysis?.positionCount ?? 0) > 0);
+    // A tender package can contain several local estimates (for example,
+    // concrete, metal and general works). Include every parsed estimate.
+    const estimateDocsWithData = estimateDocs.filter(
+      (document) => (document.estimatePositions?.length ?? 0) > 0 || (document.analysis?.positionCount ?? 0) > 0
+    );
+    const allEstimatePositions = estimateDocsWithData.flatMap((document) =>
+      (document.estimatePositions ?? []).map((position) => ({ document, position }))
+    );
     if (
       !p.originalCalculationId &&
-      estimateDoc &&
-      ((estimateDoc.estimatePositions?.length ?? 0) > 0 ||
-        (estimateDoc.analysis?.positionCount ?? 0) > 0)
+      estimateDocsWithData.length > 0
     ) {
       const oid = `c-orig-${Date.now()}`;
-      const extractedPositions = estimateDoc.estimatePositions ?? [];
-      const completeSourceRates = extractedPositions.length > 0 && extractedPositions.every(
-        (position) => !position.rateMissing && Number.isFinite(position.rate) && position.rate > 0
-      );
-      const estimateAnalysis = estimateDoc.analysis;
-      const qty = Math.max(1, estimateAnalysis?.positionCount ?? extractedPositions.length);
-      const rate =
-        estimateAnalysis?.costThousand != null
-          ? Math.round((estimateAnalysis.costThousand * 1000) / qty)
-          : 0;
+      const customerSourcePositions = estimateDocsWithData.flatMap((document) => {
+        const extracted = document.estimatePositions ?? [];
+        const completeRates = extracted.length > 0 && extracted.every(
+          (position) => !position.rateMissing && Number.isFinite(position.rate) && position.rate > 0
+        );
+        if (completeRates) {
+          return extracted.map((position) => ({
+            id: position.id,
+            sourceDocumentId: document.id,
+            sourcePositionId: position.id,
+            code: position.code,
+            name: position.name,
+            unit: position.unit,
+            quantity: position.quantity,
+            rate: position.rate,
+          }));
+        }
+        const total = document.analysis?.costThousand;
+        return total != null
+          ? [{
+              id: `cp-orig-${document.id}`,
+              sourceDocumentId: document.id,
+              code: "CUST-TOTAL",
+              name: document.analysis?.workName || `Итог сметы · ${document.fileName}`,
+              unit: "компл",
+              quantity: 1,
+              rate: Math.round(total * 1000),
+            }]
+          : [];
+      });
+      const sourceFileNames = estimateDocsWithData.map((document) => document.fileName);
+      const rowsWithoutSourceRates = allEstimatePositions.filter(({ position }) =>
+        position.rateMissing || !(Number.isFinite(position.rate) && position.rate > 0)
+      ).length;
       data.calculations.unshift({
         id: oid,
         orgId: p.orgId,
         procurementId: p.id,
         title: `Смета заказчика (оригинал) — ${p.title.slice(0, 40)}`,
         status: "gotovo",
-        positions: completeSourceRates
-          ? extractedPositions.map((position) => ({
-              id: position.id,
-              code: position.code,
-              name: position.name,
-              unit: position.unit,
-              quantity: position.quantity,
-              rate: position.rate,
-            }))
-          : [
-              {
-                id: `cp-orig-${Date.now()}`,
-                code: "CUST-TOTAL",
-                name: estimateAnalysis?.workName || "Итог сметы заказчика",
-                unit: "компл",
-                quantity: 1,
-                rate:
-                  estimateAnalysis?.costThousand != null
-                    ? Math.round(estimateAnalysis.costThousand * 1000)
-                    : rate,
-              },
-            ],
+        positions: customerSourcePositions.length
+          ? customerSourcePositions
+          : [{ id: `cp-orig-${Date.now()}`, code: "CUST-TOTAL", name: "Итог сметы заказчика", unit: "компл", quantity: 1, rate: 0, rateMissing: true }],
         assumptions: [
-          completeSourceRates
-            ? `Неизменяемый снимок сметы заказчика: ${extractedPositions.length} распознанных позиций`
-            : extractedPositions.length
-              ? `В документе найдено ${extractedPositions.length} строк, но исходные построчные ставки не извлечены надёжно; в оригинале показан подтверждённый итог сметы без подмены ставок нулями.`
-              : "Неизменяемый снимок сметы заказчика; построчная выгрузка недоступна, показан только итог",
-          `Источник: ${estimateDoc.fileName}`,
+          rowsWithoutSourceRates
+            ? `Распознано ${allEstimatePositions.length} строк по ${estimateDocsWithData.length} сметам; для ${rowsWithoutSourceRates} строк исходная ставка не извлечена надёжно, поэтому оригинал показывает подтверждённый итог каждой сметы без подмены ставок нулями.`
+            : `Неизменяемый снимок сметы заказчика: ${allEstimatePositions.length} распознанных позиций.`,
+          `Источники: ${sourceFileNames.join("; ")}`,
           "Собственные ресурсы сюда не добавляются",
         ],
         scenario: "bazovyy",
@@ -1950,13 +1956,13 @@ export function sendProcurementToCalculation(
     }
 
     // Create or refresh editable resource draft
-    const positionsFromEstimate = (estimateDoc?.estimatePositions ?? [])
-      .filter((position) =>
+    const positionsFromEstimate = allEstimatePositions
+      .filter(({ position }) =>
         Boolean(position.code && position.name && position.unit) &&
         Number.isFinite(position.quantity) &&
         position.quantity > 0
       )
-      .map((position) => {
+      .map(({ document, position }) => {
         const hit = matchingDirectoryRate(data, position.code, position.unit);
         const unitCompatible = Boolean(hit);
         return {
@@ -1971,7 +1977,7 @@ export function sendProcurementToCalculation(
           ...(position.resourceKind ? { resourceKind: position.resourceKind } : {}),
           ...(position.sectionName ? { sourceSectionName: position.sectionName } : {}),
           ...(position.workName ? { sourceWorkName: position.workName } : {}),
-          sourceDocumentId: estimateDoc!.id,
+          sourceDocumentId: document.id,
           sourcePositionId: position.id,
           ...(unitCompatible ? { rateSourceDirectoryId: hit!.dirId } : {}),
         };
@@ -1995,7 +2001,7 @@ export function sendProcurementToCalculation(
         positions: seedPositions,
         assumptions: [
           seedPositions.length
-            ? `Черновик заполнен ${seedPositions.length} распознанными строками из «${estimateDoc?.fileName ?? "сметы заказчика"}». Исходная смета сохранена отдельно и неизменна.`
+            ? `Черновик заполнен ${seedPositions.length} распознанными строками из ${estimateDocsWithData.length} смет(ы). Исходные сметы сохранены отдельно и неизменны.`
             : "Ресурсный черновик создан пустым: в документах нет распознанных строк сметы",
           seedPositions.length
             ? "В черновик перенесены только код, наименование, единица и количество. Ставки взяты только из точного совпадения кода и единицы в справочниках; цена заказчика не копировалась."
@@ -2054,7 +2060,7 @@ export function sendProcurementToCalculation(
           ...(linked.assumptions ?? []).filter(
             (assumption) => !assumption.startsWith("Ресурсный черновик создан пустым:")
           ),
-          `Черновик содержит распознанные строки из «${estimateDoc?.fileName ?? "сметы заказчика"}». Исходная смета сохранена отдельно и неизменна.`,
+          `Черновик содержит распознанные строки из ${estimateDocsWithData.length} смет(ы). Исходные сметы сохранены отдельно и неизменны.`,
           "Для импортированных строк перенесены только код, наименование, единица и количество. Ставки взяты только из точного совпадения кода и единицы в справочниках; цена заказчика не копировалась.",
           "Проверьте состав ресурсов и каждую ставку до использования итогов",
         ];
