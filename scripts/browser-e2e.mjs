@@ -189,6 +189,21 @@ try {
   if (await page.getByText("Совпадений не найдено.").count()) pass("XLSX preview search filters rows");
   else fail("XLSX preview search filters rows", "expected empty search state");
 
+  const contractDocx = path.join(process.cwd(), "fixtures/docx/contract-terms.docx");
+  await page.goto(`${base}/cabinet/dokumenty`);
+  await page.setInputFiles('[data-testid="doc-file-input"]', contractDocx);
+  await page.waitForTimeout(2500);
+  await page.goto(`${base}/cabinet/dokumenty`);
+  const docxCard = page.getByRole("link").filter({ hasText: "contract-terms.docx" }).first();
+  await docxCard.click();
+  await page.getByRole("button", { name: "Открыть в веб" }).click();
+  const docxPreview = page.getByTestId("docx-document-preview");
+  await docxPreview.waitFor();
+  await page.getByText(/ДОГОВОР ПОДРЯДА № TMA361-TEST/i).waitFor();
+  if (await docxPreview.locator(".tma361-docx").count()) pass("DOCX preview renders formatted content");
+  else fail("DOCX preview renders formatted content", "renderer did not produce DOCX page markup");
+  await page.screenshot({ path: path.join(mediaDir, "27-docx-preview.png"), fullPage: true });
+
   // F) Dengi denied as tender
   await page.goto(`${base}/cabinet/dengi`);
   await page.waitForTimeout(400);
@@ -206,6 +221,7 @@ try {
     "dengi for smetchik",
     "plan/fact for otvetstvennyy",
     "document upload setInputFiles",
+    "DOCX formatted preview",
     "SectionGate dengi deny for tender",
   ];
   results.notCovered = [

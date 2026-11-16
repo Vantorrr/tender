@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
-import { api } from "@/lib/api";
+import { api, getClientToken } from "@/lib/api";
 import type { DocumentItem } from "@/lib/types";
 
 type PreviewData =
@@ -19,6 +19,10 @@ export function DocumentWebPreview({ document }: { document: DocumentItem }) {
   const [error, setError] = useState("");
   const [sheet, setSheet] = useState(0);
   const [search, setSearch] = useState("");
+  const [docxLoaded, setDocxLoaded] = useState(false);
+  const [docxRenderError, setDocxRenderError] = useState("");
+  const docxBodyRef = useRef<HTMLDivElement>(null);
+  const docxStylesRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let alive = true;
@@ -29,6 +33,48 @@ export function DocumentWebPreview({ document }: { document: DocumentItem }) {
       });
     return () => { alive = false; };
   }, [document.id]);
+
+  useEffect(() => {
+    if (preview?.kind !== "docx") return;
+    const controller = new AbortController();
+    let alive = true;
+    const bodyElement = docxBodyRef.current;
+    const stylesElement = docxStylesRef.current;
+    void (async () => {
+      try {
+        const token = getClientToken();
+        const response = await fetch(
+          `/api/dokumenty/file?id=${encodeURIComponent(document.id)}&disposition=inline`,
+          {
+            credentials: "include",
+            signal: controller.signal,
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+          }
+        );
+        if (!response.ok) throw new Error(`Не удалось открыть оригинал (${response.status})`);
+        const blob = await response.blob();
+        const { renderAsync } = await import("docx-preview");
+        if (!alive || !bodyElement || !stylesElement) return;
+        await renderAsync(blob, bodyElement, stylesElement, {
+          className: "tma361-docx",
+          inWrapper: true,
+          breakPages: true,
+          renderAltChunks: false,
+        });
+        if (alive) setDocxLoaded(true);
+      } catch (reason) {
+        if (alive && !controller.signal.aborted) {
+          setDocxRenderError(reason instanceof Error ? reason.message : "Не удалось отобразить DOCX");
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+      controller.abort();
+      bodyElement?.replaceChildren();
+      stylesElement?.replaceChildren();
+    };
+  }, [document.id, preview?.kind]);
 
   const currentSheet = preview?.kind === "xlsx" ? preview.sheets[sheet] : undefined;
   const query = search.trim().toLocaleLowerCase("ru-RU");
@@ -53,8 +99,12 @@ export function DocumentWebPreview({ document }: { document: DocumentItem }) {
     </div>;
   }
   if (preview.kind === "docx") {
-    return <div className="max-h-[70vh] space-y-3 overflow-auto rounded-lg border bg-white p-5 text-sm leading-relaxed">
-      {preview.paragraphs.length ? preview.paragraphs.map((paragraph) => <p key={paragraph.index}>{paragraph.text}</p>) : <p className="text-[var(--tk-muted)]">В документе нет текстовых абзацев.</p>}
+    return <div className="max-h-[75vh] overflow-auto rounded-lg border bg-stone-100 p-4" data-testid="docx-document-preview">
+      <div ref={docxStylesRef} />
+      <div ref={docxBodyRef} />
+      {docxRenderError ? <Alert variant="destructive" className="mt-3"><AlertDescription>{docxRenderError} · Ниже показан текстовый запасной просмотр.</AlertDescription></Alert> : null}
+      {docxRenderError ? <div className="mt-3 space-y-2 rounded-lg bg-white p-5 text-sm leading-relaxed">{preview.paragraphs.map((paragraph) => <p key={paragraph.index}>{paragraph.text}</p>)}</div> : null}
+      {!docxLoaded && !docxRenderError ? <p className="p-4 text-sm text-[var(--tk-muted)]">Загружаем форматированный документ…</p> : null}
     </div>;
   }
   if (preview.kind === "xlsx") {
