@@ -312,6 +312,8 @@ export interface DocumentItem {
     unit: string;
     quantity: number;
     rate: number;
+    /** Estimate work line used as a GPR task volume, not a resource count. */
+    isWorkItem?: boolean;
     /** Original PDF/XLSX row was recognized, but its source rate was not. */
     rateMissing?: boolean;
     resourceKind?: "labor" | "equipment" | "material" | "bus" | "other";
@@ -334,6 +336,8 @@ export interface CalcPosition {
   sourceSectionName?: string;
   /** Parsed parent work item used to nest resources under a work row. */
   sourceWorkName?: string;
+  /** Estimate work line used as a task volume, not a priced resource. */
+  isWorkItem?: boolean;
   /** Directory version used for an exact, unit-compatible rate match. */
   rateSourceDirectoryId?: string;
   code: string;

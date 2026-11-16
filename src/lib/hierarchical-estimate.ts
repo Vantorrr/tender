@@ -174,9 +174,11 @@ export function buildHierarchicalEstimate(opts: {
   for (const st of opts.stages.slice().sort((a, b) => a.sequence - b.sequence)) {
     const leaves: EstimateLeaf[] = [];
     const linkedSourceKeys = new Set<string>();
+    const linkedResourceIds = new Set<string>();
     for (const r of st.resources ?? []) {
       const resolved = resolveResourceDimensions(r, st, params);
       const leaf = leafFromResolved(r, st, resolved);
+      linkedResourceIds.add(r.id);
       if (r.sourceKey) linkedSourceKeys.add(r.sourceKey);
       if (
         match(st.name) ||
@@ -187,11 +189,13 @@ export function buildHierarchicalEstimate(opts: {
       }
     }
     for (const p of opts.positions ?? []) {
+      if (p.isWorkItem) continue;
       const parentWorkCode = /^(?:ЕНИР|ФЕР|ТЕР|ГЭСН)(?:М)?/iu.test(p.code.trim());
       const belongsToStage = (p.sourceWorkName?.trim() || p.sourceSectionName?.trim()) === (st.workName?.trim() || st.name);
       if (
         !belongsToStage ||
         (parentWorkCode && p.name.trim() === (st.workName?.trim() || st.name) && representedWorkPositionIds.add(p.id)) ||
+        (p.sourceResourceId != null && linkedResourceIds.has(p.sourceResourceId)) ||
         linkedSourceKeys.has(p.id) ||
         (st.resources ?? []).some((resource) => resource.name.toLocaleLowerCase("ru-RU") === p.name.toLocaleLowerCase("ru-RU"))
       ) continue;
@@ -237,6 +241,7 @@ export function buildHierarchicalEstimate(opts: {
   );
   const unbound: EstimateLeaf[] = [];
   for (const p of opts.positions ?? []) {
+    if (p.isWorkItem) continue;
     if (p.code === "НР" || p.code === "СП") continue;
     if (representedWorkPositionIds.has(p.id)) continue;
     if (sectionedNames.has(p.id)) continue;

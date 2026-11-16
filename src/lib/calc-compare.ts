@@ -49,8 +49,8 @@ export function compareCalculations(
   if (!original) notes.push("Исходная смета заказчика отсутствует");
   if (!draft) notes.push("Собственный черновик отсутствует");
 
-  const originalPositions = (original?.positions ?? []).filter((p) => p.code !== "НР" && p.code !== "СП");
-  const draftPositions = (draft?.positions ?? []).filter((p) => p.code !== "НР" && p.code !== "СП");
+  const originalPositions = (original?.positions ?? []).filter((p) => p.code !== "НР" && p.code !== "СП" && !p.isWorkItem);
+  const draftPositions = (draft?.positions ?? []).filter((p) => p.code !== "НР" && p.code !== "СП" && !p.isWorkItem);
   const usedOriginal = new Set<number>();
   const usedDraft = new Set<number>();
   const pairs: Array<{ original?: CalcPosition; draft?: CalcPosition; method?: "code" | "name" }> = [];
@@ -185,8 +185,8 @@ export function compareCalculations(
     });
   }
 
-  const originalHasMissingRates = Boolean(original?.positions.some((position) => position.rateMissing));
-  const draftHasMissingRates = Boolean(draft?.positions.some((position) => position.rateMissing));
+  const originalHasMissingRates = Boolean(original?.positions.some((position) => position.rateMissing && !position.isWorkItem));
+  const draftHasMissingRates = Boolean(draft?.positions.some((position) => position.rateMissing && !position.isWorkItem));
   const oTot = original && !originalHasMissingRates ? sourceEstimateTotals(original.positions) : null;
   const dTot = draft && !draftHasMissingRates ? calculationTotals(draft) : null;
   if (originalHasMissingRates || draftHasMissingRates) {

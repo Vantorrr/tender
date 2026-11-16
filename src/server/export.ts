@@ -128,6 +128,17 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
 
   const factor = calc.scenarioFactor || 1;
   for (const p of calc.positions) {
+    if (p.isWorkItem && calc.kind !== "customer_original") {
+      ws.addRow({
+        code: p.code,
+        name: `${p.name} (объём работы; ставка ресурса не применяется)`,
+        unit: p.unit,
+        qty: p.quantity,
+        rate: null,
+        sum: null,
+      });
+      continue;
+    }
     const sum = p.rateMissing ? null : positionLineSum(p, factor);
     ws.addRow({
       code: p.code,
@@ -349,6 +360,15 @@ export async function buildCalculationPdf(calcId: string): Promise<Buffer> {
   drawWrapped("Позиции сметы", 11, true);
   const factor = calc.scenarioFactor || 1;
   for (const p of calc.positions) {
+    if (p.isWorkItem && calc.kind !== "customer_original") {
+      drawWrapped(
+        `${p.code} · ${p.name} · ${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 3 }).format(p.quantity)} ${p.unit} · объём работы; ресурсная ставка не применяется`,
+        9,
+        false,
+        muted
+      );
+      continue;
+    }
     if (p.rateMissing) {
       drawWrapped(
         `${p.code} · ${p.name} · ${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 3 }).format(p.quantity)} ${p.unit} · ставка не заполнена · сумма не подтверждена`,
@@ -391,7 +411,7 @@ export async function buildCalculationPdf(calcId: string): Promise<Buffer> {
         : "Итого расчёта";
     drawWrapped(`${label}: ${money(totals.total)}${partial ? " · неполный расчёт" : ""}`, 12, true);
   }
-  if (partial || calc.positions.some((position) => position.rateMissing)) {
+  if (partial || calc.positions.some((position) => position.rateMissing && !position.isWorkItem)) {
     y -= 8;
     drawWrapped("Есть незаполненные ставки или исходные данные. Неполные суммы нельзя считать подтверждённой стоимостью.", 9, true, accent);
   }

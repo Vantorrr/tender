@@ -39,6 +39,7 @@ import {
   unitConflicts,
   worksSubtotal,
 } from "@/lib/calc-math";
+import { bucketsFromPositions } from "@/lib/cost-engine";
 import {
   parseContractRisksDetailed,
   RISK_HELPER_DISCLAIMER,
@@ -77,6 +78,21 @@ describe("B1 procurement honesty", () => {
     ]).total).toBe(123_000);
   });
 
+  it("keeps estimate work rows as volume only in the editable resource draft", () => {
+    const work: CalcPosition = {
+      id: "work-volume",
+      code: "09-03-002-05",
+      name: "Монтаж колонн",
+      unit: "1т",
+      quantity: 3.7,
+      rate: 50_000,
+      rateMissing: false,
+      isWorkItem: true,
+    };
+    expect(worksSubtotal([work])).toBe(0);
+    expect(bucketsFromPositions([work], 1).other).toBe(0);
+  });
+
   it("stub never invents AUTO procurements", async () => {
     const feed = await new StubProcurementSource().fetchNotices("org-alfa");
     expect(feed.notices).toHaveLength(0);
@@ -99,6 +115,7 @@ describe("B2 OCR ordinary scans", () => {
     const text = [
       "ПАО Норильский никель",
       "Смета №2131190",
+      "На сумму, руб. На сумму, руб.",
       "На Капитальный ремонт столовой",
       "Всего по смете 7 595 709",
       "Индекс=1 01. Разработка грунта. Зимние условия.",
@@ -122,6 +139,7 @@ describe("B2 OCR ordinary scans", () => {
       provider: "pdftotext",
     });
     expect(analysis.analysis.estimateNumber).toBe("2131190");
+    expect(analysis.analysis.workName).toBe("Капитальный ремонт столовой");
     expect(analysis.analysis.positionCount).toBe(3);
     expect(analysis.analysis.costThousand).toBe(7595.709);
     expect(analysis.positions[0]).toMatchObject({
@@ -131,8 +149,9 @@ describe("B2 OCR ordinary scans", () => {
       quantity: 0.2284,
       rate: 0,
       rateMissing: true,
-      resourceKind: "labor",
+      isWorkItem: true,
     });
+    expect(analysis.positions[0].resourceKind).toBeUndefined();
     expect(analysis.positions[1].resourceKind).toBe("equipment");
     expect(analysis.positions[2].resourceKind).toBe("material");
     expect(analysis.analyticalNote).toMatch(/Тарифы из сметы заказчика не копируются/);

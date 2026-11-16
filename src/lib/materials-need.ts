@@ -30,6 +30,7 @@ export function buildMaterialNeeds(opts: {
   const rows: MaterialNeedRow[] = [];
 
   for (const p of opts.positions) {
+    if (p.isWorkItem) continue;
     if (!isMaterialPosition(p)) continue;
     const rate = Number.isFinite(p.rate) && p.rate > 0 ? p.rate : null;
     const missing: string[] = [];

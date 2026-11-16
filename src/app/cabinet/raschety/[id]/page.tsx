@@ -310,7 +310,7 @@ export default function RaschetDetailPage() {
     calc.scenarioFactor || 1
   );
   const materials = calc.positions.filter((p) => {
-    if (p.code === "НР" || p.code === "СП") return false;
+    if (p.isWorkItem || p.code === "НР" || p.code === "СП") return false;
     const hay = `${p.code} ${p.name} ${p.unit}`.toLowerCase();
     return /матер|м²|м2|т\b|сэндвич|бетон|арматур|компл/.test(hay);
   });
@@ -696,9 +696,9 @@ export default function RaschetDetailPage() {
           <p className="mt-1">
             Исходные количества и строки заказчика перенесены для проверки. Исходная смета остаётся неизменной; её цены в наш черновик не копировались. Ставки сопоставлены только по точному коду и совместимой единице.
           </p>
-          {calc.positions.some((position) => position.rateMissing) ? (
+          {calc.positions.some((position) => position.rateMissing && !position.isWorkItem) ? (
             <p className="mt-1 font-medium">
-              Нужны ставки для {calc.positions.filter((position) => position.rateMissing).length} строк. Они исключены из стоимости, пока не подтверждены.
+              Нужны ставки для {calc.positions.filter((position) => position.rateMissing && !position.isWorkItem).length} строк. Они исключены из стоимости, пока не подтверждены.
             </p>
           ) : null}
         </section>
@@ -942,7 +942,9 @@ export default function RaschetDetailPage() {
                     )}
                   </TableCell>
                   <TableCell className="text-right">
-                    {locked ? (
+                    {p.isWorkItem && calc.kind !== "customer_original" ? (
+                      <span className="text-xs text-[var(--tk-muted)]">не применяется к объёму работы</span>
+                    ) : locked ? (
                       formatMoney(p.rate)
                     ) : (
                       <Input
@@ -961,9 +963,9 @@ export default function RaschetDetailPage() {
                     )}
                   </TableCell>
                   <TableCell className="text-right font-medium">
-                    {formatMoney(
-                      positionLineSum(p, calc.scenarioFactor || 1)
-                    )}
+                    {p.isWorkItem && calc.kind !== "customer_original"
+                      ? "—"
+                      : formatMoney(positionLineSum(p, calc.scenarioFactor || 1))}
                   </TableCell>
                 </TableRow>
               ))}

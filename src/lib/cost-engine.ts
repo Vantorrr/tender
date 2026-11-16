@@ -374,7 +374,7 @@ export function bucketsFromPositions(
   let other = 0;
   let hasMaterialPositions = false;
   for (const p of positions) {
-    if (p.code === "НР" || p.code === "СП") continue;
+    if (p.code === "НР" || p.code === "СП" || p.isWorkItem) continue;
     const bucket = classifyDirectCostBucket(p);
     if (bucket === "materials") hasMaterialPositions = true;
     // Missing rate must not become a confirmed 0 ₽ contribution.

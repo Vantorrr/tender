@@ -17,6 +17,8 @@ export type GrandPosition = {
   rate: number;
   /** Source row was read, but its price could not be extracted reliably. */
   rateMissing?: boolean;
+  /** Work rows become GPR stages; their physical volume is not headcount. */
+  isWorkItem?: boolean;
   resourceKind?: "labor" | "equipment" | "material" | "bus" | "other";
   /** Name of the estimate section this line appears under. */
   sectionName?: string;
@@ -33,7 +35,11 @@ export function parseTextEstimateRows(text: string): {
 } {
   const lines = text.split(/\r?\n/u);
   const estimateNumber = text.match(/Смета\s*№\s*([\w/-]+)/iu)?.[1] ?? "";
-  const workName = text.match(/На\s+(.{8,180}?)(?:\n|Заказчик)/iu)?.[1]?.replace(/\s+/gu, " ").trim() ?? "";
+  const workName = lines
+    .map((line) => line.match(/^\s*На\s+(?!сумму(?:\s|,|$))(.{8,180}?)(?:\s+Заказчик\b|\s+Лот\s*№|$)/iu)?.[1])
+    .find((candidate) => Boolean(candidate))
+    ?.replace(/\s+/gu, " ")
+    .trim() ?? "";
   const totalText = text.match(/Всего\s+по\s+смете\s+([\d\s]+(?:[,.]\d+)?)/iu)?.[1];
   const total = totalText ? asNumber(totalText) : null;
   const unitQuantity = /(?:^|\s)((?:(?:1000|100|10|1)\s*)?(?:м3|м2|м²|м|т|кг|шт|отверсти\w*|чел\.?-?ч|маш\.?-?ч))\s+([0-9]+(?:[,.][0-9]+)?)(?=\s|$)/iu;
@@ -62,10 +68,12 @@ export function parseTextEstimateRows(text: string): {
     const isWork = /^ФирЕР/iu.test(row[2]);
     if (isWork) currentWork = name;
     const resourceKind: GrandPosition["resourceKind"] = isWork
-      ? "labor"
+      ? undefined
       : /фирсцт|перевоз|самосвал|автомобил|техник/iu.test(`${row[2]} ${name}`)
         ? "equipment"
-        : /фирсц|\bsap\b|бетон|арматур|сталь|раствор|материал|грунт|щебен|подушк|лакокрас/iu.test(`${row[2]} ${name}`)
+        : /фирот|фирзп|оплат[аы] труда|затрат[аы] труда|\bзарплат/iu.test(`${row[2]} ${name}`)
+          ? "labor"
+          : /фирсц|\bsap\b|бетон|арматур|сталь|раствор|материал|грунт|щебен|подушк|лакокрас/iu.test(`${row[2]} ${name}`)
           ? "material"
           : "other";
     positions.push({
@@ -75,7 +83,8 @@ export function parseTextEstimateRows(text: string): {
       quantity,
       rate: 0,
       rateMissing: true,
-      resourceKind,
+      ...(resourceKind ? { resourceKind } : {}),
+      ...(isWork ? { isWorkItem: true } : {}),
       ...(sectionName ? { sectionName } : {}),
       ...(currentWork ? { workName: currentWork } : {}),
     });
@@ -386,6 +395,7 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
       unit,
       quantity,
       rate: asNumber(row.getCell(10).value) ?? 0,
+      ...(isWorkRateCode(code) ? { isWorkItem: true } : {}),
       ...(currentSectionName ? { sectionName: currentSectionName } : {}),
       ...(currentWorkName ? { workName: currentWorkName } : {}),
     };

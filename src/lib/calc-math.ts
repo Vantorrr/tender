@@ -34,7 +34,7 @@ export function worksSubtotal(
 ): number {
   return roundMoney(
     positions
-      .filter((p) => p.code !== "НР" && p.code !== "СП" && !p.rateMissing)
+      .filter((p) => p.code !== "НР" && p.code !== "СП" && !p.isWorkItem && !p.rateMissing)
       .reduce((s, p) => s + p.quantity * p.rate * factor, 0)
   );
 }

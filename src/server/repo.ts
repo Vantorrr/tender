@@ -712,6 +712,8 @@ export function reanalyzeDocument(
     data.documents = data.documents.map((d) => {
       if (d.id !== id) return d;
       const nextVersion = d.versions.length + 1;
+      const previousPositions = d.estimatePositions ?? [];
+      const reusedPositionIds = new Set<string>();
       const version = {
         id: `dv-${Date.now()}`,
         version: nextVersion,
@@ -727,6 +729,28 @@ export function reanalyzeDocument(
         return { ...d, versions: [...d.versions, version] };
       }
       const versionLabel = `doc-v${nextVersion}`;
+      const estimatePositions = prepared.positions.map((position, index) => {
+        const previous = previousPositions.find((candidate) =>
+          !reusedPositionIds.has(candidate.id) &&
+          candidate.code === position.code &&
+          candidate.name === position.name &&
+          candidate.unit === position.unit
+        );
+        if (previous) reusedPositionIds.add(previous.id);
+        return {
+          id: previous?.id ?? `source-${id}-v${nextVersion}-${index + 1}`,
+          code: position.code,
+          name: position.name,
+          unit: position.unit,
+          quantity: position.quantity,
+          rate: position.rate,
+          ...(position.isWorkItem ? { isWorkItem: true } : {}),
+          ...(position.rateMissing ? { rateMissing: true } : {}),
+          ...(position.resourceKind ? { resourceKind: position.resourceKind } : {}),
+          ...(position.sectionName ? { sectionName: position.sectionName } : {}),
+          ...(position.workName ? { workName: position.workName } : {}),
+        };
+      });
       return {
         ...d,
         title: d.title.startsWith("Разбор поставлен") ? prepared.title : d.title,
@@ -736,18 +760,7 @@ export function reanalyzeDocument(
         citations: stampCitationSourceVersion(prepared.citations, versionLabel),
         highlights: prepared.highlights,
         analysis: prepared.analysis,
-        estimatePositions: prepared.positions.map((position, index) => ({
-          id: `source-${id}-v${nextVersion}-${index + 1}`,
-          code: position.code,
-          name: position.name,
-          unit: position.unit,
-          quantity: position.quantity,
-          rate: position.rate,
-          ...(position.rateMissing ? { rateMissing: true } : {}),
-          ...(position.resourceKind ? { resourceKind: position.resourceKind } : {}),
-          ...(position.sectionName ? { sectionName: position.sectionName } : {}),
-          ...(position.workName ? { workName: position.workName } : {}),
-        })),
+        estimatePositions,
       };
     });
     audit(data, actorId, "reanalyze", "document", id, "Разбор по параметрам ГРАНД-Смета");
@@ -831,6 +844,7 @@ export function createDocument(
         unit: position.unit,
         quantity: position.quantity,
         rate: position.rate,
+        ...(position.isWorkItem ? { isWorkItem: true } : {}),
         ...(position.rateMissing ? { rateMissing: true } : {}),
         ...(position.resourceKind ? { resourceKind: position.resourceKind } : {}),
         ...(position.sectionName ? { sectionName: position.sectionName } : {}),
@@ -1572,14 +1586,14 @@ export async function analyzeProcurementPackageWithAI(
   const documents = snapshot.documents.filter((document) => document.procurementId === procurement.id && document.storedPath);
   const deterministic = buildProjectAnalytics(procurement, documents);
   const draft = snapshot.calculations.find((item) => item.id === procurement.calculationId && item.kind === "resource_draft");
-  const missingRates = draft?.positions.filter((position) => position.rateMissing).length ?? 0;
+  const missingRates = draft?.positions.filter((position) => position.rateMissing && !position.isWorkItem).length ?? 0;
   const economics = draft ? {
     cost: draft.costSummary?.resourceSlices?.costWithOh ?? draft.costSummary?.C0 ?? null,
     priceWithVat: draft.costSummary?.priceIncVat ?? null,
     incomplete: Boolean(!draft.costSummary || draft.positions.length === 0 ||
       draft.costSummary.totalsIncomplete || draft.costSummary.incomplete?.length || missingRates),
     missingRates,
-    missingRateNames: draft.positions.filter((position) => position.rateMissing).map((position) => position.name),
+    missingRateNames: draft.positions.filter((position) => position.rateMissing && !position.isWorkItem).map((position) => position.name),
     incompleteReasons: draft.costSummary?.incomplete ?? [],
   } : undefined;
   const generated = await analyzeProjectPackageWithModel(procurement, documents, deterministic, economics);
@@ -1774,10 +1788,13 @@ function buildDraftStagesFromEstimate(
 
   return [...sections.values()].map(({ sectionName, workName, positions: rows }, index) => {
     const stageId = `gs-${Date.now()}-${index + 1}`;
-    const workPosition = rows.find((position) =>
-      position.name === workName && /^(?:ЕНИР|ФЕР|ТЕР|ГЭСН)(?:М)?/iu.test(position.code.trim())
-    );
+    const workPositions = rows.filter((position) => position.isWorkItem && position.name === workName);
+    const workUnits = new Set(workPositions.map((position) => position.unit));
+    const workVolume = workPositions.length > 0 && workUnits.size === 1
+      ? workPositions.reduce((total, position) => total + position.quantity, 0)
+      : null;
     const resources: GprStageResource[] = rows.flatMap((position) => {
+      if (position.isWorkItem) return [];
       const code = position.code.toLocaleUpperCase("ru-RU");
       const unit = position.unit.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
       let kind: GprStageResource["kind"] | null = position.resourceKind ?? null;
@@ -1816,7 +1833,7 @@ function buildDraftStagesFromEstimate(
       sequence: index + 1,
       crewSize: 0,
       ...(workName !== sectionName ? { workName } : {}),
-      ...(workPosition ? { planVolume: workPosition.quantity, planUnit: workPosition.unit } : {}),
+      ...(workVolume != null ? { planVolume: workVolume, planUnit: workPositions[0].unit } : {}),
       resources,
     };
   });
@@ -1826,9 +1843,27 @@ function mergeEstimateRowsIntoDraft(
   existing: Calculation["positions"],
   imported: Calculation["positions"]
 ): Calculation["positions"] {
-  const known = new Set(existing.map((position) => position.sourcePositionId).filter(Boolean));
+  const importedBySourceId = new Map(
+    imported.filter((position) => position.sourcePositionId)
+      .map((position) => [position.sourcePositionId!, position])
+  );
+  const refreshed = existing.map((position) => {
+    const source = position.sourcePositionId
+      ? importedBySourceId.get(position.sourcePositionId)
+      : undefined;
+    if (!source) return position;
+    return {
+      ...position,
+      isWorkItem: source.isWorkItem ?? false,
+      ...(source.isWorkItem ? { rateMissing: false } : {}),
+      ...(source.resourceKind ? { resourceKind: source.resourceKind } : { resourceKind: undefined }),
+      ...(source.sourceSectionName ? { sourceSectionName: source.sourceSectionName } : {}),
+      ...(source.sourceWorkName ? { sourceWorkName: source.sourceWorkName } : {}),
+    };
+  });
+  const known = new Set(refreshed.map((position) => position.sourcePositionId).filter(Boolean));
   return [
-    ...existing,
+    ...refreshed,
     ...imported.filter((position) => !position.sourcePositionId || !known.has(position.sourcePositionId)),
   ];
 }
@@ -1905,6 +1940,7 @@ export function sendProcurementToCalculation(
             unit: position.unit,
             quantity: position.quantity,
             rate: position.rate,
+            ...(position.isWorkItem ? { isWorkItem: true } : {}),
           }));
         }
         const total = document.analysis?.costThousand;
@@ -1963,7 +1999,7 @@ export function sendProcurementToCalculation(
         position.quantity > 0
       )
       .map(({ document, position }) => {
-        const hit = matchingDirectoryRate(data, position.code, position.unit);
+        const hit = position.isWorkItem ? null : matchingDirectoryRate(data, position.code, position.unit);
         const unitCompatible = Boolean(hit);
         return {
           id: `draft-${position.id}`,
@@ -1973,7 +2009,8 @@ export function sendProcurementToCalculation(
           quantity: position.quantity,
           // The customer rate is never copied into our editable draft.
           rate: unitCompatible ? hit!.rate : 0,
-          rateMissing: !unitCompatible,
+          rateMissing: !unitCompatible && !position.isWorkItem,
+          ...(position.isWorkItem ? { isWorkItem: true } : {}),
           ...(position.resourceKind ? { resourceKind: position.resourceKind } : {}),
           ...(position.sectionName ? { sourceSectionName: position.sectionName } : {}),
           ...(position.workName ? { sourceWorkName: position.workName } : {}),
@@ -2148,30 +2185,73 @@ export function sendProcurementToCalculation(
       });
       p.gprId = gid;
     } else {
-      data.schedules = data.schedules.map((s) =>
-        s.id !== p.gprId
-          ? s
-          : {
-              ...s,
-              calculationId: draftId!,
-              updatedAt: now,
-              ...(derivedGprStages.length > 0 &&
-                s.stages.every((stage) =>
-                  ["Подготовка / мобилизация", "Основные работы"].includes(stage.name) &&
-                  (stage.resources ?? []).every((resource) => resource.quantity === 0)
-                )
-                ? {
-                    stages: derivedGprStages,
-                    assumptions: [
-                      ...(s.assumptions ?? []).filter((item) => !item.startsWith("Начальные даты и этапы")),
-                      "Виды работ и вложенные ресурсы сгруппированы по разделам распознанной сметы. Проверьте состав строк и сопоставьте их с видами работ объекта.",
-                      "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.",
-                      "Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.",
-                    ],
-                  }
-                : {}),
-            }
+      const workPositionIds = new Set(
+        positionsFromEstimate.filter((position) => position.isWorkItem).map((position) => position.id)
       );
+      const workPositionsByName = new Map<string, typeof positionsFromEstimate>();
+      for (const position of positionsFromEstimate) {
+        if (!position.isWorkItem) continue;
+        const key = (position.sourceWorkName?.trim() || position.name.trim()).toLocaleLowerCase("ru-RU");
+        workPositionsByName.set(key, [...(workPositionsByName.get(key) ?? []), position]);
+      }
+      data.schedules = data.schedules.map((s) => {
+        if (s.id !== p.gprId) return s;
+        const isPlaceholder = s.stages.every((stage) =>
+          ["Подготовка / мобилизация", "Основные работы"].includes(stage.name) &&
+          (stage.resources ?? []).every((resource) => resource.quantity === 0)
+        );
+        if (derivedGprStages.length > 0 && isPlaceholder) {
+          return {
+            ...s,
+            calculationId: draftId!,
+            updatedAt: now,
+            stages: derivedGprStages,
+            assumptions: [
+              ...(s.assumptions ?? []).filter((item) => !item.startsWith("Начальные даты и этапы")),
+              "Виды работ и вложенные ресурсы сгруппированы по разделам распознанной сметы. Проверьте состав строк и сопоставьте их с видами работ объекта.",
+              "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.",
+              "Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.",
+            ],
+          };
+        }
+
+        // Migrate the old PDF mapping where ФирЕР work rows appeared as people.
+        // Preserve user-entered dates, volumes, unrelated resources and facts.
+        const stages = s.stages.map((stage) => {
+          const key = (stage.workName?.trim() || stage.name.trim()).toLocaleLowerCase("ru-RU");
+          const workRows = workPositionsByName.get(key) ?? [];
+          if (!workRows.length) return stage;
+          const units = new Set(workRows.map((position) => position.unit));
+          const volume = units.size === 1
+            ? workRows.reduce((total, position) => total + position.quantity, 0)
+            : null;
+          return {
+            ...stage,
+            ...(stage.planVolume == null && volume != null
+              ? { planVolume: volume, planUnit: workRows[0].unit }
+              : {}),
+            resources: (stage.resources ?? []).filter((resource) =>
+              !resource.sourceKey || !workPositionIds.has(resource.sourceKey)
+            ),
+          };
+        });
+        const migrated = stages.some((stage, index) =>
+          (stage.resources ?? []).length !== (s.stages[index].resources ?? []).length ||
+          stage.planVolume !== s.stages[index].planVolume
+        );
+        return {
+          ...s,
+          calculationId: draftId!,
+          updatedAt: now,
+          ...(migrated ? {
+            stages,
+            assumptions: [
+              ...(s.assumptions ?? []).filter((item) => !item.startsWith("Строки работ ФирЕР")),
+              "Строки работ ФирЕР показаны как физический объём этапа, не как численность людей. Даты и производительность сохранены; проверьте состав и ставки ресурсов.",
+            ],
+          } : {}),
+        };
+      });
     }
 
     if (p.reviewStatus === "novaya") {
@@ -2649,7 +2729,7 @@ export function recomputeCalculationCost(
     const incomplete = [
       ...engine.incomplete,
       ...item.positions
-        .filter((position) => position.rateMissing)
+        .filter((position) => position.rateMissing && !position.isWorkItem)
         .slice(0, 20)
         .map((position) => `missing_rate:${position.code || position.id}`),
       ...(buckets.materialsUnpriced ? ["materials_positions"] : []),

@@ -6,7 +6,7 @@ import { createSession } from "@/server/auth";
 import { closeDb, ensureReady, readAppData } from "@/server/db";
 import { analyzeUpload } from "@/server/grand-smeta";
 import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
-import { createManualProcurement } from "@/server/repo";
+import { createManualProcurement, reanalyzeDocument } from "@/server/repo";
 import { detectArchiveFormat } from "@/server/safe-archive";
 import "./setup";
 
@@ -84,6 +84,7 @@ describe("manual procurement file upload", () => {
     });
     const fileName = "ls-01-02-01-demontazh.xlsx";
     const bytes = fs.readFileSync(path.join(process.cwd(), "fixtures/grand-smeta", fileName));
+    const prepared = await analyzeUpload(fileName, "xlsx", bytes);
     const form = new FormData();
     form.set("procurementId", procurement.id);
     form.set("category", "general");
@@ -120,6 +121,11 @@ describe("manual procurement file upload", () => {
     expect(schedule.stages.some((stage) => /^Раздел \d+/i.test(stage.sectionName ?? ""))).toBe(true);
     expect(schedule.stages.some((stage) => Boolean(stage.workName))).toBe(true);
     expect(schedule.stages.some((stage) => Boolean(stage.planVolume && stage.planUnit))).toBe(true);
+    const workPosition = draft.positions.find((position) => position.isWorkItem)!;
+    expect(workPosition).toBeTruthy();
+    const workStage = schedule.stages.find((stage) => stage.name === workPosition.name)!;
+    expect(workStage).toMatchObject({ planVolume: workPosition.quantity, planUnit: workPosition.unit });
+    expect(workStage.resources?.some((resource) => resource.sourceKey === workPosition.id)).toBe(false);
     expect(saw).toMatchObject({ kind: "equipment", quantityBasis: "total_hours", rate: null });
     expect(saw?.sourceKey).toBeTruthy();
     expect(schedule.stages.some((stage) => stage.resources?.some((resource) => resource.kind === "labor"))).toBe(true);
@@ -133,5 +139,20 @@ describe("manual procurement file upload", () => {
     expect(tree.some((node) => node.groups.some((group) => group.leaves.some((leaf) => leaf.name === saw?.name)))).toBe(true);
     const displayedLeaves = tree.flatMap((node) => node.groups.flatMap((group) => group.leaves));
     expect(displayedLeaves.every((leaf) => !/^(?:ЕНИР|ФЕР|ТЕР|ГЭСН)/iu.test(leaf.name))).toBe(true);
+
+    const firstCount = draft.positions.length;
+    reanalyzeDocument("u-tender", document.id, prepared);
+    const repeatedSend = await zakupkiPost(new Request("http://local/api/zakupki", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${createSession("u-tender")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ action: "sendToCalculation", id: procurement.id }),
+    }));
+    expect(repeatedSend.status).toBe(200);
+    const afterReanalysis = readAppData();
+    const refreshedDraft = afterReanalysis.calculations.find((item) => item.id === savedProcurement.calculationId)!;
+    expect(refreshedDraft.positions).toHaveLength(firstCount);
   });
 });
