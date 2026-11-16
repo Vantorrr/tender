@@ -7,6 +7,7 @@ import {
   calculationTotals,
   positionLineSum,
   roundMoney,
+  sourceEstimateTotals,
 } from "@/lib/calc-math";
 import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
 import {
@@ -177,12 +178,14 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
     });
   } else {
     // Immutable original / legacy: позиции × коэф. + НР15/СП8
-    const totals = calculationTotals(calc);
+    const totals = calc.kind === "customer_original" || calc.immutable
+      ? sourceEstimateTotals(calc.positions)
+      : calculationTotals(calc);
     ws.addRow({
       code: "Итого",
       name:
         calc.kind === "customer_original" || calc.immutable
-          ? "Оригинал (НР15/СП8)"
+          ? "Итого исходной сметы"
           : "Итого",
       sum: totals.total,
     });
@@ -379,10 +382,12 @@ export async function buildCalculationPdf(calcId: string): Promise<Buffer> {
     if (calc.officeOverhead != null) drawWrapped(`Офисные расходы отдельно: ${money(calc.officeOverhead)}`, 9, false, muted);
     if (calc.costSummary?.reserve != null) drawWrapped(`Непредвиденные расходы: ${money(calc.costSummary.reserve)}`, 9, false, muted);
   } else {
-    const totals = calculationTotals(calc);
+    const totals = calc.kind === "customer_original" || calc.immutable
+      ? sourceEstimateTotals(calc.positions)
+      : calculationTotals(calc);
     const label =
       calc.kind === "customer_original" || calc.immutable
-        ? "Итого исходной сметы (НР15/СП8)"
+        ? "Итого исходной сметы заказчика"
         : "Итого расчёта";
     drawWrapped(`${label}: ${money(totals.total)}${partial ? " · неполный расчёт" : ""}`, 12, true);
   }

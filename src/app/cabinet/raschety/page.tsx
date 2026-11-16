@@ -3,7 +3,7 @@
 import { EmptyState } from "@/components/empty-state";
 import { EntityCard } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
-import { calculationTotals } from "@/lib/calc-math";
+import { calculationTotals, sourceEstimateTotals } from "@/lib/calc-math";
 import { formatMoney } from "@/lib/format";
 import { SCENARIO_LABELS } from "@/lib/roles";
 import { useStore } from "@/lib/store";
@@ -79,7 +79,7 @@ export default function RaschetyPage() {
               </h2>
               <div className="grid gap-4 md:grid-cols-2">
                 {originals.map((c) => {
-                  const total = calculationTotals(c).total;
+                  const total = sourceEstimateTotals(c.positions).total;
                   return (
                     <EntityCard
                       key={c.id}

@@ -95,6 +95,34 @@ export function calculationTotals(
 }
 
 /**
+ * Totals for an immutable customer estimate. Its source already contains the
+ * customer's priced scope, so never add the draft's default НР/СП percentages.
+ * Explicit НР/СП rows in the source remain included in the source total.
+ */
+export function sourceEstimateTotals(
+  positions: CalcPosition[],
+): { works: number; nr: number; sp: number; total: number } {
+  const sum = (position: CalcPosition) =>
+    position.rateMissing ? 0 : position.quantity * position.rate;
+  const works = roundMoney(
+    positions
+      .filter((position) => position.code !== "НР" && position.code !== "СП")
+      .reduce((total, position) => total + sum(position), 0),
+  );
+  const nr = roundMoney(
+    positions
+      .filter((position) => position.code === "НР")
+      .reduce((total, position) => total + sum(position), 0),
+  );
+  const sp = roundMoney(
+    positions
+      .filter((position) => position.code === "СП")
+      .reduce((total, position) => total + sum(position), 0),
+  );
+  return { works, nr, sp, total: roundMoney(works + nr + sp) };
+}
+
+/**
  * Line amount for UI/export. Work rows take scenario factor;
  * НР/СП are stored already computed from factored works (see recalcCalculation).
  */

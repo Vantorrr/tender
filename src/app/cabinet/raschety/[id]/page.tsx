@@ -36,6 +36,7 @@ import { useStore } from "@/lib/store";
 import {
   calculationTotals,
   positionLineSum,
+  sourceEstimateTotals,
 } from "@/lib/calc-math";
 import { compareCalculations } from "@/lib/calc-compare";
 import type { NorthernInputs } from "@/lib/cost-engine";
@@ -288,8 +289,14 @@ export default function RaschetDetailPage() {
   const compareSignature = JSON.stringify(compare);
   const compareAiBatches = Math.ceil(compare.rows.length / 80);
 
-  const totals = calculationTotals(calc);
-  const originalTotals = paired ? calculationTotals(paired) : null;
+  const totals = calc.kind === "customer_original"
+    ? sourceEstimateTotals(calc.positions)
+    : calculationTotals(calc);
+  const originalTotals = paired
+    ? paired.kind === "customer_original"
+      ? sourceEstimateTotals(paired.positions)
+      : calculationTotals(paired)
+    : null;
   const draftSlices = calc.costSummary?.resourceSlices;
   /** Draft chip: unified Z when present; never pretend NR15/SP8 == resource Z. */
   const total =

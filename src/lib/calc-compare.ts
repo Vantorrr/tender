@@ -3,7 +3,7 @@
  * Causes are only from measurable diffs — never invented LLM prose.
  */
 
-import { calculationTotals, roundMoney } from "@/lib/calc-math";
+import { calculationTotals, roundMoney, sourceEstimateTotals } from "@/lib/calc-math";
 import type { CalcPosition, Calculation, CalcCompareRow } from "@/lib/types";
 
 function keyOf(p: CalcPosition): string {
@@ -187,7 +187,7 @@ export function compareCalculations(
 
   const originalHasMissingRates = Boolean(original?.positions.some((position) => position.rateMissing));
   const draftHasMissingRates = Boolean(draft?.positions.some((position) => position.rateMissing));
-  const oTot = original && !originalHasMissingRates ? calculationTotals(original) : null;
+  const oTot = original && !originalHasMissingRates ? sourceEstimateTotals(original.positions) : null;
   const dTot = draft && !draftHasMissingRates ? calculationTotals(draft) : null;
   if (originalHasMissingRates || draftHasMissingRates) {
     notes.push("Итоги не рассчитаны: в одной из смет есть неподтверждённые ставки");

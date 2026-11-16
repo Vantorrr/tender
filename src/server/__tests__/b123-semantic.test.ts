@@ -35,6 +35,7 @@ import {
   positionLineSum,
   positionSum,
   scenarioFactor,
+  sourceEstimateTotals,
   unitConflicts,
   worksSubtotal,
 } from "@/lib/calc-math";
@@ -58,6 +59,24 @@ afterEach(() => {
 });
 
 describe("B1 procurement honesty", () => {
+  it("shows customer source totals without auto-applying draft НР/СП", () => {
+    const positions: CalcPosition[] = [
+      { id: "work", code: "CUST-TOTAL", name: "Работы", unit: "компл", quantity: 1, rate: 100_000 },
+    ];
+    expect(sourceEstimateTotals(positions)).toEqual({
+      works: 100_000,
+      nr: 0,
+      sp: 0,
+      total: 100_000,
+    });
+    expect(calculationTotals({ positions, scenarioFactor: 1 }).total).toBe(123_000);
+    expect(sourceEstimateTotals([
+      ...positions,
+      { id: "nr", code: "НР", name: "Накладные", unit: "компл", quantity: 1, rate: 15_000 },
+      { id: "sp", code: "СП", name: "Прибыль", unit: "компл", quantity: 1, rate: 8_000 },
+    ]).total).toBe(123_000);
+  });
+
   it("stub never invents AUTO procurements", async () => {
     const feed = await new StubProcurementSource().fetchNotices("org-alfa");
     expect(feed.notices).toHaveLength(0);
