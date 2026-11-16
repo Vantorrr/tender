@@ -597,6 +597,28 @@ describe("client corrections stage 1", () => {
     expect(note.missingInputs).not.toContain("нет ТЗ / извещения");
   });
 
+  it("recognizes Cyrillic ТЗ abbreviation in a document title or file name", () => {
+    const p = readAppData().procurements.find((x) => x.id === "p-norilsk-1")!;
+    const note = buildProjectAnalytics(p, [{
+      id: "doc-tz-abbreviation",
+      orgId: p.orgId,
+      procurementId: p.id,
+      title: "ТЗ заказчика",
+      fileName: "ТЗ.pdf",
+      fileType: "pdf",
+      category: "general",
+      status: "v_rabote",
+      versions: [],
+      analyticalNote: "Документ загружен и обработан.",
+      citations: [],
+      highlights: [],
+      uploadedBy: "u-tender",
+      uploadedAt: new Date().toISOString(),
+      storedPath: "uploads/tz.pdf",
+    }]);
+    expect(note.missingInputs).not.toContain("нет ТЗ / извещения");
+  });
+
   it("detects estimate, contract, and specification evidence in manually categorized package files", () => {
     const data = readAppData();
     const p = data.procurements.find((item) => item.id === "p-norilsk-1")!;

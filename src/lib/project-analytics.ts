@@ -51,7 +51,7 @@ export function buildProjectAnalytics(
     (d) => d.category === "contract" || /dogovor|договор|контракт/i.test(searchable(d))
   );
   const hasTz = sourceDocs.some((d) =>
-    d.category === "tz" || /\btz\b|\bтз\b|извещ|техническ.{0,12}задан|ведомост.{0,12}объем/i.test(searchable(d))
+    d.category === "tz" || /(?:^|[^а-яёa-z0-9])(?:tz|тз)(?=$|[^а-яёa-z0-9])|извещ|техническ.{0,12}задан|ведомост.{0,12}об[ъь]?ем/iu.test(searchable(d))
   );
   const analyzed = sourceDocs.filter(
     (d) => (d.analyticalNote && d.analyticalNote.length > 40) || d.analysis
