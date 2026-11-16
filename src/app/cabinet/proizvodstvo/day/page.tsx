@@ -14,7 +14,7 @@ import {
   planResourceLinesForDay,
   stagesForWork,
 } from "@/lib/day-resource-plan";
-import { formatDate, formatNumber } from "@/lib/format";
+import { formatDate, formatNumber, todayIsoInTimeZone } from "@/lib/format";
 import { allocatePlanForSlice } from "@/lib/plan-from-gpr";
 import {
   entryDisplayFact,
@@ -116,7 +116,7 @@ function DayDetailsInner() {
 
   const planFactId = sp.get("planFactId") ?? "";
   const [date, setDate] = useState(
-    sp.get("date") ?? new Date().toISOString().slice(0, 10)
+    sp.get("date") ?? todayIsoInTimeZone()
   );
   const workParam = sp.get("work") ?? "";
 

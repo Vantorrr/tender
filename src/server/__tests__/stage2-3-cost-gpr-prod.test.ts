@@ -6,6 +6,7 @@ import {
   sendProcurementToCalculation,
   shiftGprStage,
   transferProcurementToProduction,
+  updateSchedule,
 } from "@/server/repo";
 import {
   busCost,
@@ -16,7 +17,8 @@ import {
 } from "@/lib/cost-engine";
 import { parseDateRu, formatDate } from "@/lib/format";
 import { T25U_TEST } from "@/lib/t25u-test-fixture";
-import { totalStageCalendarDays } from "@/lib/plan-from-gpr";
+import { stagesForWork as linkedGprStages, totalStageCalendarDays } from "@/lib/plan-from-gpr";
+import { stageMatchesWork } from "@/lib/day-resource-plan";
 import {
   entryDisplayFact,
   entryDisplayRemain,
@@ -525,6 +527,58 @@ describe("stage3 won→production + daily fact + baseline", () => {
       { workName: "Монтаж труб", unit: "м", plan: 30, fact: 0, contractRemaining: 30 },
     ]);
     expect(plan.baselineEntries).toEqual(plan.entries);
+  });
+
+  it("seeds production plan from GPR and follows later GPR volume edits without losing fact", () => {
+    const procurementId = "p-1";
+    const schedule = readAppData().schedules.find((item) => item.procurementId === procurementId)!;
+    const stages = [{
+      id: "gpr-work-volume",
+      name: "Монтаж труб",
+      start: "2026-11-01",
+      end: "2026-11-05",
+      sequence: 1,
+      planVolume: 20,
+      planUnit: "м",
+      resources: [],
+    }];
+    mutateAppData((data) => {
+      const procurement = data.procurements.find((item) => item.id === procurementId)!;
+      procurement.lifecycle = "won";
+      const linked = data.schedules.find((item) => item.id === schedule.id)!;
+      linked.stages = stages;
+      const plan = data.planFacts.find((item) => item.id === procurement.planFactId)!;
+      plan.entries = [];
+      plan.baselineEntries = undefined;
+      plan.dailyFacts = [];
+      return data;
+    });
+
+    transferProcurementToProduction("u-ruk", procurementId);
+    let data = readAppData();
+    let plan = data.planFacts.find((item) => item.procurementId === procurementId)!;
+    const activeSchedule = data.schedules.find((item) => item.id === schedule.id)!;
+    expect(plan.entries).toMatchObject([
+      { workName: "Монтаж труб", unit: "м", plan: 20, fact: 0, contractRemaining: 20 },
+    ]);
+    const linkedStages = linkedGprStages(plan.entries.map((entry) => entry.workName), activeSchedule.stages, "Монтаж труб");
+    expect(linkedStages).toHaveLength(1);
+    expect(stageMatchesWork(activeSchedule.stages[0], "Монтаж труб")).toBe(true);
+
+    mutateAppData((current) => {
+      const target = current.planFacts.find((item) => item.id === plan.id)!;
+      target.entries[0].fact = 4;
+      target.entries[0].contractRemaining = 16;
+      return current;
+    });
+    updateSchedule("u-ruk", schedule.id, {
+      stages: [{ ...stages[0], planVolume: 30 }],
+    });
+    data = readAppData();
+    plan = data.planFacts.find((item) => item.procurementId === procurementId)!;
+    expect(plan.entries).toMatchObject([
+      { workName: "Монтаж труб", unit: "м", plan: 30, fact: 4, contractRemaining: 26 },
+    ]);
   });
 
   it("daily fact updates physical totals without touching cash", () => {

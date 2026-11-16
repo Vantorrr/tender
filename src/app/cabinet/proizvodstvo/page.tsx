@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/table";
 import { DateInputRu } from "@/components/date-input-ru";
 import { api, downloadUrl } from "@/lib/api";
-import { formatDate, formatMoney, formatNumber } from "@/lib/format";
+import { formatDate, formatMoney, formatNumber, todayIsoInTimeZone } from "@/lib/format";
 import { userHasSection } from "@/lib/acl";
 import {
   entryDisplayFact,
@@ -65,7 +65,7 @@ export default function ProizvodstvoPage() {
       : new URLSearchParams(window.location.search).get("planFactId") ?? ""
   );
   const [period, setPeriod] = useState<PeriodMode>("cum");
-  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(todayIsoInTimeZone());
   const [qty, setQty] = useState("1");
   const [newWorkName, setNewWorkName] = useState("");
   const [newWorkUnit, setNewWorkUnit] = useState("");

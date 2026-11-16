@@ -50,7 +50,7 @@ import { randomBytes } from "node:crypto";
 import { economicsFromVolumes } from "@/lib/economics-from-rates";
 import { ensureStageResources } from "@/lib/gpr-resources";
 import { gprCoveredDays, totalStageCalendarDays } from "@/lib/plan-from-gpr";
-import { recomputeEntriesFromDaily } from "@/lib/plan-fact-agg";
+import { recomputeEntriesFromDaily, sumDailyQty } from "@/lib/plan-fact-agg";
 import { buildMaterialNeeds, materialNeedsIncomplete } from "@/lib/materials-need";
 import {
   EXCEL_RESOURCE_SCHEDULE_DEFAULTS,
@@ -1044,6 +1044,75 @@ function productionEntriesFromCustomerEstimate(data: AppData, procurementId: str
   }));
 }
 
+/** Physical production plan comes from explicit work volumes in the linked GPR. */
+function productionEntriesFromSchedule(data: AppData, procurementId: string): PlanFactEntry[] {
+  const schedule = data.schedules.find((item) => item.procurementId === procurementId);
+  if (!schedule) return [];
+  const grouped = new Map<string, { workName: string; unit: string; plan: number }>();
+  for (const stage of schedule.stages) {
+    if (!Number.isFinite(stage.planVolume) || (stage.planVolume ?? 0) <= 0 || !stage.planUnit?.trim()) continue;
+    const linkedWorks = stage.workNames?.filter((name) => name.trim()) ?? [];
+    // A stage total cannot safely be copied to each of several work types.
+    const workName = stage.workName?.trim() || (linkedWorks.length === 1 ? linkedWorks[0].trim() : "") ||
+      (linkedWorks.length === 0 ? stage.name.trim() : "");
+    if (!workName) continue;
+    const unit = stage.planUnit.trim();
+    const key = `${workName.toLocaleLowerCase("ru-RU")}\u0000${unit.toLocaleLowerCase("ru-RU")}`;
+    const row = grouped.get(key) ?? { workName, unit, plan: 0 };
+    row.plan += stage.planVolume!;
+    grouped.set(key, row);
+  }
+  return [...grouped.values()].map((row, index) => ({
+    id: `pfe-gpr-${procurementId}-${index + 1}`,
+    workName: row.workName,
+    unit: row.unit,
+    plan: row.plan,
+    fact: 0,
+    contractRemaining: row.plan,
+  }));
+}
+
+/** Refresh GPR-sourced rows without discarding entered facts or manual plan rows. */
+function syncProductionPlanFromSchedule(data: AppData, schedule: GprSchedule) {
+  const procurement = data.procurements.find((item) => item.id === schedule.procurementId);
+  if (!procurement || procurement.lifecycle !== "production" || !procurement.planFactId) return;
+  const plan = data.planFacts.find((item) => item.id === procurement.planFactId);
+  if (!plan) return;
+  const derived = productionEntriesFromSchedule(data, procurement.id);
+  const keyOf = (entry: Pick<PlanFactEntry, "workName" | "unit">) =>
+    `${entry.workName.trim().toLocaleLowerCase("ru-RU")}\u0000${entry.unit.trim().toLocaleLowerCase("ru-RU")}`;
+  const oldByKey = new Map(plan.entries.map((entry) => [keyOf(entry), entry]));
+  const nextKeys = new Set(derived.map(keyOf));
+  const next: PlanFactEntry[] = derived.map((entry) => {
+    const old = oldByKey.get(keyOf(entry));
+    const dailyHasFact = (plan.dailyFacts ?? []).some((daily) => daily.workName.trim() === entry.workName.trim());
+    const fact = dailyHasFact
+      ? Math.round(sumDailyQty(plan.dailyFacts, { workName: entry.workName }) * 1000) / 1000
+      : old?.fact ?? 0;
+    return {
+      ...entry,
+      ...(old ? { id: old.id } : {}),
+      fact,
+      contractRemaining: Math.max(0, entry.plan - fact),
+    };
+  });
+  for (const old of plan.entries) {
+    if (nextKeys.has(keyOf(old))) continue;
+    const hasRecordedFact = old.fact > 0 || (plan.dailyFacts ?? []).some((fact) =>
+      fact.workName.trim() === old.workName.trim() && fact.unit.trim() === old.unit.trim() && fact.quantity > 0
+    );
+    const importedEstimateOrGpr = old.id.startsWith("pfe-gpr-") || old.id.startsWith("pfe-est-");
+    if (hasRecordedFact || !importedEstimateOrGpr) next.push(old);
+  }
+  plan.entries = next;
+  plan.updatedAt = new Date().toISOString();
+}
+
+function productionEntriesForProcurement(data: AppData, procurementId: string): PlanFactEntry[] {
+  const fromGpr = productionEntriesFromSchedule(data, procurementId);
+  return fromGpr.length ? fromGpr : productionEntriesFromCustomerEstimate(data, procurementId);
+}
+
 export function updateSchedule(
   actorId: string,
   id: string,
@@ -1057,6 +1126,14 @@ export function updateSchedule(
     const { orgId: _o, id: _i, ...safe } = patch;
     void _o;
     void _i;
+    const physicalPlanSignature = (stages: GprStage[]) => JSON.stringify(stages.map((stage) => ({
+      name: stage.name,
+      workName: stage.workName,
+      workNames: stage.workNames,
+      planVolume: stage.planVolume,
+      planUnit: stage.planUnit,
+    })));
+    const previousPhysicalPlan = safe.stages ? physicalPlanSignature(item.stages) : null;
     data.schedules = data.schedules.map((s) =>
       s.id === id
         ? { ...s, ...safe, updatedAt: new Date().toISOString() }
@@ -1075,6 +1152,9 @@ export function updateSchedule(
           replacePositions: true,
         });
         Object.assign(calc, synced.calc);
+      }
+      if (previousPhysicalPlan !== physicalPlanSignature(updated.stages)) {
+        syncProductionPlanFromSchedule(data, updated);
       }
     }
     audit(data, actorId, "update", "gpr", id, "Обновление ГПР");
@@ -2611,7 +2691,7 @@ export function transferProcurementToProduction(
         procurementId: p.id,
         title: `План/факт — ${p.title.slice(0, 48)}`,
         status: "v_rabote",
-        entries: productionEntriesFromCustomerEstimate(data, p.id),
+        entries: productionEntriesForProcurement(data, p.id),
         dailyFacts: [],
         updatedAt: now,
       });
@@ -2627,10 +2707,10 @@ export function transferProcurementToProduction(
       pf.entries[0].workName === "Общий объём" &&
       pf.entries[0].unit === "%"
     ) {
-      pf.entries = productionEntriesFromCustomerEstimate(data, p.id);
+      pf.entries = productionEntriesForProcurement(data, p.id);
     }
     if (!pf.baselineEntries && (pf.dailyFacts ?? []).length === 0 && pf.entries.length === 0) {
-      pf.entries = productionEntriesFromCustomerEstimate(data, p.id);
+      pf.entries = productionEntriesForProcurement(data, p.id);
     }
     if (!pf.baselineEntries) {
       pf.baselineEntries = structuredClone(pf.entries) as PlanFactEntry[];

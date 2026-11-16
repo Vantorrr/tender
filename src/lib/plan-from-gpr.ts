@@ -17,7 +17,9 @@ export function stagesForWork(
   if (!key) return [];
   const linked = stages.filter((stage) =>
     (stage.workNames?.length ? stage.workNames : [stage.workName])
-      .some((name) => name?.trim() === key)
+      .some((name) => name?.trim() === key) ||
+    (!stage.workName && !stage.workNames?.length && stage.planVolume != null &&
+      Boolean(stage.planUnit?.trim()) && stage.name.trim() === key)
   );
   if (linked.length) return linked;
   const hasMultipleWorks = new Set(workNames.map((name) => name.trim()).filter(Boolean)).size > 1;

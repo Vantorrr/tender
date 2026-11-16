@@ -13,6 +13,18 @@ export function formatNumber(value: number, digits = 2): string {
   }).format(value);
 }
 
+/** Today's calendar date in the project's operating timezone, not UTC. */
+export function todayIsoInTimeZone(timeZone = "Europe/Moscow", now = new Date()): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day}`;
+}
+
 /** Calendar day as DD.MM.YYYY (client requirement). Uses UTC noon to avoid TZ shift. */
 export function formatDate(iso: string): string {
   const raw = iso.includes("T") ? iso.slice(0, 10) : iso;
