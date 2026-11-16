@@ -5,7 +5,7 @@ import {
   getProcurementSource,
   type ProcurementNoticeDraft,
 } from "@/server/procurement-source";
-import { reanalyzeDocument } from "@/server/repo";
+import { reanalyzeDocument, refreshProcurementAnalytics } from "@/server/repo";
 import { readUpload } from "@/server/uploads";
 
 /** Normalized notice number for dedup (strip -DUP/-AUTO suffixes). */
@@ -258,6 +258,9 @@ export async function runReanalyzePipeline(
         )
       : null;
     const data = reanalyzeDocument(actorId, documentId, prepared);
+    if (existing.procurementId) {
+      refreshProcurementAnalytics(actorId, existing.procurementId);
+    }
     updateJob(id, {
       status: "done",
       detail: useLlm
