@@ -162,10 +162,11 @@ function DayDetailsInner() {
     selectedWork
   );
 
-  const existingLines = dayFacts.reduce<DailyFact | undefined>(
+  const latestDayFact = dayFacts.reduce<DailyFact | undefined>(
     (latest, item) => (!latest || item.at > latest.at ? item : latest),
     undefined
-  )?.resourceLines;
+  );
+  const existingLines = latestDayFact?.resourceLines;
   const [lines, setLines] = useState<DailyResourceLine[] | null>(null);
   const displayLines = lines ?? existingLines ?? baselineLines;
 
@@ -199,9 +200,18 @@ function DayDetailsInner() {
 
   async function save(withPhoto: boolean) {
     if (savingRef.current || !entry) return;
+    if (withPhoto && !photoRef.current?.files?.[0]) {
+      toast.error("Сначала выберите фото кнопкой «Загрузить фото»");
+      return;
+    }
+    const quantity = Number(qty) - (dayQty - (latestDayFact?.quantity ?? 0));
+    if (!Number.isFinite(quantity) || quantity < 0) {
+      toast.error("Объём не может быть меньше других записей этого дня. Исправьте предыдущие записи в производстве.");
+      return;
+    }
     savingRef.current = true;
     setSaving(true);
-    const factId = pendingFactIdRef.current ?? createDailyFactId();
+    const factId = pendingFactIdRef.current ?? latestDayFact?.id ?? createDailyFactId();
     pendingFactIdRef.current = factId;
     try {
       const resourceLines = displayLines.map((l) => ({
@@ -215,7 +225,7 @@ function DayDetailsInner() {
         form.append("date", date);
         form.append("workName", selectedWork);
         form.append("unit", entry?.unit ?? "%");
-        form.append("quantity", qty || "0");
+        form.append("quantity", String(quantity));
         form.append("resourceLines", JSON.stringify(resourceLines));
         if (caption.trim()) form.append("caption", caption.trim());
         form.append("photo", photoRef.current.files[0]);
@@ -231,7 +241,7 @@ function DayDetailsInner() {
               date,
               workName: selectedWork,
               unit: entry?.unit ?? "%",
-              quantity: Number(qty) || 0,
+              quantity,
               resourceLines,
               comment: caption.trim() || undefined,
             },
@@ -396,7 +406,7 @@ function DayDetailsInner() {
           <p className="mt-1 font-[family-name:var(--font-display)] text-3xl">
             {dayPlan > 0 ? (
               <>
-                {Math.round((factVal / dayPlan) * 100)}%
+                {Math.round((factVal / (entry?.plan || dayPlan)) * 100)}%
                 <span className="ml-2 text-base font-normal text-teal-100">
                   ({formatNumber(factVal)} {entry?.unit ?? ""})
                 </span>
@@ -414,6 +424,7 @@ function DayDetailsInner() {
               {linkedStages.length === 0 ? "—" : formatNumber(delta)}
             </span>
           </p>
+          <p className="mt-1 text-xs text-teal-100">Проценты плана и факта — от объёма договора.</p>
           <p className="mt-1 text-xs text-teal-100">
             Накоплено по виду работ: {formatNumber(contractFact)} /{" "}
             {formatNumber(entry?.plan ?? 0)}

@@ -200,13 +200,18 @@ export default function ProizvodstvoPage() {
   const selectedWorkStages = plan
     ? stagesForWork(plan.entries.map((entry) => entry.workName), gprStages, selectedWork)
     : [];
-  const planSlice = allocatePlanForSlice(
-    totals.plan,
-    gprStages,
-    period,
-    date,
-    gpr?.calendar
-  );
+  const planForEntries = (mode: PeriodMode) => {
+    const slices = (plan?.entries ?? []).map((entry) => allocatePlanForSlice(
+      entry.plan,
+      stagesForWork(plan!.entries.map((item) => item.workName), gprStages, entry.workName),
+      mode, date, gpr?.calendar
+    ));
+    return {
+      plan: slices.reduce((sum, slice) => sum + slice.plan, 0),
+      source: slices.some((slice) => slice.source === "stage_volumes") ? "stage_volumes" : slices.some((slice) => slice.source === "uniform_fallback") ? "uniform_fallback" : "none",
+    };
+  };
+  const planSlice = planForEntries(period);
   const periodPlan = planSlice.plan;
   const sliceVariance = periodFact - periodPlan;
   const varianceKey = JSON.stringify({
@@ -471,13 +476,7 @@ export default function ProizvodstvoPage() {
                       {formatNumber(
                         period === "month"
                           ? periodPlan
-                          : allocatePlanForSlice(
-                              totals.plan,
-                              gprStages,
-                              "month",
-                              date,
-                              gpr?.calendar
-                            ).plan
+                          : planForEntries("month").plan
                       )}{" "}
                       {planUnits[0] ?? ""}
                     </p>
@@ -832,7 +831,7 @@ export default function ProizvodstvoPage() {
                                 <option key={status} value={status}>{SUPPLY_STATUS_LABELS[status]}</option>
                               ))}
                             </select>
-                            {overdue ? <p className="mt-1 text-xs font-medium text-rose-700">Срок просрочен на {formatDate(date)}</p> : null}
+                            {overdue ? <p className="mt-1 text-xs font-medium text-rose-700">Поставка просрочена · требовалась к {formatDate(supply.needBy)}</p> : null}
                           </div>
                           <label className="text-xs text-[var(--tk-muted)]">
                             Получено ({supply.unit})
