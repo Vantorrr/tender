@@ -548,3 +548,44 @@
     animation-duration: 0.32s;
   }
 }
+
+/* Keep Word pages looking like pages inside the scrollable web preview. */
+.tma361-docx-wrapper {
+  align-items: center !important;
+  gap: 1.25rem;
+  padding: 1.25rem !important;
+  background: #e9edf3 !important;
+}
+
+.tma361-docx-wrapper > section.tma361-docx {
+  flex: 0 0 auto;
+  max-width: 100%;
+  margin: 0 auto 1.25rem !important;
+  background: #fff !important;
+  box-shadow: 0 2px 12px rgb(15 23 42 / 14%) !important;
+}
+
+.tma361-docx-wrapper > section.tma361-docx:not([style*="width"]) {
+  box-sizing: border-box;
+  width: min(210mm, calc(100vw - 5rem));
+  min-height: 297mm;
+  padding: 24mm 22mm;
+}
+
+.tma361-docx-wrapper .tma361-docx table {
+  max-width: 100%;
+  table-layout: fixed;
+}
+
+.tma361-docx-wrapper .tma361-docx td,
+.tma361-docx-wrapper .tma361-docx th {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .tma361-docx-wrapper > section.tma361-docx:not([style*="width"]) {
+    width: 100%;
+    min-height: 0;
+    padding: 1rem;
+  }
+}

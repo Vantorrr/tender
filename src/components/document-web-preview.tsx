@@ -10,7 +10,15 @@ type PreviewData =
   | { kind: "pdf" }
   | { kind: "image" }
   | { kind: "docx"; paragraphs: Array<{ index: number; text: string }> }
-  | { kind: "xlsx"; sheets: Array<{ name: string; rows: string[][] }> }
+  | {
+      kind: "xlsx";
+      sheets: Array<{
+        name: string;
+        columns: Array<{ sourceIndex: number; width: number }>;
+        merges: Array<{ row: number; column: number; rowSpan: number; colSpan: number }>;
+        rows: Array<{ number: number; height?: number; cells: string[] }>;
+      }>;
+    }
   | { kind: "archive"; files: NonNullable<DocumentItem["extractedFiles"]>; errors: string[] }
   | { kind: "unsupported"; fileName: string };
 
@@ -64,6 +72,8 @@ export function DocumentWebPreview({ document }: { document: DocumentItem }) {
         if (alive) setDocxLoaded(true);
       } catch (reason) {
         if (alive && !controller.signal.aborted) {
+          bodyElement?.replaceChildren();
+          stylesElement?.replaceChildren();
           setDocxRenderError(reason instanceof Error ? reason.message : "Не удалось отобразить DOCX");
         }
       }
@@ -79,8 +89,7 @@ export function DocumentWebPreview({ document }: { document: DocumentItem }) {
   const currentSheet = preview?.kind === "xlsx" ? preview.sheets[sheet] : undefined;
   const query = search.trim().toLocaleLowerCase("ru-RU");
   const visibleRows = useMemo(() => (currentSheet?.rows ?? [])
-    .map((row, index) => ({ row, index }))
-    .filter(({ row }) => !query || row.some((cell) => cell.toLocaleLowerCase("ru-RU").includes(query))), [currentSheet, query]);
+    .filter(({ cells }) => !query || cells.some((cell) => cell.toLocaleLowerCase("ru-RU").includes(query))), [currentSheet, query]);
 
   if (error) return <Alert variant="destructive"><AlertDescription>{error}</AlertDescription></Alert>;
   if (!preview) return <p className="p-4 text-sm text-[var(--tk-muted)]">Открываем файл…</p>;
@@ -100,14 +109,27 @@ export function DocumentWebPreview({ document }: { document: DocumentItem }) {
   }
   if (preview.kind === "docx") {
     return <div className="max-h-[75vh] overflow-auto rounded-lg border bg-stone-100 p-4" data-testid="docx-document-preview">
+      {docxRenderError ? <Alert variant="destructive" className="mb-3"><AlertDescription>
+        Не удалось сохранить исходное оформление файла ({docxRenderError}). Ниже показана текстовая версия. <a className="font-medium underline" href={`/api/dokumenty/file?id=${encodeURIComponent(document.id)}`}>Скачать оригинал DOCX</a>
+      </AlertDescription></Alert> : null}
       <div ref={docxStylesRef} />
       <div ref={docxBodyRef} />
-      {docxRenderError ? <Alert variant="destructive" className="mt-3"><AlertDescription>{docxRenderError} · Ниже показан текстовый запасной просмотр.</AlertDescription></Alert> : null}
-      {docxRenderError ? <div className="mt-3 space-y-2 rounded-lg bg-white p-5 text-sm leading-relaxed">{preview.paragraphs.map((paragraph) => <p key={paragraph.index}>{paragraph.text}</p>)}</div> : null}
+      {docxRenderError ? <article className="mx-auto mt-3 max-w-[210mm] space-y-3 rounded-lg bg-white px-8 py-10 text-sm leading-7 shadow-sm">{preview.paragraphs.map((paragraph) => <p key={paragraph.index}>{paragraph.text}</p>)}</article> : null}
       {!docxLoaded && !docxRenderError ? <p className="p-4 text-sm text-[var(--tk-muted)]">Загружаем форматированный документ…</p> : null}
     </div>;
   }
   if (preview.kind === "xlsx") {
+    const sourceColumnCount = currentSheet?.columns.length ?? 0;
+    const activeMerges = query ? [] : currentSheet?.merges ?? [];
+    const mergeByCell = new Map(activeMerges.map((merge) => [`${merge.row}:${merge.column}`, merge]));
+    const mergedCells = new Set<string>();
+    for (const merge of activeMerges) {
+      for (let rowIndex = merge.row; rowIndex < merge.row + merge.rowSpan; rowIndex += 1) {
+        for (let columnIndex = merge.column; columnIndex < merge.column + merge.colSpan; columnIndex += 1) {
+          if (rowIndex !== merge.row || columnIndex !== merge.column) mergedCells.add(`${rowIndex}:${columnIndex}`);
+        }
+      }
+    }
     const columnName = (index: number) => {
       let value = index + 1;
       let label = "";
@@ -118,7 +140,7 @@ export function DocumentWebPreview({ document }: { document: DocumentItem }) {
       }
       return label;
     };
-    return <div className="overflow-hidden rounded-lg border bg-white">
+    return <div className="overflow-hidden rounded-lg border bg-white" data-testid="xlsx-document-preview">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b bg-stone-50 p-3">
         <div className="flex min-w-0 gap-1 overflow-x-auto" role="tablist" aria-label="Листы таблицы">
           {preview.sheets.map((item, index) => <button key={item.name} type="button" role="tab" aria-selected={sheet === index} onClick={() => setSheet(index)} className={`shrink-0 rounded-md px-3 py-1.5 text-sm ${sheet === index ? "bg-slate-900 text-white" : "hover:bg-stone-200"}`}>{item.name}</button>)}
@@ -129,25 +151,32 @@ export function DocumentWebPreview({ document }: { document: DocumentItem }) {
         </label>
       </div>
       <div className="max-h-[65vh] overflow-auto">
-        <table className="min-w-full border-collapse text-xs tabular-nums" data-testid="spreadsheet-document-preview">
+        <table className="w-max min-w-full table-fixed border-collapse text-xs tabular-nums" data-testid="spreadsheet-document-preview">
           <caption className="sr-only">Предпросмотр листа {currentSheet?.name ?? ""}</caption>
+          <colgroup>
+            <col style={{ width: 48 }} />
+            {(currentSheet?.columns ?? []).map((column) => <col key={column.sourceIndex} style={{ width: column.width }} />)}
+          </colgroup>
           <thead className="sticky top-0 z-20 bg-slate-100 text-[var(--tk-muted)] shadow-sm">
             <tr>
               <th scope="col" className="sticky left-0 z-30 min-w-12 border-b border-r bg-slate-100 px-2 py-2 text-center font-medium">№</th>
-              {Array.from({ length: Math.max(0, ...((currentSheet?.rows ?? []).map((row) => row.length))) }, (_, colIndex) => <th key={colIndex} scope="col" className="min-w-24 border-b border-r px-2 py-2 text-center font-medium">{columnName(colIndex)}</th>)}
+              {(currentSheet?.columns ?? []).map((column) => <th key={column.sourceIndex} scope="col" className="border-b border-r px-2 py-2 text-center font-medium">{columnName(column.sourceIndex - 1)}</th>)}
             </tr>
           </thead>
-          <tbody>{visibleRows.map(({ row, index }) => <tr key={index} className="border-b even:bg-stone-50 hover:bg-amber-50/70" data-testid="spreadsheet-preview-row">
-            <th scope="row" className="sticky left-0 z-10 border-r bg-stone-100 px-2 py-1.5 text-center font-medium text-[var(--tk-muted)]">{index + 1}</th>
-            {row.map((cell, colIndex) => {
+          <tbody>{visibleRows.map((row) => <tr key={row.number} className="border-b even:bg-stone-50 hover:bg-amber-50/70" data-testid="spreadsheet-preview-row" style={row.height ? { height: row.height } : undefined}>
+            <th scope="row" className="sticky left-0 z-10 border-r bg-stone-100 px-2 py-1.5 text-center font-medium text-[var(--tk-muted)]">{row.number}</th>
+            {row.cells.slice(0, sourceColumnCount).map((cell, colIndex) => {
+              if (mergedCells.has(`${row.number - 1}:${colIndex}`)) return null;
               const displayValue = cell.trim();
-              return <td key={colIndex} title={displayValue || undefined} className={`max-w-[24rem] border-r px-2 py-1.5 align-top ${/^-?\d[\d\s.,]*%?$/.test(displayValue) ? "whitespace-nowrap text-right" : "min-w-32 whitespace-pre-wrap"}`}><span className="block max-h-12 overflow-y-auto">{displayValue || <span aria-hidden="true" className="text-stone-300">&nbsp;</span>}</span></td>;
+              const merge = mergeByCell.get(`${row.number - 1}:${colIndex}`);
+              const textAlign = /^-?\d[\d\s.,]*%?$/.test(displayValue) ? "text-right" : "text-left";
+              return <td key={colIndex} colSpan={merge?.colSpan} rowSpan={merge?.rowSpan} title={displayValue || undefined} className={`border-r border-b border-stone-200 px-2 py-1.5 align-top ${textAlign} ${merge ? "bg-slate-50/70" : ""}`}><span className="whitespace-pre-wrap break-words">{displayValue || <span aria-hidden="true" className="text-stone-300">&nbsp;</span>}</span></td>;
             })}
           </tr>)}</tbody>
         </table>
         {!visibleRows.length ? <p className="px-4 py-8 text-center text-sm text-[var(--tk-muted)]">{query ? "Совпадений не найдено." : "На листе нет заполненных строк."}</p> : null}
       </div>
-      <p className="border-t bg-stone-50 px-3 py-2 text-xs text-[var(--tk-muted)]" aria-live="polite">Лист «{currentSheet?.name ?? "—"}» · строк в предпросмотре: {visibleRows.length}{query ? ` из ${currentSheet?.rows.length ?? 0}` : ""} · максимум 500 строк и 30 столбцов.</p>
+      <p className="border-t bg-stone-50 px-3 py-2 text-xs text-[var(--tk-muted)]" aria-live="polite">Лист «{currentSheet?.name ?? "—"}» · строк в предпросмотре: {visibleRows.length}{query ? ` из ${currentSheet?.rows.length ?? 0}` : ""} · скрытые в Excel столбцы не показаны; предпросмотр ограничен 500 строками и 30 видимыми столбцами.</p>
     </div>;
   }
   if (preview.kind === "archive") return <div className="space-y-3">

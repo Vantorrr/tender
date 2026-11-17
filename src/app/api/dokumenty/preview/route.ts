@@ -58,14 +58,79 @@ export async function GET(req: Request) {
       const workbook = new ExcelJS.Workbook();
       await workbook.xlsx.load(bytes as unknown as ExcelJS.Buffer);
       const sheets = workbook.worksheets.slice(0, 20).map((sheet) => {
-        const rows: string[][] = [];
         const lastRow = Math.min(sheet.rowCount, 500);
-        const lastColumn = Math.min(sheet.columnCount, 30);
+        const usedVisibleColumns = new Set<number>();
+        for (let rowIndex = 1; rowIndex <= lastRow; rowIndex += 1) {
+          sheet.getRow(rowIndex).eachCell({ includeEmpty: false }, (cell) => {
+            if (cell.value == null || cell.isMerged && cell.master.address !== cell.address) return;
+            const columnNumber = cell.fullAddress.col;
+            if (!sheet.getColumn(columnNumber).hidden) usedVisibleColumns.add(columnNumber);
+          });
+        }
+        const usedColumnNumbers = [...usedVisibleColumns].sort((a, b) => a - b);
+        const firstColumn = usedColumnNumbers[0] ?? 1;
+        const lastColumn = usedColumnNumbers.at(-1) ?? Math.min(sheet.columnCount, 14);
+        const sourceColumns = Array.from({ length: Math.max(1, lastColumn - firstColumn + 1) }, (_, index) => firstColumn + index)
+          .filter((columnNumber) => !sheet.getColumn(columnNumber).hidden)
+          .slice(0, 30);
+        const visibleColumnIndex = new Map(sourceColumns.map((columnNumber, index) => [columnNumber, index]));
+        const columns = sourceColumns.map((columnNumber) => {
+          const column = sheet.getColumn(columnNumber);
+          return { sourceIndex: columnNumber, width: Math.max(56, Math.min(360, Math.round((column.width ?? 10) * 7))) };
+        });
+        const merges: Array<{ row: number; column: number; rowSpan: number; colSpan: number }> = sheet.model.merges.flatMap((range) => {
+          const [startAddress, endAddress] = range.split(":");
+          if (!startAddress || !endAddress) return [];
+          const start = sheet.getCell(startAddress);
+          const end = sheet.getCell(endAddress);
+          const startRow = start.fullAddress.row;
+          const endRow = end.fullAddress.row;
+          const startCol = start.fullAddress.col;
+          const endCol = end.fullAddress.col;
+          const startColumn = visibleColumnIndex.get(startCol);
+          const visibleMergeColumns = sourceColumns.filter((column) => column >= startCol && column <= endCol).length;
+          if (startRow > lastRow || startColumn == null || visibleMergeColumns < 2 && startRow === endRow) return [];
+          return [{
+            row: startRow - 1,
+            column: startColumn,
+            rowSpan: Math.min(endRow, lastRow) - startRow + 1,
+            colSpan: Math.max(1, visibleMergeColumns),
+          }];
+        });
+        // Excel lets long, unwrapped text flow over empty neighboring cells.
+        // A browser table would wrap it into a very narrow column, so emulate
+        // that behavior where the adjacent cells are genuinely empty.
         for (let rowIndex = 1; rowIndex <= lastRow; rowIndex += 1) {
           const row = sheet.getRow(rowIndex);
-          rows.push(Array.from({ length: lastColumn }, (_, index) => cellText(row.getCell(index + 1).value)));
+          for (let visibleIndex = 0; visibleIndex < sourceColumns.length - 1; visibleIndex += 1) {
+            const sourceColumn = sourceColumns[visibleIndex];
+            const cell = row.getCell(sourceColumn);
+            if (cell.value == null || cell.isMerged || cell.alignment?.wrapText) continue;
+            const value = cellText(cell.value).trim();
+            const width = Math.max(56, Math.min(360, Math.round((sheet.getColumn(sourceColumn).width ?? 10) * 7)));
+            if (value.length <= Math.max(12, width / 7 * 1.4)) continue;
+            let span = 1;
+            for (let nextIndex = visibleIndex + 1; nextIndex < sourceColumns.length && span < 8; nextIndex += 1) {
+              const nextCell = row.getCell(sourceColumns[nextIndex]);
+              if (nextCell.value != null || nextCell.isMerged) break;
+              span += 1;
+            }
+            if (span > 1) merges.push({ row: rowIndex - 1, column: visibleIndex, rowSpan: 1, colSpan: span });
+          }
         }
-        return { name: sheet.name, rows };
+        const rows: Array<{ number: number; height?: number; cells: string[] }> = [];
+        for (let rowIndex = 1; rowIndex <= lastRow; rowIndex += 1) {
+          const row = sheet.getRow(rowIndex);
+          rows.push({
+            number: rowIndex,
+            height: row.height ? Math.max(20, Math.min(180, Math.round(row.height * 1.33))) : undefined,
+            cells: sourceColumns.map((columnNumber) => {
+              const cell = row.getCell(columnNumber);
+              return cell.isMerged && cell.master.address !== cell.address ? "" : cellText(cell.value);
+            }),
+          });
+        }
+        return { name: sheet.name, rows, columns, merges };
       });
       return json({ kind: "xlsx", sheets });
     }
