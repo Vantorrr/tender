@@ -27,7 +27,7 @@ import { procurementSourceStatus } from "@/server/procurement-source";
  * 17: TPKP demo estimate uses only latest revisions and explicit GPR stage links;
  * repeated lines are summarized by resource while preserving editable source rows.
  */
-const SCHEMA_VERSION = "17";
+const SCHEMA_VERSION = "18";
 
 declare global {
   var __tkDb: DatabaseSync | undefined;

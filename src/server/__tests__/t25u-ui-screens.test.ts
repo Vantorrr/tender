@@ -153,6 +153,50 @@ describe("t25u hierarchical estimate (PDF UI / Excel arithmetic)", () => {
     expect(nodes.map((node) => node.id)).toEqual(["prep"]);
     expect(nodes[0].groups.find((group) => group.kind === "equipment")?.leaves[0].id).toBe("prep-tool");
   });
+
+  it("keeps phase, estimate work, and nested resources separate while hiding empty template rows", () => {
+    const stages: GprStage[] = [{
+      id: "phase-prep",
+      name: "Подготовка / мобилизация",
+      sequence: 1,
+      start: "2026-11-17",
+      end: "2026-11-17",
+      resources: [
+        { id: "empty-labor", kind: "labor", name: "Бригада · Подготовка / мобилизация", quantity: 0, unit: "чел", rate: null },
+        { id: "saw", sourceKey: "pos-saw", kind: "equipment", name: "Пила", quantity: 12, unit: "маш.-ч", rate: 10 },
+      ],
+    }];
+    const positions: CalcPosition[] = [
+      { id: "work-cut", code: "ФЕР04-01", name: "Резка труб", unit: "рез", quantity: 8, rate: 0, isWorkItem: true, sourceStageName: "Подготовка / мобилизация", sourceWorkName: "Резка труб", sourceSectionName: "Раздел 1. Демонтаж" },
+      { id: "pos-saw", code: "ТСЭМ-331601", name: "Пила", unit: "маш.-ч", quantity: 12, rate: 10, sourceStageName: "Подготовка / мобилизация", sourceWorkName: "Резка труб", sourceSectionName: "Раздел 1. Демонтаж" },
+    ];
+
+    const [node] = buildHierarchicalEstimate({ stages, positions });
+    expect(node.works).toHaveLength(1);
+    expect(node.works[0]).toMatchObject({ name: "Резка труб", planVolume: 8, planUnit: "рез" });
+    expect(node.works[0].groups.find((group) => group.kind === "equipment")?.leaves.map((leaf) => leaf.id)).toEqual(["saw"]);
+    expect(node.unassignedGroups).toEqual([]);
+    expect(node.groups.find((group) => group.kind === "labor")).toBeUndefined();
+  });
+
+  it("seeds the ORCH GPR as phase → estimate work → resource type without an outside bucket", () => {
+    closeDb();
+    ensureReady();
+    const data = readAppData();
+    const schedule = data.schedules.find((item) => item.id === "g-tpkp")!;
+    const calc = data.calculations.find((item) => item.id === schedule.calculationId)!;
+    const nodes = buildHierarchicalEstimate({ stages: schedule.stages, positions: calc.positions });
+    const prep = nodes.find((node) => node.id === "gs-tpkp-preparation")!;
+    const main = nodes.find((node) => node.id === "gs-tpkp-main")!;
+
+    expect(prep.works.some((work) => /перепиливание/i.test(work.name))).toBe(true);
+    expect(main.works.some((work) => /бурение скважин/i.test(work.name))).toBe(true);
+    expect(main.works.some((work) => /установка дорожных знаков/i.test(work.name))).toBe(true);
+    expect(prep.groups.some((group) => group.leaves.some((leaf) => /Указать|Бригада ·/u.test(leaf.name)))).toBe(false);
+    expect(nodes.some((node) => node.id === "_unbound")).toBe(false);
+    expect(prep.groups.some((group) => group.kind === "equipment")).toBe(true);
+    expect(prep.groups.some((group) => group.kind === "material")).toBe(true);
+  });
 });
 
 describe("t25u day resource scoping", () => {

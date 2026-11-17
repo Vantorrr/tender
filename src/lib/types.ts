@@ -359,6 +359,8 @@ export interface CalcPosition {
   sourceSectionName?: string;
   /** Parsed parent work item used to nest resources under a work row. */
   sourceWorkName?: string;
+  /** Explicit GPR phase assigned by import rules; kept separate from the estimate work name. */
+  sourceStageName?: string;
   /** Estimate work line used as a task volume, not a priced resource. */
   isWorkItem?: boolean;
   /** Directory version used for an exact, unit-compatible rate match. */

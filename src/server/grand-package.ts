@@ -4,7 +4,9 @@ import pack from "@/lib/grand-reference.json";
 import type {
   AppData,
   CalcPosition,
+  Citation,
   DocumentItem,
+  GprStageResource,
   Highlight,
 } from "@/lib/types";
 import { config } from "@/server/config";
@@ -71,7 +73,10 @@ export function installGrandReference(data: AppData): AppData {
         },
       ],
       analyticalNote: src.analyticalNote,
-      citations: src.citations,
+      citations: src.citations.map((citation) => ({
+        ...citation,
+        confidence: citation.confidence as Citation["confidence"],
+      })),
       highlights: src.highlights as Highlight[],
       uploadedBy: "u-smet",
       uploadedAt: AT,
@@ -87,19 +92,37 @@ export function installGrandReference(data: AppData): AppData {
     .filter((position) => ![...SUPERSEDED_DOCUMENTS].some((id) => position.id.startsWith(`${id}-`)))
     .map((position) => {
       const source = pack.documents.find((document) => position.id.startsWith(`${document.id}-`));
-      const workName = source && PREPARATION_DOCUMENTS.has(source.id)
+      const stageName = source && PREPARATION_DOCUMENTS.has(source.id)
         ? "Подготовка / мобилизация"
         : "Основные работы";
       return {
         ...position,
+        resourceKind: position.resourceKind as CalcPosition["resourceKind"],
         ...(source ? {
           sourceDocumentId: source.id,
           sourcePositionId: position.id,
-          sourceSectionName: source.title,
-          sourceWorkName: workName,
+          sourceSectionName: position.sourceSectionName ?? source.title,
+          sourceStageName: stageName,
         } : {}),
       };
     });
+
+  const scheduleResources = (stageName: string): GprStageResource[] => positions
+    .filter((position) => position.sourceStageName === stageName && !position.isWorkItem && position.resourceKind)
+    .map((position) => ({
+      id: `res-${position.id}`,
+      sourceKey: position.id,
+      kind: position.resourceKind!,
+      name: position.name,
+      quantity: position.quantity,
+      unit: position.unit,
+      rate: position.rateMissing ? null : position.rate,
+      quantityBasis: position.resourceKind === "material"
+        ? "material_qty"
+        : /(?:маш|чел|н)[\s.-]*ч/iu.test(position.unit)
+          ? "total_hours"
+          : "uncertain",
+    }));
 
   data.schedules.unshift({
     id: GPR_ID,
@@ -117,7 +140,7 @@ export function installGrandReference(data: AppData): AppData {
         start: AT.slice(0, 10),
         end: AT.slice(0, 10),
         sequence: 1,
-        resources: [],
+        resources: scheduleResources("Подготовка / мобилизация"),
       },
       {
         id: "gs-tpkp-main",
@@ -127,13 +150,13 @@ export function installGrandReference(data: AppData): AppData {
         sequence: 2,
         dependsOn: "gs-tpkp-preparation",
         dependencyType: "FS",
-        resources: [],
+        resources: scheduleResources("Основные работы"),
       },
     ],
     assumptions: [
-      "Смета демонтажных работ редакции 2 и расчистка снега отнесены к подготовке; бурение, сваи и знаки — к основным работам.",
+      "Позиции смет связаны с этапом по документу, а внутри этапа сгруппированы по разделу и родительской работе из исходного файла.",
       "Редакция 1 сметы демонтажа сохранена в документах, но исключена из активного расчёта во избежание двойного учёта.",
-      "Сроки этапов — заготовка; подтвердите календарь проекта перед использованием.",
+      "Дата начала не указана в сметах. Длительность и календарные даты ГПР нужно подтвердить по нормативной трудоёмкости, составу бригад и плановой дате старта.",
     ],
     updatedAt: AT,
   });

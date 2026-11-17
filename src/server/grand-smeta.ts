@@ -389,6 +389,17 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
     const quantity = asNumber(row.getCell(9).value) ?? asNumber(row.getCell(7).value);
     if (!name || quantity == null || quantity === 0) return;
     if (isWorkRateCode(code)) currentWorkName = name;
+    const resourceKind: GrandPosition["resourceKind"] = isWorkRateCode(code)
+      ? undefined
+      : namedLaborResource || /^(?:от|зп)(?:[-.\s]|$)/iu.test(code)
+        ? "labor"
+        : /^тсэм|^фсэм|маш\.?\s*[-.]?\s*ч/iu.test(`${code} ${unit}`)
+          ? "equipment"
+          : /^фссцпг/iu.test(code)
+            ? "other"
+            : /^(?:фссц|тссц|фсбц)(?:[-.\s]|$)/iu.test(code)
+              ? "material"
+              : undefined;
     lastPosition = {
       code,
       name: name.slice(0, 240),
@@ -396,6 +407,7 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
       quantity,
       rate: asNumber(row.getCell(10).value) ?? 0,
       ...(isWorkRateCode(code) ? { isWorkItem: true } : {}),
+      ...(resourceKind ? { resourceKind } : {}),
       ...(currentSectionName ? { sectionName: currentSectionName } : {}),
       ...(currentWorkName ? { workName: currentWorkName } : {}),
     };

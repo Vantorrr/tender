@@ -77,6 +77,10 @@ for (const file of files) {
       unit: position.unit,
       quantity: position.quantity,
       rate: position.rate,
+      ...(position.sectionName ? { sourceSectionName: position.sectionName } : {}),
+      ...(position.workName ? { sourceWorkName: position.workName } : {}),
+      ...(position.resourceKind ? { resourceKind: position.resourceKind } : {}),
+      ...(position.isWorkItem ? { isWorkItem: true } : {}),
     })),
   });
 }
