@@ -62,6 +62,17 @@ export default function GprDetailPage() {
   const planFact =
     data.planFacts.find((p) => p.id === procurement?.planFactId) ??
     data.planFacts.find((p) => p.procurementId === schedule.procurementId);
+  const projectPath: Array<{ label: string; href: string; current?: boolean }> = [
+    { label: "Заявка", href: `/cabinet/zakupki/${schedule.procurementId}` },
+    { label: "Расчёт", href: `/cabinet/raschety/${schedule.calculationId}` },
+    { label: "ГПР", href: `/cabinet/gpr/${schedule.id}`, current: true },
+    {
+      label: "Производство",
+      href: procurement?.planFactId
+        ? `/cabinet/proizvodstvo?planFactId=${encodeURIComponent(procurement.planFactId)}`
+        : "/cabinet/proizvodstvo",
+    },
+  ];
 
   async function shiftStage(
     stageId: string,
@@ -165,14 +176,32 @@ export default function GprDetailPage() {
 
   return (
     <div>
-      <nav aria-label="Навигация проекта" className="mb-3 text-sm text-[var(--tk-muted)]">
-        <ol className="flex flex-wrap items-center gap-2">
-          <li><Link className="underline underline-offset-2 hover:text-[var(--tk-ink)]" href={`/cabinet/zakupki/${schedule.procurementId}`}>Заявка</Link></li>
-          <li aria-hidden="true">›</li>
-          <li><Link className="underline underline-offset-2 hover:text-[var(--tk-ink)]" href={`/cabinet/raschety/${schedule.calculationId}`}>Расчёт</Link></li>
-          <li aria-hidden="true">›</li>
-          <li aria-current="page" className="font-medium text-[var(--tk-ink)]">ГПР</li>
-        </ol>
+      <nav
+        aria-label="Путь проекта"
+        className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--tk-line)] bg-white/80 px-3 py-2 text-sm"
+        data-testid="project-matryoshka"
+      >
+        {projectPath.map((step, index) => (
+          <span key={step.label} className="inline-flex items-center gap-2">
+            <Link
+              href={step.href}
+              aria-current={step.current ? "step" : undefined}
+              className={
+                step.current
+                  ? "rounded-md bg-[var(--tk-ink)] px-2 py-1 font-medium text-white"
+                  : "text-[var(--tk-ink)] underline decoration-[var(--tk-line)] underline-offset-2 hover:decoration-current"
+              }
+            >
+              {step.label}
+            </Link>
+            {index < projectPath.length - 1 ? (
+              <span aria-hidden="true" className="text-[var(--tk-muted)]">›</span>
+            ) : null}
+          </span>
+        ))}
+        <span className="ml-auto text-xs text-[var(--tk-muted)]">
+          {procurement?.number ?? `Заявка ${schedule.procurementId}`}
+        </span>
       </nav>
       <PageHeader
         title={schedule.title}
