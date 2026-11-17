@@ -183,16 +183,152 @@ function NorthernCostEditor({
   );
 }
 
-const DATA_FLAG_LABELS: Record<string, string> = {
-  requires_manual_check: "Проверьте объёмы, состав ресурсов и ставки перед использованием итога.",
-  no_accuracy_promise: "Результат зависит от качества исходных документов; процент точности не заявляется.",
-  seeded_from_customer_estimate: "Строки черновика перенесены из распознанной сметы заказчика.",
-  awaiting_estimate_rows: "В исходных документах пока не распознаны строки сметы.",
-  unified_resource_tree: "Итог рассчитан по ресурсам, сгруппированным по работам ГПР.",
-  synced_from_gpr_stages: "Позиции расчёта синхронизированы с ресурсами этапов ГПР.",
-  resource_schedule_excel_economics: "Применены параметры ресурсной модели Excel.",
-  gpr_dates_shifted: "Даты этапов ГПР изменены; график и производные показатели пересчитаны.",
+const CALCULATION_FLAG_INFO: Record<string, { title: string; effect: string; action?: string; severity: "info" | "review" }> = {
+  requires_manual_check: {
+    title: "Итог требует проверки",
+    effect: "Есть неподтверждённые объёмы, ставки или ресурсы; итог может быть неполным.",
+    action: "Откройте строки с пометкой «нет данных» и подтвердите исходные значения.",
+    severity: "review",
+  },
+  no_accuracy_promise: {
+    title: "Точность зависит от исходных документов",
+    effect: "Это пояснение не меняет сумму и не является оценкой точности в процентах.",
+    severity: "info",
+  },
+  seeded_from_customer_estimate: {
+    title: "Позиции перенесены из сметы заказчика",
+    effect: "Перенесённые объёмы участвуют в черновом расчёте; ставки и состав ресурсов проверяйте отдельно.",
+    severity: "info",
+  },
+  awaiting_estimate_rows: {
+    title: "В расчёте нет распознанных строк сметы",
+    effect: "Без позиций нельзя получить полный ресурсный итог.",
+    action: "Загрузите смету заказчика или внесите позиции вручную.",
+    severity: "review",
+  },
+  unified_resource_tree: {
+    title: "Итог рассчитан по ресурсам",
+    effect: "Сумма собрана из строк ресурсов в дереве расчёта.",
+    severity: "info",
+  },
+  synced_from_gpr_stages: {
+    title: "Ресурсы связаны с этапами ГПР",
+    effect: "Позиции синхронизируются с этапами; изменения ресурсов в ГПР обновляют расчёт.",
+    severity: "info",
+  },
+  resource_schedule_excel_economics: {
+    title: "Применена ресурсная модель",
+    effect: "Итог учитывает параметры ресурсного расчёта, включая накладные и прибыль.",
+    severity: "info",
+  },
+  gpr_dates_shifted: {
+    title: "Пересчитано расписание ГПР",
+    effect: "После сдвига дат обновлены график и связанные с ним показатели.",
+    severity: "info",
+  },
+  bus_missing_full_tariff: {
+    title: "Не задан полный тариф автобуса",
+    effect: "Стоимость автобусного ресурса не подтверждена и может быть исключена из полного итога.",
+    action: "Укажите тариф с учётом применимых затрат на перевозку.",
+    severity: "review",
+  },
+  full_machine_hour_tariff: {
+    title: "Используется тариф за машино-час",
+    effect: "Сумма техники считается по ставке за машино-час.",
+    severity: "info",
+  },
+  no_extra_fuel_or_driver_on_top: {
+    title: "Топливо и водитель отдельно не добавляются",
+    effect: "Они считаются включёнными в полный тариф техники, чтобы не посчитать их дважды.",
+    severity: "info",
+  },
+  fuel_basis_liters_per_hour_not_per_100km: {
+    title: "Топливо рассчитано по часам работы",
+    effect: "Норма топлива трактуется как литры в час, а не на 100 км.",
+    severity: "info",
+  },
+  fuel_liters_per_hour: {
+    title: "Применена часовая норма топлива",
+    effect: "Затраты на топливо зависят от литров в час и времени работы техники.",
+    severity: "info",
+  },
+  driver_included_in_tariff: {
+    title: "Водитель включён в тариф",
+    effect: "Отдельная зарплата водителя сверх тарифа не начисляется.",
+    severity: "info",
+  },
+  check_rent_tariff_does_not_already_include_driver: {
+    title: "Проверьте состав тарифа аренды",
+    effect: "Если водитель уже входит в аренду, отдельная строка может задвоить затраты.",
+    action: "Сверьте ставку аренды с договором и справочником.",
+    severity: "review",
+  },
+  own_mode_uses_ownership_cost_not_full_rent: {
+    title: "Для собственной техники учтена стоимость владения",
+    effect: "Полная арендная ставка собственной технике не назначается.",
+    severity: "info",
+  },
+  check_full_tariff_may_already_include_fuel: {
+    title: "Проверьте, включено ли топливо в тариф",
+    effect: "Повторное добавление топлива может задвоить затраты.",
+    action: "Сверьте тариф с источником цены.",
+    severity: "review",
+  },
+  northern_not_applicable: {
+    title: "Северные затраты отключены",
+    effect: "Северные и вахтовые расходы не включены в итог.",
+    action: "Проверьте настройку применимости для этого проекта.",
+    severity: "review",
+  },
+  northern_marked_not_applicable_but_amounts_present: {
+    title: "Есть северные суммы, но затраты отключены",
+    effect: "Суммы не войдут в расчёт, пока статья не подтверждена.",
+    action: "Проверьте северные затраты в параметрах расчёта.",
+    severity: "review",
+  },
+  no_dual_markup_and_margin: {
+    title: "Наценка не дублируется с маржой",
+    effect: "Используется один выбранный способ расчёта прибыли.",
+    severity: "info",
+  },
 };
+
+const HIDDEN_TECHNICAL_CALC_FLAGS = new Set([
+  "cost_engine_v1",
+  "immutable_original",
+  "from_estimate_doc",
+  "user_attached",
+  "auto_chain",
+  "migrated_schema_8",
+  "seed_resource_draft",
+  "t25u_test_fixture",
+]);
+
+function assumptionScope(text: string): { label: string; className: string } {
+  if (/ставк|объем|объём|коэф|индекс|наклад|прибыл|регион|уровень цен|нр\b|сп\b|расцен/iu.test(text)) {
+    return { label: "Влияет на сумму", className: "border-amber-200 bg-amber-50 text-amber-900" };
+  }
+  if (/срок|дата|календар|гпр/iu.test(text)) {
+    return { label: "Влияет на график", className: "border-sky-200 bg-sky-50 text-sky-900" };
+  }
+  return { label: "Источник / пояснение", className: "border-border bg-muted text-muted-foreground" };
+}
+
+function calculationFlagInfo(flag: string) {
+  if (HIDDEN_TECHNICAL_CALC_FLAGS.has(flag) || /^migrated_schema_/u.test(flag) || /^cost_/u.test(flag)) return null;
+  const known = CALCULATION_FLAG_INFO[flag];
+  if (known) return known;
+  if (flag.startsWith("profit_method:")) {
+    return { title: "Способ расчёта прибыли", effect: `В расчёте выбран метод «${flag.slice("profit_method:".length)}».`, severity: "info" as const };
+  }
+  if (flag.startsWith("tariff_basis:")) {
+    return { title: "Основание тарифа техники", effect: "В расчёт передан выбранный тип тарифа из справочника.", severity: "info" as const };
+  }
+  if (flag.startsWith("north_scenario:")) {
+    return { title: "Сценарная северная статья не включена в итог", effect: "Сценарная сумма хранится отдельно до подтверждения.", severity: "review" as const };
+  }
+  return null;
+}
 
 export default function RaschetDetailPage() {
   const params = useParams<{ id: string }>();
@@ -1489,20 +1625,62 @@ export default function RaschetDetailPage() {
       </section>
 
       <section className="mt-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-5" data-testid="calculation-assumptions">
-        <h2 className="font-[family-name:var(--font-display)] text-base">
-          Что учтено и что проверить
+        <h2 className="font-[family-name:var(--font-display)] text-lg font-semibold">
+          Из чего сложился расчёт
         </h2>
-        {calc.assumptions.length || calc.dataFlags?.length ? (
-          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-[var(--tk-ink-soft)]">
-            {calc.assumptions.map((assumption, index) => (
-              <li key={`${index}:${assumption}`}>{assumption}</li>
-            ))}
-            {(calc.dataFlags ?? []).map((flag) => (
-              <li key={flag}>{DATA_FLAG_LABELS[flag] ?? "Требуется дополнительная проверка исходных данных."}</li>
-            ))}
-          </ul>
-        ) : (
-          <p className="mt-2 text-sm text-[var(--tk-muted)]">Допущений и открытых проверок нет.</p>
+        <p className="mt-1 max-w-4xl text-sm text-[var(--tk-ink-soft)]">
+          Здесь указаны исходные данные и правила расчёта. Объёмы, ставки, коэффициенты,
+          региональные условия и накладные отражаются в суммах выше. Пояснения к источникам
+          описывают происхождение данных, а технические отметки системы здесь не показываются.
+        </p>
+
+        {calc.assumptions.length > 0 && (
+          <div className="mt-5">
+            <h3 className="text-sm font-semibold text-[var(--tk-ink)]">Исходные данные и правила</h3>
+            <div className="mt-2 space-y-2">
+              {calc.assumptions.map((assumption, index) => {
+                const scope = assumptionScope(assumption);
+                return (
+                  <div key={`${index}:${assumption}`} className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-[var(--tk-line)] bg-white px-3 py-2.5">
+                    <p className="min-w-0 flex-1 text-sm text-[var(--tk-ink-soft)]">{assumption}</p>
+                    <span className={`shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium ${scope.className}`}>
+                      {scope.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {(() => {
+          const flags = [...new Set(calc.dataFlags ?? [])]
+            .map((flag) => ({ flag, info: calculationFlagInfo(flag) }))
+            .filter((item): item is { flag: string; info: NonNullable<ReturnType<typeof calculationFlagInfo>> } => item.info != null);
+          if (flags.length === 0) return null;
+          return (
+            <div className="mt-5">
+              <h3 className="text-sm font-semibold text-[var(--tk-ink)]">Что требует внимания</h3>
+              <div className="mt-2 grid gap-2 lg:grid-cols-2">
+                {flags.map(({ flag, info }) => (
+                  <article
+                    key={flag}
+                    className={`rounded-lg border px-3 py-2.5 ${info.severity === "review" ? "border-amber-200 bg-amber-50/70" : "border-[var(--tk-line)] bg-white"}`}
+                  >
+                    <h4 className="text-sm font-semibold text-[var(--tk-ink)]">{info.title}</h4>
+                    <p className="mt-1 text-sm text-[var(--tk-ink-soft)]">{info.effect}</p>
+                    {info.action && <p className="mt-1 text-sm font-medium text-amber-900">Действие: {info.action}</p>}
+                  </article>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
+
+        {calc.assumptions.length === 0 && (calc.dataFlags ?? []).every((flag) => !calculationFlagInfo(flag)) && (
+          <p className="mt-4 rounded-lg bg-muted px-3 py-2 text-sm text-[var(--tk-muted)]">
+            Дополнительных исходных условий и проверок для этого расчёта нет.
+          </p>
         )}
       </section>
     </div>
