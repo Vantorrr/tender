@@ -24,10 +24,10 @@ import { hashPassword } from "@/server/passwords";
 import { procurementSourceStatus } from "@/server/procurement-source";
 
 /**
- * 16: Q dimensions + draft export V/W/X/Y/Z; non-destructive schedule sync;
- * TEST fixture OPT-IN; buses summed across stages.
+ * 17: TPKP demo estimate uses only latest revisions and explicit GPR stage links;
+ * repeated lines are summarized by resource while preserving editable source rows.
  */
-const SCHEMA_VERSION = "16";
+const SCHEMA_VERSION = "17";
 
 declare global {
   var __tkDb: DatabaseSync | undefined;

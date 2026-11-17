@@ -13,7 +13,10 @@ import { safeFileName } from "@/server/uploads";
 const PROC_ID = "p-tpkp";
 const OBJ_ID = "obj-tpkp";
 const CALC_ID = "c-tpkp";
+const GPR_ID = "g-tpkp";
 const AT = "2026-11-05T06:40:00.000Z";
+const PREPARATION_DOCUMENTS = new Set(["d-gs-dem2", "d-gs-sneg"]);
+const SUPERSEDED_DOCUMENTS = new Set(["d-gs-dem"]);
 
 function moneyThousand(value: number) {
   return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(value);
@@ -36,6 +39,9 @@ export function installGrandReference(data: AppData): AppData {
   data.procurements = data.procurements.filter((item) => item.id !== PROC_ID);
   data.objects = data.objects.filter((item) => item.id !== OBJ_ID);
   data.calculations = data.calculations.filter((item) => item.id !== CALC_ID);
+  data.schedules = data.schedules.filter(
+    (item) => item.procurementId !== PROC_ID && item.calculationId !== CALC_ID
+  );
   data.notifications = data.notifications.filter((item) => !item.id.startsWith("n-gs-"));
   data.auditLog = data.auditLog.filter((item) => item.id !== "aud-grand-ref");
 
@@ -77,6 +83,60 @@ export function installGrandReference(data: AppData): AppData {
       },
     };
   });
+  const positions: CalcPosition[] = pack.positions
+    .filter((position) => ![...SUPERSEDED_DOCUMENTS].some((id) => position.id.startsWith(`${id}-`)))
+    .map((position) => {
+      const source = pack.documents.find((document) => position.id.startsWith(`${document.id}-`));
+      const workName = source && PREPARATION_DOCUMENTS.has(source.id)
+        ? "Подготовка / мобилизация"
+        : "Основные работы";
+      return {
+        ...position,
+        ...(source ? {
+          sourceDocumentId: source.id,
+          sourcePositionId: position.id,
+          sourceSectionName: source.title,
+          sourceWorkName: workName,
+        } : {}),
+      };
+    });
+
+  data.schedules.unshift({
+    id: GPR_ID,
+    orgId: "org-alfa",
+    procurementId: PROC_ID,
+    calculationId: CALC_ID,
+    title: "ГПР — Техническое перевооружение ОРЧ конденсатопровода",
+    status: "v_rabote",
+    version: 1,
+    authorId: "u-smet",
+    stages: [
+      {
+        id: "gs-tpkp-preparation",
+        name: "Подготовка / мобилизация",
+        start: AT.slice(0, 10),
+        end: AT.slice(0, 10),
+        sequence: 1,
+        resources: [],
+      },
+      {
+        id: "gs-tpkp-main",
+        name: "Основные работы",
+        start: AT.slice(0, 10),
+        end: AT.slice(0, 10),
+        sequence: 2,
+        dependsOn: "gs-tpkp-preparation",
+        dependencyType: "FS",
+        resources: [],
+      },
+    ],
+    assumptions: [
+      "Смета демонтажных работ редакции 2 и расчистка снега отнесены к подготовке; бурение, сваи и знаки — к основным работам.",
+      "Редакция 1 сметы демонтажа сохранена в документах, но исключена из активного расчёта во избежание двойного учёта.",
+      "Сроки этапов — заготовка; подтвердите календарь проекта перед использованием.",
+    ],
+    updatedAt: AT,
+  });
 
   data.objects.unshift({
     id: OBJ_ID,
@@ -94,13 +154,14 @@ export function installGrandReference(data: AppData): AppData {
     procurementId: PROC_ID,
     title: "Объёмы ТП-КП-М-Д · локальные сметы ГРАНД-Смета",
     status: "trebuet_proverki",
-    positions: pack.positions as CalcPosition[],
+    positions,
     assumptions: [
       "Позиции сняты с локальных смет ГРАНД-Смета 2022.3, форма приказа № 421",
       "Код: номер сметы и обоснование. Объём — графа «всего с учётом коэффициентов»",
       "Ставка черновая: итог по расценке в текущем уровне, делённый на объём. Накладные и прибыль в ставку не входят",
       "Регион — Красноярский край, зона 5, уровень цен 2023 год, основание — дефектная ведомость № 1.2",
       "ЛС 01-02-01 пришла двумя редакциями с разной стоимостью",
+      "В активный расчёт включена редакция 2; редакция 1 оставлена в документах отдельно и не суммируется",
     ],
     scenario: "bazovyy",
     scenarioFactor: 1,
@@ -133,6 +194,7 @@ export function installGrandReference(data: AppData): AppData {
     })),
     objectId: OBJ_ID,
     documentIds: documents.map((doc) => doc.id),
+    gprId: GPR_ID,
     calculationId: CALC_ID,
     tags: ["ГРАНД-Смета", "ТП-КП-М-Д", "Красноярский край"],
     createdAt: AT,

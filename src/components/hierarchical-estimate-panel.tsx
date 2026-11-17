@@ -74,6 +74,7 @@ export function HierarchicalEstimatePanel({
   // PDF cue: stages collapsed by default; one stage expanded for overview+detail
   const [expandAll, setExpandAll] = useState(false);
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [openResources, setOpenResources] = useState<Record<string, boolean>>({});
   const [paramsDraft, setParamsDraft] = useState<ResourceScheduleParams>(
     resourceScheduleParams ?? EXCEL_RESOURCE_SCHEDULE_DEFAULTS
   );
@@ -118,6 +119,81 @@ export function HierarchicalEstimatePanel({
   function isOpen(id: string) {
     if (open[id] != null) return open[id];
     return expandAll || id === firstNodeId;
+  }
+
+  function resourceBuckets(leaves: EstimateLeaf[]) {
+    const buckets = new Map<string, EstimateLeaf[]>();
+    for (const leaf of leaves) {
+      const key = [
+        leaf.kind,
+        leaf.name.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ").trim(),
+        leaf.unit,
+        leaf.rate ?? "missing",
+        leaf.sourceDocumentId ?? "",
+      ].join("|");
+      buckets.set(key, [...(buckets.get(key) ?? []), leaf]);
+    }
+    return [...buckets.entries()];
+  }
+
+  function renderLeafRow(leaf: EstimateLeaf, nested = false) {
+    return (
+      <div
+        key={leaf.id}
+        className={`grid grid-cols-[minmax(12rem,1fr)_5.5rem_5.5rem_5.5rem_7rem] items-center gap-2 px-3 py-1.5 ${nested ? "pl-14" : "pl-10"} text-sm`}
+        data-testid={`estimate-leaf-${leaf.id}`}
+        title={leaf.sourceCode ? `Код сметы: ${leaf.sourceCode}` : undefined}
+      >
+        <div className="min-w-0 truncate">{leaf.name}</div>
+        <div className="text-right">
+          {locked ? formatNumber(leaf.quantity) : (
+            <Input
+              className="h-8 text-right"
+              type="number"
+              min={0}
+              step="any"
+              value={leaf.quantity}
+              data-testid={`estimate-qty-${leaf.id}`}
+              onChange={(e) => {
+                const quantity = Number(e.target.value) || 0;
+                onPatchLeaf(leaf, { quantity });
+                toast.success("Количество обновлено");
+              }}
+            />
+          )}
+        </div>
+        <div className="text-right text-xs" data-testid={`estimate-q-${leaf.id}`}>
+          {leaf.basis === "material_qty" ? "—" : leaf.hoursQ == null ? "нет данных" : formatNumber(leaf.hoursQ)}
+        </div>
+        <div className="text-right">
+          {locked ? (leaf.rate == null ? <span className="text-amber-800" title="нет данных">—</span> : formatNumber(leaf.rate)) : (
+            <Input
+              className="h-8 text-right"
+              type="number"
+              min={0}
+              step="any"
+              placeholder="—"
+              title={leaf.rate == null ? "нет данных" : "Ставка"}
+              aria-label={leaf.rate == null ? `Ставка · ${leaf.name} (нет данных)` : `Ставка · ${leaf.name}`}
+              value={leaf.rate == null ? "" : String(leaf.rate)}
+              data-testid={`estimate-rate-${leaf.id}`}
+              onChange={(e) => {
+                const raw = e.target.value.trim();
+                const rate = raw === "" ? null : Number(raw);
+                onPatchLeaf(leaf, { rate: rate == null || Number.isNaN(rate) ? null : rate });
+              }}
+            />
+          )}
+        </div>
+        <div
+          className="sticky right-0 bg-inherit text-right shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.08)]"
+          data-testid={`estimate-amount-${leaf.id}`}
+          title={leaf.amount == null ? "нет данных" : undefined}
+        >
+          {leaf.amount == null ? "—" : formatMoney(leaf.amount)}
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -484,97 +560,38 @@ export function HierarchicalEstimatePanel({
                       <div className="px-3 py-1.5 pl-8 text-xs font-semibold uppercase tracking-wide text-[var(--tk-muted)]">
                         {g.label}
                       </div>
-                      {g.leaves.map((leaf) => (
-                        <div
-                          key={leaf.id}
-                          className="grid grid-cols-[minmax(12rem,1fr)_5.5rem_5.5rem_5.5rem_7rem] items-center gap-2 px-3 py-1.5 pl-10 text-sm"
-                          data-testid={`estimate-leaf-${leaf.id}`}
-                        >
-                          <div className="min-w-0 truncate">
-                            {leaf.name}
+                      {resourceBuckets(g.leaves).map(([key, leaves]) => {
+                        if (leaves.length === 1) return renderLeafRow(leaves[0]);
+                        const first = leaves[0];
+                        const amount = leaves.every((leaf) => leaf.amount != null)
+                          ? leaves.reduce((total, leaf) => total + (leaf.amount ?? 0), 0)
+                          : null;
+                        const hours = leaves.every((leaf) => leaf.hoursQ != null)
+                          ? leaves.reduce((total, leaf) => total + (leaf.hoursQ ?? 0), 0)
+                          : null;
+                        const expanded = Boolean(openResources[key]);
+                        return (
+                          <div key={key} className="border-t border-[var(--tk-line)]/60">
+                            <button
+                              type="button"
+                              className="grid w-full grid-cols-[minmax(12rem,1fr)_5.5rem_5.5rem_5.5rem_7rem] items-center gap-2 px-3 py-2 pl-10 text-left text-sm font-medium hover:bg-stone-50"
+                              aria-expanded={expanded}
+                              onClick={() => setOpenResources((current) => ({ ...current, [key]: !expanded }))}
+                            >
+                              <span className="min-w-0 truncate">
+                                <span className="mr-2 text-[var(--tk-muted)]">{expanded ? "▾" : "▸"}</span>
+                                {first.name}
+                                <span className="ml-2 text-xs font-normal text-muted-foreground">{leaves.length} строк сметы</span>
+                              </span>
+                              <span className="text-right">{formatNumber(leaves.reduce((total, leaf) => total + leaf.quantity, 0))}</span>
+                              <span className="text-right text-xs">{hours == null ? "нет данных" : formatNumber(hours)}</span>
+                              <span className="text-right">{first.rate == null ? "—" : formatNumber(first.rate)}</span>
+                              <span className="sticky right-0 bg-inherit text-right">{amount == null ? "—" : formatMoney(amount)}</span>
+                            </button>
+                            {expanded ? leaves.map((leaf) => renderLeafRow(leaf, true)) : null}
                           </div>
-                          <div className="text-right">
-                            {locked ? (
-                              formatNumber(leaf.quantity)
-                            ) : (
-                              <Input
-                                className="h-8 text-right"
-                                type="number"
-                                min={0}
-                                step="any"
-                                value={leaf.quantity}
-                                data-testid={`estimate-qty-${leaf.id}`}
-                                onChange={(e) => {
-                                  const quantity = Number(e.target.value) || 0;
-                                  onPatchLeaf(leaf, { quantity });
-                                  toast.success("Количество обновлено");
-                                }}
-                              />
-                            )}
-                          </div>
-                          <div
-                            className="text-right text-xs"
-                            data-testid={`estimate-q-${leaf.id}`}
-                          >
-                            {leaf.basis === "material_qty"
-                              ? "—"
-                              : leaf.hoursQ == null
-                                ? "нет данных"
-                                : formatNumber(leaf.hoursQ)}
-                          </div>
-                          <div className="text-right">
-                            {locked ? (
-                              leaf.rate == null ? (
-                                <span className="text-amber-800" title="нет данных">
-                                  —
-                                </span>
-                              ) : (
-                                formatNumber(leaf.rate)
-                              )
-                            ) : (
-                              <Input
-                                className="h-8 text-right"
-                                type="number"
-                                min={0}
-                                step="any"
-                                placeholder="—"
-                                title={
-                                  leaf.rate == null ? "нет данных" : "Ставка"
-                                }
-                                aria-label={
-                                  leaf.rate == null
-                                    ? `Ставка · ${leaf.name} (нет данных)`
-                                    : `Ставка · ${leaf.name}`
-                                }
-                                value={
-                                  leaf.rate == null ? "" : String(leaf.rate)
-                                }
-                                data-testid={`estimate-rate-${leaf.id}`}
-                                onChange={(e) => {
-                                  const raw = e.target.value.trim();
-                                  const rate =
-                                    raw === "" ? null : Number(raw);
-                                  onPatchLeaf(leaf, {
-                                    rate:
-                                      rate == null || Number.isNaN(rate)
-                                        ? null
-                                        : rate,
-                                  });
-                                }}
-                              />
-                            )}
-                          </div>
-                          <div
-                            className="sticky right-0 bg-inherit text-right shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.08)]"
-                            data-testid={`estimate-amount-${leaf.id}`}
-                            title={leaf.amount == null ? "нет данных" : undefined}
-                          >
-                            {leaf.amount == null
-                              ? "—"
-                              : formatMoney(leaf.amount)}
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   ))
                 : null}

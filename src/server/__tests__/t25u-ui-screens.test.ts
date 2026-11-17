@@ -127,6 +127,32 @@ describe("t25u hierarchical estimate (PDF UI / Excel arithmetic)", () => {
       amount: null,
     });
   });
+
+  it("matches a position to a GPR stage through its section even when the work label differs", () => {
+    const stages: GprStage[] = [{
+      id: "prep",
+      name: "Подготовка / мобилизация",
+      sectionName: "Подготовка работ",
+      sequence: 1,
+      start: "2026-11-17",
+      end: "2026-11-17",
+      resources: [],
+    }];
+    const positions: CalcPosition[] = [{
+      id: "prep-tool",
+      code: "ТСЭМ-331601",
+      name: "Пила с карбюраторным двигателем",
+      unit: "маш.-ч",
+      quantity: 12,
+      rate: 10.92,
+      sourceWorkName: "Обработка материалов электроинструментами",
+      sourceSectionName: "Подготовка работ",
+    }];
+
+    const nodes = buildHierarchicalEstimate({ stages, positions });
+    expect(nodes.map((node) => node.id)).toEqual(["prep"]);
+    expect(nodes[0].groups.find((group) => group.kind === "equipment")?.leaves[0].id).toBe("prep-tool");
+  });
 });
 
 describe("t25u day resource scoping", () => {
