@@ -1671,9 +1671,27 @@ export async function analyzeProcurementPackageWithAI(
   return { warning, usedAi };
 }
 
+function estimateDocumentsForProcurement(data: AppData, procurementId: string) {
+  return data.documents
+    .filter((document) => {
+      if (document.procurementId !== procurementId || !document.storedPath) return false;
+      const looksLikeEstimate =
+        document.category === "estimate" ||
+        /smeta|смет/i.test(document.fileName) ||
+        Boolean(document.estimatePositions?.length) ||
+        (document.analysis?.positionCount ?? 0) > 0;
+      const hasEstimateData =
+        Boolean(document.estimatePositions?.length) ||
+        (document.analysis?.positionCount ?? 0) > 0 ||
+        document.analysis?.costThousand != null;
+      return looksLikeEstimate && hasEstimateData;
+    })
+    .sort((a, b) => a.uploadedAt.localeCompare(b.uploadedAt));
+}
+
 /**
- * Attach uploaded estimate document as immutable customer_original on the procurement.
- * Prefer latest estimate doc with positions; also records an exchange history row.
+ * Attach all recognized customer estimate files as an immutable original on
+ * the procurement. Supports numeric PDF names and keeps each estimate's source.
  */
 export function attachCustomerEstimate(
   actorId: string,
@@ -1690,65 +1708,72 @@ export function attachCustomerEstimate(
       data.directories.find((d) => d.type === "rascenki" && d.current) ??
       data.directories[0];
 
-    const estimateDocs = data.documents
-      .filter(
-        (d) =>
-          d.procurementId === p.id &&
-          Boolean(d.storedPath) &&
-          (d.category === "estimate" || /smeta|смет/i.test(d.fileName))
-      )
-      .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
-    const estimateDoc = estimateDocs[0];
-    if (!estimateDoc) {
+    const estimateDocs = estimateDocumentsForProcurement(data, p.id);
+    if (!estimateDocs.length) {
       throw new Error("Сначала загрузите файл сметы заказчика (XLSX / Grand Smeta)");
     }
 
-    const extractedPositions = estimateDoc.estimatePositions ?? [];
-    const completeSourceRates = extractedPositions.length > 0 && extractedPositions.every(
-      (position) => !position.rateMissing && Number.isFinite(position.rate) && position.rate > 0
-    );
-    const positionCount =
-      extractedPositions.length || estimateDoc.analysis?.positionCount || 0;
-    if (!positionCount) {
-      throw new Error(
-        "В файле не распознаны сметные позиции. Проверьте XLSX / выгрузку Grand Smeta."
+    const positions = estimateDocs.flatMap((document) => {
+      const extracted = document.estimatePositions ?? [];
+      const completeSourceRates = extracted.length > 0 && extracted.every(
+        (position) => !position.rateMissing && Number.isFinite(position.rate) && position.rate > 0
       );
-    }
-
-    const qty = Math.max(1, positionCount);
-    const rate =
-      estimateDoc.analysis?.costThousand != null
-        ? Math.round((estimateDoc.analysis.costThousand * 1000) / qty)
-        : 0;
-    const positions = completeSourceRates
-      ? extractedPositions.map((position) => ({
-          id: position.id,
+      if (completeSourceRates) {
+        return extracted.map((position, index) => ({
+          id: `cp-orig-${document.id}-${position.id || index + 1}`,
+          sourceDocumentId: document.id,
+          sourcePositionId: position.id,
           code: position.code,
           name: position.name,
           unit: position.unit,
           quantity: position.quantity,
           rate: position.rate,
-            ...(position.sectionName ? { sourceSectionName: position.sectionName } : {}),
-            ...(position.workName ? { sourceWorkName: position.workName } : {}),
-        }))
-      : [
-          {
-            id: `cp-orig-${Date.now()}`,
-            code: "CUST-TOTAL",
-            name: estimateDoc.analysis?.workName || "Итог сметы заказчика",
-            unit: "компл",
-            quantity: 1,
-            rate:
-              estimateDoc.analysis?.costThousand != null
-                ? Math.round(estimateDoc.analysis.costThousand * 1000)
-                : rate,
-          },
-        ];
+          ...(position.isWorkItem ? { isWorkItem: true } : {}),
+          ...(position.resourceKind ? { resourceKind: position.resourceKind } : {}),
+          ...(position.sectionName ? { sourceSectionName: position.sectionName } : {}),
+          ...(position.workName ? { sourceWorkName: position.workName } : {}),
+        }));
+      }
+      const total = document.analysis?.costThousand;
+      if (total != null) {
+        return [{
+          id: `cp-orig-total-${document.id}`,
+          sourceDocumentId: document.id,
+          code: `CUST-TOTAL-${document.id}`,
+          name: `Итог сметы · ${document.analysis?.workName || document.fileName}`,
+          unit: "компл",
+          quantity: 1,
+          rate: Math.round(total * 1000),
+        }];
+      }
+      return extracted.map((position, index) => ({
+        id: `cp-orig-${document.id}-${position.id || index + 1}`,
+        sourceDocumentId: document.id,
+        sourcePositionId: position.id,
+        code: position.code,
+        name: position.name,
+        unit: position.unit,
+        quantity: position.quantity,
+        rate: 0,
+        rateMissing: true,
+        ...(position.isWorkItem ? { isWorkItem: true } : {}),
+        ...(position.resourceKind ? { resourceKind: position.resourceKind } : {}),
+        ...(position.sectionName ? { sourceSectionName: position.sectionName } : {}),
+        ...(position.workName ? { sourceWorkName: position.workName } : {}),
+      }));
+    });
+    if (!positions.length) {
+      throw new Error("В файлах не найдены распознанные позиции или итоги смет");
+    }
+    const sourceNames = estimateDocs.map((document) => document.fileName);
+    const recognizedCount = estimateDocs.reduce(
+      (count, document) => count + (document.estimatePositions?.length || document.analysis?.positionCount || 0),
+      0,
+    );
 
     let oid = p.originalCalculationId;
-    const existing = oid
-      ? data.calculations.find((c) => c.id === oid)
-      : undefined;
+    const existing = (oid ? data.calculations.find((c) => c.id === oid) : undefined) ??
+      data.calculations.find((c) => c.procurementId === p.id && c.kind === "customer_original");
     // Only overwrite an original that already belongs to this org + procurement.
     const ownedOriginal =
       existing &&
@@ -1764,7 +1789,8 @@ export function attachCustomerEstimate(
       ownedOriginal.immutable = true;
       ownedOriginal.assumptions = [
         `Неизменяемый снимок сметы заказчика: ${positions.length} позиций`,
-        `Источник: ${estimateDoc.fileName}`,
+        `Источники: ${sourceNames.join("; ")}`,
+        `Распознано строк смет: ${recognizedCount}`,
         "Собственные ресурсы сюда не добавляются",
       ];
       ownedOriginal.dataFlags = [
@@ -1772,6 +1798,7 @@ export function attachCustomerEstimate(
         "from_estimate_doc",
         "user_attached",
       ];
+      oid = ownedOriginal.id;
     } else {
       oid = `c-orig-${Date.now()}`;
       data.calculations.unshift({
@@ -1783,7 +1810,8 @@ export function attachCustomerEstimate(
         positions,
         assumptions: [
           `Неизменяемый снимок сметы заказчика: ${positions.length} позиций`,
-          `Источник: ${estimateDoc.fileName}`,
+          `Источники: ${sourceNames.join("; ")}`,
+          `Распознано строк смет: ${recognizedCount}`,
           "Собственные ресурсы сюда не добавляются",
         ],
         scenario: "bazovyy",
@@ -1801,6 +1829,17 @@ export function attachCustomerEstimate(
       });
       p.originalCalculationId = oid;
     }
+    p.originalCalculationId = oid;
+    const attachedOriginal = data.calculations.find((calculation) => calculation.id === oid);
+    if (attachedOriginal) {
+      attachedOriginal.pairedCalculationId = p.calculationId;
+      attachedOriginal.assumptions = [
+        `Неизменяемый снимок смет заказчика: ${positions.length} строк итогов и позиций`,
+        `Источники: ${sourceNames.join("; ")}`,
+        `Распознано строк смет: ${recognizedCount}`,
+        "Собственные ресурсы сюда не добавляются",
+      ];
+    }
 
     if (p.calculationId) {
       const draft = data.calculations.find((c) => c.id === p.calculationId);
@@ -1809,11 +1848,11 @@ export function attachCustomerEstimate(
       }
     }
 
-    const mappedCount = opts?.mappedCount ?? positions.length;
+    const mappedCount = opts?.mappedCount ?? recognizedCount;
     data.smetaExchanges.unshift({
       id: `sx-${Date.now()}`,
       orgId: p.orgId,
-      name: `Смета заказчика · ${opts?.fileName ?? estimateDoc.fileName} · ${p.number} · ${p.id}`,
+      name: `Смета заказчика · ${opts?.fileName ?? sourceNames.join(", ")} · ${p.number} · ${p.id}`,
       at: now,
       authorId: actorId,
       positionsMapped: mappedCount,
@@ -1827,7 +1866,7 @@ export function attachCustomerEstimate(
       "attach_customer_estimate",
       "procurement",
       procurementId,
-      `Оригинал ${oid}; позиций ${positions.length}; файл ${estimateDoc.fileName}`
+      `Оригинал ${oid}; позиций ${positions.length}; распознано строк ${recognizedCount}; файлы ${sourceNames.join("; ")}`
     );
     return data;
   });
@@ -1966,20 +2005,9 @@ export function sendProcurementToCalculation(
     }
 
     // Build immutable original from estimate document positions if none
-    const estimateDocs = data.documents.filter(
-      (d) =>
-        d.procurementId === p.id &&
-        Boolean(d.storedPath) &&
-        (d.category === "estimate" ||
-          /smeta|смет/i.test(d.fileName) ||
-          Boolean(d.estimatePositions?.length) ||
-          (d.analysis?.positionCount ?? 0) > 0)
-    );
-    // A tender package can contain several local estimates (for example,
-    // concrete, metal and general works). Include every parsed estimate.
-    const estimateDocsWithData = estimateDocs.filter(
-      (document) => (document.estimatePositions?.length ?? 0) > 0 || (document.analysis?.positionCount ?? 0) > 0
-    );
+    // A tender package can contain several local estimates (often numeric PDF
+    // names stored as general documents). Use the same detector as manual attach.
+    const estimateDocsWithData = estimateDocumentsForProcurement(data, p.id);
     const allEstimatePositions = estimateDocsWithData.flatMap((document) =>
       (document.estimatePositions ?? []).map((position) => ({ document, position }))
     );

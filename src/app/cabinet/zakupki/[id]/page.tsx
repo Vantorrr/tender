@@ -253,7 +253,12 @@ export default function ZakupkaDetailPage() {
   );
   const estimateRows = useMemo(
     () => docs
-      .filter((document) => document.category === "estimate" || /smeta|смет/i.test(document.fileName))
+      .filter((document) =>
+        document.category === "estimate" ||
+        /smeta|смет/i.test(document.fileName) ||
+        Boolean(document.estimatePositions?.length) ||
+        (document.analysis?.positionCount ?? 0) > 0
+      )
       .flatMap((document) => (document.estimatePositions ?? []).map((position) => ({
         ...position,
         sourceFile: document.fileName,
@@ -263,9 +268,13 @@ export default function ZakupkaDetailPage() {
   const calc = procurement?.calculationId
     ? data.calculations.find((c) => c.id === procurement.calculationId)
     : undefined;
-  const original = procurement?.originalCalculationId
-    ? data.calculations.find((c) => c.id === procurement.originalCalculationId)
-    : undefined;
+  const original = (procurement?.originalCalculationId
+    ? data.calculations.find(
+        (c) => c.id === procurement.originalCalculationId && c.procurementId === procurement.id && c.kind === "customer_original"
+      )
+    : undefined) ?? data.calculations.find(
+        (c) => c.procurementId === procurement?.id && c.kind === "customer_original"
+      );
   const gpr = procurement?.gprId
     ? data.schedules.find((s) => s.id === procurement.gprId)
     : undefined;
@@ -631,7 +640,7 @@ export default function ZakupkaDetailPage() {
         ref={customerEstimateRef}
         type="file"
         className="sr-only"
-        accept=".xlsx,.xls,.xml,.gsfx,.gge"
+        accept=".pdf,.xlsx,.xls,.xml,.gsfx,.gge"
         aria-label="Добавить смету заказчика"
         data-testid="customer-estimate-input"
         onChange={(e) => {

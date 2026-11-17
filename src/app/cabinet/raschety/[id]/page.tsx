@@ -220,6 +220,7 @@ export default function RaschetDetailPage() {
     report: CalcCompareAiReport;
   } | null>(null);
   const [aiCompareLoading, setAiCompareLoading] = useState(false);
+  const [attachEstimateLoading, setAttachEstimateLoading] = useState(false);
 
   const calc = user
     ? data.calculations.find(
@@ -272,16 +273,37 @@ export default function RaschetDetailPage() {
   }
 
   const locked = Boolean(calc.immutable || calc.kind === "customer_original");
-  const paired = calc.pairedCalculationId
-    ? data.calculations.find((c) => c.id === calc.pairedCalculationId)
-    : data.calculations.find(
-        (c) =>
-          c.procurementId === calc.procurementId &&
-          c.id !== calc.id &&
-          (calc.kind === "resource_draft"
-            ? c.kind === "customer_original"
-            : c.kind === "resource_draft")
-      );
+  const pairedKind = calc.kind === "customer_original" ? "resource_draft" : "customer_original";
+  const linkedPair = calc.pairedCalculationId
+    ? data.calculations.find(
+        (candidate) =>
+          candidate.id === calc.pairedCalculationId &&
+          candidate.procurementId === calc.procurementId &&
+          candidate.kind === pairedKind,
+      )
+    : undefined;
+  const procurementOriginal = procurement?.originalCalculationId
+    ? data.calculations.find(
+        (candidate) =>
+          candidate.id === procurement.originalCalculationId &&
+          candidate.procurementId === calc.procurementId &&
+          candidate.kind === "customer_original",
+      )
+    : undefined;
+  const paired = linkedPair ??
+    (calc.kind === "customer_original"
+      ? data.calculations.find(
+          (candidate) =>
+            candidate.procurementId === calc.procurementId &&
+            candidate.id !== calc.id &&
+            candidate.kind === "resource_draft",
+        )
+      : procurementOriginal ?? data.calculations.find(
+          (candidate) =>
+            candidate.procurementId === calc.procurementId &&
+            candidate.id !== calc.id &&
+            candidate.kind === "customer_original",
+        ));
   const compare =
     calc.kind === "resource_draft"
       ? compareCalculations(paired, calc)
@@ -1302,6 +1324,47 @@ export default function RaschetDetailPage() {
               <li key={n}>{n}</li>
             ))}
           </ul>
+        ) : null}
+        {calc.kind === "resource_draft" && !paired && procurement ? (
+          <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm" role="status" data-testid="customer-estimate-link-guidance">
+            <span>Исходная смета ещё не подключена к сравнению.</span>
+            {userHasSection(user, "zakupki") && projectDocuments.some((document) =>
+              document.category === "estimate" ||
+              Boolean(document.estimatePositions?.length) ||
+              (document.analysis?.positionCount ?? 0) > 0
+            ) ? (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={attachEstimateLoading}
+                data-testid="attach-existing-customer-estimate"
+                onClick={async () => {
+                  setAttachEstimateLoading(true);
+                  try {
+                    await api("/api/zakupki", {
+                      method: "POST",
+                      body: JSON.stringify({
+                        action: "attachCustomerEstimate",
+                        id: procurement.id,
+                      }),
+                    });
+                    await refresh();
+                    toast.success("Загруженная смета подключена к сравнению");
+                  } catch (error) {
+                    toast.error(error instanceof Error ? error.message : "Не удалось подключить смету");
+                  } finally {
+                    setAttachEstimateLoading(false);
+                  }
+                }}
+              >
+                {attachEstimateLoading ? "Подключаю…" : "Подключить загруженную смету"}
+              </Button>
+            ) : userHasSection(user, "zakupki") ? (
+              <Link href={`/cabinet/zakupki/${procurement.id}`} className="text-[var(--tk-copper-deep)] underline">
+                Открыть заявку и загрузить смету
+              </Link>
+            ) : null}
+          </div>
         ) : null}
         <div className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
           <div>
