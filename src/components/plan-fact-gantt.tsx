@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
 import { DateInputRu } from "@/components/date-input-ru";
 import { Button } from "@/components/ui/button";
 import { diffDays } from "@/lib/cost-engine";
@@ -23,6 +23,8 @@ type DragState = {
   stageId: string;
   mode: DragMode;
   startX: number;
+  clientX: number;
+  clientY: number;
   duration: number;
   delta: number;
 };
@@ -65,6 +67,19 @@ function addDays(day: string, amount: number) {
   return new Date(new Date(`${day}T00:00:00Z`).getTime() + amount * DAY_MS)
     .toISOString()
     .slice(0, 10);
+}
+
+function visibleRangeForViewport(
+  viewport: HTMLDivElement | null,
+  start: string,
+  days: number,
+  dayWidth: number
+): [string, string] | null {
+  if (!viewport || !start || !days) return null;
+  const first = Math.max(0, Math.min(days - 1, Math.floor(viewport.scrollLeft / dayWidth)));
+  const visibleDays = Math.max(1, Math.floor((viewport.clientWidth - LABEL_WIDTH) / dayWidth));
+  const last = Math.min(days - 1, first + visibleDays - 1);
+  return [addDays(start, first), addDays(start, last)];
 }
 
 function clamp01(n: number) {
@@ -125,6 +140,8 @@ export function PlanFactGantt({
 }: Props) {
   const [scale, setScale] = useState<Scale>("week");
   const [fitDayWidth, setFitDayWidth] = useState<number | null>(null);
+  const [autoFit, setAutoFit] = useState(true);
+  const [visibleDateRange, setVisibleDateRange] = useState<[string, string] | null>(null);
   const [ephemeralFilter, setEphemeralFilter] = useState("all");
   const [savingStageId, setSavingStageId] = useState<string | null>(null);
   const [dragPreview, setDragPreview] = useState<DragState | null>(null);
@@ -162,6 +179,35 @@ export function PlanFactGantt({
   const today = new Date().toISOString().slice(0, 10);
   const todayOffset = minStart ? diffDays(minStart, today) : -1;
   const showToday = todayOffset >= 0 && todayOffset < totalDays;
+
+  useEffect(() => {
+    if (!autoFit || !scrollRef.current || totalDays <= 0) return;
+    const viewport = scrollRef.current;
+    const fit = () => {
+      const available = Math.max(320, viewport.clientWidth - LABEL_WIDTH - 20);
+      const nextScale: Scale = totalDays > 120 ? "month" : totalDays <= 45 ? "day" : "week";
+      const minWidth = nextScale === "month" ? 1.25 : 10;
+      const maxWidth = nextScale === "day" ? 34 : nextScale === "week" ? 18 : 7;
+      setScale(nextScale);
+      setFitDayWidth(Math.max(minWidth, Math.min(maxWidth, available / totalDays)));
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [autoFit, totalDays]);
+
+  useEffect(() => {
+    const viewport = scrollRef.current;
+    const update = () => setVisibleDateRange(
+      visibleRangeForViewport(viewport, minStart, totalDays, dayWidth)
+    );
+    update();
+    if (!viewport) return;
+    const observer = new ResizeObserver(update);
+    observer.observe(viewport);
+    return () => observer.disconnect();
+  }, [dayWidth, minStart, totalDays]);
   const plannedCount = sorted.filter((stage) => stage.planVolume != null && stage.planVolume > 0).length;
   const totalWorkingDays = gprCoveredDays(sorted, { weekendDays }).length;
   const ticks = (() => {
@@ -226,6 +272,8 @@ export function PlanFactGantt({
       stageId: stage.id,
       mode,
       startX: event.clientX,
+      clientX: event.clientX,
+      clientY: event.clientY,
       duration: daysBetween(stage.start, stage.end),
       delta: 0,
     };
@@ -237,7 +285,7 @@ export function PlanFactGantt({
     const current = dragRef.current;
     if (!current || current.pointerId !== event.pointerId) return;
     const delta = Math.round((event.clientX - current.startX) / dayWidth);
-    const next = { ...current, delta };
+    const next = { ...current, delta, clientX: event.clientX, clientY: event.clientY };
     dragRef.current = next;
     setDragPreview(next);
   }
@@ -266,12 +314,8 @@ export function PlanFactGantt({
   }
 
   function fitSchedule() {
-    setScale("month");
-    if (scrollRef.current && totalDays > 0) {
-      const availableWidth = Math.max(320, scrollRef.current.clientWidth - LABEL_WIDTH - 20);
-      setFitDayWidth(availableWidth / totalDays);
-      scrollRef.current.scrollTo({ left: 0, behavior: "smooth" });
-    }
+    setAutoFit(true);
+    scrollRef.current?.scrollTo({ left: 0, behavior: "smooth" });
   }
 
   const kindLabels: Record<string, string> = {
@@ -281,6 +325,14 @@ export function PlanFactGantt({
     bus: "Автобусы",
     other: "Прочее",
   };
+  const activeDragStage = dragPreview ? stageById.get(dragPreview.stageId) : undefined;
+  const dragPreviewStart = activeDragStage
+    ? addDays(activeDragStage.start, dragPreview?.mode === "move" ? dragPreview.delta : 0)
+    : minStart;
+  const dragPreviewDuration = dragPreview?.mode === "resize"
+    ? Math.max(1, dragPreview.duration + dragPreview.delta)
+    : activeDragStage ? daysBetween(activeDragStage.start, activeDragStage.end) : 1;
+  const dragPreviewEnd = addDays(dragPreviewStart, dragPreviewDuration - 1);
 
   return (
     <div className="space-y-3" data-testid="plan-fact-gantt">
@@ -332,6 +384,7 @@ export function PlanFactGantt({
                 aria-pressed={scale === item}
                 data-testid={`gantt-scale-${item}`}
                 onClick={() => {
+                  setAutoFit(false);
                   setFitDayWidth(null);
                   setScale(item);
                 }}
@@ -345,8 +398,13 @@ export function PlanFactGantt({
             Сегодня
           </Button>
           <Button size="sm" variant="outline" className="h-8" onClick={fitSchedule} disabled={!sorted.length}>
-            Весь график
+            Вписать график
           </Button>
+          {visibleDateRange ? (
+            <span className="rounded-md bg-[var(--tk-brand)] px-2.5 py-1.5 text-xs font-semibold text-white tabular-nums" data-testid="gantt-visible-dates">
+              На экране: {formatDateRangeShort(visibleDateRange[0], visibleDateRange[1])}
+            </span>
+          ) : null}
         </div>
       </div>
 
@@ -357,12 +415,15 @@ export function PlanFactGantt({
           <span className="inline-flex items-center gap-1.5"><i className="h-4 w-0.5 bg-rose-600" /> Сегодня</span>
           <span>Выходные подсвечены</span>
         </div>
-        <span>Перетащите полосу — сдвинуть · потяните правый край — изменить длительность · зависимости и ресурсы обновятся автоматически</span>
+        <span>Полоса меняет даты, правый край — длительность. Зависимые этапы пересчитываются автоматически.</span>
       </div>
 
       <div
         ref={scrollRef}
         className="overflow-auto rounded-xl border border-[var(--tk-line)] bg-white shadow-sm"
+        onScroll={(event) => setVisibleDateRange(
+          visibleRangeForViewport(event.currentTarget, minStart, totalDays, dayWidth)
+        )}
         data-testid="gantt-scroll-container"
       >
         {!sorted.length ? (
@@ -413,7 +474,7 @@ export function PlanFactGantt({
               const isSaving = savingStageId === stage.id;
               const stageFact = entry ? entryDisplayFact(entry, dailyFacts) : null;
               const resSummary = stageResourceSummary(stage);
-              const barTitle = `План ${formatDateRangeShort(stage.start, stage.end)}${factPct == null ? " · факт не привязан к этапу" : ` · факт ${Math.round(factPct * 100)}%`}`;
+              const barTitle = `План ${formatDateRangeShort(previewStart, previewEnd)}${factPct == null ? " · факт не привязан к этапу" : ` · факт ${Math.round(factPct * 100)}%`}`;
               return (
                 <div
                   key={stage.id}
@@ -432,8 +493,8 @@ export function PlanFactGantt({
                           {stage.name}
                         </div>
                         {stage.sectionName ? <div className="mt-0.5 truncate text-[10px] text-[var(--tk-muted)]" title={stage.sectionName}>{stage.sectionName}</div> : null}
-                        <div className="mt-1 text-[11px] text-[var(--tk-muted)]">
-                          {formatDate(stage.start)} – {formatDate(stage.end)}
+                        <div className={`mt-1 tabular-nums ${preview ? "rounded-md bg-[var(--tk-brand)] px-1.5 py-1 text-xs font-semibold text-white" : "text-[11px] text-[var(--tk-muted)]"}`} aria-live={preview ? "polite" : undefined}>
+                          {formatDate(previewStart)} – {formatDate(previewEnd)}{preview ? ` · ${widthDays} дн.` : ""}
                         </div>
                         {predecessor ? (
                           <div className="mt-1 truncate text-[11px] text-[var(--tk-muted)]" title={`Зависимость от ${predecessor.name}`}>
@@ -620,8 +681,8 @@ export function PlanFactGantt({
                       </span>
                     ) : null}
                     {dragPreview?.stageId === stage.id ? (
-                      <span aria-live="polite" className="absolute bottom-2 rounded bg-white/95 px-2 py-1 text-[10px] font-medium text-[var(--tk-ink)] shadow" style={{ left: Math.max(4, left) }}>
-                        {formatDate(previewStart)} – {formatDate(previewEnd)} · {widthDays} дн.
+                      <span className="absolute bottom-2 rounded bg-[var(--tk-brand)] px-2 py-1 text-[11px] font-semibold text-white shadow" style={{ left: Math.max(4, left) }}>
+                        {formatDate(previewStart)} – {formatDate(previewEnd)}
                       </span>
                     ) : null}
                     {isSaving ? <span className="absolute bottom-2 right-3 text-[10px] text-[var(--tk-muted)]">Сохраняю и пересчитываю…</span> : null}
@@ -632,6 +693,24 @@ export function PlanFactGantt({
           </div>
         )}
       </div>
+      {dragPreview ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="pointer-events-none fixed z-[100] max-w-64 rounded-lg bg-[var(--tk-brand)] px-3 py-2 text-sm font-semibold text-white shadow-xl ring-2 ring-white"
+          style={{
+            left: Math.max(8, Math.min(dragPreview.clientX + 14, (typeof window === "undefined" ? 1200 : window.innerWidth) - 280)),
+            top: Math.max(8, Math.min(dragPreview.clientY + 14, (typeof window === "undefined" ? 800 : window.innerHeight) - 64)),
+          }}
+          data-testid="gantt-drag-date-preview"
+        >
+          <span className="block text-[11px] font-medium text-white/75">{dragPreview.mode === "move" ? "Новые даты этапа" : "Новая длительность"}</span>
+          {formatDate(dragPreviewStart)} – {formatDate(dragPreviewEnd)}
+          {dragPreview.mode === "resize"
+            ? ` · ${dragPreviewDuration} дн.`
+            : ` · сдвиг ${dragPreview.delta > 0 ? "+" : ""}${dragPreview.delta} дн.`}
+        </div>
+      ) : null}
     </div>
   );
 }
