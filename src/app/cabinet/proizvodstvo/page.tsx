@@ -32,7 +32,7 @@ import {
   entryDisplayRemain,
   sumDailyQty,
 } from "@/lib/plan-fact-agg";
-import { allocatePlanForSlice, stagesForWork } from "@/lib/plan-from-gpr";
+import { allocatePlanForSlice, linkEstimateWorksToStages, stagesForWork } from "@/lib/plan-from-gpr";
 import { economicsFromVolumes } from "@/lib/economics-from-rates";
 import { forecastWorkCompletion } from "@/lib/production-forecast";
 import { useStore } from "@/lib/store";
@@ -63,7 +63,7 @@ export default function ProizvodstvoPage() {
       ? ""
       : new URLSearchParams(window.location.search).get("planFactId") ?? ""
   );
-  const [period, setPeriod] = useState<PeriodMode>("cum");
+  const [period, setPeriod] = useState<PeriodMode>("day");
   const [date, setDate] = useState(todayIsoInTimeZone());
   const [qty, setQty] = useState("1");
   const [newWorkName, setNewWorkName] = useState("");
@@ -126,7 +126,7 @@ export default function ProizvodstvoPage() {
 
   const workOptions = plan?.entries.map((e) => e.workName) ?? [];
   const [workName, setWorkName] = useState("");
-  const selectedWork = workName || workOptions[0] || "";
+  const selectedWork = workOptions.includes(workName) ? workName : workOptions[0] || "";
   const selectedEntry = plan?.entries.find((e) => e.workName === selectedWork);
   const selectedUnit = selectedEntry?.unit ?? "—";
 
@@ -191,7 +191,9 @@ export default function ProizvodstvoPage() {
           : totals.fact;
 
   // Plan for selected slice: stage volumes when present, else uniform fallback
-  const gprStages = gpr?.stages ?? [];
+  const gprStages = gpr
+    ? linkEstimateWorksToStages(gpr.stages, draftCalculation?.positions ?? [])
+    : [];
   const selectedWorkStages = plan
     ? stagesForWork(plan.entries.map((entry) => entry.workName), gprStages, selectedWork)
     : [];
@@ -209,6 +211,13 @@ export default function ProizvodstvoPage() {
   const planSlice = planForEntries(period);
   const periodPlan = planSlice.plan;
   const sliceVariance = periodFact - periodPlan;
+  const dailyGprPlanRows = (plan?.entries ?? [])
+    .map((entry) => {
+      const workStages = stagesForWork(plan?.entries.map((item) => item.workName) ?? [], gprStages, entry.workName);
+      const slice = allocatePlanForSlice(entry.plan, workStages, "day", date, gpr?.calendar);
+      return { entry, plan: slice.plan, source: slice.source };
+    })
+    .filter((row) => row.plan > 0);
   const varianceKey = JSON.stringify({
     planId: plan?.id,
     period,
@@ -909,6 +918,22 @@ export default function ProizvodstvoPage() {
                     toast.success("Вид работ добавлен в план договора");
                   }}>Добавить работу</Button>
                 </div>
+                <section className="mb-4 rounded-lg border border-primary/20 bg-primary/[0.04] p-3" aria-label="План ГПР на выбранный день" data-testid="daily-gpr-plan">
+                  <h4 className="font-medium">По ГПР на {formatDate(date)}</h4>
+                  {dailyGprPlanRows.length ? (
+                    <ul className="mt-2 space-y-1 text-sm">
+                      {dailyGprPlanRows.map(({ entry, plan: planned }) => (
+                        <li key={entry.id} className="flex flex-wrap justify-between gap-x-4">
+                          <span>{entry.workName}</span>
+                          <span className="font-semibold tabular-nums">{formatNumber(planned)} {entry.unit}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="mt-1 text-sm text-muted-foreground">На выбранный день в ГПР работы не запланированы. Выберите дату внутри этапа или проверьте календарь ГПР.</p>
+                  )}
+                  <p className="mt-2 text-xs text-muted-foreground">Внесите выполненный объём ниже по каждому виду работ — отклонение от плана обновится автоматически.</p>
+                </section>
                 <h3 className="mb-3 font-medium">Дневной факт + фото</h3>
                 <div className="flex flex-wrap items-end gap-2">
                   <div>

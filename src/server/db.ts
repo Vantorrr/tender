@@ -8,6 +8,7 @@ import {
 import { DEMO_SECRET_KEYS } from "@/lib/demo-accounts";
 import { ensureStageResources } from "@/lib/gpr-resources";
 import { recomputeEntriesFromDaily } from "@/lib/plan-fact-agg";
+import { linkEstimateWorksToStages, productionEntriesFromGpr } from "@/lib/plan-from-gpr";
 import { createSeedData } from "@/lib/seed";
 import { ensureT25uTestFixture } from "@/lib/t25u-test-fixture";
 import type { AppData } from "@/lib/types";
@@ -27,7 +28,7 @@ import { procurementSourceStatus } from "@/server/procurement-source";
  * 17: TPKP demo estimate uses only latest revisions and explicit GPR stage links;
  * repeated lines are summarized by resource while preserving editable source rows.
  */
-const SCHEMA_VERSION = "18";
+const SCHEMA_VERSION = "19";
 
 declare global {
   var __tkDb: DatabaseSync | undefined;
@@ -432,6 +433,32 @@ function migrate(db: DatabaseSync) {
     installGrandReference(data);
     applySchema8Extras(data);
     applySchema10Extras(data);
+    // v19: derive production work rows from the linked estimate and attach them
+    // to their GPR phases, preserving any facts/manual rows already entered.
+    const calculationsById = new Map(data.calculations.map((item) => [item.id, item]));
+    data.schedules = data.schedules.map((schedule) => {
+      const calculation = calculationsById.get(schedule.calculationId);
+      return calculation
+        ? { ...schedule, stages: linkEstimateWorksToStages(schedule.stages, calculation.positions ?? []) }
+        : schedule;
+    });
+    for (const procurement of data.procurements) {
+      if (procurement.lifecycle !== "production" || !procurement.planFactId || !procurement.gprId) continue;
+      const plan = data.planFacts.find((item) => item.id === procurement.planFactId);
+      const schedule = data.schedules.find((item) => item.id === procurement.gprId);
+      const calculation = schedule ? calculationsById.get(schedule.calculationId) : undefined;
+      if (!plan || !schedule || !calculation) continue;
+      const derived = productionEntriesFromGpr(schedule.stages, calculation.positions ?? [])
+        .map((entry, index) => ({ ...entry, id: `pfe-gpr-${procurement.id}-${index + 1}` }));
+      const keys = new Set(plan.entries.map((entry) => `${entry.workName.trim().toLocaleLowerCase("ru-RU")}\u0000${entry.unit.trim().toLocaleLowerCase("ru-RU")}`));
+      const missing = derived.filter((entry) => !keys.has(`${entry.workName.trim().toLocaleLowerCase("ru-RU")}\u0000${entry.unit.trim().toLocaleLowerCase("ru-RU")}`));
+      if (missing.length) {
+        plan.entries = [...plan.entries, ...missing];
+        plan.baselineEntries = [...(plan.baselineEntries ?? plan.entries.slice(0, -missing.length)), ...missing].map((entry) => ({ ...entry }));
+        plan.baselineAt ??= new Date().toISOString();
+        plan.updatedAt = new Date().toISOString();
+      }
+    }
     // Additive only: insert [TEST] fixture if missing. Never rewrite g-1/c-1/pf-1.
     ensureT25uTestFixture(data);
 

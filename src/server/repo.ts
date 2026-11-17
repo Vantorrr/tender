@@ -54,7 +54,12 @@ import { createSession, publicUser } from "@/server/auth";
 import { randomBytes } from "node:crypto";
 import { economicsFromVolumes } from "@/lib/economics-from-rates";
 import { ensureStageResources } from "@/lib/gpr-resources";
-import { gprCoveredDays, totalStageCalendarDays } from "@/lib/plan-from-gpr";
+import {
+  gprCoveredDays,
+  linkEstimateWorksToStages,
+  productionEntriesFromGpr as deriveProductionEntriesFromGpr,
+  totalStageCalendarDays,
+} from "@/lib/plan-from-gpr";
 import { recomputeEntriesFromDaily, sumDailyQty } from "@/lib/plan-fact-agg";
 import { buildMaterialNeeds, materialNeedsIncomplete } from "@/lib/materials-need";
 import {
@@ -1081,27 +1086,11 @@ function productionEntriesFromCustomerEstimate(data: AppData, procurementId: str
 function productionEntriesFromSchedule(data: AppData, procurementId: string): PlanFactEntry[] {
   const schedule = data.schedules.find((item) => item.procurementId === procurementId);
   if (!schedule) return [];
-  const grouped = new Map<string, { workName: string; unit: string; plan: number }>();
-  for (const stage of schedule.stages) {
-    if (!Number.isFinite(stage.planVolume) || (stage.planVolume ?? 0) <= 0 || !stage.planUnit?.trim()) continue;
-    const linkedWorks = stage.workNames?.filter((name) => name.trim()) ?? [];
-    // A stage total cannot safely be copied to each of several work types.
-    const workName = stage.workName?.trim() || (linkedWorks.length === 1 ? linkedWorks[0].trim() : "") ||
-      (linkedWorks.length === 0 ? stage.name.trim() : "");
-    if (!workName) continue;
-    const unit = stage.planUnit.trim();
-    const key = `${workName.toLocaleLowerCase("ru-RU")}\u0000${unit.toLocaleLowerCase("ru-RU")}`;
-    const row = grouped.get(key) ?? { workName, unit, plan: 0 };
-    row.plan += stage.planVolume!;
-    grouped.set(key, row);
-  }
-  return [...grouped.values()].map((row, index) => ({
+  const calculation = data.calculations.find((item) => item.id === schedule.calculationId);
+  const linkedStages = linkEstimateWorksToStages(schedule.stages, calculation?.positions ?? []);
+  return deriveProductionEntriesFromGpr(linkedStages, calculation?.positions ?? []).map((entry, index) => ({
+    ...entry,
     id: `pfe-gpr-${procurementId}-${index + 1}`,
-    workName: row.workName,
-    unit: row.unit,
-    plan: row.plan,
-    fact: 0,
-    contractRemaining: row.plan,
   }));
 }
 
@@ -1167,11 +1156,14 @@ export function updateSchedule(
       planUnit: stage.planUnit,
     })));
     const previousPhysicalPlan = safe.stages ? physicalPlanSignature(item.stages) : null;
-    data.schedules = data.schedules.map((s) =>
-      s.id === id
-        ? { ...s, ...safe, updatedAt: new Date().toISOString() }
-        : s
-    );
+    data.schedules = data.schedules.map((s) => {
+      if (s.id !== id) return s;
+      const calc = data.calculations.find((item) => item.id === s.calculationId);
+      const stages = safe.stages
+        ? linkEstimateWorksToStages(safe.stages, calc?.positions ?? [])
+        : s.stages;
+      return { ...s, ...safe, stages, updatedAt: new Date().toISOString() };
+    });
     // Only resync explicit resource-linked drafts — never rewrite unrelated/legacy positions.
     const updated = data.schedules.find((s) => s.id === id)!;
     if (safe.stages) {

@@ -2,10 +2,74 @@
  * Allocate contract / stage plan volumes across GPR calendar for period slices.
  * Prefer per-stage planVolume when present; uniform fallback only when no stage volumes.
  */
-import type { GprStage, WorkCalendar } from "@/lib/types";
+import type { CalcPosition, GprStage, PlanFactEntry, WorkCalendar } from "@/lib/types";
 import { addDaysIso, diffDays } from "@/lib/cost-engine";
 
 export type PlanSliceMode = "day" | "month" | "period" | "cum";
+
+function normalizedLabel(value?: string): string {
+  return (value ?? "")
+    .normalize("NFKC")
+    .toLocaleLowerCase("ru-RU")
+    .replace(/ё/g, "е")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+function sourceStageMatches(position: CalcPosition, stage: GprStage): boolean {
+  const source = normalizedLabel(position.sourceStageName);
+  if (!source) return false;
+  return [stage.name, stage.workName, ...(stage.workNames ?? [])]
+    .map(normalizedLabel)
+    .some((label) => label && (label === source || (Math.min(label.length, source.length) >= 32 && (label.startsWith(source) || source.startsWith(label)))));
+}
+
+/** Link estimate work rows to their GPR phase and expose them in production plan/fact. */
+export function linkEstimateWorksToStages(stages: GprStage[], positions: CalcPosition[]): GprStage[] {
+  return stages.map((stage) => {
+    const derived = positions
+      .filter((position) => position.isWorkItem && sourceStageMatches(position, stage))
+      .map((position) => position.name.trim())
+      .filter(Boolean);
+    if (!derived.length) return stage;
+    const names = [...new Set([...(stage.workNames ?? []), ...derived])];
+    return { ...stage, workNames: names };
+  });
+}
+
+/** Physical work plan for production, sourced from quantity-bearing estimate work rows. */
+export function productionEntriesFromGpr(stages: GprStage[], positions: CalcPosition[]): PlanFactEntry[] {
+  const grouped = new Map<string, { workName: string; unit: string; plan: number }>();
+  const represented = new Set<string>();
+  for (const position of positions) {
+    if (!position.isWorkItem || !Number.isFinite(position.quantity) || position.quantity <= 0 || !position.name.trim() || !position.unit.trim()) continue;
+    const stage = stages.find((item) => sourceStageMatches(position, item));
+    if (!stage) continue;
+    const key = `${position.name.trim().toLocaleLowerCase("ru-RU")}\u0000${position.unit.trim().toLocaleLowerCase("ru-RU")}`;
+    const row = grouped.get(key) ?? { workName: position.name.trim(), unit: position.unit.trim(), plan: 0 };
+    row.plan += position.quantity;
+    grouped.set(key, row);
+    represented.add(stage.id);
+  }
+  // Keep explicit manually entered stage volumes when no estimate work rows were parsed.
+  for (const stage of stages) {
+    if (represented.has(stage.id) || !Number.isFinite(stage.planVolume) || (stage.planVolume ?? 0) <= 0 || !stage.planUnit?.trim()) continue;
+    const linked = stage.workName?.trim() || ((stage.workNames ?? []).length === 1 ? stage.workNames![0].trim() : "") || ((stage.workNames ?? []).length === 0 ? stage.name.trim() : "");
+    if (!linked) continue;
+    const key = `${linked.toLocaleLowerCase("ru-RU")}\u0000${stage.planUnit.trim().toLocaleLowerCase("ru-RU")}`;
+    const row = grouped.get(key) ?? { workName: linked, unit: stage.planUnit.trim(), plan: 0 };
+    row.plan += stage.planVolume!;
+    grouped.set(key, row);
+  }
+  return [...grouped.values()].map((row, index) => ({
+    id: `pfe-gpr-auto-${index + 1}`,
+    workName: row.workName,
+    unit: row.unit,
+    plan: Math.round(row.plan * 1000) / 1000,
+    fact: 0,
+    contractRemaining: Math.round(row.plan * 1000) / 1000,
+  }));
+}
 
 /** Match production work to explicitly linked GPR stages; only a single-work plan may use unlinked stages. */
 export function stagesForWork(
