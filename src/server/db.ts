@@ -28,7 +28,7 @@ import { procurementSourceStatus } from "@/server/procurement-source";
  * 17: TPKP demo estimate uses only latest revisions and explicit GPR stage links;
  * repeated lines are summarized by resource while preserving editable source rows.
  */
-const SCHEMA_VERSION = "19";
+const SCHEMA_VERSION = "20";
 
 declare global {
   var __tkDb: DatabaseSync | undefined;
@@ -433,8 +433,8 @@ function migrate(db: DatabaseSync) {
     installGrandReference(data);
     applySchema8Extras(data);
     applySchema10Extras(data);
-    // v19: derive production work rows from the linked estimate and attach them
-    // to their GPR phases, preserving any facts/manual rows already entered.
+    // v20: derive work rows from the linked estimate and attach them to their
+    // GPR phases, preserving any facts/manual rows already entered.
     const calculationsById = new Map(data.calculations.map((item) => [item.id, item]));
     data.schedules = data.schedules.map((schedule) => {
       const calculation = calculationsById.get(schedule.calculationId);
@@ -442,14 +442,14 @@ function migrate(db: DatabaseSync) {
         ? { ...schedule, stages: linkEstimateWorksToStages(schedule.stages, calculation.positions ?? []) }
         : schedule;
     });
-    for (const procurement of data.procurements) {
-      if (procurement.lifecycle !== "production" || !procurement.planFactId || !procurement.gprId) continue;
-      const plan = data.planFacts.find((item) => item.id === procurement.planFactId);
-      const schedule = data.schedules.find((item) => item.id === procurement.gprId);
+    for (const plan of data.planFacts) {
+      if (!plan.procurementId) continue;
+      const procurement = data.procurements.find((item) => item.id === plan.procurementId);
+      const schedule = data.schedules.find((item) => item.id === (procurement?.gprId ?? "") || item.procurementId === plan.procurementId);
       const calculation = schedule ? calculationsById.get(schedule.calculationId) : undefined;
       if (!plan || !schedule || !calculation) continue;
       const derived = productionEntriesFromGpr(schedule.stages, calculation.positions ?? [])
-        .map((entry, index) => ({ ...entry, id: `pfe-gpr-${procurement.id}-${index + 1}` }));
+        .map((entry, index) => ({ ...entry, id: `pfe-gpr-${plan.procurementId}-${index + 1}` }));
       const keys = new Set(plan.entries.map((entry) => `${entry.workName.trim().toLocaleLowerCase("ru-RU")}\u0000${entry.unit.trim().toLocaleLowerCase("ru-RU")}`));
       const missing = derived.filter((entry) => !keys.has(`${entry.workName.trim().toLocaleLowerCase("ru-RU")}\u0000${entry.unit.trim().toLocaleLowerCase("ru-RU")}`));
       if (missing.length) {

@@ -1097,37 +1097,39 @@ function productionEntriesFromSchedule(data: AppData, procurementId: string): Pl
 /** Refresh GPR-sourced rows without discarding entered facts or manual plan rows. */
 function syncProductionPlanFromSchedule(data: AppData, schedule: GprSchedule) {
   const procurement = data.procurements.find((item) => item.id === schedule.procurementId);
-  if (!procurement || procurement.lifecycle !== "production" || !procurement.planFactId) return;
-  const plan = data.planFacts.find((item) => item.id === procurement.planFactId);
-  if (!plan) return;
+  if (!procurement) return;
+  const plans = data.planFacts.filter((item) => item.procurementId === procurement.id || item.id === procurement.planFactId);
+  if (!plans.length) return;
   const derived = productionEntriesFromSchedule(data, procurement.id);
   const keyOf = (entry: Pick<PlanFactEntry, "workName" | "unit">) =>
     `${entry.workName.trim().toLocaleLowerCase("ru-RU")}\u0000${entry.unit.trim().toLocaleLowerCase("ru-RU")}`;
-  const oldByKey = new Map(plan.entries.map((entry) => [keyOf(entry), entry]));
-  const nextKeys = new Set(derived.map(keyOf));
-  const next: PlanFactEntry[] = derived.map((entry) => {
-    const old = oldByKey.get(keyOf(entry));
-    const dailyHasFact = (plan.dailyFacts ?? []).some((daily) => daily.workName.trim() === entry.workName.trim());
-    const fact = dailyHasFact
-      ? Math.round(sumDailyQty(plan.dailyFacts, { workName: entry.workName }) * 1000) / 1000
-      : old?.fact ?? 0;
-    return {
-      ...entry,
-      ...(old ? { id: old.id } : {}),
-      fact,
-      contractRemaining: Math.max(0, entry.plan - fact),
-    };
-  });
-  for (const old of plan.entries) {
-    if (nextKeys.has(keyOf(old))) continue;
-    const hasRecordedFact = old.fact > 0 || (plan.dailyFacts ?? []).some((fact) =>
-      fact.workName.trim() === old.workName.trim() && fact.unit.trim() === old.unit.trim() && fact.quantity > 0
-    );
-    const importedEstimateOrGpr = old.id.startsWith("pfe-gpr-") || old.id.startsWith("pfe-est-");
-    if (hasRecordedFact || !importedEstimateOrGpr) next.push(old);
+  for (const plan of plans) {
+    const oldByKey = new Map(plan.entries.map((entry) => [keyOf(entry), entry]));
+    const nextKeys = new Set(derived.map(keyOf));
+    const next: PlanFactEntry[] = derived.map((entry) => {
+      const old = oldByKey.get(keyOf(entry));
+      const dailyHasFact = (plan.dailyFacts ?? []).some((daily) => daily.workName.trim() === entry.workName.trim());
+      const fact = dailyHasFact
+        ? Math.round(sumDailyQty(plan.dailyFacts, { workName: entry.workName }) * 1000) / 1000
+        : old?.fact ?? 0;
+      return {
+        ...entry,
+        ...(old ? { id: old.id } : {}),
+        fact,
+        contractRemaining: Math.max(0, entry.plan - fact),
+      };
+    });
+    for (const old of plan.entries) {
+      if (nextKeys.has(keyOf(old))) continue;
+      const hasRecordedFact = old.fact > 0 || (plan.dailyFacts ?? []).some((fact) =>
+        fact.workName.trim() === old.workName.trim() && fact.unit.trim() === old.unit.trim() && fact.quantity > 0
+      );
+      const importedEstimateOrGpr = old.id.startsWith("pfe-gpr-") || old.id.startsWith("pfe-est-");
+      if (hasRecordedFact || !importedEstimateOrGpr) next.push(old);
+    }
+    plan.entries = next;
+    plan.updatedAt = new Date().toISOString();
   }
-  plan.entries = next;
-  plan.updatedAt = new Date().toISOString();
 }
 
 function productionEntriesForProcurement(data: AppData, procurementId: string): PlanFactEntry[] {
