@@ -6,7 +6,6 @@ import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { ProjectAiChat } from "@/components/project-ai-chat";
-import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -81,10 +80,6 @@ export default function ProizvodstvoPage() {
   const pendingFactIdRef = useRef<string | null>(null);
   const photoRef = useRef<HTMLInputElement>(null);
 
-  const objects = useMemo(
-    () => (user ? data.objects.filter((o) => o.orgId === user.orgId) : []),
-    [data.objects, user]
-  );
   const plans = useMemo(
     () => (user ? data.planFacts.filter((p) => p.orgId === user.orgId) : []),
     [data.planFacts, user]
@@ -93,7 +88,7 @@ export default function ProizvodstvoPage() {
     ? requestedPlanId
     : plans[0]?.id || "");
   const plan = plans.find((p) => p.id === activeId);
-  const object = objects.find((o) => o.id === plan?.objectId);
+  const object = data.objects.find((o) => o.id === plan?.objectId && o.orgId === user?.orgId);
   const procurement = orgProcurements.find((p) => p.id === plan?.procurementId);
   const canViewMoney = user ? userHasSection(user, "dengi") : false;
   const canViewProcurement = user ? userHasSection(user, "zakupki") : false;
@@ -328,7 +323,7 @@ export default function ProizvodstvoPage() {
     <div>
       <PageHeader
         title="Производство · план/факт"
-        description="День / месяц / период / накопительно. Фото и ручной факт. Финансовый результат отделён от кассы. Базовый план сохраняется при переводе в производство."
+        description="Выберите проект и период, чтобы сверить выполнение работ с планом."
         actions={
           plan ? (
             <div className="flex flex-wrap items-center gap-2">
@@ -349,31 +344,6 @@ export default function ProizvodstvoPage() {
         }
       />
 
-      <div className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950">
-        Физический факт ≠ платёж. Нормативная стоимость выполненного и
-        подтверждённые затраты ≠ поступления/списания кассы. Признанная выручка
-        — отдельно («нет данных», пока не подтверждено).
-      </div>
-
-      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {objects.map((o) => (
-          <div
-            key={o.id}
-            className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4"
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div>
-                <h3 className="font-semibold">{o.name}</h3>
-                <p className="mt-1 text-sm text-[var(--tk-muted)]">
-                  {o.address}
-                </p>
-              </div>
-              <StatusBadge status={o.status} />
-            </div>
-          </div>
-        ))}
-      </div>
-
       {plans.length === 0 ? (
         <EmptyState
           title="План/факт не заведён"
@@ -381,11 +351,11 @@ export default function ProizvodstvoPage() {
         />
       ) : (
         <>
-          <div className="mb-4 flex flex-wrap items-end gap-3">
-            <div>
-              <p className="mb-1 text-xs text-[var(--tk-muted)]">Карточка</p>
+          <div className="mb-5 flex flex-wrap items-end gap-4 rounded-2xl border border-border bg-card p-4 shadow-sm">
+            <div className="min-w-[260px] flex-1">
+              <label className="mb-1.5 block text-sm font-semibold" htmlFor="production-project">Проект</label>
               <Select value={activeId} onValueChange={(v) => v && setPfId(v)}>
-                <SelectTrigger className="w-[280px]">
+                <SelectTrigger id="production-project" className="h-11 w-full bg-background text-sm font-medium">
                   <SelectValue>{plan?.title ?? "План/факт"}</SelectValue>
                 </SelectTrigger>
                 <SelectContent>
@@ -398,32 +368,26 @@ export default function ProizvodstvoPage() {
               </Select>
             </div>
             {procurement ? (
-              <p className="text-sm text-[var(--tk-muted)]">
-                Проект {procurement.number}
-                {procurement.lifecycle === "production"
-                  ? " · в производстве"
-                  : ""}
-                {plan?.baselineAt
-                  ? ` · базовый план от ${formatDate(plan.baselineAt)}`
-                  : ""}
+              <p className="pb-2 text-sm text-muted-foreground">
+                Закупка № {procurement.number}{procurement.lifecycle === "production" ? " · В производстве" : ""}
               </p>
             ) : null}
             {plan ? (
               <Link
                 href={`/cabinet/proizvodstvo/day?planFactId=${encodeURIComponent(plan.id)}&date=${encodeURIComponent(date)}&work=${encodeURIComponent(selectedWork)}`}
-                className="inline-flex h-8 items-center rounded-lg border border-border bg-background px-2.5 text-sm hover:bg-muted"
+                className="inline-flex h-10 items-center rounded-lg border border-border bg-background px-3 text-sm font-medium hover:bg-muted"
                 data-testid="open-day-details"
               >
                 Детали дня →
               </Link>
             ) : null}
             <div>
-              <p className="mb-1 text-xs text-[var(--tk-muted)]">Срез</p>
+              <label className="mb-1.5 block text-sm font-semibold" htmlFor="production-period">Период</label>
               <Select
                 value={period}
                 onValueChange={(v) => v && setPeriod(v as PeriodMode)}
               >
-                <SelectTrigger className="w-[180px]" data-testid="period-mode">
+                <SelectTrigger id="production-period" className="h-11 w-[180px] bg-background" data-testid="period-mode">
                   <SelectValue>
                     {
                       {
@@ -445,9 +409,18 @@ export default function ProizvodstvoPage() {
             </div>
           </div>
 
+          <details className="mb-5 rounded-xl border border-border bg-muted/40 px-4 py-3 text-sm">
+            <summary className="cursor-pointer font-medium text-foreground">Как читать показатели</summary>
+            <p className="mt-2 max-w-4xl leading-relaxed text-muted-foreground">
+              Факт — выполненный физический объём. Деньги и касса учитываются отдельно: стоимость выполненного, подтверждённые затраты, поступления и списания — разные показатели. Базовый план сохраняется при переводе проекта в производство.
+            </p>
+          </details>
+
           {plan ? (
             <>
-              <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4" data-testid="prod-plan-vs-gpr">
+              <section className="mb-5" aria-label="Сводка выполнения" data-testid="prod-plan-vs-gpr">
+                <h2 className="mb-3 text-lg font-semibold tracking-tight">Выполнение работ</h2>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 {hasMixedPlanUnits ? (
                   <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 sm:col-span-2 lg:col-span-4">
                     Общий объём не суммируется: в проекте разные единицы или часть единиц не указана ({planUnits.join(", ") || "не указаны"}).
@@ -455,14 +428,14 @@ export default function ProizvodstvoPage() {
                   </div>
                 ) : <>
                   <div
-                    className="rounded-xl border bg-white/80 p-3 text-sm"
+                    className="rounded-xl border bg-white/80 p-4 text-sm"
                     data-testid="period-plan-from-gpr"
                   >
-                    <p className="text-xs text-[var(--tk-muted)]">За период (план ГПР)</p>
-                    <p className="mt-1 text-lg font-semibold">
+                    <p className="text-sm font-medium text-muted-foreground">План за период</p>
+                    <p className="mt-2 text-2xl font-semibold tracking-tight">
                       {formatNumber(periodPlan)} {planUnits[0] ?? ""}
                     </p>
-                    <span className="mt-1 block text-[11px] text-[var(--tk-muted)]">
+                    <span className="mt-2 block text-xs text-muted-foreground">
                       {planSlice.source === "stage_volumes"
                         ? "по объёмам этапов"
                         : planSlice.source === "uniform_fallback"
@@ -470,9 +443,9 @@ export default function ProizvodstvoPage() {
                           : "нет ГПР — срез ограничен"}
                     </span>
                   </div>
-                  <div className="rounded-xl border bg-white/80 p-3 text-sm" data-testid="prod-month-plan">
-                    <p className="text-xs text-[var(--tk-muted)]">За месяц</p>
-                    <p className="mt-1 text-lg font-semibold">
+                  <div className="rounded-xl border bg-white/80 p-4 text-sm" data-testid="prod-month-plan">
+                    <p className="text-sm font-medium text-muted-foreground">План месяца</p>
+                    <p className="mt-2 text-2xl font-semibold tracking-tight">
                       {formatNumber(
                         period === "month"
                           ? periodPlan
@@ -480,26 +453,26 @@ export default function ProizvodstvoPage() {
                       )}{" "}
                       {planUnits[0] ?? ""}
                     </p>
-                    <p className="mt-1 text-[11px] text-[var(--tk-muted)]">
-                      Факт месяца: {formatNumber(sumDailyQty(monthFacts))} {planUnits[0] ?? ""}
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Выполнено: {formatNumber(sumDailyQty(monthFacts))} {planUnits[0] ?? ""}
                     </p>
                   </div>
-                  <div className="rounded-xl border bg-white/80 p-3 text-sm" data-testid="prod-cum-done">
-                    <p className="text-xs text-[var(--tk-muted)]">Выполнено с начала</p>
-                    <p className="mt-1 text-lg font-semibold">
+                  <div className="rounded-xl border border-primary/20 bg-primary/[0.04] p-4 text-sm" data-testid="prod-cum-done">
+                    <p className="text-sm font-semibold text-foreground">Выполнено всего</p>
+                    <p className="mt-2 text-2xl font-bold tracking-tight">
                       {formatNumber(totals.fact)} {planUnits[0] ?? ""}
                     </p>
-                    <p className="mt-1 text-[11px] text-[var(--tk-muted)]">
-                      План договора: {formatNumber(totals.plan)} {planUnits[0] ?? ""}
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      из {formatNumber(totals.plan)} {planUnits[0] ?? ""} по договору
                     </p>
                   </div>
-                  <div className="rounded-xl border bg-white/80 p-3 text-sm" data-testid="prod-contract-remain">
-                    <p className="text-xs text-[var(--tk-muted)]">Остаток по договору</p>
-                    <p className="mt-1 text-lg font-semibold">
+                  <div className="rounded-xl border bg-white/80 p-4 text-sm" data-testid="prod-contract-remain">
+                    <p className="text-sm font-medium text-muted-foreground">Осталось выполнить</p>
+                    <p className="mt-2 text-2xl font-semibold tracking-tight">
                       {formatNumber(totals.remain)} {planUnits[0] ?? ""}
                     </p>
-                    <p className="mt-1 text-[11px] text-[var(--tk-muted)]">
-                      Отклонение среза:{" "}
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Отклонение от плана:{" "}
                       <span
                         className={
                           sliceVariance < 0
@@ -514,44 +487,54 @@ export default function ProizvodstvoPage() {
                     </p>
                   </div>
                 </>}
-                <div className="rounded-xl border bg-white/80 p-3 text-sm sm:col-span-2 lg:col-span-2" data-testid="prod-earned-rub">
-                  <p className="text-xs text-[var(--tk-muted)]">Заработано ₽ (объём × ставки)</p>
-                  <p className="mt-1 text-lg font-semibold">
+              </div>
+              </section>
+
+              <section className="mb-5" aria-label="Экономика проекта">
+                <h2 className="mb-3 text-lg font-semibold tracking-tight">Стоимость и смета</h2>
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                <div className="rounded-xl border bg-white/80 p-4 text-sm" data-testid="prod-earned-rub">
+                  <p className="text-sm font-medium text-muted-foreground">Стоимость выполненного</p>
+                  <p className="mt-2 text-xl font-semibold tracking-tight">
                     {productionEconomics == null || productionEconomics.incomplete.length > 0
                       ? "Расчёт неполный"
                       : formatMoney(productionEconomics.autoIncurred)}
                   </p>
                   {(productionEconomics?.incomplete.length ?? 0) > 0 ? (
-                    <span className="mt-1 block text-[11px] text-amber-800">
-                      нет подтверждённых ставок: {(productionEconomics?.incomplete ?? []).slice(0, 4).join(", ")}
+                    <span className="mt-2 block text-xs text-amber-800">
+                      Не хватает ставок по {productionEconomics?.incomplete.length} позициям
                     </span>
                   ) : null}
                 </div>
-                <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  По смете заказчика (₽):{" "}
+                <div className="rounded-xl border bg-white/80 p-4 text-sm">
+                  <p className="font-medium text-muted-foreground">Стоимость по смете заказчика</p>
+                  <p className="mt-2 text-lg font-semibold tracking-tight">
                   {productionEconomics?.customerEstimateValue == null
                     ? "нет данных"
                     : formatMoney(productionEconomics.customerEstimateValue)}
+                  </p>
                   {(productionEconomics?.customerEstimateIncomplete.length ?? 0) > 0 ? (
-                    <span className="mt-1 block text-[11px] text-amber-800">
+                    <span className="mt-2 block text-xs text-amber-800">
                       {customerEstimateMissingSource
                         ? "Исходная смета заказчика не загружена"
                         : `нет точной ставки: ${productionEconomics?.customerEstimateIncomplete.slice(0, 3).join(", ")}`}
                     </span>
                   ) : null}
                 </div>
-                <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  Остаток по смете заказчика (₽):{" "}
+                <div className="rounded-xl border bg-white/80 p-4 text-sm">
+                  <p className="font-medium text-muted-foreground">Остаток по смете</p>
+                  <p className="mt-2 text-lg font-semibold tracking-tight">
                   {productionEconomics?.customerEstimateRemainingValue == null
                     ? "нет данных"
                     : formatMoney(productionEconomics.customerEstimateRemainingValue)}
+                  </p>
                 </div>
-              </div>
+                </div>
+              </section>
 
               <div className="mb-4 space-y-3">
                 <div className="flex flex-wrap items-center gap-3">
                   <Button
-                    variant="outline"
                     disabled={varianceLoading || !selectedEntry || !selectedWorkStages.length}
                     onClick={async () => {
                       setVarianceLoading(true);
@@ -579,12 +562,16 @@ export default function ProizvodstvoPage() {
                   >
                     {varianceLoading ? "ИИ проверяет записи…" : "Разобрать отклонение с ИИ"}
                   </Button>
-                  <span className="text-xs text-[var(--tk-muted)]">
-                    {!selectedWorkStages.length
-                      ? "Для выбранной работы нет связанных этапов ГПР. Свяжите работу и этап в графике."
-                      : `Платный запрос в настроенную модель. Разбор относится к работе «${selectedWork}»; используются только её факт, график, комментарии и поставки.`}
-                  </span>
+                  <details className="text-sm text-muted-foreground">
+                    <summary className="cursor-pointer">Что проверит ИИ</summary>
+                    <p className="mt-1 max-w-2xl leading-relaxed">
+                      Сопоставит факт выбранной работы с этапами ГПР, комментариями и поставками. Анализ запускается отдельным платным запросом.
+                    </p>
+                  </details>
                 </div>
+                {!selectedWorkStages.length ? (
+                  <p className="text-sm text-amber-800">Для этой работы не связаны этапы ГПР. Сначала свяжите их в графике.</p>
+                ) : null}
                 {varianceReport?.key === varianceKey ? (
                   <div className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4" data-testid="production-variance-ai">
                     <h3 className="font-medium">
@@ -619,13 +606,22 @@ export default function ProizvodstvoPage() {
                 ) : null}
               </div>
 
-              <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  <p className="mb-1 text-xs text-[var(--tk-muted)]">
+              <section className="mb-5" aria-label="Финансовые показатели">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-lg font-semibold tracking-tight">Затраты и касса</h2>
+                  <details className="text-sm text-muted-foreground">
+                    <summary className="cursor-pointer">Что сюда вносить</summary>
+                    <p className="mt-1 max-w-lg leading-relaxed">Факт выполненных работ не является платежом. Вносите подтверждённые затраты и реальные движения денег; неизвестную выручку оставляйте пустой.</p>
+                  </details>
+                </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-xl border bg-white/80 p-4 text-sm">
+                  <label className="mb-2 block text-sm font-medium" htmlFor="pnl-incurred">
                     Подтверждённые затраты (₽)
                     {plan.pnl?.incurredManual ? " · вручную" : ""}
-                  </p>
+                  </label>
                   <Input
+                    id="pnl-incurred"
                     data-testid="pnl-incurred"
                     value={String(plan.pnl?.incurredCosts ?? 0)}
                     onChange={(e) => {
@@ -650,11 +646,12 @@ export default function ProizvodstvoPage() {
                     }}
                   />
                 </div>
-                <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  <p className="mb-1 text-xs text-[var(--tk-muted)]">
-                    Поступления касса (₽)
-                  </p>
+                <div className="rounded-xl border bg-white/80 p-4 text-sm">
+                  <label className="mb-2 block text-sm font-medium" htmlFor="pnl-cash-in">
+                    Поступления, ₽
+                  </label>
                   <Input
+                    id="pnl-cash-in"
                     data-testid="pnl-cash-in"
                     value={String(plan.pnl?.cashIn ?? 0)}
                     onChange={(e) => {
@@ -674,11 +671,12 @@ export default function ProizvodstvoPage() {
                     }}
                   />
                 </div>
-                <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  <p className="mb-1 text-xs text-[var(--tk-muted)]">
-                    Списания касса (₽)
-                  </p>
+                <div className="rounded-xl border bg-white/80 p-4 text-sm">
+                  <label className="mb-2 block text-sm font-medium" htmlFor="pnl-cash-out">
+                    Списания, ₽
+                  </label>
                   <Input
+                    id="pnl-cash-out"
                     data-testid="pnl-cash-out"
                     value={String(plan.pnl?.cashOut ?? 0)}
                     onChange={(e) => {
@@ -698,13 +696,14 @@ export default function ProizvodstvoPage() {
                     }}
                   />
                 </div>
-                <div className="rounded-xl border bg-white/80 p-3 text-sm">
-                  <p className="mb-1 text-xs text-[var(--tk-muted)]">
-                    Признанная выручка (₽, пусто = нет данных)
-                  </p>
+                <div className="rounded-xl border bg-white/80 p-4 text-sm">
+                  <label className="mb-2 block text-sm font-medium" htmlFor="pnl-revenue">
+                    Выручка, ₽
+                  </label>
                   <Input
+                    id="pnl-revenue"
                     data-testid="pnl-revenue"
-                    placeholder="нет данных"
+                    placeholder="Не указана"
                     value={
                       plan.pnl?.recognizedRevenue == null
                         ? ""
@@ -728,24 +727,15 @@ export default function ProizvodstvoPage() {
                   />
                 </div>
               </div>
+              </section>
 
               {gpr ? (
-                <div className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4 text-sm">
-                  <h3 className="font-medium">Связь с ГПР</h3>
-                  <p className="mt-1 text-[var(--tk-muted)]">
-                    {gpr.title} · этапы: {gpr.stages.length} ·{" "}
-                    {formatDate(gpr.stages[0]?.start ?? "")} —{" "}
-                    {formatDate(
-                      gpr.stages[gpr.stages.length - 1]?.end ?? ""
-                    )}
-                  </p>
-                  <ul className="mt-2 space-y-1 text-xs text-[var(--tk-muted)]">
-                    {gpr.stages.slice(0, 5).map((st) => (
-                      <li key={st.id}>
-                        {st.name}: {formatDate(st.start)}–{formatDate(st.end)}
-                      </li>
-                    ))}
-                  </ul>
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3">
+                  <div>
+                    <p className="text-sm font-semibold">График производства работ</p>
+                    <p className="mt-1 text-sm text-muted-foreground">{gpr.title} · {gpr.stages.length} этапов</p>
+                  </div>
+                  <Link href={`/cabinet/gpr/${gpr.id}`} className="text-sm font-medium text-primary underline underline-offset-4">Открыть ГПР →</Link>
                 </div>
               ) : null}
 
@@ -757,9 +747,6 @@ export default function ProizvodstvoPage() {
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <h3 className="font-medium">Материалы и поставки</h3>
-                    <p className="mt-1 text-xs text-[var(--tk-muted)]">
-                      Потребность, заказанное и полученное количество с привязкой к работе и сроку.
-                    </p>
                   </div>
                   {canViewProcurement && procurement ? (
                     <Link
@@ -870,9 +857,6 @@ export default function ProizvodstvoPage() {
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
                       <h3 className="font-medium">Деньги по контракту</h3>
-                      <p className="mt-1 text-xs text-[var(--tk-muted)]">
-                        План платежей связан с этой закупкой; фактические затраты и касса — выше.
-                      </p>
                     </div>
                     <Link
                       href={`/cabinet/zakupki/${procurement!.id}?tab=money`}
