@@ -1,4 +1,4 @@
-import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
@@ -8,14 +8,12 @@ export default defineConfig({
     setupFiles: ["./src/server/__tests__/setup.ts"],
     fileParallelism: false,
     pool: "forks",
-    poolOptions: {
-      forks: { singleFork: true },
-    },
+    maxWorkers: 1,
     testTimeout: 60_000,
   },
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },
 });
