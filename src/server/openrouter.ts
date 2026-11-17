@@ -6,7 +6,7 @@ export function modelConfigured() {
   return Boolean(config.openRouterKey);
 }
 
-export async function completeJson(system: string, user: string, attempt = 0): Promise<string> {
+export async function completeJson(system: string, user: string, attempt = 0, options: { webSearch?: boolean } = {}): Promise<string> {
   if (!config.openRouterKey) throw new Error("Ключ модели не задан");
   const retrying = attempt > 0;
   const tokenBudgets = [4000, 6000, 8000];
@@ -23,6 +23,7 @@ export async function completeJson(system: string, user: string, attempt = 0): P
       temperature: 0.2,
       max_tokens: tokenBudgets[Math.min(attempt, tokenBudgets.length - 1)],
       response_format: { type: "json_object" },
+      ...(options.webSearch ? { tools: [{ type: "openrouter:web_search", parameters: { max_results: 5 } }] } : {}),
       messages: [
         { role: "system", content: !retrying
           ? system
@@ -30,7 +31,7 @@ export async function completeJson(system: string, user: string, attempt = 0): P
         { role: "user", content: user },
       ],
     }),
-    signal: AbortSignal.timeout(45_000),
+    signal: AbortSignal.timeout(options.webSearch ? 75_000 : 45_000),
   });
   if (!response.ok) {
     const detail = await response.text();
@@ -47,7 +48,7 @@ export async function completeJson(system: string, user: string, attempt = 0): P
       ? rawContent.map((part) => part.text ?? "").join("\n")
       : "").trim();
   const finishReason = choice?.finish_reason;
-  if (!content && attempt < tokenBudgets.length - 1) return completeJson(system, user, attempt + 1);
+  if (!content && attempt < tokenBudgets.length - 1) return completeJson(system, user, attempt + 1, options);
   if (!content) {
     if (choice?.message?.refusal) throw new Error(`Модель отказала в анализе: ${choice.message.refusal.slice(0, 180)}`);
     throw new Error(`Модель вернула пустой ответ после ${attempt + 1} попыток (finish_reason: ${finishReason ?? "не указан"}).`);
@@ -60,7 +61,7 @@ export async function completeJson(system: string, user: string, attempt = 0): P
     // Providers may stop mid-quote despite JSON mode. Retry once with a larger
     // completion budget before surfacing a confusing JSON parser error to users.
   }
-  if ((!validJson || finishReason === "length") && attempt < tokenBudgets.length - 1) return completeJson(system, user, attempt + 1);
+  if ((!validJson || finishReason === "length") && attempt < tokenBudgets.length - 1) return completeJson(system, user, attempt + 1, options);
   if (!validJson) throw new Error(`Модель вернула неполный JSON после ${attempt + 1} попыток.`);
   return content;
 }

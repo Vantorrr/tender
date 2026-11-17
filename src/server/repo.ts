@@ -1687,7 +1687,10 @@ function estimateDocumentsForProcurement(data: AppData, procurementId: string) {
         document.analysis?.costThousand != null;
       return looksLikeEstimate && hasEstimateData;
     })
-    .sort((a, b) => a.uploadedAt.localeCompare(b.uploadedAt));
+    // Show the newest estimate first. Besides matching the procurement card,
+    // this keeps customer totals and source revisions in a stable order when
+    // several files are uploaded in quick succession.
+    .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
 }
 
 /**

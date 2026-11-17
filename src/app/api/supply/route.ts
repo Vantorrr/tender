@@ -14,6 +14,7 @@ import type { SupplyStatus } from "@/lib/types";
 import { saveUpload, readUpload } from "@/server/uploads";
 import { config } from "@/server/config";
 import { mailStatus, sendMail } from "@/server/mail";
+import { discoverMaterialSuppliers } from "@/server/supplier-discovery";
 
 export async function GET(req: Request) {
   return withSection(req, "zakupki", (user) => {
@@ -39,7 +40,7 @@ export async function POST(req: Request) {
     }
     const body = (await req.json()) as {
       id?: string;
-      action?: "recordQuote" | "selectQuote" | "upsertSupplier" | "deleteSupplier" | "generateManifest" | "sendRfq";
+      action?: "recordQuote" | "selectQuote" | "upsertSupplier" | "deleteSupplier" | "generateManifest" | "sendRfq" | "discoverSuppliers";
       quoteId?: string;
       supplierId?: string;
       confirmed?: boolean;
@@ -86,6 +87,20 @@ export async function POST(req: Request) {
       if (!body.procurementId) return json({ error: "Не указана закупка" }, 400);
       const manifest = generateProcurementMaterialManifest(user.id, body.procurementId);
       return json({ ...getBootstrap(user), manifest });
+    }
+    if (body.action === "discoverSuppliers") {
+      if (!body.id) return json({ error: "Не указана позиция материала" }, 400);
+      const data = getBootstrap(user).data;
+      const supply = (data.supplyRequests ?? []).find((item) => item.id === body.id);
+      if (!supply) return json({ error: "Потребность не найдена" }, 404);
+      const procurement = data.procurements.find((item) => item.id === supply.procurementId);
+      if (!procurement) return json({ error: "Закупка не найдена" }, 404);
+      try {
+        const candidates = await discoverMaterialSuppliers({ material: supply.materialName, region: procurement.region, work: supply.workName });
+        return json({ candidates, searchStatus: candidates.length ? "results" : "empty" });
+      } catch (error) {
+        return json({ error: error instanceof Error ? error.message : "Не удалось найти поставщиков" }, 502);
+      }
     }
     if (body.action === "sendRfq") {
       if (!body.confirmed) return json({ error: "Подтвердите отправку запроса поставщику" }, 400);

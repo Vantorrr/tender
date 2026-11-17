@@ -29,6 +29,7 @@ import { WORK_TYPES } from "@/lib/pipeline";
 import { userHasSection } from "@/lib/acl";
 import { REVIEW_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
 import type { Citation, DocumentCategory, ReviewStatus, SupplyRequest, SupplyStatus, SupplierDirectoryEntry, OrganizationCompanyCard } from "@/lib/types";
+import type { SupplierSearchCandidate } from "@/server/supplier-discovery";
 import { useStore } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { ProjectAiChat } from "@/components/project-ai-chat";
@@ -254,6 +255,9 @@ export default function ZakupkaDetailPage() {
   const [companyCard, setCompanyCard] = useState<OrganizationCompanyCard | null>(null);
   const [supplyMailReady, setSupplyMailReady] = useState(false);
   const [supplyMailDetail, setSupplyMailDetail] = useState("Проверяем почтовую настройку…");
+  const [supplierSearchBusyId, setSupplierSearchBusyId] = useState<string | null>(null);
+  const [supplierSearchResults, setSupplierSearchResults] = useState<Record<string, SupplierSearchCandidate[]>>({});
+  const [supplierSearchErrors, setSupplierSearchErrors] = useState<Record<string, string>>({});
   const companyCardInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -537,6 +541,37 @@ export default function ZakupkaDetailPage() {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось отправить запрос КП");
     }
+  }
+
+  async function searchPublicSuppliers(supply: SupplyRequest) {
+    setSupplierSearchBusyId(supply.id);
+    setSupplierSearchErrors((current) => ({ ...current, [supply.id]: "" }));
+    try {
+      const result = await api<{ candidates: SupplierSearchCandidate[] }>("/api/supply", {
+        method: "POST", body: JSON.stringify({ action: "discoverSuppliers", id: supply.id }),
+      });
+      setSupplierSearchResults((current) => ({ ...current, [supply.id]: result.candidates }));
+    } catch (error) {
+      setSupplierSearchErrors((current) => ({ ...current, [supply.id]: error instanceof Error ? error.message : "Поиск поставщиков не выполнен" }));
+    } finally { setSupplierSearchBusyId(null); }
+  }
+
+  async function addDiscoveredSupplier(supply: SupplyRequest, candidate: SupplierSearchCandidate) {
+    if (!candidate.email) return;
+    try {
+      await api("/api/supply", { method: "POST", body: JSON.stringify({
+        action: "upsertSupplier",
+        supplier: {
+          name: candidate.name, email: candidate.email,
+          materialKeywords: [...new Set([supply.materialName, ...candidate.materials])],
+          regions: [procurement!.region], website: candidate.website,
+          note: `Найден ИИ-поиском; проверьте сведения перед отправкой КП. Источник: ${candidate.sourceUrl}. ${candidate.evidence}`,
+        },
+      }) });
+      await refresh();
+      setSupplierSearchResults((current) => ({ ...current, [supply.id]: (current[supply.id] ?? []).filter((item) => item.sourceUrl !== candidate.sourceUrl) }));
+      toast.success("Поставщик добавлен и сопоставлен с материалом. Проверьте email и ассортимент.");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Не удалось добавить поставщика"); }
   }
 
   async function onUpload(file: File) {
@@ -1810,13 +1845,26 @@ export default function ZakupkaDetailPage() {
                       </div>
                     ) : null}
                     <div className="mt-2 rounded-md bg-stone-50 px-3 py-2" data-testid={`supply-matches-${s.id}`}>
-                      <div className="text-xs font-medium">Подходящие поставщики</div>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="text-xs font-medium">Подходящие поставщики</div>
+                        <Button size="sm" variant="outline" disabled={supplierSearchBusyId === s.id} onClick={() => void searchPublicSuppliers(s)}>{supplierSearchBusyId === s.id ? "Ищу в открытых источниках…" : "Найти поставщиков в интернете"}</Button>
+                      </div>
                       {(s.supplierIds ?? []).length ? <div className="mt-1 flex flex-wrap gap-2">{(s.supplierIds ?? []).map((supplierId) => {
                         const supplier = suppliers.find((item) => item.id === supplierId);
                         if (!supplier) return null;
                         const alreadySent = (s.sentToSupplierIds ?? []).includes(supplierId);
                         return <div key={supplierId} className="flex flex-wrap items-center gap-2 rounded border bg-white px-2 py-1 text-xs"><span>{supplier.name} · {supplier.email}</span>{alreadySent ? <span className="text-emerald-800">Запрос отправлен</span> : <Button size="sm" variant="outline" disabled={!supplyMailReady || !companyCard} title={!companyCard ? "Загрузите карточку предприятия" : !supplyMailReady ? supplyMailDetail : undefined} onClick={() => void sendSupplierRfq(s, supplier)}>Отправить запрос КП</Button>}</div>;
-                      })}</div> : <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[var(--tk-muted)]"><span>В справочнике нет поставщика с подходящим ассортиментом.</span><a className="text-sky-800 underline" target="_blank" rel="noreferrer" href={`https://duckduckgo.com/?q=${encodeURIComponent(`${s.materialName} поставщик ${procurement.region}`)}`}>Поиск в открытых источниках ↗</a></div>}
+                      })}</div> : <p className="mt-1 text-xs text-[var(--tk-muted)]">В справочнике нет поставщика с подходящим ассортиментом.</p>}
+                      {supplierSearchErrors[s.id] ? <p className="mt-2 text-xs text-amber-800" role="alert">{supplierSearchErrors[s.id]}</p> : null}
+                      {(supplierSearchResults[s.id]?.length ?? 0) > 0 ? <ul className="mt-2 space-y-2">{supplierSearchResults[s.id].map((candidate) => <li key={candidate.sourceUrl} className="rounded border bg-white p-2 text-xs" data-testid={`supplier-search-result-${s.id}`}>
+                        <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{candidate.name}</span>{candidate.email ? <Button size="sm" variant="outline" onClick={() => void addDiscoveredSupplier(s, candidate)}>Добавить в поставщики</Button> : <a className="text-sky-800 underline" href={candidate.sourceUrl} target="_blank" rel="noreferrer">Проверить контакты ↗</a>}</div>
+                        <p className="mt-1">Материалы: {candidate.materials.join(", ")}{candidate.email ? ` · ${candidate.email}` : " · email не найден в источнике"}</p>
+                        {candidate.regionEvidence ? <p className="mt-1 text-[var(--tk-muted)]">Регион: {candidate.regionEvidence}</p> : null}
+                        <p className="mt-1 text-[var(--tk-muted)]">{candidate.evidence}</p>
+                        <a className="mt-1 inline-block text-sky-800 underline" href={candidate.sourceUrl} target="_blank" rel="noreferrer">Источник ↗</a>
+                      </li>)}</ul> : null}
+                      {supplierSearchResults[s.id] && supplierSearchResults[s.id].length === 0 ? <p className="mt-2 text-xs text-[var(--tk-muted)]">Подтверждённых поставщиков не найдено. Попробуйте уточнить название материала.</p> : null}
+                      <p className="mt-2 text-[10px] text-[var(--tk-muted)]">Результаты ИИ-поиска требуют проверки на сайте поставщика. Письмо отправляется только поставщику из вашего справочника и только после нажатия кнопки отправки.</p>
                     </div>
                     <details className="mt-2 text-xs">
                       <summary className="cursor-pointer text-[var(--tk-muted)]">
