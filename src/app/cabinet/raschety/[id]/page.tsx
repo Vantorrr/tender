@@ -27,7 +27,7 @@ import {
 import { api, downloadUrl } from "@/lib/api";
 import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-panel";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
-import { bucketsFromPositions } from "@/lib/cost-engine";
+import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engine";
 import { formatMoney, formatNumber } from "@/lib/format";
 import type { Calculation, GprStageResource, ResourceQuantityBasis } from "@/lib/types";
 import type { EstimateLeaf } from "@/lib/hierarchical-estimate";
@@ -309,6 +309,31 @@ export default function RaschetDetailPage() {
     calc.positions,
     calc.scenarioFactor || 1
   );
+  const billablePositions = calc.positions.filter(
+    (position) => position.code !== "НР" && position.code !== "СП" && !position.isWorkItem,
+  );
+  const missingRateCount = billablePositions.filter((position) => position.rateMissing).length;
+  const noPricedPositions = billablePositions.length > 0 && missingRateCount === billablePositions.length;
+  const bucketStats = billablePositions.reduce(
+    (stats, position) => {
+      const bucket = classifyDirectCostBucket(position);
+      stats[bucket].count += 1;
+      if (position.rateMissing) stats[bucket].missing += 1;
+      return stats;
+    },
+    {
+      labor: { count: 0, missing: 0 },
+      materials: { count: 0, missing: 0 },
+      equipment: { count: 0, missing: 0 },
+      other: { count: 0, missing: 0 },
+    },
+  );
+  const displayBucket = (key: keyof typeof bucketStats, amount: number) => {
+    const stats = bucketStats[key];
+    if (!stats.count) return "нет данных";
+    if (stats.missing) return `неполно · нет ставок для ${stats.missing} из ${stats.count}`;
+    return formatMoney(amount);
+  };
   const materials = calc.positions.filter((p) => {
     if (p.isWorkItem || p.code === "НР" || p.code === "СП") return false;
     const hay = `${p.code} ${p.name} ${p.unit}`.toLowerCase();
@@ -698,7 +723,7 @@ export default function RaschetDetailPage() {
           </p>
           {calc.positions.some((position) => position.rateMissing && !position.isWorkItem) ? (
             <p className="mt-1 font-medium">
-              Нужны ставки для {calc.positions.filter((position) => position.rateMissing && !position.isWorkItem).length} строк. Они исключены из стоимости, пока не подтверждены.
+              Нужны ставки для {calc.positions.filter((position) => position.rateMissing && !position.isWorkItem).length} строк. Они исключены из стоимости, пока не подтверждены. Нулевые цены не подставляются.
             </p>
           ) : null}
         </section>
@@ -774,12 +799,14 @@ export default function RaschetDetailPage() {
                       ? " · расчёт неполный"
                       : ""
                   }`
-                : calc.costSummary?.totalsIncomplete
+                : noPricedPositions
+                  ? "Итого черновика · нужны ставки"
+                  : calc.costSummary?.totalsIncomplete
                   ? "Итого черновика · расчёт неполный"
                   : "Итого черновика"}
           </div>
           <div className="font-[family-name:var(--font-display)] text-xl">
-            {formatMoney(total)}
+            {noPricedPositions ? "Не рассчитано" : formatMoney(total)}
             {(calc.costSummary?.totalsIncomplete ||
               draftSlices?.partial ||
               (calc.costSummary?.incomplete?.length ?? 0) > 0) &&
@@ -886,19 +913,16 @@ export default function RaschetDetailPage() {
         </summary>
         <div className="mt-3 mb-3 grid gap-2 text-sm sm:grid-cols-4">
           <div className="rounded-xl border bg-white/80 p-3">
-            Труд: {formatMoney(buckets.labor)}
+            Труд: {displayBucket("labor", buckets.labor)}
           </div>
           <div className="rounded-xl border bg-white/80 p-3">
-            Материалы:{" "}
-            {buckets.materialsUnpriced
-              ? "нет данных"
-              : formatMoney(buckets.materials)}
+            Материалы: {displayBucket("materials", buckets.materials)}
           </div>
           <div className="rounded-xl border bg-white/80 p-3">
-            Техника: {formatMoney(buckets.equipment)}
+            Техника: {displayBucket("equipment", buckets.equipment)}
           </div>
           <div className="rounded-xl border bg-white/80 p-3">
-            Прочее прямые: {formatMoney(buckets.other)}
+            Прочее прямые: {displayBucket("other", buckets.other)}
           </div>
         </div>
         <div
@@ -950,12 +974,16 @@ export default function RaschetDetailPage() {
                       <Input
                         className="ml-auto w-32 text-right"
                         data-testid={`pos-rate-${p.id}`}
-                        value={String(p.rate)}
+                        placeholder={p.rateMissing ? "нет ставки" : undefined}
+                        value={p.rateMissing ? "" : String(p.rate)}
                         onChange={(e) => {
-                          const v = Number(e.target.value) || 0;
+                          const raw = e.target.value.trim();
+                          const rateMissing = raw === "";
+                          const v = rateMissing ? 0 : Number(raw);
+                          if (!rateMissing && (!Number.isFinite(v) || v < 0)) return;
                           updateCalculation(calc.id, {
                             positions: calc.positions.map((x) =>
-                              x.id === p.id ? { ...x, rate: v } : x
+                              x.id === p.id ? { ...x, rate: v, rateMissing } : x
                             ),
                           });
                         }}
@@ -965,7 +993,9 @@ export default function RaschetDetailPage() {
                   <TableCell className="text-right font-medium">
                     {p.isWorkItem && calc.kind !== "customer_original"
                       ? "—"
-                      : formatMoney(positionLineSum(p, calc.scenarioFactor || 1))}
+                      : p.rateMissing
+                        ? "—"
+                        : formatMoney(positionLineSum(p, calc.scenarioFactor || 1))}
                   </TableCell>
                 </TableRow>
               ))}
