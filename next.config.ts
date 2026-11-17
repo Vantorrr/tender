@@ -1,6 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  experimental: {
+    agentUpgrade: "security",
+  },
   // API + SQLite session routes need request-time rendering
   cacheComponents: false,
   serverExternalPackages: ["exceljs", "node-unrar-js"],
