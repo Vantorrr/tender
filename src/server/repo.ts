@@ -1108,9 +1108,11 @@ function syncProductionPlanFromSchedule(data: AppData, schedule: GprSchedule) {
     const nextKeys = new Set(derived.map(keyOf));
     const next: PlanFactEntry[] = derived.map((entry) => {
       const old = oldByKey.get(keyOf(entry));
-      const dailyHasFact = (plan.dailyFacts ?? []).some((daily) => daily.workName.trim() === entry.workName.trim());
+      const dailyHasFact = (plan.dailyFacts ?? []).some((daily) =>
+        daily.workName.trim() === entry.workName.trim() && daily.unit.trim() === entry.unit.trim()
+      );
       const fact = dailyHasFact
-        ? Math.round(sumDailyQty(plan.dailyFacts, { workName: entry.workName }) * 1000) / 1000
+        ? Math.round(sumDailyQty(plan.dailyFacts, { workName: entry.workName, unit: entry.unit }) * 1000) / 1000
         : old?.fact ?? 0;
       return {
         ...entry,

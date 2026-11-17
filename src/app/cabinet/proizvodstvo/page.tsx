@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
@@ -24,6 +25,8 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { DateInputRu } from "@/components/date-input-ru";
+import { ProductionPlanFactChart } from "@/components/production-plan-fact-chart";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { api, downloadUrl } from "@/lib/api";
 import { formatDate, formatMoney, formatNumber, todayIsoInTimeZone } from "@/lib/format";
 import { userHasSection } from "@/lib/acl";
@@ -37,7 +40,7 @@ import { economicsFromVolumes } from "@/lib/economics-from-rates";
 import { forecastWorkCompletion } from "@/lib/production-forecast";
 import { useStore } from "@/lib/store";
 import type { ProductionVarianceReport } from "@/server/production-variance-ai";
-import type { SupplyStatus } from "@/lib/types";
+import type { DailyFactPhoto, SupplyStatus } from "@/lib/types";
 
 type PeriodMode = "day" | "month" | "period" | "cum";
 
@@ -72,6 +75,12 @@ export default function ProizvodstvoPage() {
   const [savingDaily, setSavingDaily] = useState(false);
   const [varianceLoading, setVarianceLoading] = useState(false);
   const [supplySavingId, setSupplySavingId] = useState<string | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<{
+    photo: DailyFactPhoto;
+    date: string;
+    workName: string;
+  } | null>(null);
+  const [photoPreviewFailed, setPhotoPreviewFailed] = useState(false);
   const [varianceReport, setVarianceReport] = useState<{
     key: string;
     report: ProductionVarianceReport;
@@ -159,36 +168,9 @@ export default function ProizvodstvoPage() {
     "customer_estimate_missing"
   ) ?? false;
 
-  function qtyForWork(name: string, list: typeof daily) {
-    return sumDailyQty(list, { workName: name });
+  function qtyForWork(name: string, unit: string, list: typeof daily) {
+    return sumDailyQty(list, { workName: name, unit });
   }
-
-  // Daily ledger is the display source of truth (same as server after save)
-  const totals = plan
-    ? plan.entries.reduce(
-        (acc, e) => {
-          const fact = entryDisplayFact(e, daily);
-          acc.plan += e.plan;
-          acc.fact += fact;
-          acc.remain += entryDisplayRemain(e, daily);
-          return acc;
-        },
-        { plan: 0, fact: 0, remain: 0 }
-      )
-    : { plan: 0, fact: 0, remain: 0 };
-  const planUnits = [...new Set((plan?.entries ?? []).map((entry) => entry.unit.trim()).filter(Boolean))];
-  const hasMixedPlanUnits = Boolean(plan?.entries.length) && (
-    planUnits.length > 1 || plan!.entries.some((entry) => !entry.unit.trim())
-  );
-
-  const periodFact =
-    period === "day"
-      ? sumDailyQty(dayFacts)
-      : period === "month"
-        ? sumDailyQty(monthFacts)
-        : period === "period"
-          ? sumDailyQty(daily)
-          : totals.fact;
 
   // Plan for selected slice: stage volumes when present, else uniform fallback
   const gprStages = gpr
@@ -197,10 +179,10 @@ export default function ProizvodstvoPage() {
   const selectedWorkStages = plan
     ? stagesForWork(plan.entries.map((entry) => entry.workName), gprStages, selectedWork)
     : [];
-  const planForEntries = (mode: PeriodMode) => {
-    const slices = (plan?.entries ?? []).map((entry) => allocatePlanForSlice(
+  const planForEntries = (mode: PeriodMode, entries = plan?.entries ?? []) => {
+    const slices = entries.map((entry) => allocatePlanForSlice(
       entry.plan,
-      stagesForWork(plan!.entries.map((item) => item.workName), gprStages, entry.workName),
+      stagesForWork(entries.map((item) => item.workName), gprStages, entry.workName),
       mode, date, gpr?.calendar
     ));
     return {
@@ -208,9 +190,67 @@ export default function ProizvodstvoPage() {
       source: slices.some((slice) => slice.source === "stage_volumes") ? "stage_volumes" : slices.some((slice) => slice.source === "uniform_fallback") ? "uniform_fallback" : "none",
     };
   };
-  const planSlice = planForEntries(period);
-  const periodPlan = planSlice.plan;
-  const sliceVariance = periodFact - periodPlan;
+  const unitGroups = (() => {
+    const groups = new Map<string, NonNullable<typeof plan>["entries"]>();
+    for (const entry of plan?.entries ?? []) {
+      const unit = entry.unit.trim() || "ед. не указана";
+      groups.set(unit, [...(groups.get(unit) ?? []), entry]);
+    }
+    return [...groups.entries()].map(([unit, entries]) => {
+      const factsForEntries = (facts: typeof daily) => facts.filter((fact) =>
+        entries.some((entry) => entry.workName === fact.workName && entry.unit === fact.unit)
+      );
+      const sliceFacts = period === "day"
+        ? factsForEntries(dayFacts)
+        : period === "month"
+          ? factsForEntries(monthFacts)
+          : period === "period"
+            ? factsForEntries(daily)
+            : [];
+      const fact = entries.reduce((sum, entry) => sum + entryDisplayFact(entry, daily), 0);
+      const periodFact = period === "cum" ? fact : sumDailyQty(sliceFacts);
+      const periodPlan = planForEntries(period, entries).plan;
+      return {
+        unit,
+        workCount: entries.length,
+        plan: entries.reduce((sum, entry) => sum + entry.plan, 0),
+        fact,
+        remain: entries.reduce((sum, entry) => sum + entryDisplayRemain(entry, daily), 0),
+        periodPlan,
+        periodFact,
+        variance: periodFact - periodPlan,
+        monthFact: sumDailyQty(factsForEntries(monthFacts)),
+        monthPlan: planForEntries("month", entries).plan,
+      };
+    });
+  })();
+  const selectedWorkFact = selectedEntry
+    ? sumDailyQty(daily, { workName: selectedEntry.workName, unit: selectedEntry.unit })
+    : 0;
+  const selectedWorkPeriodFact = selectedEntry
+    ? period === "day"
+      ? sumDailyQty(dayFacts, { workName: selectedEntry.workName, unit: selectedEntry.unit })
+      : period === "month"
+        ? sumDailyQty(monthFacts, { workName: selectedEntry.workName, unit: selectedEntry.unit })
+        : selectedWorkFact
+    : 0;
+  const selectedWorkPeriodPlan = selectedEntry
+    ? allocatePlanForSlice(selectedEntry.plan, selectedWorkStages, period, date, gpr?.calendar).plan
+    : 0;
+  const planMonthDays = (() => {
+    const [year, month] = monthKey.split("-").map(Number);
+    return new Date(Date.UTC(year, month, 0)).getUTCDate();
+  })();
+  const chartPoints = selectedEntry
+    ? Array.from({ length: planMonthDays }, (_, index) => {
+        const dayDate = `${monthKey}-${String(index + 1).padStart(2, "0")}`;
+        return {
+          date: dayDate,
+          plan: allocatePlanForSlice(selectedEntry.plan, selectedWorkStages, "day", dayDate, gpr?.calendar).plan,
+          fact: sumDailyQty(daily, { workName: selectedEntry.workName, unit: selectedEntry.unit, date: dayDate }),
+        };
+      })
+    : [];
   const dailyGprPlanRows = (plan?.entries ?? [])
     .map((entry) => {
       const workStages = stagesForWork(plan?.entries.map((item) => item.workName) ?? [], gprStages, entry.workName);
@@ -223,8 +263,8 @@ export default function ProizvodstvoPage() {
     period,
     date,
     selectedWork,
-    periodPlan,
-    periodFact,
+    selectedWorkPeriodPlan,
+    selectedWorkPeriodFact,
     daily: daily.map((fact) => [fact.id, fact.date, fact.workName, fact.quantity, fact.comment]),
     supplies: (data.supplyRequests ?? [])
       .filter((supply) => supply.procurementId === plan?.procurementId)
@@ -429,73 +469,25 @@ export default function ProizvodstvoPage() {
             <>
               <section className="mb-5" aria-label="Сводка выполнения" data-testid="prod-plan-vs-gpr">
                 <h2 className="mb-3 text-lg font-semibold tracking-tight">Выполнение работ</h2>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                {hasMixedPlanUnits ? (
-                  <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 sm:col-span-2 lg:col-span-4">
-                    Общий объём не суммируется: в проекте разные единицы или часть единиц не указана ({planUnits.join(", ") || "не указаны"}).
-                    Сверяйте план, факт и остаток в таблице по каждому виду работ отдельно.
-                  </div>
-                ) : <>
-                  <div
-                    className="rounded-xl border bg-white/80 p-4 text-sm"
-                    data-testid="period-plan-from-gpr"
-                  >
-                    <p className="text-sm font-medium text-muted-foreground">План за период</p>
-                    <p className="mt-2 text-2xl font-semibold tracking-tight">
-                      {formatNumber(periodPlan)} {planUnits[0] ?? ""}
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {unitGroups.map((group) => (
+                  <article key={group.unit} className="rounded-xl border bg-white/80 p-4 text-sm" data-testid={`prod-unit-${group.unit}`}>
+                    <div className="flex items-baseline justify-between gap-3">
+                      <h3 className="font-semibold">Объём · {group.unit}</h3>
+                      <span className="text-xs text-muted-foreground">{group.workCount} видов работ</span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-3">
+                      <div><p className="text-xs text-muted-foreground">План за период</p><p className="mt-1 text-lg font-semibold">{formatNumber(group.periodPlan)}</p></div>
+                      <div><p className="text-xs text-muted-foreground">Факт за период</p><p className="mt-1 text-lg font-semibold">{formatNumber(group.periodFact)}</p></div>
+                      <div><p className="text-xs text-muted-foreground">Выполнено всего</p><p className="mt-1 font-medium">{formatNumber(group.fact)} <span className="font-normal text-muted-foreground">из {formatNumber(group.plan)}</span></p></div>
+                      <div><p className="text-xs text-muted-foreground">Остаток</p><p className="mt-1 font-medium">{formatNumber(group.remain)}</p></div>
+                      <div className="col-span-2 border-t pt-2"><p className="text-xs text-muted-foreground">За месяц · план / факт</p><p className="mt-1 font-medium">{formatNumber(group.monthPlan)} / {formatNumber(group.monthFact)}</p></div>
+                    </div>
+                    <p className={`mt-3 text-xs ${group.variance < 0 ? "text-rose-700" : group.variance > 0 ? "text-emerald-700" : "text-muted-foreground"}`}>
+                      Отклонение за период: {group.variance > 0 ? "+" : ""}{formatNumber(group.variance)}
                     </p>
-                    <span className="mt-2 block text-xs text-muted-foreground">
-                      {planSlice.source === "stage_volumes"
-                        ? "по объёмам этапов"
-                        : planSlice.source === "uniform_fallback"
-                          ? "равномерно (объёмы этапов не заданы)"
-                          : "нет ГПР — срез ограничен"}
-                    </span>
-                  </div>
-                  <div className="rounded-xl border bg-white/80 p-4 text-sm" data-testid="prod-month-plan">
-                    <p className="text-sm font-medium text-muted-foreground">План месяца</p>
-                    <p className="mt-2 text-2xl font-semibold tracking-tight">
-                      {formatNumber(
-                        period === "month"
-                          ? periodPlan
-                          : planForEntries("month").plan
-                      )}{" "}
-                      {planUnits[0] ?? ""}
-                    </p>
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      Выполнено: {formatNumber(sumDailyQty(monthFacts))} {planUnits[0] ?? ""}
-                    </p>
-                  </div>
-                  <div className="rounded-xl border border-primary/20 bg-primary/[0.04] p-4 text-sm" data-testid="prod-cum-done">
-                    <p className="text-sm font-semibold text-foreground">Выполнено всего</p>
-                    <p className="mt-2 text-2xl font-bold tracking-tight">
-                      {formatNumber(totals.fact)} {planUnits[0] ?? ""}
-                    </p>
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      из {formatNumber(totals.plan)} {planUnits[0] ?? ""} по договору
-                    </p>
-                  </div>
-                  <div className="rounded-xl border bg-white/80 p-4 text-sm" data-testid="prod-contract-remain">
-                    <p className="text-sm font-medium text-muted-foreground">Осталось выполнить</p>
-                    <p className="mt-2 text-2xl font-semibold tracking-tight">
-                      {formatNumber(totals.remain)} {planUnits[0] ?? ""}
-                    </p>
-                    <p className="mt-2 text-xs text-muted-foreground">
-                      Отклонение от плана:{" "}
-                      <span
-                        className={
-                          sliceVariance < 0
-                            ? "text-rose-700"
-                            : sliceVariance > 0
-                              ? "text-emerald-700"
-                              : ""
-                        }
-                      >
-                        {formatNumber(sliceVariance)}
-                      </span>
-                    </p>
-                  </div>
-                </>}
+                  </article>
+                ))}
               </div>
               </section>
 
@@ -1003,7 +995,14 @@ export default function ProizvodstvoPage() {
                 </div>
               </div>
 
-              <div className="overflow-x-auto rounded-xl border bg-white/80">
+              <ProductionPlanFactChart
+                workName={selectedWork}
+                unit={selectedUnit}
+                points={chartPoints}
+                hasSchedule={selectedWorkStages.length > 0}
+              />
+
+              <div className="mt-5 overflow-x-auto rounded-xl border bg-white/80">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -1021,8 +1020,8 @@ export default function ProizvodstvoPage() {
                   </TableHeader>
                   <TableBody>
                     {plan.entries.map((e) => {
-                      const dayQ = qtyForWork(e.workName, dayFacts);
-                      const monthQ = qtyForWork(e.workName, monthFacts);
+                      const dayQ = qtyForWork(e.workName, e.unit, dayFacts);
+                      const monthQ = qtyForWork(e.workName, e.unit, monthFacts);
                       const fact = entryDisplayFact(e, daily);
                       const remain = entryDisplayRemain(e, daily);
                       const workStages = stagesForWork(plan.entries.map((entry) => entry.workName), gprStages, e.workName);
@@ -1037,11 +1036,11 @@ export default function ProizvodstvoPage() {
                         weekendDays: gpr?.calendar?.weekendDays,
                       });
                       const workFactsInSlice = period === "day"
-                        ? qtyForWork(e.workName, dayFacts)
+                        ? qtyForWork(e.workName, e.unit, dayFacts)
                         : period === "month"
-                          ? qtyForWork(e.workName, monthFacts)
+                          ? qtyForWork(e.workName, e.unit, monthFacts)
                           : period === "period"
-                            ? qtyForWork(e.workName, daily)
+                            ? qtyForWork(e.workName, e.unit, daily)
                             : fact;
                       const workVariance = workPlanSlice.source === "none"
                         ? null
@@ -1154,19 +1153,37 @@ export default function ProizvodstvoPage() {
                           {(d.photos?.length ?? 0) > 0 ? (
                             <div className="mt-1 flex flex-wrap gap-2">
                               {d.photos.map((ph) => (
-                                <a
+                                <button
                                   key={ph.id}
-                                  href={`/api/proizvodstvo/photo?id=${ph.id}&disposition=inline`}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="inline-flex items-center rounded-md bg-stone-100 px-2 py-1 text-xs underline-offset-2 hover:underline"
+                                  type="button"
+                                  onClick={() => {
+                                    setPhotoPreviewFailed(false);
+                                    setPhotoPreview({ photo: ph, date: d.date, workName: d.workName });
+                                  }}
+                                  className="group flex max-w-64 items-center gap-2 rounded-lg border bg-white p-2 text-left text-xs hover:border-primary/50 hover:bg-muted/40"
                                   data-testid={`photo-${ph.id}`}
                                   title={`${d.date} · ${d.workName}`}
                                 >
-                                  📷 {ph.fileName}
-                                  {ph.caption ? ` — ${ph.caption}` : ""}
-                                  {ph.storedPath ? " · открыть" : ""}
-                                </a>
+                                  {/\.(png|jpe?g|webp|gif|avif|bmp)$/i.test(ph.fileName) && ph.storedPath ? (
+                                    <Image
+                                      src={`/api/proizvodstvo/photo?id=${ph.id}&disposition=inline`}
+                                      alt={ph.caption || ph.fileName}
+                                      width={320}
+                                      height={224}
+                                      unoptimized
+                                      className="h-14 w-20 shrink-0 rounded object-cover"
+                                      loading="lazy"
+                                    />
+                                  ) : (
+                                    <span className="grid h-14 w-20 shrink-0 place-items-center rounded bg-muted text-lg" aria-hidden="true">
+                                      {ph.fileName.toLowerCase().endsWith(".pdf") ? "PDF" : "Фото"}
+                                    </span>
+                                  )}
+                                  <span className="min-w-0">
+                                    <span className="block truncate font-medium">{ph.caption || ph.fileName}</span>
+                                    <span className="mt-1 block text-muted-foreground">{ph.storedPath ? "Открыть просмотр" : "Файл недоступен"}</span>
+                                  </span>
+                                </button>
                               ))}
                             </div>
                           ) : null}
@@ -1175,6 +1192,43 @@ export default function ProizvodstvoPage() {
                   )}
                 </ul>
               </div>
+
+              <Dialog open={Boolean(photoPreview)} onOpenChange={(open) => { if (!open) setPhotoPreview(null); }}>
+                <DialogContent className="max-w-5xl p-0" showCloseButton>
+                  {photoPreview ? (
+                    <>
+                      <div className="border-b px-5 py-4 pr-12">
+                        <DialogTitle>{photoPreview.photo.caption || photoPreview.photo.fileName}</DialogTitle>
+                        <DialogDescription className="mt-1">{formatDate(photoPreview.date)} · {photoPreview.workName}</DialogDescription>
+                      </div>
+                      <div className="grid min-h-56 place-items-center bg-stone-950/5 p-4">
+                        {/\.(png|jpe?g|webp|gif|avif|bmp)$/i.test(photoPreview.photo.fileName) && !photoPreviewFailed ? (
+                          <Image
+                            src={`/api/proizvodstvo/photo?id=${photoPreview.photo.id}&disposition=inline`}
+                            alt={photoPreview.photo.caption || photoPreview.photo.fileName}
+                            width={1600}
+                            height={1200}
+                            unoptimized
+                            className="max-h-[72vh] max-w-full rounded-lg object-contain"
+                            onError={() => setPhotoPreviewFailed(true)}
+                          />
+                        ) : photoPreview.photo.fileName.toLowerCase().endsWith(".pdf") ? (
+                          <iframe
+                            title={photoPreview.photo.fileName}
+                            src={`/api/proizvodstvo/photo?id=${photoPreview.photo.id}&disposition=inline`}
+                            className="h-[72vh] w-full rounded-lg bg-white"
+                          />
+                        ) : (
+                          <div className="text-center text-sm text-muted-foreground">
+                            <p>{photoPreviewFailed ? "Не удалось загрузить изображение." : "Предпросмотр этого формата недоступен в браузере."}</p>
+                            <a className="mt-2 inline-block underline underline-offset-2" href={`/api/proizvodstvo/photo?id=${photoPreview.photo.id}&disposition=attachment`}>Скачать файл</a>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  ) : null}
+                </DialogContent>
+              </Dialog>
 
               {object ? (
                 <p className="mt-4 text-xs text-[var(--tk-muted)]">

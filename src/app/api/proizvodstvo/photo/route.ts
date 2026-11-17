@@ -53,15 +53,30 @@ export async function GET(req: Request) {
           ? "image/jpeg"
           : lower.endsWith(".webp")
             ? "image/webp"
-            : lower.endsWith(".pdf")
-              ? "application/pdf"
-              : "application/octet-stream";
+            : lower.endsWith(".gif")
+              ? "image/gif"
+              : lower.endsWith(".avif")
+                ? "image/avif"
+                : lower.endsWith(".bmp")
+                  ? "image/bmp"
+                  : lower.endsWith(".heic") || lower.endsWith(".heif")
+                    ? "image/heic"
+                    : lower.endsWith(".pdf")
+                      ? "application/pdf"
+                      : "application/octet-stream";
+      const asciiFileName = found.fileName
+        .replace(/[^\x20-\x7E]/g, "_")
+        .replace(/["\\;]/g, "_");
+      const encodedFileName = encodeURIComponent(found.fileName).replace(/['()]/g, (char) =>
+        `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+      );
       return new NextResponse(new Uint8Array(buf), {
         status: 200,
         headers: {
           "Content-Type": type,
-          "Content-Disposition": `${disposition}; filename="${found.fileName}"`,
+          "Content-Disposition": `${disposition}; filename="${asciiFileName}"; filename*=UTF-8''${encodedFileName}`,
           "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
         },
       });
     }

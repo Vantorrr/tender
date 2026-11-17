@@ -5,11 +5,12 @@ import type { DailyFact, PlanFact, PlanFactEntry } from "@/lib/types";
 
 export function sumDailyQty(
   daily: DailyFact[] | undefined,
-  opts?: { workName?: string; date?: string; monthPrefix?: string }
+  opts?: { workName?: string; unit?: string; date?: string; monthPrefix?: string }
 ): number {
   const list = daily ?? [];
   return list.reduce((s, d) => {
     if (opts?.workName && d.workName !== opts.workName) return s;
+    if (opts?.unit && d.unit !== opts.unit) return s;
     if (opts?.date && d.date !== opts.date) return s;
     if (opts?.monthPrefix && !d.date.startsWith(opts.monthPrefix)) return s;
     return s + d.quantity;
@@ -23,16 +24,17 @@ export function sumDailyQty(
  */
 export function recomputeEntriesFromDaily(pf: PlanFact): PlanFact {
   const daily = pf.dailyFacts ?? [];
-  const namesFromDaily = new Set(daily.map((d) => d.workName));
+  const workKeysFromDaily = new Set(daily.map((d) => `${d.workName}\u0000${d.unit}`));
   pf.entries = (pf.entries ?? []).map((e) => {
-    if (!namesFromDaily.has(e.workName)) {
+    const key = `${e.workName}\u0000${e.unit}`;
+    if (!workKeysFromDaily.has(key)) {
       return {
         ...e,
         contractRemaining: Math.max(0, e.plan - e.fact),
       };
     }
     const fact =
-      Math.round(sumDailyQty(daily, { workName: e.workName }) * 1000) / 1000;
+      Math.round(sumDailyQty(daily, { workName: e.workName, unit: e.unit }) * 1000) / 1000;
     return {
       ...e,
       fact,
@@ -40,11 +42,12 @@ export function recomputeEntriesFromDaily(pf: PlanFact): PlanFact {
     };
   });
   // Ensure every daily workName has a table row
-  for (const name of namesFromDaily) {
-    if (pf.entries.some((e) => e.workName === name)) continue;
-    const sample = daily.find((d) => d.workName === name)!;
+  for (const key of workKeysFromDaily) {
+    const [name, unit] = key.split("\u0000");
+    if (pf.entries.some((e) => e.workName === name && e.unit === unit)) continue;
+    const sample = daily.find((d) => d.workName === name && d.unit === unit)!;
     const fact =
-      Math.round(sumDailyQty(daily, { workName: name }) * 1000) / 1000;
+      Math.round(sumDailyQty(daily, { workName: name, unit }) * 1000) / 1000;
     pf.entries.push({
       id: `pfe-auto-${name.slice(0, 12)}-${Date.now()}`,
       workName: name,
@@ -62,8 +65,8 @@ export function entryDisplayFact(
   daily: DailyFact[] | undefined
 ): number {
   const list = daily ?? [];
-  if (list.some((d) => d.workName === e.workName)) {
-    return Math.round(sumDailyQty(list, { workName: e.workName }) * 1000) / 1000;
+  if (list.some((d) => d.workName === e.workName && d.unit === e.unit)) {
+    return Math.round(sumDailyQty(list, { workName: e.workName, unit: e.unit }) * 1000) / 1000;
   }
   return e.fact;
 }
