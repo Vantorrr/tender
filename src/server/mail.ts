@@ -17,6 +17,7 @@ export type MailMessage = {
   to: string;
   subject: string;
   text: string;
+  attachments?: Array<{ filename: string; contentBase64: string; contentType?: string }>;
   at: string;
   id?: string;
 };
@@ -144,6 +145,11 @@ export class SmtpMailTransport implements MailTransport {
       to: message.to,
       subject: message.subject,
       text: message.text,
+      attachments: message.attachments?.map((attachment) => ({
+        filename: attachment.filename,
+        content: Buffer.from(attachment.contentBase64, "base64"),
+        contentType: attachment.contentType,
+      })),
     });
     const full: MailMessage = {
       ...message,

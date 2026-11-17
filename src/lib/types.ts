@@ -43,6 +43,28 @@ export interface Organization {
   joinCode?: string;
 }
 
+export interface SupplierDirectoryEntry {
+  id: string;
+  orgId: string;
+  name: string;
+  email: string;
+  materialKeywords: string[];
+  regions: string[];
+  website?: string;
+  note?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrganizationCompanyCard {
+  orgId: string;
+  fileName: string;
+  storedPath: string;
+  fileSize: number;
+  uploadedAt: string;
+  uploadedBy: string;
+}
+
 export interface User {
   id: string;
   email: string;
@@ -232,6 +254,9 @@ export interface SupplyRequest {
   orgId: string;
   procurementId: string;
   workName?: string;
+  source?: "gpr" | "estimate" | "manual";
+  sourceFiles?: string[];
+  quantityNeedsReview?: boolean;
   materialName: string;
   unit: string;
   qtyNeed: number;
@@ -244,6 +269,8 @@ export interface SupplyRequest {
   supplierName?: string;
   supplierEmail?: string;
   supplierNote?: string;
+  supplierIds?: string[];
+  sentToSupplierIds?: string[];
   unitPrice?: number | null;
   /** Several supplier offers for comparison; legacy supplier fields mirror the selected quote. */
   quotes?: SupplierQuote[];
@@ -800,6 +827,8 @@ export interface AppData {
   auditLog: AuditEntry[];
   smetaExchanges: SmetaExchangeVersion[];
   supplyRequests?: SupplyRequest[];
+  suppliers?: SupplierDirectoryEntry[];
+  companyCards?: OrganizationCompanyCard[];
   /** Private-by-user project chat history; fetched only through the scoped chat API. */
   projectChatMessages?: ProjectChatMessage[];
 }

@@ -330,6 +330,8 @@ function applySchema9Extras(data: AppData): AppData {
 function applySchema10Extras(data: AppData): AppData {
   applySchema9Extras(data);
   data.supplyRequests = data.supplyRequests ?? [];
+  data.suppliers = data.suppliers ?? [];
+  data.companyCards = data.companyCards ?? [];
   data.procurements = (data.procurements ?? []).map((p) => ({
     ...p,
     supplyRequestIds: p.supplyRequestIds ?? [],

@@ -18,6 +18,8 @@ import type {
   Role,
   SectionKey,
   SupplyRequest,
+  SupplierDirectoryEntry,
+  OrganizationCompanyCard,
   SupplierQuote,
   SupplyStatus,
   User,
@@ -165,6 +167,9 @@ export function getBootstrap(user: User) {
         .filter((u) => isSuper || u.orgId === orgId)
         .map((u) => publicUser(u)),
       procurements: data.procurements.filter((p) => p.orgId === orgId),
+      supplyRequests: (data.supplyRequests ?? []).filter((s) => s.orgId === orgId),
+      suppliers: (data.suppliers ?? []).filter((s) => s.orgId === orgId),
+      companyCards: (data.companyCards ?? []).filter((c) => c.orgId === orgId),
       documents: data.documents.filter((d) => d.orgId === orgId),
       calculations: data.calculations.filter((c) => c.orgId === orgId),
       schedules: data.schedules.filter((s) => s.orgId === orgId),
@@ -3091,6 +3096,93 @@ export function supplyStatusLabel(s: SupplyStatus): string {
   return SUPPLY_STATUS_RU[s] ?? s;
 }
 
+export function upsertSupplier(
+  actorId: string,
+  input: Omit<SupplierDirectoryEntry, "id" | "orgId" | "createdAt" | "updatedAt"> & { id?: string }
+) {
+  let saved!: SupplierDirectoryEntry;
+  mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    data.suppliers = data.suppliers ?? [];
+    const now = new Date().toISOString();
+    const existing = input.id ? data.suppliers.find((item) => item.id === input.id) : undefined;
+    if (input.id && !existing) throw new Error("Поставщик не найден");
+    if (existing) {
+      assertOrgAccess(actor, existing.orgId, "поставщика");
+      Object.assign(existing, {
+        name: input.name.trim(), email: input.email.trim().toLowerCase(),
+        materialKeywords: [...new Set(input.materialKeywords.map((value) => value.trim()).filter(Boolean))],
+        regions: [...new Set(input.regions.map((value) => value.trim()).filter(Boolean))],
+        website: input.website?.trim() || undefined, note: input.note?.trim() || undefined, updatedAt: now,
+      });
+      for (const supply of data.supplyRequests ?? []) {
+        if (supply.orgId !== existing.orgId) continue;
+        const project = data.procurements.find((item) => item.id === supply.procurementId);
+        if (supplierIdsForMaterial(data, existing.orgId, supply.materialName, project?.region).includes(existing.id)) {
+          supply.supplierIds = [...new Set([...(supply.supplierIds ?? []), existing.id])];
+        }
+      }
+      audit(data, actorId, "update", "supplier", existing.id, existing.name);
+      saved = structuredClone(existing);
+      return data;
+    }
+    const supplier: SupplierDirectoryEntry = {
+      id: `supplier-${Date.now()}-${randomBytes(3).toString("hex")}`,
+      orgId: actor.orgId, name: input.name.trim(), email: input.email.trim().toLowerCase(),
+      materialKeywords: [...new Set(input.materialKeywords.map((value) => value.trim()).filter(Boolean))],
+      regions: [...new Set(input.regions.map((value) => value.trim()).filter(Boolean))],
+      website: input.website?.trim() || undefined, note: input.note?.trim() || undefined,
+      createdAt: now, updatedAt: now,
+    };
+    data.suppliers.unshift(supplier);
+    for (const supply of data.supplyRequests ?? []) {
+      if (supply.orgId !== supplier.orgId) continue;
+      const project = data.procurements.find((item) => item.id === supply.procurementId);
+      if (supplierIdsForMaterial(data, supplier.orgId, supply.materialName, project?.region).includes(supplier.id)) {
+        supply.supplierIds = [...new Set([...(supply.supplierIds ?? []), supplier.id])];
+      }
+    }
+    audit(data, actorId, "create", "supplier", supplier.id, supplier.name);
+    saved = structuredClone(supplier);
+    return data;
+  });
+  return saved;
+}
+
+export function deleteSupplier(actorId: string, supplierId: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const supplier = data.suppliers?.find((item) => item.id === supplierId);
+    if (!supplier) throw new Error("Поставщик не найден");
+    assertOrgAccess(actor, supplier.orgId, "поставщика");
+    data.suppliers = (data.suppliers ?? []).filter((item) => item.id !== supplierId);
+    data.supplyRequests = (data.supplyRequests ?? []).map((item) => ({
+      ...item,
+      supplierIds: (item.supplierIds ?? []).filter((id) => id !== supplierId),
+      sentToSupplierIds: (item.sentToSupplierIds ?? []).filter((id) => id !== supplierId),
+    }));
+    audit(data, actorId, "delete", "supplier", supplierId, supplier.name);
+    return data;
+  });
+}
+
+export function saveOrganizationCompanyCard(actorId: string, card: Omit<OrganizationCompanyCard, "orgId" | "uploadedAt" | "uploadedBy">) {
+  let saved!: OrganizationCompanyCard;
+  mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    data.companyCards = data.companyCards ?? [];
+    const row: OrganizationCompanyCard = {
+      ...card, orgId: actor.orgId, uploadedAt: new Date().toISOString(), uploadedBy: actorId,
+    };
+    data.companyCards = data.companyCards.filter((item) => item.orgId !== actor.orgId);
+    data.companyCards.unshift(row);
+    audit(data, actorId, "upload", "company_card", actor.orgId, card.fileName);
+    saved = structuredClone(row);
+    return data;
+  });
+  return saved;
+}
+
 export function upsertSupplyRequest(
   actorId: string,
   input: {
@@ -3101,10 +3193,14 @@ export function upsertSupplyRequest(
     qtyNeed: number;
     needBy: string;
     workName?: string;
+    source?: SupplyRequest["source"];
+    sourceFiles?: string[];
+    quantityNeedsReview?: boolean;
     status?: SupplyStatus;
     quoteDraftText?: string;
     supplierName?: string;
     supplierEmail?: string;
+    supplierIds?: string[];
     supplierNote?: string;
     qtyOrdered?: number;
     qtyDelivered?: number;
@@ -3127,10 +3223,14 @@ export function upsertSupplyRequest(
         qtyNeed: input.qtyNeed,
         needBy: input.needBy,
         workName: input.workName,
+        source: input.source ?? row.source,
+        sourceFiles: input.sourceFiles ?? row.sourceFiles,
+        quantityNeedsReview: input.quantityNeedsReview ?? row.quantityNeedsReview,
         status: input.status ?? row.status,
         quoteDraftText: input.quoteDraftText ?? row.quoteDraftText,
         supplierName: input.supplierName ?? row.supplierName,
         supplierEmail: input.supplierEmail ?? row.supplierEmail,
+        supplierIds: input.supplierIds ?? supplierIdsForMaterial(data, p.orgId, input.materialName, p.region),
         supplierNote: input.supplierNote ?? row.supplierNote,
         qtyOrdered: input.qtyOrdered ?? row.qtyOrdered,
         qtyDelivered: input.qtyDelivered ?? row.qtyDelivered,
@@ -3156,15 +3256,122 @@ export function upsertSupplyRequest(
       quoteDraftText: input.quoteDraftText,
       supplierName: input.supplierName,
       supplierEmail: input.supplierEmail,
+      supplierIds: input.supplierIds ?? supplierIdsForMaterial(data, p.orgId, input.materialName, p.region),
       supplierNote: input.supplierNote,
       unitPrice: input.unitPrice ?? null,
       workName: input.workName,
+      source: input.source ?? "manual",
+      sourceFiles: input.sourceFiles,
+      quantityNeedsReview: input.quantityNeedsReview,
       createdAt: now,
       updatedAt: now,
     };
     data.supplyRequests.unshift(row);
     p.supplyRequestIds = [...(p.supplyRequestIds ?? []), id];
     audit(data, actorId, "create", "supply", id, row.materialName);
+    return data;
+  });
+}
+
+function normalizeSupplierTerm(value: string) {
+  return value.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+function supplierIdsForMaterial(data: AppData, orgId: string, materialName: string, region = "") {
+  const name = normalizeSupplierTerm(materialName);
+  const projectRegion = normalizeSupplierTerm(region);
+  return (data.suppliers ?? []).filter((supplier) => supplier.orgId === orgId &&
+    (!supplier.regions.length || !projectRegion || supplier.regions.some((value) => projectRegion.includes(normalizeSupplierTerm(value)) || normalizeSupplierTerm(value).includes(projectRegion))) &&
+    supplier.materialKeywords.some((keyword) => {
+      const term = normalizeSupplierTerm(keyword);
+      return term.length >= 3 && (name.includes(term) || term.includes(name));
+    })).map((supplier) => supplier.id);
+}
+
+/** Build an idempotent buy list from confirmed material rows in GPR and parsed estimates/VOR. */
+export function generateProcurementMaterialManifest(actorId: string, procurementId: string) {
+  let created = 0;
+  mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const procurement = data.procurements.find((item) => item.id === procurementId);
+    if (!procurement) throw new Error("Закупка не найдена");
+    assertOrgAccess(actor, procurement.orgId, "поставок");
+    data.supplyRequests = data.supplyRequests ?? [];
+    const schedule = data.schedules.find((item) => item.id === procurement.gprId && item.orgId === procurement.orgId);
+    const docs = data.documents.filter((item) => item.procurementId === procurementId && item.orgId === procurement.orgId);
+    const rows: Array<{ name: string; unit: string; quantity: number; workName?: string; needBy?: string; source: "gpr" | "estimate"; sourceFiles?: string[] }> = [];
+    const gprKeys = new Set<string>();
+    for (const stage of schedule?.stages ?? []) {
+      for (const resource of stage.resources ?? []) {
+        if (resource.kind !== "material" || !Number.isFinite(resource.quantity) || resource.quantity <= 0) continue;
+        const key = `${normalizeSupplierTerm(resource.name)}|${normalizeSupplierTerm(resource.unit)}|${normalizeSupplierTerm(stage.name)}`;
+        gprKeys.add(key);
+        rows.push({ name: resource.name.trim(), unit: resource.unit || "шт", quantity: resource.quantity, workName: stage.name, needBy: stage.end, source: "gpr" });
+      }
+    }
+    for (const doc of docs) {
+      for (const position of doc.estimatePositions ?? []) {
+        if (position.isWorkItem || position.resourceKind !== "material" || !Number.isFinite(position.quantity) || position.quantity <= 0) continue;
+        const stage = (schedule?.stages ?? []).find((item) =>
+          (position.workName && normalizeSupplierTerm(item.name) === normalizeSupplierTerm(position.workName)) ||
+          (position.sectionName && item.sectionName && normalizeSupplierTerm(item.sectionName) === normalizeSupplierTerm(position.sectionName))
+        );
+        const workName = stage?.name ?? position.workName ?? position.sectionName;
+        const key = `${normalizeSupplierTerm(position.name)}|${normalizeSupplierTerm(position.unit)}|${normalizeSupplierTerm(workName ?? "")}`;
+        if (gprKeys.has(key)) continue;
+        rows.push({ name: position.name.trim(), unit: position.unit || "шт", quantity: position.quantity, workName, needBy: stage?.end, source: "estimate", sourceFiles: [doc.fileName] });
+      }
+    }
+    const merged = new Map<string, typeof rows[number]>();
+    for (const row of rows) {
+      const key = `${normalizeSupplierTerm(row.name)}|${normalizeSupplierTerm(row.unit)}|${normalizeSupplierTerm(row.workName ?? "")}`;
+      const previous = merged.get(key);
+      if (previous) {
+        previous.quantity += row.quantity;
+        previous.sourceFiles = [...new Set([...(previous.sourceFiles ?? []), ...(row.sourceFiles ?? [])])];
+        if (row.source === "gpr") previous.source = "gpr";
+      } else merged.set(key, { ...row });
+    }
+    for (const row of merged.values()) {
+      const existing = data.supplyRequests.find((item) => item.procurementId === procurementId &&
+        normalizeSupplierTerm(item.materialName) === normalizeSupplierTerm(row.name) &&
+        normalizeSupplierTerm(item.unit) === normalizeSupplierTerm(row.unit) &&
+        normalizeSupplierTerm(item.workName ?? "") === normalizeSupplierTerm(row.workName ?? "") && item.status !== "cancelled");
+      if (existing) continue;
+      const now = new Date().toISOString();
+      const id = `sup-${Date.now()}-${randomBytes(3).toString("hex")}`;
+      data.supplyRequests.unshift({
+        id, orgId: procurement.orgId, procurementId, workName: row.workName,
+        materialName: row.name, unit: row.unit, qtyNeed: row.quantity,
+        qtyOrdered: 0, qtyDelivered: 0, needBy: row.needBy ?? procurement.deadline ?? now.slice(0, 10),
+        status: "need", source: row.source, sourceFiles: row.sourceFiles,
+        quantityNeedsReview: !row.needBy,
+        supplierIds: supplierIdsForMaterial(data, procurement.orgId, row.name, procurement.region),
+        createdAt: now, updatedAt: now,
+      });
+      procurement.supplyRequestIds = [...(procurement.supplyRequestIds ?? []), id];
+      audit(data, actorId, "create", "supply", id, `Ведомость материалов · ${row.name}`);
+      created += 1;
+    }
+    return data;
+  });
+  return { created };
+}
+
+export function markSupplyRequestSent(actorId: string, supplyId: string, supplierId: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const supply = data.supplyRequests?.find((item) => item.id === supplyId);
+    const supplier = data.suppliers?.find((item) => item.id === supplierId);
+    if (!supply || !supplier) throw new Error("Потребность или поставщик не найдены");
+    assertOrgAccess(actor, supply.orgId, "поставок");
+    assertOrgAccess(actor, supplier.orgId, "поставщика");
+    if (supply.orgId !== supplier.orgId || !(supply.supplierIds ?? []).includes(supplier.id)) {
+      throw new Error("Поставщик не сопоставлен с этой позицией материала");
+    }
+    supply.sentToSupplierIds = [...new Set([...(supply.sentToSupplierIds ?? []), supplier.id])];
+    supply.updatedAt = new Date().toISOString();
+    audit(data, actorId, "send", "supplier_rfq", supply.id, `${supplier.name} · ${supply.materialName}`);
     return data;
   });
 }

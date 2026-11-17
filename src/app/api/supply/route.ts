@@ -1,25 +1,49 @@
 import {
+  deleteSupplier,
+  generateProcurementMaterialManifest,
   getBootstrap,
+  markSupplyRequestSent,
   recordSupplierQuote,
+  saveOrganizationCompanyCard,
   selectSupplierQuote,
   upsertSupplyRequest,
+  upsertSupplier,
 } from "@/server/repo";
 import { withSection, json } from "@/server/http";
 import type { SupplyStatus } from "@/lib/types";
+import { saveUpload, readUpload } from "@/server/uploads";
+import { config } from "@/server/config";
+import { mailStatus, sendMail } from "@/server/mail";
 
 export async function GET(req: Request) {
   return withSection(req, "zakupki", (user) => {
     const data = getBootstrap(user).data;
-    return json({ items: data.supplyRequests ?? [] });
+    const mail = mailStatus();
+    return json({ items: data.supplyRequests ?? [], suppliers: data.suppliers ?? [], companyCard: data.companyCards?.[0] ?? null, mail: { live: mail.live, detail: mail.detail } });
   });
 }
 
 export async function POST(req: Request) {
   return withSection(req, "zakupki", async (user) => {
+    if ((req.headers.get("content-type") ?? "").includes("multipart/form-data")) {
+      const form = await req.formData();
+      const file = form.get("file");
+      if (String(form.get("action") ?? "") !== "companyCard" || !(file instanceof File)) return json({ error: "Передайте файл карточки предприятия" }, 400);
+      if (file.size > config.maxUploadBytes) return json({ error: "Файл превышает допустимый размер" }, 413);
+      const ext = file.name.split(".").pop()?.toLowerCase();
+      if (!ext || !["pdf", "doc", "docx", "jpg", "jpeg", "png"].includes(ext)) return json({ error: "Карточка предприятия должна быть PDF, DOC/DOCX или изображением" }, 415);
+      const stored = await saveUpload(`company-${user.orgId}-${Date.now()}`, file.name, Buffer.from(await file.arrayBuffer()));
+      saveOrganizationCompanyCard(user.id, { fileName: file.name, storedPath: stored.storedPath, fileSize: stored.fileSize });
+      const data = getBootstrap(user).data;
+      return json({ companyCard: data.companyCards?.[0] ?? null });
+    }
     const body = (await req.json()) as {
       id?: string;
-      action?: "recordQuote" | "selectQuote";
+      action?: "recordQuote" | "selectQuote" | "upsertSupplier" | "deleteSupplier" | "generateManifest" | "sendRfq";
       quoteId?: string;
+      supplierId?: string;
+      confirmed?: boolean;
+      supplier?: { id?: string; name?: string; email?: string; materialKeywords?: string[]; regions?: string[]; website?: string; note?: string };
       quote?: {
         id?: string;
         supplierName?: string;
@@ -34,6 +58,10 @@ export async function POST(req: Request) {
       qtyNeed?: number;
       needBy?: string;
       workName?: string;
+      supplierIds?: string[];
+      source?: "gpr" | "estimate" | "manual";
+      sourceFiles?: string[];
+      quantityNeedsReview?: boolean;
       status?: SupplyStatus;
       quoteDraftText?: string;
       supplierName?: string;
@@ -43,6 +71,44 @@ export async function POST(req: Request) {
       qtyDelivered?: number;
       unitPrice?: number | null;
     };
+    if (body.action === "upsertSupplier") {
+      const supplier = body.supplier;
+      if (!supplier?.name?.trim() || !supplier.email?.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(supplier.email.trim()) || !Array.isArray(supplier.materialKeywords) || supplier.materialKeywords.length === 0) return json({ error: "Укажите название, корректный email и хотя бы один вид материала" }, 400);
+      upsertSupplier(user.id, { id: supplier.id, name: supplier.name, email: supplier.email, materialKeywords: supplier.materialKeywords, regions: supplier.regions ?? [], website: supplier.website, note: supplier.note });
+      return json(getBootstrap(user));
+    }
+    if (body.action === "deleteSupplier") {
+      if (!body.supplierId) return json({ error: "Не указан поставщик" }, 400);
+      deleteSupplier(user.id, body.supplierId);
+      return json(getBootstrap(user));
+    }
+    if (body.action === "generateManifest") {
+      if (!body.procurementId) return json({ error: "Не указана закупка" }, 400);
+      const manifest = generateProcurementMaterialManifest(user.id, body.procurementId);
+      return json({ ...getBootstrap(user), manifest });
+    }
+    if (body.action === "sendRfq") {
+      if (!body.confirmed) return json({ error: "Подтвердите отправку запроса поставщику" }, 400);
+      const readiness = mailStatus();
+      if (!readiness.live) return json({ error: `Отправка недоступна: ${readiness.detail}. Требуется настроить SMTP.` }, 503);
+      if (!body.id || !body.supplierId) return json({ error: "Не указаны позиция материала и поставщик" }, 400);
+      const data = getBootstrap(user).data;
+      const supply = (data.supplyRequests ?? []).find((item) => item.id === body.id);
+      const supplier = (data.suppliers ?? []).find((item) => item.id === body.supplierId);
+      const procurement = data.procurements.find((item) => item.id === supply?.procurementId);
+      const card = data.companyCards?.find((item) => item.orgId === user.orgId);
+      if (!supply || !supplier || !procurement) return json({ error: "Позиция, поставщик или закупка не найдены" }, 404);
+      if (!(supply.supplierIds ?? []).includes(supplier.id)) return json({ error: "Этот поставщик не сопоставлен с материалом" }, 409);
+      if ((supply.sentToSupplierIds ?? []).includes(supplier.id)) return json({ error: "Запрос этому поставщику уже отправлен" }, 409);
+      if (!card) return json({ error: "Сначала загрузите карточку предприятия — она будет приложена к письму" }, 409);
+      const bytes = readUpload(card.storedPath);
+      if (!bytes) return json({ error: "Файл карточки предприятия недоступен. Загрузите его повторно." }, 409);
+      const text = [`Здравствуйте, ${supplier.name}!`, "Просим направить коммерческое предложение по материалу:", `Объект: ${procurement.title}`, `Позиция: ${supply.materialName}`, `Количество: ${supply.qtyNeed} ${supply.unit}`, supply.workName ? `Вид работ: ${supply.workName}` : null, `Желаемый срок поставки: ${supply.needBy}`, "Просим указать цену, срок действия предложения, срок и условия доставки.", "Карточка предприятия приложена к письму."].filter(Boolean).join("\n");
+      const sent = await sendMail({ to: supplier.email, subject: `Запрос КП: ${supply.materialName} · ${procurement.title}`, text: supply.quoteDraftText?.trim() || text, attachments: [{ filename: card.fileName, contentBase64: bytes.toString("base64") }] });
+      if (!sent.ok) return json({ error: "Почтовый сервер не принял письмо" }, 502);
+      markSupplyRequestSent(user.id, supply.id, supplier.id);
+      return json({ ...getBootstrap(user), sentTo: supplier.name });
+    }
     if (body.action === "recordQuote") {
       const quote = body.quote;
       if (!body.id || !quote?.supplierName?.trim() || quote.unitPrice == null) {
@@ -91,6 +157,10 @@ export async function POST(req: Request) {
       qtyOrdered: body.qtyOrdered,
       qtyDelivered: body.qtyDelivered,
       unitPrice: body.unitPrice,
+      supplierIds: body.supplierIds,
+      source: body.source,
+      sourceFiles: body.sourceFiles,
+      quantityNeedsReview: body.quantityNeedsReview,
     });
     return json(getBootstrap(user));
   });
