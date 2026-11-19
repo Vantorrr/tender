@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { downloadUrl } from "@/lib/api";
 import { downloadTextFile, formatDateTime } from "@/lib/format";
+import { presentAnalyticalNote } from "@/lib/analytical-note";
 import { readableCitations } from "@/lib/citation-display";
 import { useStore } from "@/lib/store";
 
@@ -89,6 +90,7 @@ export default function DocumentDetailPage() {
   const author = (id: string) =>
     data.users.find((u) => u.id === id)?.name ?? id;
   const displayCitations = readableCitations(doc.citations.filter((citation) => citation.confidence !== "ocr" && citation.sourceVersion !== "ocr-extract"));
+  const note = presentAnalyticalNote(doc.analyticalNote);
 
   return (
     <div>
@@ -237,19 +239,27 @@ export default function DocumentDetailPage() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
-          {/OCR\s*\(|Текст распознан автоматически/u.test(doc.analyticalNote) ? (
+          {note.text ? (
+            <NoteEditor
+              key={`${doc.id}:${doc.versions.length}:${note.text.slice(0, 24)}`}
+              docId={doc.id}
+              initialNote={note.text}
+            />
+          ) : null}
+          {note.recognized ? (
             <section className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
-              <h2 className="font-[family-name:var(--font-display)] text-base">Записка</h2>
+              {note.text ? null : <h2 className="font-[family-name:var(--font-display)] text-base">Записка</h2>}
               <p className="mt-2 text-sm">Текст распознан автоматически, сверьте с оригиналом</p>
               <Button className="mt-3" variant="outline" onClick={() => setPreviewOpen(true)}>Открыть документ</Button>
             </section>
-          ) : (
+          ) : null}
+          {!note.text && !note.recognized ? (
             <NoteEditor
-              key={`${doc.id}:${doc.versions.length}:${doc.analyticalNote.slice(0, 24)}`}
+              key={`${doc.id}:${doc.versions.length}:empty`}
               docId={doc.id}
-              initialNote={doc.analyticalNote}
+              initialNote=""
             />
-          )}
+          ) : null}
 
           <section className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
             <h2 className="font-[family-name:var(--font-display)] text-base">

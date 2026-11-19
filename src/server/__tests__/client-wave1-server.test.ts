@@ -15,8 +15,9 @@ import {
   createManualProcurement,
   deleteGprStage,
   deleteProcurement,
+  updateDocument,
 } from "@/server/repo";
-import { saveUpload } from "@/server/uploads";
+import { deleteUpload, resolveUploadPath, saveUpload } from "@/server/uploads";
 import { config } from "@/server/config";
 import "./setup";
 
@@ -80,6 +81,7 @@ describe("client wave 1 server", () => {
     const created = createManualProcurement("u-ruk", { title: "На удаление", region: "Ямал" });
     const stored = await saveUpload("wave1-del", "файл.txt", Buffer.from("документ"));
     const other = await saveUpload("wave1-keep", "чужой.txt", Buffer.from("чужой"));
+    const photo = await saveUpload("wave1-photo", "фото.jpg", Buffer.from("фото"));
     mutateAppData((data) => {
       const procurement = data.procurements.find((item) => item.id === created.id)!;
       data.documents.unshift({
@@ -122,6 +124,26 @@ describe("client wave 1 server", () => {
           confirmed: true,
         },
       );
+      data.planFacts.unshift({
+        id: "pf-wave1-del",
+        orgId: procurement.orgId,
+        objectId: "obj-wave1",
+        procurementId: procurement.id,
+        title: "Фото",
+        status: "v_rabote",
+        entries: [],
+        updatedAt: new Date().toISOString(),
+        dailyFacts: [{
+          id: "df-wave1",
+          date: "2026-12-01",
+          workName: "Работа",
+          unit: "м2",
+          quantity: 1,
+          photos: [{ id: "ph-wave1", fileName: "фото.jpg", storedPath: photo.storedPath, at: "2026-12-01T00:00:00Z" }],
+          authorId: "u-ruk",
+          at: "2026-12-01T00:00:00Z",
+        }],
+      });
       return data;
     });
     expect(() => deleteProcurement("u-tender", created.id)).toThrow(/руководитель/);
@@ -135,6 +157,28 @@ describe("client wave 1 server", () => {
     expect(after.smetaExchanges.some((item) => item.id === "sx-wave1-other")).toBe(true);
     expect(fs.existsSync(path.join(config.dataDir, stored.storedPath))).toBe(false);
     expect(fs.existsSync(path.join(config.dataDir, other.storedPath))).toBe(true);
+    expect(fs.existsSync(path.join(config.dataDir, photo.storedPath))).toBe(false);
+  });
+
+  it("does not delete a file outside the uploads folder and ignores a rewritten path", () => {
+    const outside = path.join(config.dataDir, "not-an-upload.txt");
+    fs.writeFileSync(outside, "keep");
+    deleteUpload("not-an-upload.txt");
+    deleteUpload(outside);
+    deleteUpload("uploads/../../not-an-upload.txt");
+    expect(fs.existsSync(outside)).toBe(true);
+    expect(resolveUploadPath("/etc/passwd")).toBeNull();
+    fs.unlinkSync(outside);
+    mutateAppData((data) => {
+      const doc = data.documents.find((item) => item.orgId === "org-alfa");
+      if (!doc) throw new Error("нет документа");
+      doc.storedPath = "uploads/seed-keep.txt";
+      return data;
+    });
+    const doc = readAppData().documents.find((item) => item.storedPath === "uploads/seed-keep.txt");
+    expect(doc).toBeTruthy();
+    updateDocument("u-tender", doc!.id, { storedPath: "not-an-upload.txt", title: doc!.title });
+    expect(readAppData().documents.find((item) => item.id === doc!.id)?.storedPath).toBe("uploads/seed-keep.txt");
   });
 
   it("returns 404 when the same procurement is deleted twice", async () => {

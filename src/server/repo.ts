@@ -459,6 +459,14 @@ export function deleteProcurement(actorId: string, id: string) {
     for (const document of data.documents) {
       if (document.procurementId === id && document.storedPath) removedFiles.push(document.storedPath);
     }
+    for (const plan of data.planFacts) {
+      if (plan.procurementId !== id) continue;
+      for (const fact of plan.dailyFacts ?? []) {
+        for (const photo of fact.photos ?? []) {
+          if (photo.storedPath) removedFiles.push(photo.storedPath);
+        }
+      }
+    }
     data.procurements = data.procurements.filter((p) => p.id !== id);
     data.documents = data.documents.filter((d) => d.procurementId !== id);
     data.calculations = data.calculations.filter((c) => c.procurementId !== id);
@@ -765,9 +773,10 @@ export function updateDocument(
     const item = data.documents.find((d) => d.id === id);
     if (!item) throw new Error("Документ не найден");
     assertOrgAccess(actor, item.orgId, "документа");
-    const { orgId: _o, id: _i, ...safe } = patch;
+    const { orgId: _o, id: _i, storedPath: _path, ...safe } = patch;
     void _o;
     void _i;
+    void _path;
     const noteEdited =
       typeof safe.analyticalNote === "string" &&
       safe.analyticalNote !== item.analyticalNote;

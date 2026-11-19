@@ -3,8 +3,10 @@ import { parseDecimalRu } from "@/lib/decimal-ru";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
 import { humanizeIssue, humanizeIssues } from "@/lib/issue-text";
+import { presentAnalyticalNote } from "@/lib/analytical-note";
 import { paymentAmountError, paymentBucket, paymentTotals } from "@/lib/money-payments";
-import { displayedKanbanColumn } from "@/lib/pipeline";
+import { displayedKanbanColumn, procurementBoardLabel } from "@/lib/pipeline";
+import { patchMergedResources } from "@/lib/resource-merge";
 import type { GprStage } from "@/lib/types";
 
 describe("client wave 1 wording and money", () => {
@@ -97,5 +99,34 @@ describe("client wave 1 wording and money", () => {
     expect(carpenter.rate).toBe(756.41);
     expect(carpenter.hoursQ).toBe(44);
     expect(carpenter.hoursQ).not.toBe(carpenter.rate);
+  });
+
+  it("keeps a scanned summary and drops the raw recognition dump", () => {
+    const presented = presentAnalyticalNote([
+      "Смета 12: бурение.",
+      "Текст распознан автоматически, сверьте с оригиналом",
+      "OCR (tesseract): сырой текст страницы",
+    ].join("\n"));
+    expect(presented.recognized).toBe(true);
+    expect(presented.text).toBe("Смета 12: бурение.");
+  });
+
+  it("keeps the sign and each calendar when a merged return is edited", () => {
+    const members = [
+      { id: "w1", kind: "material" as const, name: "Вода", unit: "м3", quantity: -164.68, rate: 20, days: 2 },
+      { id: "w2", kind: "material" as const, name: "Вода", unit: "м3", quantity: -2563.6, rate: 20, days: 5 },
+    ];
+    const rated = patchMergedResources(members, { name: "Возврат: Вода" }, { rate: 25 });
+    expect(rated.map((item) => item.quantity)).toEqual([-164.68, -2563.6]);
+    expect(rated.map((item) => item.days)).toEqual([2, 5]);
+    expect(rated.every((item) => item.rate === 25)).toBe(true);
+    const resized = patchMergedResources(members, { name: "Возврат: Вода" }, { quantity: 100 });
+    expect(resized.reduce((sum, item) => sum + item.quantity, 0)).toBeCloseTo(-100, 5);
+  });
+
+  it("names a rejected card the same way as the closed column", () => {
+    expect(procurementBoardLabel({ reviewStatus: "otklonena" })).toBe("Закрыто и не реализовано");
+    expect(procurementBoardLabel({ reviewStatus: "dublirovana" })).toBe("Закрыто и не реализовано");
+    expect(displayedKanbanColumn({ reviewStatus: "otklonena" })).toBe("closed_not_realized");
   });
 });

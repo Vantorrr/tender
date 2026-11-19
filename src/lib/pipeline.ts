@@ -111,11 +111,8 @@ export function procurementBoardLabel(input: {
   lifecycle?: string;
   lifecycleOutcome?: string;
 }): string {
-  if (input.lifecycle === "production") return "В производстве";
-  if (input.lifecycle === "closed") {
-    return input.lifecycleOutcome === "successful" ? "Успешно реализовано" : "Закрыто";
-  }
-  return KANBAN_COLUMNS.find((column) => column.reviewStatuses.includes(input.reviewStatus))?.label ?? "Новое";
+  const column = displayedKanbanColumn(input);
+  return KANBAN_COLUMNS.find((item) => item.id === column)?.label ?? "Новое";
 }
 
 export function displayedKanbanColumn(input: {

@@ -207,9 +207,7 @@ export default function DengiPage() {
                         <Input
                           aria-label={`Сумма платежа ${p.title}`}
                           className="ml-auto w-36 text-right"
-                          type="number"
-                          min={0}
-                          step="0.01"
+                          inputMode="decimal"
                           key={`${p.id}:${p.amount}`}
                           defaultValue={String(p.amount)}
                           onBlur={(e) => {

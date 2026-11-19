@@ -31,22 +31,28 @@ export async function saveUpload(
   return { storedPath: relative, fileSize: bytes.length };
 }
 
+/** Only a file inside data/uploads. Absolute paths and `..` never resolve. */
+export function resolveUploadPath(storedPath: string): string | null {
+  if (!storedPath || storedPath.includes("\0") || storedPath.includes("..")) return null;
+  if (path.isAbsolute(storedPath)) return null;
+  const normalized = path.normalize(storedPath).replace(/\\/g, "/");
+  if (!normalized.startsWith("uploads/") || normalized.endsWith("/")) return null;
+  const root = path.resolve(uploadsDir());
+  const absolute = path.resolve(/*turbopackIgnore: true*/ config.dataDir, normalized);
+  const rootPrefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  if (!absolute.startsWith(rootPrefix)) return null;
+  return absolute;
+}
+
 export function deleteUpload(storedPath: string) {
-  if (!storedPath || storedPath.includes("..")) return;
-  const absolute = path.join(
-    /*turbopackIgnore: true*/ config.dataDir,
-    storedPath
-  );
-  if (fs.existsSync(absolute)) fs.unlinkSync(absolute);
+  const absolute = resolveUploadPath(storedPath);
+  if (!absolute || !fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) return;
+  fs.unlinkSync(absolute);
 }
 
 export function readUpload(storedPath: string): Buffer | null {
-  if (!storedPath || storedPath.includes("..")) return null;
-  const absolute = path.join(
-    /*turbopackIgnore: true*/ config.dataDir,
-    storedPath
-  );
-  if (!fs.existsSync(absolute)) return null;
+  const absolute = resolveUploadPath(storedPath);
+  if (!absolute || !fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) return null;
   return fs.readFileSync(absolute);
 }
 
