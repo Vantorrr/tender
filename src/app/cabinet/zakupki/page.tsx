@@ -240,7 +240,7 @@ export default function ZakupkiPage() {
           <AlertDescription>
             {syncIssues.map((p) => (
               <span key={p.id} className="mr-3 inline-block text-sm">
-                {visibleProcurementNumber(p)}:{" "}
+                {visibleProcurementNumber(p)} · {p.title}:{" "}
                 {p.syncStatus === "ustarelo"
                   ? "данные устарели"
                   : "ошибка синхронизации"}{" "}

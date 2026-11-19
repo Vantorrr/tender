@@ -51,7 +51,7 @@ export default function DokumentyPage() {
             <select
               data-testid="doc-procurement"
               aria-label="Закупка для загрузки"
-              className="flex h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm sm:w-[220px]"
+              className="flex h-9 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm sm:w-[360px]"
               value={procurementId}
               onChange={(e) => setPickedId(e.target.value)}
             >
@@ -60,7 +60,7 @@ export default function DokumentyPage() {
               ) : null}
               {orgProcurements.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {visibleProcurementNumber(p)}
+                  {visibleProcurementNumber(p)} · {p.title}
                 </option>
               ))}
             </select>
