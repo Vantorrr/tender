@@ -9,6 +9,7 @@ import {
   citationIdsForFact,
   logisticsCustomerQuestion,
   recommendationAfterConflict,
+  hasBlockingConflict,
   packDocumentCitations,
   splitMergedRegions,
   economicMissingInputs,
@@ -171,6 +172,12 @@ describe("grounded project analysis", () => {
     expect(logisticsCustomerQuestion(["Завоз по зимнику."])).toBeNull();
     expect(recommendationAfterConflict("do_not_participate", true, false)).toBe("insufficient_data");
     expect(recommendationAfterConflict("do_not_participate", true, true)).toBe("do_not_participate");
+    expect(hasBlockingConflict({
+      topics: [],
+      missingInputs: ["В смете и договоре противоречие по региону."],
+      texts: [],
+    })).toBe(true);
+    expect(recommendationAfterConflict("participate", true, false)).toBe("insufficient_data");
     const merged = splitMergedRegions("Площадка относится к 5-й зоне Красноярского края (ЯНАО).");
     expect(merged.text).not.toMatch(/янао/iu);
     expect(merged.text).toMatch(/красноярск/iu);

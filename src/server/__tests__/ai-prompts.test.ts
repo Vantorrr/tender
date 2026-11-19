@@ -122,6 +122,12 @@ describe("estimator prompts", () => {
     expect(placed).toContain("A8");
     expect(placed).toContain("A9");
     expect(placed).toContain("N58");
+    const codes = keepCellsThatSupportFact("Сертификат ISO9001 и код L2 остаются. Диапазон в ячейка G10.", [
+      { id: "range", text: "Диапазон итога", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "G10:G11" },
+    ]);
+    expect(codes).toContain("ISO9001");
+    expect(codes).toContain("L2");
+    expect(codes).toContain("G10");
     const sheetPayload = buildModelNoteUserContent(
       { kind: "local-estimate" },
       [],

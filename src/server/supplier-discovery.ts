@@ -236,15 +236,74 @@ function regionExcerpt(raw: string): string | null {
   return excerpt && plain.includes(excerpt) ? excerpt : null;
 }
 
-async function readSupplierPage(url: string, fetchImpl: FetchLike, timeoutMs = 4000): Promise<string | null> {
+function isPublicSupplierUrl(value: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return false;
+  if (host === "0.0.0.0" || host === "::" || host === "::1") return false;
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipv4) {
+    const parts = ipv4.slice(1).map(Number);
+    if (parts.some((part) => part > 255)) return false;
+    const [a, b] = parts;
+    if (a === 0 || a === 10 || a === 127) return false;
+    if (a === 169 && b === 254) return false;
+    if (a === 172 && b >= 16 && b <= 31) return false;
+    if (a === 192 && b === 168) return false;
+    if (a === 100 && b >= 64 && b <= 127) return false;
+  }
+  const mapped = host.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (mapped) return isPublicSupplierUrl(`http://${mapped[1]}/`);
+  if (host.includes(":") && (host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80"))) return false;
+  return true;
+}
+
+async function readCapped(response: Response, limit: number): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return (await response.text()).slice(0, limit);
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (total < limit) {
+    const { done, value } = await reader.read();
+    if (done || !value) break;
+    const room = limit - total;
+    chunks.push(value.byteLength > room ? value.slice(0, room) : value);
+    total += Math.min(value.byteLength, room);
+    if (value.byteLength > room) {
+      await reader.cancel();
+      break;
+    }
+  }
+  const merged = new Uint8Array(chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(merged);
+}
+
+async function readSupplierPage(url: string, fetchImpl: FetchLike, timeoutMs = 4000, hops = 0): Promise<string | null> {
+  if (hops > 2 || !isPublicSupplierUrl(url)) return null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const response = await fetchImpl(url, { method: "GET", redirect: "follow", signal: AbortSignal.timeout(timeoutMs) });
+      const response = await fetchImpl(url, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        if (!location) return null;
+        return readSupplierPage(new URL(location, url).toString(), fetchImpl, timeoutMs, hops + 1);
+      }
       if (response.status >= 500) continue;
       if (response.status < 200 || response.status >= 400) return null;
       const declared = Number(response.headers.get("content-length") ?? 0);
       if (declared > PAGE_TEXT_LIMIT) return null;
-      return await response.text();
+      return readCapped(response, PAGE_TEXT_LIMIT);
     } catch {
       return null;
     }

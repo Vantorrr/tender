@@ -121,30 +121,29 @@ export function cellRelatesToFact(fact: string, cellText: string): boolean {
   return words.some((word) => cellWords.has(word)) || numbers.some((value) => cellText.includes(value));
 }
 
+function cellKeys(cell: string): string[] {
+  const value = cell.toUpperCase();
+  const parts = value.split(":");
+  return [...new Set(parts.length > 1 ? [value, ...parts] : [value])];
+}
+
 export function keepCellsThatSupportFact(note: string, citations: Citation[]): string {
   const byCell = new Map<string, string>();
   for (const citation of citations) {
     if (!citation.cell) continue;
-    const key = citation.cell.toUpperCase();
-    byCell.set(key, `${byCell.get(key) ?? ""} ${citation.text}`);
+    for (const key of cellKeys(citation.cell)) byCell.set(key, `${byCell.get(key) ?? ""} ${citation.text}`);
   }
   return note.split(/(?<=\n)/).map((line) => {
-    const found = [...line.matchAll(new RegExp(CELL_TOKEN, "gi"))].map((match) => match[0].toUpperCase());
-    const unique = [...new Set(found)];
-    if (!unique.length) return line;
-    const supported = unique.filter((cell) => cellRelatesToFact(line, byCell.get(cell) ?? "")).slice(0, 3);
-    let next = line;
-    for (const cell of unique) {
-      if (supported.includes(cell)) continue;
-      next = next.replace(new RegExp(`ячейк[аеиу]\\s+${cell}(?::${cell})?\\b`, "gi"), "");
-      next = next.replace(new RegExp(`(?<![A-Z])${cell}\\b`, "gi"), "");
-    }
-    return next;
+    const mention = new RegExp(`ячейк[а-яё]{0,3}\\s+((?:${CELL_TOKEN}\\s*,\\s*)*${CELL_TOKEN})`, "gi");
+    return line.replace(mention, (_full, list: string) => {
+      const tokens = [...new Set(list.split(/\s*,\s*/).map((token) => token.toUpperCase()))];
+      const supported = tokens.filter((token) => cellRelatesToFact(line, byCell.get(token) ?? "")).slice(0, 3);
+      return supported.length ? `ячейка ${supported.join(", ")}` : "";
+    });
   }).join("")
     .replace(/[ \t]{2,}/g, " ")
     .replace(/\s+([,.;])/g, "$1")
     .replace(/,\s*(?=[,.]|$)/g, "")
-    .replace(/ячейк[аеиу]\s*(?=[,.]|$)/gi, "")
     .trim();
 }
 

@@ -34,6 +34,14 @@ describe("estimate section rollup", () => {
     expect(alignVolumeToSections("и установку 3044 шт. свай", rollup)).toContain("скважин");
     expect(alignVolumeToSections("и установку 3044 шт. свай", rollup)).not.toContain("свай");
     expect(alignVolumeToSections("4 раздела бурения на 18544 м", rollup)).toContain("бурения");
+    const meters = rollupWorkSections([
+      { sectionName: "Раздел 1. Бурение скважин", name: "Бурение скважин", code: "ФЕР01", unit: "м", quantity: 32, isWorkItem: true },
+    ]);
+    const money = alignVolumeToSections("Стоимость 32 тыс. руб. и ещё 132 шт.", meters);
+    expect(money).toContain("32 тыс");
+    expect(money).toContain("132 шт");
+    expect(money).not.toContain("Бурение");
+    expect(alignVolumeToSections("Услуги 32 м.", meters)).toContain("Бурение скважин");
   });
 
   it("drops a work type that the cited excerpt does not contain", () => {

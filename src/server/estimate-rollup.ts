@@ -96,7 +96,7 @@ export function alignVolumeToSections(text: string, rollup: WorkSectionRollup): 
     const stems = volumeStems(claim.name);
     if (!stems.length) continue;
     const qty = String(Math.trunc(claim.quantity));
-    const pattern = new RegExp(`(?:[А-Яа-яЁёA-Za-z-]{3,}\\s+){0,6}${qty}(?:[.,]\\d+)?\\s*(?:шт|м2|м3|м|т|кг)\\.?\\s*(?:[А-Яа-яЁёA-Za-z-]{3,}\\s*){0,4}`, "giu");
+    const pattern = new RegExp(`(?:[А-Яа-яЁёA-Za-z-]{3,}\\s+){0,6}(?<!\\d)${qty}(?!\\d)(?:[.,]\\d+)?\\s*(?:шт|м2|м3|м|т|кг)(?![а-яёa-z0-9])\\.?\\s*(?:[А-Яа-яЁёA-Za-z-]{3,}\\s*){0,4}`, "giu");
     next = next.replace(pattern, (phrase, offset: number) => {
       const window = next.slice(Math.max(0, offset - 48), offset + phrase.length + 48).toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
       if (stems.some((stem) => window.includes(stem))) return phrase;

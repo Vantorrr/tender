@@ -313,6 +313,17 @@ export function recommendationAfterConflict(
   return recommendation;
 }
 
+/** A sourced conflict, a conflict named by the model, or two regions in one sentence block participation. */
+export function hasBlockingConflict(input: {
+  topics: string[];
+  missingInputs: string[];
+  texts: string[];
+}): boolean {
+  return input.topics.includes("conflict")
+    || input.missingInputs.some(describesConflict)
+    || input.texts.some((text) => Boolean(splitMergedRegions(text).conflict));
+}
+
 /** Prefer the shortest citation that actually contains the quote, so the link is the paragraph of the fact. */
 export function citationIdsForFact(quote: string, citations: Array<{ id: string; text: string; paragraph?: number | null }>): string[] {
   const needle = quote.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ").trim();
@@ -573,10 +584,14 @@ export async function analyzeProjectPackageWithModel(
   const priceStop = economics?.priceWithVat != null && procurement.nmck != null && economics.priceWithVat > procurement.nmck;
   const profitStop = Boolean(economics?.profit != null && economics.profit <= 0 && economicsComplete);
   if (priceStop || profitStop) recommendation = "do_not_participate";
-  const hasDataConflict = accepted.some((item) => item.topic === "conflict");
+  const conflictNotes = sanitizeCustomerQuestions(result.missingInputs, visibleCorpus).filter(describesConflict);
+  const hasDataConflict = hasBlockingConflict({
+    topics: accepted.map((item) => item.topic),
+    missingInputs: conflictNotes,
+    texts: accepted.map((item) => item.text),
+  });
   recommendation = recommendationAfterConflict(recommendation, hasDataConflict, priceStop || profitStop);
   let reportedGaps = missingInputs;
-  const conflictNotes = sanitizeCustomerQuestions(result.missingInputs, visibleCorpus).filter(describesConflict);
 
   const economicSummary = !economics
     ? "Черновая себестоимость не рассчитана."
@@ -605,11 +620,13 @@ export async function analyzeProjectPackageWithModel(
   const volumeRollups = packageDocuments.map((document) => rollupWorkSections(document.estimatePositions ?? []));
   const sectionNames = volumeRollups.flatMap((rollup) => rollup.sections.map((section) => section.section));
   const alignVolume = (text: string) => volumeRollups.reduce((current, rollup) => alignVolumeToSections(current, rollup), text);
-  const regionConflicts: string[] = [];
-  const presentFinding = (text: string, quote: string) => {
+  const regionConflicts: Array<{ text: string; quote: string; citationIds: string[]; sourceFiles: string[] }> = [];
+  const presentFinding = (text: string, quote: string, citationIds: string[], sourceFiles: string[]) => {
     const stripped = stripWorkTypesOutsideSources(alignVolume(text), quote, sectionNames);
     const split = splitMergedRegions(stripped);
-    if (split.conflict && !regionConflicts.includes(split.conflict)) regionConflicts.push(split.conflict);
+    if (split.conflict && !regionConflicts.some((item) => item.text === split.conflict)) {
+      regionConflicts.push({ text: split.conflict, quote, citationIds, sourceFiles });
+    }
     return split.text;
   };
 
@@ -627,40 +644,29 @@ export async function analyzeProjectPackageWithModel(
     findings: [
       ...accepted
         .filter((item) => packageSectionCount <= 1 || !/только\s+(?:по\s+)?одн(?:у|ой|а|о)\s+позиц/iu.test(item.text))
-        .map(({ topic, importance, text, quote, citationIds, sourceFiles, costImpact, scheduleImpact }) => ({
-          topic: TOPIC_LABELS[topic] ?? TOPIC_LABELS.other,
-          importance: importance as NonNullable<ProjectAnalytics["findings"]>[number]["importance"],
-          text: presentFinding(text, quote),
-          quote,
-          citationIds: (() => {
-            const holders = citationIdsForFact(quote, [...byPromptId.values()]);
-            return holders.length ? [...new Set(holders)].slice(0, 4) : citationIds.map((id) => byPromptId.get(id)?.id ?? id);
-          })(),
-          sourceFiles,
-          costImpact,
-          scheduleImpact,
-        })),
+        .map(({ topic, importance, text, quote, citationIds, sourceFiles, costImpact, scheduleImpact }) => {
+          const holders = citationIdsForFact(quote, [...byPromptId.values()]);
+          const resolvedIds = holders.length ? [...new Set(holders)].slice(0, 4) : citationIds.map((id) => byPromptId.get(id)?.id ?? id);
+          return {
+            topic: TOPIC_LABELS[topic] ?? TOPIC_LABELS.other,
+            importance: importance as NonNullable<ProjectAnalytics["findings"]>[number]["importance"],
+            text: presentFinding(text, quote, resolvedIds, sourceFiles),
+            quote,
+            citationIds: resolvedIds,
+            sourceFiles,
+            costImpact,
+            scheduleImpact,
+          };
+        }),
       ...regionConflicts
-        .filter((item) => !accepted.some((entry) => entry.topic === "conflict" && entry.text.includes(item.slice(0, 40))))
+        .filter((item) => !accepted.some((entry) => entry.topic === "conflict" && entry.text.includes(item.text.slice(0, 40))))
         .map((item) => ({
           topic: TOPIC_LABELS.conflict,
           importance: "high" as const,
-          text: item,
-          quote: item,
-          citationIds: [] as string[],
-          sourceFiles: [] as string[],
-          costImpact: NOT_IN_DOCUMENTS,
-          scheduleImpact: NOT_IN_DOCUMENTS,
-        })),
-      ...conflictNotes
-        .filter((item) => !accepted.some((entry) => entry.topic === "conflict" && entry.text.includes(item.slice(0, 80))))
-        .map((item) => ({
-          topic: TOPIC_LABELS.conflict,
-          importance: "high" as const,
-          text: item,
-          quote: item,
-          citationIds: [] as string[],
-          sourceFiles: [] as string[],
+          text: item.text,
+          quote: item.quote,
+          citationIds: item.citationIds,
+          sourceFiles: item.sourceFiles,
           costImpact: NOT_IN_DOCUMENTS,
           scheduleImpact: NOT_IN_DOCUMENTS,
         })),

@@ -134,6 +134,23 @@ describe("open-source supplier discovery", () => {
       { name: "Геомайнинг", website: "https://geo-mining.ru", materials: ["Долото"], regionEvidence: "Норильск", evidence: "Продажа долот", sourceUrl: catalog },
     ], async () => new Response("unavailable", { status: 500 }));
     expect(failed).toEqual([]);
+    const calls: string[] = [];
+    const redirected = await groundSupplierRegions([
+      { name: "Открытый редирект", website: "https://vendor.example", materials: ["Труба"], regionEvidence: "Норильск", evidence: "Продажа труб", sourceUrl: "https://vendor.example/go" },
+    ], async (url) => {
+      calls.push(String(url));
+      if (String(url).includes("127.0.0.1")) return new Response("склад в Норильске", { status: 200 });
+      return new Response(null, { status: 302, headers: { location: "http://127.0.0.1/latest" } });
+    });
+    expect(redirected).toEqual([]);
+    expect(calls.some((url) => url.includes("127.0.0.1"))).toBe(false);
+    const followed = await groundSupplierRegions([
+      { name: "Склад", website: "https://shop.example", materials: ["Труба"], regionEvidence: "Норильск", evidence: "Продажа труб", sourceUrl: "https://shop.example/go" },
+    ], async (url) => {
+      if (String(url).endsWith("/go")) return new Response(null, { status: 302, headers: { location: "https://shop.example/sklad" } });
+      return new Response("<p>Труба есть на складе в Норильске.</p>", { status: 200 });
+    });
+    expect(followed[0]?.regionEvidence).toContain("на складе в Норильске");
   });
 
   it("requires both a material and a delivery region", async () => {
