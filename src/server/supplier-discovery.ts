@@ -58,10 +58,9 @@ export function supplierDomain(value: string): string | null {
 export function isRedirectUrl(value: string): boolean {
   try {
     const url = new URL(value);
-    const host = url.hostname.toLowerCase();
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
     return host === "vertexaisearch.cloud.google.com"
       || host.endsWith(".vertexaisearch.cloud.google.com")
-      || url.pathname.includes("grounding-api-redirect")
       || (host === "google.com" && url.pathname === "/url");
   } catch {
     return false;
