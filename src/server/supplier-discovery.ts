@@ -151,7 +151,7 @@ function confirmsDeliveryPlace(value: string): boolean {
 function looksLikeHauler(name: string, evidence: string): boolean {
   const text = `${name}. ${evidence}`.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
   const hauler = /перевозчик|перевозк|грузоперевоз|экспедитор|логист|транспортная компания|транспортной компании/.test(text);
-  const seller = /прода|поставк|каталог|прайс|в наличии/.test(text);
+  const seller = /прода|поставля|поставщик|поставк|каталог|прайс|в наличии/.test(text);
   return hauler && !seller;
 }
 

@@ -86,8 +86,10 @@ describe("open-source supplier discovery", () => {
       { name: "Енисей-Норд", website: "https://vendor.example", materials: ["Труба"], regionEvidence: "Норильск", evidence: "Перевозка грузов в Норильск", sourceUrl: "https://vendor.example/materials" },
       { name: "Грузовой экспресс", website: "https://vendor.example", materials: ["Оборудование"], regionEvidence: "Дудинка", evidence: "Транспортная компания, доставка на Таймыр", sourceUrl: "https://vendor.example/materials" },
       { name: "Склад Севера", website: "https://vendor.example", materials: ["Труба стальная"], regionEvidence: "Красноярский край, отгрузка в Норильск", evidence: "Продажа труб со склада", sourceUrl: "https://vendor.example/materials" },
+      { name: "СеверСнаб", website: "https://vendor.example", email: "sales@vendor.example", materials: ["Труба стальная"], regionEvidence: "Норильск", evidence: "Поставляем трубы, перевозка в Норильск", sourceUrl: "https://vendor.example/materials" },
+      { name: "НордСталь", website: "https://vendor.example", email: "steel@vendor.example", materials: ["Труба"], regionEvidence: "Дудинка", evidence: "Поставщик труб, логистика до Дудинки", sourceUrl: "https://vendor.example/materials" },
     ] });
-    expect(filterSupplierCandidates(vagueRegion, resolved).map((item) => item.name)).toEqual(["Склад Севера"]);
+    expect(filterSupplierCandidates(vagueRegion, resolved).map((item) => item.name)).toEqual(["Склад Севера", "СеверСнаб", "НордСталь"]);
   });
 
   it("requires both a material and a delivery region", async () => {
