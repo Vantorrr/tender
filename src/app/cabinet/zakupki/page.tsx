@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
@@ -33,6 +33,8 @@ import type { Procurement } from "@/lib/types";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { plainUserMessage } from "@/lib/plain-user-message";
+import { KonturSearchPanel } from "@/components/kontur-search-panel";
+import type { KonturSearchFilters } from "@/server/procurement-source";
 
 export default function ZakupkiPage() {
   const router = useRouter();
@@ -54,13 +56,18 @@ export default function ZakupkiPage() {
   const [manualRegion, setManualRegion] = useState("");
   const [manualNmck, setManualNmck] = useState("");
   const [manualDeadline, setManualDeadline] = useState("");
+  const [sourceHealth, setSourceHealth] = useState<{ status?: string; detail?: string; lastSuccessAt?: string | null } | null>(null);
+  useEffect(() => {
+    void fetch("/api/health")
+      .then((response) => response.json())
+      .then((body: { procurement?: { status?: string; detail?: string; lastSuccessAt?: string | null } }) => setSourceHealth(body.procurement ?? null))
+      .catch(() => undefined);
+  }, [syncing]);
 
   const regions = useMemo(() => {
     const fromData = [...new Set(orgProcurements.map((p) => p.region))];
     return [...new Set([...REGION_PRESETS, ...fromData])];
   }, [orgProcurements]);
-
-  const syncIssues = orgProcurements.filter((p) => p.syncStatus !== "aktualno");
 
   const boardProcurements = useMemo(
     () => orgProcurements.map((item) => moved[item.id] ? { ...item, ...moved[item.id] } : item),
@@ -107,6 +114,7 @@ export default function ZakupkiPage() {
       return;
     }
     if (columnOf(card) === column) return;
+    const previous = columnOf(card);
     const next: Partial<Procurement> = column === "in_production"
       ? { lifecycle: "production" }
       : column === "realized" || column === "closed_not_realized"
@@ -149,6 +157,10 @@ export default function ZakupkiPage() {
       }
       await refresh();
       dropOverlay();
+      toast("Карточка перенесена", {
+        duration: 10_000,
+        action: { label: "Отменить", onClick: () => void moveCard(id, previous) },
+      });
     } catch (e) {
       dropOverlay();
       toast.error(plainUserMessage(e instanceof Error ? e.message : "", "Не удалось обновить статус"));
@@ -214,6 +226,15 @@ export default function ZakupkiPage() {
         }
       />
 
+      <KonturSearchPanel busy={syncing} onSearch={(filters: KonturSearchFilters) => {
+        setSyncing(true);
+        void api("/api/jobs", { method: "POST", body: JSON.stringify({ type: "procurement_sync", filters }) })
+          .then(() => refresh())
+          .then(() => toast.success("Поиск завершён, карточки обновлены"))
+          .catch((error: unknown) => toast.error(plainUserMessage(error instanceof Error ? error.message : "", "Поиск закупок не выполнен")))
+          .finally(() => setSyncing(false));
+      }} />
+
       {manualFormOpen ? (
         <form onSubmit={(event) => void createManual(event)} className="mb-5 rounded-xl border border-[var(--tk-line)] bg-white p-4" data-testid="manual-procurement-form">
           <h2 className="font-semibold">Новая закупка</h2>
@@ -233,20 +254,12 @@ export default function ZakupkiPage() {
         </form>
       ) : null}
 
-      {syncIssues.length > 0 ? (
-        <Alert className="mb-6 border-amber-200 bg-amber-50 text-amber-950">
+      {sourceHealth?.status === "error" ? (
+        <Alert className="mb-6">
           <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>Статус синхронизации карточек</AlertTitle>
+          <AlertTitle>Синхронизация не удалась</AlertTitle>
           <AlertDescription>
-            {syncIssues.map((p) => (
-              <span key={p.id} className="mr-3 inline-block text-sm">
-                {visibleProcurementNumber(p)} · {p.title}:{" "}
-                {p.syncStatus === "ustarelo"
-                  ? "данные устарели"
-                  : "ошибка синхронизации"}{" "}
-                (обновлено {formatDate(p.syncAt)})
-              </span>
-            ))}
+            Синхронизация не удалась: {sourceHealth.detail || "источник не ответил"}, последняя успешная: {sourceHealth.lastSuccessAt ? formatDate(sourceHealth.lastSuccessAt) : "ещё не было"}
           </AlertDescription>
         </Alert>
       ) : null}

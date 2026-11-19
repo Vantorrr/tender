@@ -24,6 +24,7 @@ import { DocumentWebPreview } from "@/components/document-web-preview";
 import { cleanLabel } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney, formatNumber } from "@/lib/format";
 import { citationTopicLabel, readableCitations, regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
+import { citationHref } from "@/lib/wave23";
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_CHECKLIST } from "@/lib/ai-topics";
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
@@ -544,8 +545,21 @@ export default function ZakupkaDetailPage() {
 
   async function sendSupplierRfq(supply: SupplyRequest, supplier: SupplierDirectoryEntry) {
     try {
-      await api("/api/supply", { method: "POST", body: JSON.stringify({ action: "sendRfq", id: supply.id, supplierId: supplier.id, confirmed: true }) });
+      const result = await api<{ sent?: boolean; status?: string; message?: string; text?: string; fileName?: string }>("/api/supply", { method: "POST", body: JSON.stringify({ action: "sendRfq", id: supply.id, supplierId: supplier.id, confirmed: true }) });
       await refresh();
+      if (result.sent === false) {
+        toast.message(result.message ?? "Письмо не отправлено: почта не подключена. Файл запроса сохранён/скачайте его");
+        if (result.text) {
+          const blob = new Blob([result.text], { type: "text/plain;charset=utf-8" });
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = result.fileName ?? "zapros-kp.txt";
+          link.click();
+          URL.revokeObjectURL(url);
+        }
+        return;
+      }
       toast.success(`Запрос КП отправлен: ${supplier.name}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось отправить запрос КП");
@@ -742,7 +756,7 @@ export default function ZakupkaDetailPage() {
             >
               Сформировать расчёт (расчёт по формулам, без ИИ)
             </Button>
-            <Button
+            {canGpr ? <Button
               variant="outline"
               data-testid="create-gpr"
               disabled={busy || !procurement.calculationId}
@@ -769,7 +783,7 @@ export default function ZakupkaDetailPage() {
               }}
             >
               Создать ГПР
-            </Button>
+            </Button> : null}
           </div>
         }
       />
@@ -855,7 +869,7 @@ export default function ZakupkaDetailPage() {
                   <div className="mt-3">
                     <p className="text-sm font-medium">Рекомендация: {PARTICIPATE_LABELS[analytics.recommendation]}</p>
                     <p className="mt-1 line-clamp-3 text-sm text-[var(--tk-muted)]">{analytics.summary.split(/\n\n/)[0].replace(/\s+/g, " ").slice(0, 420)}</p>
-                    <p className="mt-1 text-xs text-[var(--tk-muted)]">Документов: {analytics.quality?.sourceDocuments ?? docs.length} · Цитат: {analytics.citations.length} · {analytics.quality?.status === "evidence_backed" ? "есть подтверждённые источниками тезисы" : "проверьте исходные документы"}</p>
+                    <p className="mt-1 text-xs text-[var(--tk-muted)]">Документов: {analytics.quality?.sourceDocuments ?? docs.length}</p>
                   </div>
                 ) : (
                   <p className="mt-3 text-sm text-[var(--tk-muted)]">Сводки пока нет. После загрузки документа она появится здесь.</p>
@@ -1247,8 +1261,11 @@ export default function ZakupkaDetailPage() {
                     Рекомендация: {PARTICIPATE_LABELS[analytics.recommendation]}
                   </p>
                   <div className="mt-2 space-y-1 text-sm leading-relaxed text-[var(--tk-foreground)]">
-                    {analytics.summary.split(/\n\n/)[0].split("\n").map((line, index) => (
+                    {analytics.summary.split("\n").filter((line) => line.trim()).map((line, index) => (
                       <p key={`${index}-${line}`} className={index === 0 ? "font-medium" : "text-[var(--tk-muted)]"}>{line}</p>
+                    ))}
+                    {(procurement.customerAnswers ?? []).map((item) => (
+                      <p key={item.question}>Ответ на вопрос «{item.question}»: {item.answer}</p>
                     ))}
                   </div>
                 </section>
@@ -1282,7 +1299,11 @@ export default function ZakupkaDetailPage() {
                             <details className="mt-2">
                               <summary className="w-fit cursor-pointer text-xs font-medium text-[var(--tk-muted)]">Показать фрагмент и источник</summary>
                               <blockquote className="mt-2 break-words rounded-md bg-stone-50 px-3 py-2 text-sm leading-relaxed [overflow-wrap:anywhere]">«{finding.quote}»</blockquote>
-                              {source ? <p className="mt-1 text-xs text-[var(--tk-muted)]">{source.sourceFile}{source.sheet ? ` · лист ${source.sheet}` : source.page ? ` · стр. ${source.page}` : ""}{source.paragraph ? ` · абз. ${source.paragraph}` : ""}{source.cell ? ` · ${source.cell}` : ""}</p> : null}
+                              {source ? <p className="mt-1 text-xs text-[var(--tk-muted)]">{(() => {
+                                const linked = docs.find((item) => item.fileName === source.sourceFile);
+                                const label = `${source.sourceFile}${source.sheet ? ` · лист ${source.sheet}` : source.page ? ` · стр. ${source.page}` : ""}${source.paragraph ? ` · абз. ${source.paragraph}` : ""}${source.cell ? ` · ${source.cell}` : ""}`;
+                                return linked ? <Link className="underline" href={citationHref(linked.id, source)}>{label}</Link> : label;
+                              })()}</p> : null}
                             </details>
                           </li>
                         );
@@ -1306,14 +1327,38 @@ export default function ZakupkaDetailPage() {
                 {analytics.customerQuestions?.length ? (
                   <section className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white p-4" data-testid="analytics-customer-questions">
                     <h3 className="text-sm font-semibold">Вопросы заказчику</h3>
-                    <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
-                      {analytics.customerQuestions.map((question, index) => <li key={`${index}-${question}`}>{question}</li>)}
+                    <ul className="mt-2 space-y-3 text-sm">
+                      {analytics.customerQuestions.map((question, index) => {
+                        const saved = procurement.customerAnswers?.find((item) => item.question === question);
+                        return <li key={`${index}-${question}`} className="rounded-lg border border-[var(--tk-line)] p-3">
+                          <p>{question}</p>
+                          {saved ? <p className="mt-1 text-[var(--tk-muted)]">Ответ: {saved.answer}</p> : null}
+                          <form className="mt-2 flex flex-wrap gap-2" onSubmit={(event) => {
+                            event.preventDefault();
+                            const answer = new FormData(event.currentTarget).get("answer");
+                            if (typeof answer !== "string" || !answer.trim()) return;
+                            void api("/api/zakupki", { method: "POST", body: JSON.stringify({ action: "answerCustomerQuestion", id: procurement.id, question, answer }) })
+                              .then(() => refresh())
+                              .then(() => toast.success("Ответ сохранён в карточке"))
+                              .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось сохранить ответ"));
+                          }}>
+                            <Input name="answer" aria-label={`Ответ · ${question}`} defaultValue={saved?.answer ?? ""} placeholder="Ответ сохранится в карточке" className="h-9 max-w-md" />
+                            <Button type="submit" size="sm" variant="outline">Ответить</Button>
+                          </form>
+                        </li>;
+                      })}
                     </ul>
+                    {procurement.customerAnswers?.length ? <p className="mt-3 text-xs text-[var(--tk-muted)]">Ответы добавлены в записку и чат этой закупки. Письмо заказчику не отправляется.</p> : null}
                   </section>
                 ) : null}
                 {analytics.economics ? (
                   <section className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white p-4" data-testid="analytics-economics">
                     <h3 className="text-sm font-semibold">Себестоимость и рентабельность</h3>
+                    {(() => {
+                      const draft = data.calculations.find((item) => item.id === procurement.calculationId);
+                      if (draft && draft.positions.length > 0) return null;
+                      return <p className="mt-2 text-sm" data-testid="analytics-economics-empty">Расчёт не заполнен. {procurement.calculationId ? <Link className="underline" href={`/cabinet/raschety/${procurement.calculationId}`}>Открыть расчёт</Link> : null}</p>;
+                    })()}
                     <dl className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
                       {([
                         ["Себестоимость", analytics.economics.cost],
@@ -1323,7 +1368,7 @@ export default function ZakupkaDetailPage() {
                       ] as const).map(([label, value]) => (
                         <div key={label} className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3">
                           <dt className="text-xs text-[var(--tk-muted)]">{label}</dt>
-                          <dd className="mt-1 text-sm font-semibold tabular-nums">{value == null ? "Не рассчитано" : formatMoney(value)}</dd>
+                          <dd className="mt-1 text-sm font-semibold tabular-nums">{value == null || !(data.calculations.find((item) => item.id === procurement.calculationId)?.positions.length) ? "Расчёт не заполнен" : formatMoney(value)}</dd>
                         </div>
                       ))}
                       <div className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3">
@@ -1981,13 +2026,13 @@ export default function ZakupkaDetailPage() {
                     <div className="mt-2 rounded-md bg-stone-50 px-3 py-2" data-testid={`supply-matches-${s.id}`}>
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="text-xs font-medium">Подходящие поставщики</div>
-                        <Button size="sm" variant="outline" disabled={supplierSearchBusyId === s.id} onClick={() => void searchPublicSuppliers(s)}>{supplierSearchBusyId === s.id ? "Ищу в открытых источниках…" : "Найти поставщиков в интернете"}</Button>
+                        <Button size="sm" variant="outline" disabled={supplierSearchBusyId === s.id} onClick={() => void searchPublicSuppliers(s)}>{supplierSearchBusyId === s.id ? "Идёт поиск…" : "Собрать"}</Button>
                       </div>
                       {(s.supplierIds ?? []).length ? <div className="mt-1 flex flex-wrap gap-2">{(s.supplierIds ?? []).map((supplierId) => {
                         const supplier = suppliers.find((item) => item.id === supplierId);
                         if (!supplier) return null;
                         const alreadySent = (s.sentToSupplierIds ?? []).includes(supplierId);
-                        return <div key={supplierId} className="flex flex-wrap items-center gap-2 rounded border bg-white px-2 py-1 text-xs"><span>{supplier.name} · {supplier.email}</span>{alreadySent ? <span className="text-emerald-800">Запрос отправлен</span> : <Button size="sm" variant="outline" disabled={!supplyMailReady || !companyCard} title={!companyCard ? "Загрузите карточку предприятия" : !supplyMailReady ? supplyMailDetail : undefined} onClick={() => setAsk({ kind: "rfq", supply: s, supplier })}>Отправить запрос КП</Button>}</div>;
+                        return <div key={supplierId} className="flex flex-wrap items-center gap-2 rounded border bg-white px-2 py-1 text-xs"><span>{supplier.name} · {supplier.email}</span>{alreadySent ? <span className="text-emerald-800">Запрос отправлен</span> : <Button size="sm" variant="outline" disabled={!supplyMailReady && !supplier.email} title={supplyMailReady ? undefined : "Почта не подключена: будет сохранён файл запроса"} onClick={() => setAsk({ kind: "rfq", supply: s, supplier })}>Отправить запрос КП</Button>}</div>;
                       })}</div> : <p className="mt-1 text-xs text-[var(--tk-muted)]">В справочнике нет поставщика с подходящим ассортиментом.</p>}
                       {supplierSearchErrors[s.id] ? <p className="mt-2 text-xs text-amber-800" role="alert">{supplierSearchErrors[s.id]}</p> : null}
                       {(supplierSearchResults[s.id]?.length ?? 0) > 0 ? <ul className="mt-2 space-y-2">{supplierSearchResults[s.id].map((candidate) => <li key={candidate.sourceUrl} className="rounded border bg-white p-2 text-xs" data-testid={`supplier-search-result-${s.id}`}>

@@ -9,7 +9,7 @@ import type { RiskRemark } from "@/lib/types";
 export type ParsedRiskRemark = Omit<RiskRemark, "id">;
 
 export const RISK_HELPER_DISCLAIMER =
-  "Авторазбор — эвристический помощник, не юридическая экспертиза. Проверяйте цитаты и формулировки вручную перед решением.";
+  "Проверьте цитаты и формулировки вручную перед решением. Это не юридическая экспертиза.";
 
 type Rule = {
   id: string;

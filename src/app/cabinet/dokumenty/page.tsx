@@ -128,8 +128,6 @@ export default function DokumentyPage() {
               meta={
                 <div className="space-y-1">
                   <div>Версий: {d.versions.length}</div>
-                  <div>Цитат: {d.citations.length}</div>
-                  <div>Подсветок для проверки: {d.highlights.length}</div>
                   {d.analysis?.region ? (
                     <div>
                       {d.analysis.region}

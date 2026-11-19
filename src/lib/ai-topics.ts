@@ -12,7 +12,7 @@ export const ANALYSIS_TOPIC_LABELS = {
   safety: "Охрана труда",
   criteria: "Критерии оценки",
   conflict: "Противоречие",
-  other: "Условие закупки",
+  other: "Прочее",
 } as const;
 
 export type AnalysisTopicKey = keyof typeof ANALYSIS_TOPIC_LABELS;

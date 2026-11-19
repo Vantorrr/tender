@@ -196,6 +196,7 @@ function buildSources(data: AppData, procurementId: string): Source[] {
       `Срок подачи: ${displayedDeadline(procurement.deadline)}${procurement.deadline ? ` (исходное значение: ${procurement.deadline})` : ""}`,
       `Решение об участии: ${procurement.reviewStatus}`,
       `Стадия проекта: ${procurement.lifecycle ?? "закупка"}`,
+      ...(procurement.customerAnswers ?? []).map((item) => `Вопрос заказчику: ${item.question}\nОтвет: ${item.answer}`),
     ].join("\n"),
     `/cabinet/zakupki/${procurement.id}`
   );

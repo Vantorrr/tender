@@ -27,7 +27,8 @@ import type {
 import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
 import { canonicalUploadPath, deleteUpload } from "@/server/uploads";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
-import { mergeStageResources } from "@/lib/resource-merge";
+import { buildStagesFromEstimatePositions } from "@/lib/estimate-stages";
+import { dependencyWouldCycle, inclusiveDays, scheduleAfterPredecessor } from "@/lib/wave23";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
 import {
@@ -38,7 +39,6 @@ import {
 import {
   bucketsFromPositions,
   busCost,
-  classifyDirectCostBucket,
   runCostEngine,
   shiftStages,
   workingDaysBetween,
@@ -406,6 +406,24 @@ export function setProcurementReview(
   });
 }
 
+export function saveCustomerAnswer(actorId: string, procurementId: string, question: string, answer: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.procurements.find((row) => row.id === procurementId);
+    if (!item) throw new Error("Закупка не найдена");
+    assertOrgAccess(actor, item.orgId, "закупки");
+    const asked = question.trim();
+    const text = answer.trim();
+    if (!asked || !text) throw new Error("Нужны вопрос и ответ");
+    item.customerAnswers = [
+      ...(item.customerAnswers ?? []).filter((row) => row.question !== asked),
+      { question: asked, answer: text, at: new Date().toISOString() },
+    ];
+    audit(data, actorId, "update", "procurement", procurementId, "Ответ на вопрос заказчику");
+    return data;
+  });
+}
+
 export function updateProcurement(
   actorId: string,
   id: string,
@@ -571,6 +589,38 @@ export function deleteGprStage(actorId: string, scheduleId: string, stageId: str
     }
     schedule.updatedAt = new Date().toISOString();
     audit(data, actorId, "delete", "gpr_stage", stageId, `Удалён этап ${stage.name}`);
+    return data;
+  });
+}
+
+export function setStagePredecessor(actorId: string, scheduleId: string, stageId: string, dependsOn: string | null) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    assertGprWrite(actor);
+    const schedule = data.schedules.find((item) => item.id === scheduleId);
+    if (!schedule) throw new Error("ГПР не найден");
+    assertOrgAccess(actor, schedule.orgId, "ГПР");
+    const stage = schedule.stages.find((item) => item.id === stageId);
+    if (!stage) throw new Error("Этап не найден");
+    if (!dependsOn) {
+      stage.dependsOn = undefined;
+      stage.dependencyType = undefined;
+      schedule.updatedAt = new Date().toISOString();
+      return data;
+    }
+    const predecessor = schedule.stages.find((item) => item.id === dependsOn);
+    if (!predecessor) throw new Error("Предшествующая работа не найдена");
+    if (dependencyWouldCycle(schedule.stages, stageId, dependsOn)) {
+      throw new Error("Так нельзя: работа не может начинаться после самой себя. Выберите другую работу.");
+    }
+    const next = scheduleAfterPredecessor(predecessor.end, inclusiveDays(stage.start, stage.end));
+    stage.dependsOn = dependsOn;
+    stage.dependencyType = "FS";
+    stage.start = next.start;
+    stage.end = next.end;
+    schedule.conflicts = [];
+    schedule.updatedAt = new Date().toISOString();
+    audit(data, actorId, "update", "gpr", scheduleId, `Работа «${stage.name}» начинается после «${predecessor.name}»`);
     return data;
   });
 }
@@ -1700,10 +1750,10 @@ export function injectRiskParse(
       "risk",
       riskId,
       contractText?.trim()
-        ? `Разбор договора (эвристика-помощник, ${remarks.length} замечаний; не юрэкспертиза)`
+        ? `Разбор договора по чек-листу, замечаний: ${remarks.length}`
         : remarks.length === 0
-          ? "Разбор договора: нет данных (пусто/короткий текст, без выдуманных рисков)"
-          : `Разбор договора (эвристика-помощник, ${remarks.length} замечаний)`
+          ? "Разбор договора: нет данных (пусто или короткий текст)"
+          : `Разбор договора по чек-листу, замечаний: ${remarks.length}`
     );
     return data;
   });
@@ -2118,7 +2168,7 @@ export function attachCustomerEstimate(
   });
 }
 
-/** Build work stages from parsed estimate sections and work-item parent rows. */
+/** A schedule that still has only the empty navigation stages. */
 function isNavigationStub(schedule: { stages: GprStage[] }): boolean {
   const names = new Set(["Подготовка", "Подготовка / мобилизация", "Основные работы"]);
   return schedule.stages.length > 0 && schedule.stages.every((stage) =>
@@ -2131,67 +2181,7 @@ function buildDraftStagesFromEstimate(
   positions: Calculation["positions"],
   now: string
 ): GprStage[] {
-  const sections = new Map<string, { sectionName: string; workName: string; positions: Calculation["positions"] }>();
-  for (const position of positions) {
-    const section = position.sourceSectionName?.trim();
-    if (!section) continue;
-    const workName = position.sourceWorkName?.trim() || section;
-    const key = `${section}\u0000${workName}`;
-    const group = sections.get(key) ?? { sectionName: section, workName, positions: [] };
-    group.positions.push(position);
-    sections.set(key, group);
-  }
-
-  return [...sections.values()].map(({ sectionName, workName, positions: rows }, index) => {
-    const stageId = `gs-${Date.now()}-${index + 1}`;
-    const workPositions = rows.filter((position) => position.isWorkItem && position.name === workName);
-    const workUnits = new Set(workPositions.map((position) => position.unit));
-    const workVolume = workPositions.length > 0 && workUnits.size === 1
-      ? workPositions.reduce((total, position) => total + position.quantity, 0)
-      : null;
-    const resources: GprStageResource[] = rows.flatMap((position) => {
-      if (position.isWorkItem) return [];
-      const code = position.code.toLocaleUpperCase("ru-RU");
-      const unit = position.unit.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
-      let kind: GprStageResource["kind"] | null = position.resourceKind ?? null;
-      if (!kind && /автобус|bus|^BUS(?:[-\s]|$)/iu.test(`${code} ${position.name}`)) kind = "bus";
-      else if (!kind && (/^(?:ФСЭМ|ТСЭМ|EQ(?:-|\s|$))/iu.test(code) || classifyDirectCostBucket(position) === "equipment")) kind = "equipment";
-      else if (!kind && /^ФССЦПГ/iu.test(code)) kind = "other";
-      else if (!kind && (/^(?:ФССЦ|ТССЦ|ФСБЦ|MAT(?:-|\s|$))/iu.test(code) || /щебен|геотекстил|песок|грунт|цемент/iu.test(position.name) || classifyDirectCostBucket(position) === "materials")) kind = "material";
-      else if (!kind && (/^(?:LAB(?:-|\s|$)|ОТ|ЗП)/iu.test(code) || classifyDirectCostBucket(position) === "labor")) kind = "labor";
-      if (!kind) return [];
-
-      const quantityBasis: GprStageResource["quantityBasis"] = kind === "material"
-        ? "material_qty"
-        : /(?:маш|чел|н)[\s.-]*ч/u.test(unit)
-          ? "total_hours"
-          : "uncertain";
-      return [{
-        id: `res-${stageId}-${position.id}`,
-        sourceKey: position.id,
-        kind,
-        name: position.name,
-        quantity: position.quantity,
-        unit: position.unit,
-        rate: position.rateMissing || !(Number.isFinite(position.rate) && position.rate > 0)
-          ? null
-          : position.rate,
-        quantityBasis,
-      }];
-    });
-
-    return {
-      id: stageId,
-      name: workName,
-      ...(workName !== sectionName ? { sectionName, workName } : {}),
-      start: now.slice(0, 10),
-      end: now.slice(0, 10),
-      sequence: index + 1,
-      crewSize: 0,
-      ...(workVolume != null ? { planVolume: workVolume, planUnit: workPositions[0].unit } : {}),
-      resources: mergeStageResources(resources),
-    };
-  });
+  return buildStagesFromEstimatePositions(positions, now);
 }
 
 function mergeEstimateRowsIntoDraft(
@@ -2230,6 +2220,7 @@ export function createProcurementSchedule(actorId: string, procurementId: string
   let outcome: "estimate" | "placeholder" | "unchanged" = "unchanged";
   mutateAppData((data) => {
     const actor = actorUser(data, actorId);
+    assertGprWrite(actor);
     const procurement = data.procurements.find((item) => item.id === procurementId);
     if (!procurement) throw new Error("Закупка не найдена");
     assertOrgAccess(actor, procurement.orgId, "закупки");
@@ -2423,7 +2414,7 @@ export function sendProcurementToCalculation(
       .filter(({ position }) =>
         Boolean(position.code && position.name && position.unit) &&
         Number.isFinite(position.quantity) &&
-        position.quantity > 0
+        position.quantity !== 0
       )
       .map(({ document, position }) => {
         const hit = position.isWorkItem ? null : matchingDirectoryRate(data, position.code, position.unit);

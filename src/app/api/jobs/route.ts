@@ -35,12 +35,12 @@ export async function POST(req: Request) {
       let filters;
       if (body.filters != null) {
         if (!(getProcurementSource() instanceof KonturProcurementSource)) {
-          return json({ error: "Расширенные фильтры доступны при источнике Контур.Закупки" }, 409);
+          return json({ error: "Расширенные фильтры доступны, когда подключён поиск закупок" }, 409);
         }
         try {
           filters = validateKonturSearchFilters(body.filters);
         } catch (error) {
-          return json({ error: error instanceof Error ? error.message : "Некорректные фильтры Контура" }, 400);
+          return json({ error: error instanceof Error ? error.message : "Некорректные фильтры поиска" }, 400);
         }
       }
       const result = await runProcurementSync(user.id, filters);

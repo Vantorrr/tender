@@ -1,3 +1,4 @@
+import { shouldRetrySync } from "@/lib/wave23";
 import { assertOrgAccess } from "@/server/acl";
 import { insertJob, listJobs, mutateAppData, readAppData, saveProcurementSyncStatus, updateJob } from "@/server/db";
 import { analyzeUpload } from "@/server/grand-smeta";
@@ -145,7 +146,11 @@ export async function runProcurementSync(actorId: string, filters?: KonturSearch
     const isSuper = actor?.role === "superadmin";
     const orgId = actor?.orgId ?? "org-alfa";
     const source = getProcurementSource();
-    const feed = await source.fetchNotices(orgId, filters);
+    let feed = await source.fetchNotices(orgId, filters);
+    if (feed.status === "error" && shouldRetrySync(feed.detail)) {
+      await new Promise((resolve) => setTimeout(resolve, process.env.VITEST ? 0 : 400));
+      feed = await source.fetchNotices(orgId, filters);
+    }
     saveProcurementSyncStatus(source.id, feed.status, feed.detail);
 
     const result = mutateAppData((data) => {

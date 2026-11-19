@@ -2,6 +2,7 @@ import {
   getBootstrap,
   deleteGprStage,
   patchScheduleResourceAndSync,
+  setStagePredecessor,
   shiftGprStage,
   updateSchedule,
 } from "@/server/repo";
@@ -24,7 +25,8 @@ export async function PATCH(req: Request) {
     const body = (await req.json()) as {
       id?: string;
       patch?: Partial<GprSchedule>;
-      action?: "shiftStage" | "patchResource" | "deleteStage";
+      action?: "shiftStage" | "patchResource" | "deleteStage" | "setPredecessor";
+      dependsOn?: string | null;
       stageId?: string;
       deltaDays?: number;
       cascade?: boolean;
@@ -42,6 +44,11 @@ export async function PATCH(req: Request) {
     };
     if (!body.id) return json({ error: "Нужен id" }, 400);
     try {
+      if (body.action === "setPredecessor") {
+        if (!body.stageId) return json({ error: "Нужен stageId" }, 400);
+        setStagePredecessor(user.id, body.id, body.stageId, body.dependsOn ?? null);
+        return json(getBootstrap(user));
+      }
       if (body.action === "deleteStage") {
         if (!body.stageId) return json({ error: "Нужен stageId" }, 400);
         deleteGprStage(user.id, body.id, body.stageId);

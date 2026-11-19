@@ -1,3 +1,4 @@
+import ExcelJS from "exceljs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { createSession } from "@/server/auth";
 import { closeDb, ensureReady, readAppData } from "@/server/db";
@@ -75,5 +76,40 @@ describe("document web preview", () => {
     expect(file.headers.get("content-type")).toBe("image/png");
     expect(file.headers.get("x-content-type-options")).toBe("nosniff");
     expect(Buffer.from(await file.arrayBuffer())).toEqual(bytes);
+  });
+
+  it("shows column width, a merged header and a formula result", async () => {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Смета");
+    sheet.mergeCells("A1:B1");
+    sheet.getCell("A1").value = "Шапка";
+    sheet.getColumn(1).width = 24;
+    sheet.getCell("C2").value = { formula: "1+2", result: 3 };
+    const bytes = Buffer.from(await workbook.xlsx.writeBuffer());
+    const procurement = readAppData().procurements.find((item) => item.id === "p-1")!;
+    const stored = await saveUpload("xlsx-preview", "smeta.xlsx", bytes);
+    const { documentId } = createDocument("u-ruk", {
+      orgId: procurement.orgId,
+      procurementId: procurement.id,
+      title: "Смета",
+      fileName: "smeta.xlsx",
+      fileType: "xlsx",
+      category: "estimate",
+      storedPath: stored.storedPath,
+      fileSize: stored.fileSize,
+    });
+    const { GET } = await import("@/app/api/dokumenty/preview/route");
+    const response = await GET(new Request(`http://local/api/dokumenty/preview?id=${documentId}`, {
+      headers: { authorization: `Bearer ${createSession("u-ruk")}` },
+    }));
+    expect(response.status).toBe(200);
+    const body = await response.json() as {
+      kind: string;
+      sheets: Array<{ columns: Array<{ width: number }>; merges: Array<{ colSpan: number }>; rows: Array<{ cells: string[] }> }>;
+    };
+    expect(body.kind).toBe("xlsx");
+    expect(body.sheets[0].columns[0].width).toBeGreaterThan(56);
+    expect(body.sheets[0].merges.some((merge) => merge.colSpan >= 2)).toBe(true);
+    expect(body.sheets[0].rows.some((row) => row.cells.includes("3"))).toBe(true);
   });
 });

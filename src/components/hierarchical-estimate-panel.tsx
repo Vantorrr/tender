@@ -176,14 +176,14 @@ export function HierarchicalEstimatePanel({
           {leaf.kind === "material" ? "" : leaf.hoursQ == null ? "—" : `${formatNumber(leaf.hoursQ)} ч`}
         </div>
         <div className="text-right">
-          {locked ? (leaf.rate == null ? <span className="text-amber-800" title="ставка не указана">ставка не указана</span> : formatMoney(leaf.rate)) : (
+          {locked ? (leaf.rate == null || leaf.rate === 0 ? <span className="text-amber-800" title="нет ставки">нет ставки</span> : formatMoney(leaf.rate)) : (
             <Input
               key={`${leaf.id}:${leaf.rate ?? "missing"}`}
               className="h-8 text-right"
-              placeholder="ставка не указана"
-              title={leaf.rate == null ? "ставка не указана" : "Ставка"}
-              aria-label={leaf.rate == null ? `Ставка · ${leaf.name} (ставка не указана)` : `Ставка · ${leaf.name}`}
-              defaultValue={leaf.rate == null ? "" : String(leaf.rate)}
+              placeholder="нет ставки"
+              title={leaf.rate == null || leaf.rate === 0 ? "нет ставки" : "Ставка"}
+              aria-label={leaf.rate == null || leaf.rate === 0 ? `Ставка · ${leaf.name} (нет ставки)` : `Ставка · ${leaf.name}`}
+              defaultValue={leaf.rate == null || leaf.rate === 0 ? "" : String(leaf.rate)}
               data-testid={`estimate-rate-${leaf.id}`}
               onBlur={(e) => {
                 const raw = e.target.value.trim();
@@ -203,7 +203,7 @@ export function HierarchicalEstimatePanel({
           data-testid={`estimate-amount-${leaf.id}`}
           title={leaf.amount == null ? "нет данных" : undefined}
         >
-          {leaf.amount == null ? "—" : formatMoney(leaf.amount)}
+          {leaf.amount == null || leaf.rate == null || leaf.rate === 0 ? "—" : formatMoney(leaf.amount)}
         </div>
       </div>
     );
@@ -575,6 +575,7 @@ export function HierarchicalEstimatePanel({
                     <div key={`${node.id}-${g.kind}`} className="bg-stone-50/40">
                       <div className="px-3 py-1.5 pl-8 text-xs font-semibold uppercase tracking-wide text-[var(--tk-muted)]">
                         {g.label}
+                        {g.leaves.some((leaf) => /^возврат:/iu.test(leaf.name)) ? <span className="ml-2 normal-case">· подгруппа «Возврат», в итоге со знаком минус</span> : null}
                       </div>
                       {resourceBuckets(g.leaves).map(([key, leaves]) => {
                         if (leaves.length === 1) return renderLeafRow(leaves[0]);

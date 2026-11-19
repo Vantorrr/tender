@@ -10,6 +10,7 @@ import {
   recomputeCalculationCost,
   refreshProcurementAnalytics,
   createProcurementSchedule,
+  saveCustomerAnswer,
   sendProcurementToCalculation,
   setProcurementReview,
   transferProcurementToProduction,
@@ -75,7 +76,10 @@ export async function POST(req: Request) {
         | "deleteProcurement"
         | "saveMoney"
         | "addMoneyPayment"
-        | "refreshKonturDetails";
+        | "refreshKonturDetails"
+        | "answerCustomerQuestion";
+      question?: string;
+      answer?: string;
       id?: string;
       moneyId?: string;
       patch?: Partial<MoneyPlan>;
@@ -136,6 +140,11 @@ export async function POST(req: Request) {
     }
     if (body.action === "ensureChain") {
       ensureProcurementChain(user.id, body.id!);
+      return json(getBootstrap(user));
+    }
+    if (body.action === "answerCustomerQuestion") {
+      if (!body.id || !body.question || !body.answer) return json({ error: "Нужны вопрос и ответ" }, 400);
+      saveCustomerAnswer(user.id, body.id, body.question, body.answer);
       return json(getBootstrap(user));
     }
     if (body.action === "createGpr") {

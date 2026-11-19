@@ -4,6 +4,7 @@ import { visibleProcurementNumber } from "@/lib/pipeline";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_LABELS } from "@/lib/ai-topics";
 import { NOT_IN_DOCUMENTS, numbersAreGrounded } from "@/server/ai-grounding";
+import { analysisFailureText, citedQuestion, composeAnalyticalNote, suppressFalseAbsence } from "@/lib/wave23";
 import { rollupWorkSections, alignVolumeToSections, isOverheadPosition, stripWorkTypesOutsideSources } from "@/server/estimate-rollup";
 import {
   PROJECT_ANALYSIS_CITATION_CHARS,
@@ -189,10 +190,18 @@ export function sanitizeCustomerQuestions(questions: string[], corpus: string): 
     const key = text.toLocaleLowerCase("ru-RU");
     if (text.length < 12 || text.length > 400 || seen.has(key) || !numbersAreGrounded(text, corpus)) continue;
     seen.add(key);
-    kept.push(text);
+    kept.push(suppressFalseAbsence(text, corpus));
     if (kept.length >= 12) break;
   }
   return kept;
+}
+
+/** Customer questions without a quote from the uploaded documents are discarded. */
+export function filterCitedCustomerQuestions(questions: string[], corpus: string): string[] {
+  return sanitizeCustomerQuestions(questions, corpus).flatMap((question) => {
+    const cited = citedQuestion(question, corpus, numbersAreGrounded);
+    return cited ? [suppressFalseAbsence(cited, corpus)] : [];
+  });
 }
 
 function cleanImpact(value: string | undefined, quote: string): string {
@@ -601,7 +610,7 @@ export async function analyzeProjectPackageWithModel(
   const visibleCitationIds = new Set(byPromptId.keys());
   const inputs = {
     procurement: {
-      number: procurement.number,
+      number: visibleProcurementNumber(procurement),
       title: procurement.title,
       customer: procurement.customer,
       region: packageRegion,
@@ -815,13 +824,21 @@ export async function analyzeProjectPackageWithModel(
   return {
     ...deterministic,
     recommendation,
-    summary: [
-      packageBrief,
-      economicSummary,
-      evidence.length
-        ? `ИИ подготовил ${evidence.length} вывода с проверяемыми источниками.`
-        : "Модель не вернула тезис, прошедший проверку цитаты; оставлена локальная сводка.",
-    ].join("\n\n"),
+    summary: composeAnalyticalNote({
+      verdict: recommendation === "participate" ? 7 : recommendation === "do_not_participate" ? 3 : 4,
+      verdictText: recommendation === "participate"
+        ? "Участие возможно, если цитаты и расчёт подтверждают условия."
+        : recommendation === "do_not_participate"
+          ? "Участие не рекомендуется по найденным условиям."
+          : "Данных недостаточно для уверенного решения.",
+      blocks: [
+        suppressFalseAbsence(packageBrief, visibleCorpus),
+        accepted.map((item) => item.text).filter((text) => /оплат|штраф|обеспеч|допуск|заявк/iu.test(text)).join("\n") || "нет данных",
+        volumeRollups.flatMap((rollup) => rollup.sections.map((section) => `${section.section}: ${section.quantity} ${section.unit ?? ""}`.trim())).join("\n") || "нет данных",
+        suppressFalseAbsence(economicSummary, visibleCorpus),
+        accepted.map((item) => item.text).filter((text) => /риск|штраф|расторж|неустойк|гарант/iu.test(text)).join("\n") || "нет данных",
+      ],
+    }),
     missingInputs: reportedGaps,
     findings: [
       ...accepted
@@ -869,7 +886,7 @@ export async function analyzeProjectPackageWithModel(
     ],
     customerQuestions: (() => {
       const corpus = [...visibleCitationIds].map((id) => byPromptId.get(id)?.text ?? "");
-      const questions = sanitizeCustomerQuestions(result.customerQuestions, corpus.join("\n"));
+      const questions = filterCitedCustomerQuestions(result.customerQuestions, corpus.join("\n"));
       const logistics = logisticsCustomerQuestion([
         ...corpus,
         ...packageDocuments.map((document) => document.analyticalNote ?? ""),
@@ -957,6 +974,7 @@ export function buildProjectAnalysisFallback(
     customerQuestions: [],
     aiFailure: aiAnalysisFailureStatus(failure),
     summary: [
+      analysisFailureText(failure),
       deterministic.summary,
       "ИИ-анализ не завершился. Ниже сохранён детерминированный расчёт; модельные тезисы и заключение по рискам не сформированы.",
       `Экономика: ${economicText}`,

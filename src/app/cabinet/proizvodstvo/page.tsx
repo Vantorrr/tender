@@ -35,6 +35,7 @@ import { DEFAULT_MAX_UPLOAD_BYTES, uploadTooLargeMessage } from "@/lib/upload-li
 import { formatDate, formatMoney, formatNumber, todayIsoInTimeZone } from "@/lib/format";
 import { userHasSection } from "@/lib/acl";
 import { visibleProcurementNumber } from "@/lib/pipeline";
+import { mergeQuantities, planWorksOnDate, splitEmbeddedUnit } from "@/lib/wave23";
 import {
   entryDisplayFact,
   entryDisplayRemain,
@@ -179,12 +180,13 @@ export default function ProizvodstvoPage() {
     const linked = new Set(projectSupplies.map((supply) =>
       `${supply.workName ?? ""}|${supply.materialName}`.toLocaleLowerCase("ru-RU")
     ));
-    return (gpr?.stages ?? []).flatMap((stage) =>
+    const rows = (gpr?.stages ?? []).flatMap((stage) =>
       (stage.resources ?? [])
         .filter((resource) => resource.kind === "material" && resource.quantity > 0)
         .filter((resource) => !linked.has(`${stage.name}|${resource.name}`.toLocaleLowerCase("ru-RU")))
         .map((resource) => ({
           key: `${stage.id}:${resource.id}`,
+          name: resource.name,
           stageName: stage.name,
           materialName: resource.name,
           unit: resource.unit,
@@ -192,6 +194,7 @@ export default function ProizvodstvoPage() {
           needBy: stage.end,
         }))
     );
+    return mergeQuantities(rows);
   }, [gpr?.stages, projectSupplies]);
 
   const workOptions = plan?.entries.map((e) => e.workName) ?? [];
@@ -376,7 +379,12 @@ export default function ProizvodstvoPage() {
         }),
       });
       await refresh();
-      toast.success(`Потребность добавлена: ${need.materialName}`);
+      const matched = (data.suppliers ?? []).filter((supplier) =>
+        (supplier.materialKeywords ?? []).some((keyword) => need.materialName.toLocaleLowerCase("ru-RU").includes(keyword.toLocaleLowerCase("ru-RU")))
+      );
+      toast.success(matched.length
+        ? `Потребность создана: ${need.materialName}. В справочнике ${matched.length} поставщиков.`
+        : `Потребность создана: ${need.materialName}. В справочнике подходящих поставщиков нет.`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось создать потребность");
     } finally {
@@ -579,7 +587,7 @@ export default function ProizvodstvoPage() {
                       <div className="col-span-2 border-t pt-2"><p className="text-xs text-muted-foreground">За месяц · план / факт</p><p className="mt-1 font-medium">{formatNumber(group.monthPlan)} / {formatNumber(group.monthFact)}</p></div>
                     </div>
                     <p className={`mt-3 text-xs ${group.variance < 0 ? "text-rose-700" : group.variance > 0 ? "text-emerald-700" : "text-muted-foreground"}`}>
-                      Отклонение за период: {group.variance > 0 ? "+" : ""}{formatNumber(group.variance)}
+                      Отклонение за период: {group.variance > 0 ? "+" : ""}{formatNumber(group.variance)} {group.unit}
                     </p>
                   </article>
                 ))}
@@ -591,7 +599,7 @@ export default function ProizvodstvoPage() {
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 <div className="rounded-xl border bg-white/80 p-4 text-sm" data-testid="prod-earned-rub">
                   <p className="text-sm font-medium text-muted-foreground">Стоимость выполненного</p>
-                  <p className="mt-2 text-xl font-semibold tracking-tight">
+                  <p className="mt-2 text-xl font-semibold tracking-tight" aria-readonly="true">
                     {productionEconomics == null || productionEconomics.incomplete.length > 0
                       ? "Расчёт неполный"
                       : formatMoney(productionEconomics.autoIncurred)}
@@ -982,20 +990,22 @@ export default function ProizvodstvoPage() {
                   <label className="text-xs">Плановый объём<Input aria-label="Плановый объём нового вида работ" type="number" min="0" step="any" value={newWorkPlan} onChange={(e) => setNewWorkPlan(e.target.value)} className="mt-1 w-32" /></label>
                   <Button disabled={!plan || !newWorkName.trim() || !newWorkUnit.trim() || !Number.isFinite(Number(newWorkPlan)) || Number(newWorkPlan) <= 0} onClick={() => {
                     if (!plan) return;
-                    const name = newWorkName.trim();
+                    const split = splitEmbeddedUnit(newWorkName, newWorkUnit);
+                    const name = split.workName;
                     if (plan.entries.some((entry) => entry.workName.toLocaleLowerCase("ru-RU") === name.toLocaleLowerCase("ru-RU"))) {
                       toast.error("Такой вид работ уже есть в плане");
                       return;
                     }
                     const volume = Number(newWorkPlan);
-                    updatePlanFact(plan.id, { entries: [...plan.entries, { id: `pfe-manual-${crypto.randomUUID()}`, workName: name, unit: newWorkUnit.trim(), plan: volume, fact: 0, contractRemaining: volume }] });
+                    updatePlanFact(plan.id, { entries: [...plan.entries, { id: `pfe-manual-${crypto.randomUUID()}`, workName: name, unit: split.unit, plan: volume, fact: 0, contractRemaining: volume }] });
                     setWorkName(name);
                     setNewWorkName(""); setNewWorkUnit(""); setNewWorkPlan("");
                     toast.success("Вид работ добавлен в план договора");
                   }}>Добавить работу</Button>
                 </div>
                 <section className="mb-4 rounded-lg border border-primary/20 bg-primary/[0.04] p-3" aria-label="План ГПР на выбранный день" data-testid="daily-gpr-plan">
-                  <h4 className="font-medium">По ГПР на {formatDate(date)}</h4>
+                  <h4 className="font-medium">Работы на выбранную дату · {formatDate(date)}</h4>
+                  <p className="sr-only">В графике на эту дату: {planWorksOnDate(gpr?.stages ?? [], date).map((stage) => `${stage.name} ${stage.planUnit ?? ""}`).join(", ") || "нет"}</p>
                   {dailyGprPlanRows.length ? (
                     <ul className="mt-2 space-y-1 text-sm">
                       {dailyGprPlanRows.map(({ entry, plan: planned }) => (
@@ -1105,7 +1115,7 @@ export default function ProizvodstvoPage() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead>Работа</TableHead>
+                      <TableHead>Вид работ</TableHead>
                       <TableHead>Ед.</TableHead>
                       <TableHead className="text-right">План</TableHead>
                       <TableHead className="text-right">Факт</TableHead>

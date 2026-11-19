@@ -4,8 +4,10 @@
  * Visible errors — never silent success.
  */
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
+import os from "node:os";
 import path from "node:path";
 import zlib from "node:zlib";
 import { createExtractorFromData } from "node-unrar-js";
@@ -13,7 +15,7 @@ import { config } from "@/server/config";
 
 export type ArchiveExtractResult = {
   ok: boolean;
-  format: "zip" | "rar" | "unsupported" | "none";
+  format: "zip" | "rar" | "tar" | "gz" | "7z" | "unsupported" | "none";
   files: Array<{
     name: string;
     size: number;
@@ -69,7 +71,11 @@ function decodeZipName(rawName: Buffer, flags: number, extra: Buffer): string {
 }
 
 function isNestedArchive(name: string): boolean {
-  return /\.(zip|rar)$/i.test(name);
+  return /\.(zip|rar|7z|tar|gz|tgz)$/i.test(name);
+}
+
+function is7z(buf: Buffer): boolean {
+  return buf.length >= 6 && buf[0] === 0x37 && buf[1] === 0x7a && buf[2] === 0xbc && buf[3] === 0xaf;
 }
 
 function unsafeName(name: string): string | null {
@@ -319,7 +325,9 @@ export function detectArchiveFormat(
   }
   if (isZip(bytes) || lower.endsWith(".zip")) return "zip";
   if (/\.rar$/i.test(lower)) return "rar";
-  if (/\.(7z|tar|gz|tgz)$/i.test(lower)) return "unsupported";
+  if (/\.tar\.gz$/i.test(lower) || lower.endsWith(".tgz") || lower.endsWith(".tar")) return "tar";
+  if (lower.endsWith(".gz") || (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b)) return "gz";
+  if (lower.endsWith(".7z") || is7z(bytes)) return "7z";
   return "none";
 }
 
@@ -332,18 +340,17 @@ export function extractArchiveSafely(
   if (format === "none") {
     return { ok: true, format, files: [], errors: [], skipped: [] };
   }
-  if (format === "unsupported" || format === "rar") {
+  if (format === "rar") {
     return {
       ok: false,
       format,
       files: [],
-      errors: [
-        format === "rar"
-          ? `Формат RAR «${fileName}» не поддерживается ZIP-распаковщиком; вызовите RAR-распаковщик.`
-          : `Формат архива «${fileName}» не поддерживается безопасным извлечением (ZIP/RAR).`,
-      ],
+      errors: [`Формат RAR «${fileName}» не поддерживается ZIP-распаковщиком; вызовите RAR-распаковщик.`],
       skipped: [],
     };
+  }
+  if (format === "tar" || format === "gz" || format === "7z") {
+    return writeArchiveEntries(fileName, bytes, targetDir, format);
   }
 
   fs.mkdirSync(targetDir, { recursive: true });
@@ -498,4 +505,167 @@ export async function extractRarArchiveSafely(
 
 export function archiveExtractDir(docId: string): string {
   return path.join(config.dataDir, "uploads", "extracted", docId);
+}
+
+type MemoryEntry = { name: string; data: Buffer } | { name: string; error: string };
+
+function parseTarEntries(buf: Buffer): MemoryEntry[] {
+  const entries: MemoryEntry[] = [];
+  let offset = 0;
+  let total = 0;
+  while (offset + 512 <= buf.length) {
+    const header = buf.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const nameRaw = header.subarray(0, 100).toString("utf8").replace(/\0.*$/u, "");
+    const prefix = header.subarray(345, 500).toString("utf8").replace(/\0.*$/u, "");
+    const name = prefix ? `${prefix.replace(/\/$/u, "")}/${nameRaw}` : nameRaw;
+    const size = Number.parseInt(header.subarray(124, 136).toString("utf8").replace(/\0/g, "").trim() || "0", 8);
+    const type = header[156];
+    offset += 512;
+    if (!Number.isFinite(size) || size < 0) {
+      entries.push({ name: name || "?", error: "битый заголовок tar" });
+      break;
+    }
+    const data = Buffer.from(buf.subarray(offset, offset + size));
+    offset += Math.ceil(size / 512) * 512;
+    if (type === 53 || name.endsWith("/")) continue;
+    if (type !== 0 && type !== 48) continue;
+    const unsafe = unsafeName(name);
+    if (unsafe) {
+      entries.push({ name, error: unsafe });
+      continue;
+    }
+    if (entries.length >= MAX_FILES) {
+      entries.push({ name, error: `file limit ${MAX_FILES} exceeded` });
+      break;
+    }
+    const singleLimit = isNestedArchive(name) ? MAX_SINGLE_ARCHIVE : MAX_SINGLE;
+    if (data.length > singleLimit || total + data.length > MAX_UNCOMPRESSED) {
+      entries.push({ name, error: "archive uncompressed size limit exceeded" });
+      break;
+    }
+    total += data.length;
+    entries.push({ name, data });
+  }
+  return entries;
+}
+
+function gunzipEntries(fileName: string, bytes: Buffer): MemoryEntry[] {
+  let inflated: Buffer;
+  try {
+    inflated = zlib.gunzipSync(bytes, { maxOutputLength: MAX_UNCOMPRESSED });
+  } catch {
+    return [{ name: fileName, error: "архив gz повреждён" }];
+  }
+  const ustar = inflated.length > 262 && inflated.subarray(257, 262).toString("utf8") === "ustar";
+  if (ustar) return parseTarEntries(inflated);
+  const inner = fileName.replace(/\.gz$/i, "") || "file";
+  const unsafe = unsafeName(inner);
+  if (unsafe) return [{ name: inner, error: unsafe }];
+  return [{ name: path.basename(inner), data: inflated }];
+}
+
+function sevenZipBin(): string | null {
+  for (const bin of ["7z", "7zz", "7za"]) {
+    const found = spawnSync(/*turbopackIgnore: true*/ "which", [bin], { encoding: "utf8" });
+    if (found.status === 0 && found.stdout.trim()) return found.stdout.trim();
+  }
+  return null;
+}
+
+function extract7zEntries(bytes: Buffer): MemoryEntry[] {
+  const bin = sevenZipBin();
+  if (!bin) {
+    return [{ name: "archive.7z", error: "Архив 7z не разобран: на сервере нет программы распаковки" }];
+  }
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tk-7z-"));
+  try {
+    const archivePath = path.join(tmp, "archive.7z");
+    const outDir = path.join(tmp, "out");
+    fs.mkdirSync(outDir);
+    fs.writeFileSync(archivePath, bytes);
+    const result = spawnSync(/*turbopackIgnore: true*/ bin, ["x", "-y", `-o${outDir}`, archivePath], { encoding: "utf8" });
+    if (result.status !== 0) {
+      return [{ name: "archive.7z", error: "Не удалось распаковать архив 7z" }];
+    }
+    const entries: MemoryEntry[] = [];
+    const walk = (dir: string, prefix: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
+        const abs = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(abs, rel);
+        else if (entry.isFile()) {
+          const data = fs.readFileSync(abs);
+          const unsafe = unsafeName(rel);
+          if (unsafe) entries.push({ name: rel, error: unsafe });
+          else entries.push({ name: rel, data });
+        }
+      }
+    };
+    walk(outDir, "");
+    return entries;
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+function memoryEntries(fileName: string, bytes: Buffer, format: ArchiveExtractResult["format"]): MemoryEntry[] {
+  if (format === "zip" || isZip(bytes)) return extractZipEntries(bytes);
+  if (format === "tar") {
+    if (bytes.length >= 2 && bytes[0] === 0x1f && bytes[1] === 0x8b) return gunzipEntries(fileName, bytes);
+    return parseTarEntries(bytes);
+  }
+  if (format === "gz") return gunzipEntries(fileName, bytes);
+  if (format === "7z") return extract7zEntries(bytes);
+  return [{ name: fileName, error: "формат архива не поддерживается" }];
+}
+
+function writeArchiveEntries(
+  fileName: string,
+  bytes: Buffer,
+  targetDir: string,
+  format: "tar" | "gz" | "7z",
+): ArchiveExtractResult {
+  fs.mkdirSync(targetDir, { recursive: true });
+  const entries = memoryEntries(fileName, bytes, format);
+  const files: ArchiveExtractResult["files"] = [];
+  const errors: string[] = [];
+  const skipped: string[] = [];
+  for (const entry of entries) {
+    if ("error" in entry) {
+      errors.push(`${entry.name}: ${entry.error}`);
+      skipped.push(entry.name);
+      continue;
+    }
+    const rel = entry.name.replace(/\\/g, "/");
+    const abs = path.resolve(targetDir, rel);
+    const root = path.resolve(targetDir);
+    if (abs !== root && !abs.startsWith(root + path.sep)) {
+      errors.push(`${rel}: escaped extract root`);
+      continue;
+    }
+    fs.mkdirSync(path.dirname(abs), { recursive: true });
+    fs.writeFileSync(abs, entry.data);
+    files.push({ name: path.basename(rel), size: entry.data.length, relativePath: rel, absolutePath: abs });
+  }
+  return { ok: errors.length === 0, format, files, errors, skipped };
+}
+
+/** Read one file from an archive. Rejects paths that leave the archive. */
+export function readArchiveMember(
+  fileName: string,
+  bytes: Buffer,
+  memberPath: string,
+): { ok: true; name: string; data: Buffer } | { ok: false; error: string } {
+  const rel = memberPath.replace(/\\/g, "/").replace(/^\.\//, "");
+  const unsafe = unsafeName(rel);
+  if (unsafe) return { ok: false, error: "Недопустимый путь внутри архива" };
+  const format = detectArchiveFormat(fileName, bytes);
+  if (format === "none" || format === "unsupported" || format === "rar") {
+    return { ok: false, error: "Этот архив нельзя открыть для скачивания отдельного файла" };
+  }
+  const entries = memoryEntries(fileName, bytes, format);
+  const hit = entries.find((entry) => !("error" in entry) && entry.name.replace(/\\/g, "/") === rel);
+  if (!hit || "error" in hit) return { ok: false, error: "Файл в архиве не найден" };
+  return { ok: true, name: path.basename(rel), data: hit.data };
 }

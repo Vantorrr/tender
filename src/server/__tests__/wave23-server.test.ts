@@ -1,0 +1,191 @@
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { beforeEach, describe, expect, it } from "vitest";
+import { signedQuantityBySection, buildStagesFromEstimatePositions } from "@/lib/estimate-stages";
+import type { CalcPosition } from "@/lib/types";
+import { createSession } from "@/server/auth";
+import { closeDb, ensureReady, healthSnapshot, readAppData } from "@/server/db";
+import { parseGrandBuffer } from "@/server/grand-smeta";
+import {
+  createManualProcurement,
+  createProcurementSchedule,
+  saveCustomerAnswer,
+  sendProcurementToCalculation,
+  deleteGprStage,
+  setStagePredecessor,
+  updateSchedule,
+} from "@/server/repo";
+import { extractArchiveSafely, readArchiveMember } from "@/server/safe-archive";
+import { saveUpload } from "@/server/uploads";
+import "./setup";
+
+function makeZip(files: Record<string, Buffer | string>): Buffer {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tk-zip-"));
+  const zipPath = path.join(dir, "pack.zip");
+  try {
+    for (const [name, content] of Object.entries(files)) {
+      const full = path.join(dir, "src", name);
+      fs.mkdirSync(path.dirname(full), { recursive: true });
+      fs.writeFileSync(full, content);
+    }
+    execFileSync("python3", ["-c", "import os,sys,zipfile\nroot,dest=sys.argv[1],sys.argv[2]\nwith zipfile.ZipFile(dest,'w') as z:\n  for base, dirs, files in os.walk(root):\n    for name in files:\n      full=os.path.join(base,name)\n      z.write(full, os.path.relpath(full, root))\n", path.join(dir, "src"), zipPath], { stdio: "pipe" });
+    return fs.readFileSync(zipPath);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+describe("wave 2–3 server checks", () => {
+  beforeEach(() => {
+    closeDb();
+    ensureReady();
+  });
+
+  it("keeps burenie quantities by section in the calculation and the schedule", async () => {
+    const parsed = await parseGrandBuffer(fs.readFileSync(path.join(process.cwd(), "fixtures/grand-smeta/ls-02-02-01-burenie.xlsx")));
+    const positions: CalcPosition[] = (parsed?.positions ?? []).map((position, index) => ({
+      id: `row-${index + 1}`,
+      code: position.code,
+      name: position.name,
+      unit: position.unit,
+      quantity: position.quantity,
+      rate: position.rate > 0 ? position.rate : 0,
+      rateMissing: !(position.rate > 0),
+      ...(position.isWorkItem ? { isWorkItem: true } : {}),
+      ...(position.resourceKind ? { resourceKind: position.resourceKind } : {}),
+      ...(position.sectionName ? { sourceSectionName: position.sectionName } : {}),
+      ...(position.workName ? { sourceWorkName: position.workName } : {}),
+    }));
+    const stages = buildStagesFromEstimatePositions(positions, "2026-11-19T00:00:00.000Z");
+    const source = positions.filter((position) => !position.isWorkItem && position.quantity !== 0).map((position) => ({
+      section: position.sourceSectionName,
+      name: position.name,
+      unit: position.unit,
+      quantity: position.quantity,
+    }));
+    const scheduled = stages.flatMap((stage) => (stage.resources ?? []).map((resource) => ({
+      section: stage.sectionName,
+      name: resource.name,
+      unit: resource.unit,
+      quantity: resource.quantity,
+    })));
+    const sourceTotals = signedQuantityBySection(source);
+    const stageTotals = signedQuantityBySection(scheduled);
+    for (const [key, quantity] of sourceTotals) {
+      expect(stageTotals.get(key) ?? 0).toBeCloseTo(quantity, 4);
+    }
+    const sourceSections = new Set(source.map((row) => row.section).filter(Boolean));
+    const stageSections = new Set(stages.map((stage) => stage.sectionName).filter(Boolean));
+    expect(stageSections.size).toBe(sourceSections.size);
+  });
+
+  it("extracts a nested zip and downloads one file without leaving the archive", async () => {
+    const inner = makeZip({ "inner.txt": "внутри" });
+    const outer = makeZip({ "docs/note.txt": "заметка", "nested/inner.zip": inner });
+    const extracted = extractArchiveSafely("pack.zip", outer, fs.mkdtempSync(path.join(os.tmpdir(), "tk-out-")));
+    expect(extracted.ok).toBe(true);
+    expect(extracted.files.map((file) => file.relativePath).sort()).toEqual(["docs/note.txt", "nested/inner.zip"]);
+    const note = readArchiveMember("pack.zip", outer, "docs/note.txt");
+    expect(note.ok && note.data.toString("utf8")).toBe("заметка");
+    expect(readArchiveMember("pack.zip", outer, "../secret.txt").ok).toBe(false);
+    const nested = extracted.files.find((file) => file.name === "inner.zip");
+    const nestedBytes = fs.readFileSync(nested!.absolutePath);
+    const opened = extractArchiveSafely("inner.zip", nestedBytes, fs.mkdtempSync(path.join(os.tmpdir(), "tk-inner-")));
+    expect(opened.files.map((file) => file.relativePath)).toEqual(["inner.txt"]);
+
+    const procurement = readAppData().procurements.find((item) => item.id === "p-1")!;
+    const stored = await saveUpload("archive-member", "pack.zip", outer);
+    const { createDocument } = await import("@/server/repo");
+    const { documentId } = createDocument("u-ruk", {
+      orgId: procurement.orgId,
+      procurementId: procurement.id,
+      title: "Архив",
+      fileName: "pack.zip",
+      fileType: "zip",
+      category: "archive",
+      storedPath: stored.storedPath,
+      fileSize: stored.fileSize,
+    });
+    const { GET } = await import("@/app/api/dokumenty/file/route");
+    const response = await GET(new Request(`http://local/api/dokumenty/file?id=${documentId}&member=${encodeURIComponent("docs/note.txt")}`, {
+      headers: { authorization: `Bearer ${createSession("u-ruk")}` },
+    }));
+    expect(response.status).toBe(200);
+    expect(Buffer.from(await response.arrayBuffer()).toString("utf8")).toBe("заметка");
+    const escaped = await GET(new Request(`http://local/api/dokumenty/file?id=${documentId}&member=${encodeURIComponent("../secret.txt")}`, {
+      headers: { authorization: `Bearer ${createSession("u-ruk")}` },
+    }));
+    expect(escaped.status).toBe(400);
+
+    const tarDir = fs.mkdtempSync(path.join(os.tmpdir(), "tk-tar-"));
+    fs.writeFileSync(path.join(tarDir, "note.txt"), "tar-ok");
+    execFileSync("tar", ["-czf", "pack.tar.gz", "note.txt"], { cwd: tarDir });
+    const tarBytes = fs.readFileSync(path.join(tarDir, "pack.tar.gz"));
+    const tarNote = readArchiveMember("pack.tar.gz", tarBytes, "note.txt");
+    expect(tarNote.ok && tarNote.data.toString("utf8")).toBe("tar-ok");
+    execFileSync("7z", ["a", "-bd", "pack.7z", "note.txt"], { cwd: tarDir });
+    const seven = fs.readFileSync(path.join(tarDir, "pack.7z"));
+    const sevenNote = readArchiveMember("pack.7z", seven, "note.txt");
+    expect(sevenNote.ok && sevenNote.data.toString("utf8")).toBe("tar-ok");
+  });
+
+  it("lets a manager create a schedule and refuses a tender specialist", () => {
+    const created = createManualProcurement("u-ruk", { title: "Доступ к графику", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    expect(() => createProcurementSchedule("u-tender", created.id)).toThrow(/Недостаточно прав/);
+    expect(createProcurementSchedule("u-ruk", created.id).outcome).toBeTruthy();
+    const schedule = readAppData().schedules.find((item) => item.procurementId === created.id)!;
+    const added = {
+      id: "gs-added",
+      name: "Монтаж",
+      start: "2026-11-10",
+      end: "2026-11-12",
+      sequence: schedule.stages.length + 1,
+    };
+    updateSchedule("u-ruk", schedule.id, { stages: [...schedule.stages, added] });
+    expect(readAppData().schedules.find((item) => item.id === schedule.id)!.stages.some((stage) => stage.name === "Монтаж")).toBe(true);
+    expect(() => deleteGprStage("u-tender", schedule.id, "gs-added")).toThrow(/Недостаточно прав/);
+    deleteGprStage("u-ruk", schedule.id, "gs-added");
+    expect(readAppData().schedules.find((item) => item.id === schedule.id)!.stages.some((stage) => stage.id === "gs-added")).toBe(false);
+    const current = readAppData().schedules.find((item) => item.id === schedule.id)!;
+    const [first, second] = current.stages;
+    setStagePredecessor("u-ruk", schedule.id, second.id, first.id);
+    const shifted = readAppData().schedules.find((item) => item.id === schedule.id)!.stages.find((stage) => stage.id === second.id)!;
+    expect(shifted.dependsOn).toBe(first.id);
+    expect(shifted.start > first.end).toBe(true);
+    expect(() => setStagePredecessor("u-ruk", schedule.id, first.id, second.id)).toThrow(/не может начинаться после самой себя/);
+  });
+
+  it("saves a customer answer and does not send mail without SMTP", async () => {
+    saveCustomerAnswer("u-ruk", "p-1", "Какой аванс?", "Аванс 30 процентов по проекту договора.");
+    const saved = readAppData().procurements.find((item) => item.id === "p-1")!;
+    expect(saved.customerAnswers?.[0]).toMatchObject({ question: "Какой аванс?", answer: "Аванс 30 процентов по проекту договора." });
+    const health = healthSnapshot() as { ocr: { configured: boolean }; procurement: { detail: string; lastSuccessAt: string | null } };
+    expect(typeof health.ocr.configured).toBe("boolean");
+    expect(health.procurement.detail).not.toMatch(/api[_-]?key|bearer/iu);
+
+    const { upsertSupplier, upsertSupplyRequest } = await import("@/server/repo");
+    const supplier = upsertSupplier("u-ruk", { name: "СеверСнаб", email: "sales@example.test", materialKeywords: ["труба"], regions: ["Ямал"] });
+    const supply = upsertSupplyRequest("u-ruk", {
+      procurementId: "p-1",
+      materialName: "Труба",
+      unit: "м",
+      qtyNeed: 10,
+      needBy: "2026-12-01",
+      supplierIds: [supplier.id],
+    }).supplyRequests!.find((item) => item.materialName === "Труба")!;
+    const { POST } = await import("@/app/api/supply/route");
+    const response = await POST(new Request("http://local/api/supply", {
+      method: "POST",
+      headers: { authorization: `Bearer ${createSession("u-ruk")}`, "content-type": "application/json" },
+      body: JSON.stringify({ action: "sendRfq", id: supply.id, supplierId: supplier.id, confirmed: true }),
+    }));
+    expect(response.status).toBe(200);
+    const body = await response.json() as { status: string; message: string };
+    expect(body.status).toBe("не отправлено");
+    expect(body.message).toMatch(/почта не подключена/);
+    expect(readAppData().supplyRequests!.find((item) => item.id === supply.id)?.sentToSupplierIds ?? []).not.toContain(supplier.id);
+  });
+});

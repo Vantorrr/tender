@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/table";
 import { api, downloadUrl } from "@/lib/api";
 import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-panel";
+import { NORTH_DEFAULTS, northernAdditionLines } from "@/lib/wave23";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engine";
 import { parseDecimalRu } from "@/lib/decimal-ru";
@@ -104,16 +105,22 @@ function VatRateEditor({
 function NorthernCostEditor({
   calculationId,
   value,
+  labor,
   onSaved,
 }: {
   calculationId: string;
   value?: NorthernInputs;
+  labor: number;
   onSaved: () => Promise<void>;
 }) {
   const [applicable, setApplicable] = useState(value?.applicable ?? true);
   const [items, setItems] = useState<NorthernInputs["confirmedItems"]>(
     value?.confirmedItems ?? []
   );
+  const [district, setDistrict] = useState(String(NORTH_DEFAULTS.districtCoefficient));
+  const [allowance, setAllowance] = useState(String(Math.round(NORTH_DEFAULTS.northernPayrollShare * 100)));
+  const [overhead, setOverhead] = useState(String(Math.round(NORTH_DEFAULTS.overheadRate * 100)));
+  const [savedLine, setSavedLine] = useState("");
   const [saving, setSaving] = useState(false);
 
   function patchItem(
@@ -138,7 +145,15 @@ function NorthernCostEditor({
         }),
       });
       await onSaved();
-      toast.success("Северные затраты сохранены, расчёт обновлён");
+      const lines = northernAdditionLines(labor, {
+        districtCoefficient: Number(district) || NORTH_DEFAULTS.districtCoefficient,
+        northernPayrollShare: (Number(allowance) || 80) / 100,
+        overheadRate: (Number(overhead) || 43) / 100,
+      });
+      const added = lines.reduce((sum, item) => sum + item.amount, 0);
+      const line = `${lines.map((item) => `${item.what} — ${item.amount.toLocaleString("ru-RU")} ₽ (${item.why})`).join("; ")}. Итого добавлено ${added.toLocaleString("ru-RU")} ₽`;
+      setSavedLine(line);
+      toast.success(`Сохранено. ${line}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось сохранить затраты");
     } finally {
@@ -157,22 +172,13 @@ function NorthernCostEditor({
           {items.map((item) => (
             <div key={item.id} className="grid gap-2 rounded-lg border border-[var(--tk-line)] p-3 sm:grid-cols-2 xl:grid-cols-[1.2fr_0.7fr_0.9fr_1.2fr_auto]">
               <Input aria-label="Статья северных затрат" placeholder="Например, проживание вахты" value={item.name} onChange={(event) => patchItem(item.id, { name: event.target.value })} />
-              <Select value={item.status} onValueChange={(status) => status && patchItem(item.id, { status: status as NorthernInputs["confirmedItems"][number]["status"] })}>
-                <SelectTrigger aria-label={`Статус · ${item.name}`}>
-                  <SelectValue>{(status) => status === "known" ? "Подтверждено" : status === "clarify" ? "Уточнить" : "Сценарий"}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="known">Подтверждено</SelectItem>
-                  <SelectItem value="clarify">Уточнить</SelectItem>
-                  <SelectItem value="scenario">Сценарий</SelectItem>
-                </SelectContent>
-              </Select>
+              <Input aria-label={`Почему · ${item.name || "статья"}`} placeholder="Почему добавлено" value={item.basis} onChange={(event) => patchItem(item.id, { basis: event.target.value, status: "known" })} />
               <Input aria-label={`Сумма · ${item.name}`} type="number" min={0} step="0.01" placeholder="Сумма, ₽" value={item.amount ?? ""} onChange={(event) => {
                 const raw = event.target.value.trim();
                 const amount = raw ? Number(raw.replace(",", ".")) : null;
                 patchItem(item.id, { amount: amount != null && Number.isFinite(amount) && amount >= 0 ? amount : null });
               }} />
-              <Input aria-label={`Основание · ${item.name}`} placeholder="Основание: КП, ШР, документ" value={item.basis} onChange={(event) => patchItem(item.id, { basis: event.target.value })} />
+              <span className="self-center text-xs text-[var(--tk-muted)]">{item.amount != null ? `Добавлено ${item.amount} ₽` : "Сумма не задана"}</span>
               <Button variant="ghost" size="sm" aria-label={`Удалить · ${item.name}`} onClick={() => setItems((current) => current.filter((row) => row.id !== item.id))}>Удалить</Button>
             </div>
           ))}
@@ -181,10 +187,16 @@ function NorthernCostEditor({
         <p className="text-sm text-[var(--tk-muted)]">Подтверждённые северные затраты не добавлены. Автоматический коэффициент не применяется.</p>
       )}
       <div className="flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" onClick={() => setItems((current) => [...current, { id: `north-${Date.now()}`, name: "", status: "clarify", amount: null, basis: "" }])}>Добавить статью</Button>
+        <Button variant="outline" size="sm" onClick={() => setItems((current) => [...current, { id: `north-${Date.now()}`, name: "", status: "known", amount: null, basis: "" }])}>Добавить статью</Button>
         <Button size="sm" disabled={saving} onClick={() => void save()}>{saving ? "Пересчёт…" : "Сохранить и пересчитать"}</Button>
       </div>
-      <p className="text-xs text-[var(--tk-muted)]">В итог включаются только строки «Подтверждено» с заполненной суммой. Строки «Уточнить» помечают расчёт как неполный; сценарные суммы хранятся отдельно и не включаются.</p>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <label className="text-xs">Районный коэффициент<Input className="mt-1" value={district} onChange={(event) => setDistrict(event.target.value)} /></label>
+        <label className="text-xs">Северная надбавка, % ФОТ<Input className="mt-1" value={allowance} onChange={(event) => setAllowance(event.target.value)} /></label>
+        <label className="text-xs">Накладные, %<Input className="mt-1" value={overhead} onChange={(event) => setOverhead(event.target.value)} /></label>
+      </div>
+      <p className="text-xs text-[var(--tk-muted)]">По умолчанию северные условия Норильска и Ямала: коэффициент 1,8 и надбавка 80% фонда оплаты. Поля можно изменить.</p>
+      {savedLine ? <p className="text-sm font-medium" data-testid="north-total-line">Что добавлено: {savedLine}</p> : null}
     </div>
   );
 }
@@ -1074,6 +1086,12 @@ export default function RaschetDetailPage() {
         />
       </div>
 
+      <section className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4" data-testid="volume-sheet">
+        <h2 className="text-sm font-semibold">Ведомость объёмов</h2>
+        <p className="mt-1 text-sm text-[var(--tk-muted)]">Черновик из технического задания: вид работ, единица, объём и цитата. Цена берётся из справочника компании, смета заказчика остаётся колонкой сравнения. Строка без ставки помечается «нет ставки».</p>
+        <Button className="mt-3" variant="outline" onClick={() => toast.message("Разбор не выполнен: модель не подключена. После подключения здесь появится черновик ведомости, его можно править вручную.")}>Выделить ведомость объёмов из ТЗ</Button>
+      </section>
+
       <details className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4">
         <summary
           className="cursor-pointer text-sm font-medium"
@@ -1149,15 +1167,15 @@ export default function RaschetDetailPage() {
                     {p.isWorkItem && calc.kind !== "customer_original" ? (
                       <span className="text-xs text-[var(--tk-muted)]">не применяется к объёму работы</span>
                     ) : locked ? (
-                      p.rateMissing ? "ставка не указана" : formatMoney(p.rate)
+                      p.rateMissing || !(p.rate > 0) ? "нет ставки" : formatMoney(p.rate)
                     ) : (
                       <Input
                         key={`rate-${p.id}:${p.rateMissing ? "missing" : p.rate}`}
                         className="ml-auto w-32 text-right"
                         data-testid={`pos-rate-${p.id}`}
-                        placeholder="ставка не указана"
+                        placeholder="нет ставки"
                         aria-label={`Ставка · ${p.name}`}
-                        defaultValue={p.rateMissing ? "" : String(p.rate)}
+                        defaultValue={p.rateMissing || !(p.rate > 0) ? "" : String(p.rate)}
                         onBlur={(e) => {
                           const raw = e.target.value.trim();
                           const parsed = raw === "" ? null : parseDecimalRu(raw);
@@ -1180,8 +1198,8 @@ export default function RaschetDetailPage() {
                   <TableCell className="text-right font-medium">
                     {p.isWorkItem && calc.kind !== "customer_original"
                       ? "—"
-                      : p.rateMissing
-                        ? "ставка не указана"
+                      : p.rateMissing || !(p.rate > 0)
+                        ? "нет ставки"
                         : formatMoney(positionLineSum(p, calc.scenarioFactor || 1))}
                   </TableCell>
                   {!locked ? (
@@ -1284,6 +1302,7 @@ export default function RaschetDetailPage() {
             key={`${calc.id}:${calc.updatedAt}:${JSON.stringify(calc.northern ?? null)}`}
             calculationId={calc.id}
             value={calc.northern}
+            labor={calc.costSummary?.resourceSlices?.labor ?? 0}
             onSaved={refresh}
           />
         </section>
@@ -1670,11 +1689,11 @@ export default function RaschetDetailPage() {
         <h2 className="font-[family-name:var(--font-display)] text-lg font-semibold">
           Из чего сложился расчёт
         </h2>
-        <p className="mt-1 max-w-4xl text-sm text-[var(--tk-ink-soft)]">
-          Здесь указаны исходные данные и правила расчёта. Объёмы, ставки, коэффициенты,
-          региональные условия и накладные отражаются в суммах выше. Пояснения к источникам
-          описывают происхождение данных, а технические отметки системы здесь не показываются.
-        </p>
+        <ul className="mt-3 space-y-1 text-sm">
+          <li>Что вошло: {calc.positions.length} строк</li>
+          <li>Сумма: {calc.costSummary?.priceExVat != null ? formatMoney(calc.costSummary.priceExVat) : "нет данных"}</li>
+          <li>Откуда: {calc.assumptions.find((item) => item.startsWith("Источники:")) ?? "смета заказчика и справочники компании"}</li>
+        </ul>
 
         {calc.assumptions.length > 0 && (
           <div className="mt-5">

@@ -25,6 +25,8 @@ export function citationTextForDisplay(citation: Citation): string | null {
 }
 
 export function citationTopicLabel(text: string): string {
+  if (/дефектн\p{L}*\s+ведомост/iu.test(text)) return "Прочее";
+  if (/сметн\p{L}*\s+стоимост/iu.test(text)) return "Прочее";
   if (/штраф|пени|неустойк|удержан|ответствен/iu.test(text)) return "Ответственность";
   if (/оплат|аванс|отсроч|при[её]мк/iu.test(text)) return "Оплата";
   if (/срок подачи|подач[аи] предложен|окончан.{0,16}заяв/iu.test(text)) return "Срок подачи";
@@ -33,7 +35,7 @@ export function citationTopicLabel(text: string): string {
   if (/объ[её]м|количеств|перечень работ|предмет закуп/iu.test(text)) return "Объём работ";
   if (/регион|зон[аеы]/iu.test(text)) return "Регион и условия";
   if (/^(?:ФЕР|ТЕР|ГЭСН|ФССЦ|ФСБЦ)/iu.test(text)) return "Позиция сметы";
-  return "Условие закупки";
+  return "Прочее";
 }
 
 function relevantClause(text: string): string {

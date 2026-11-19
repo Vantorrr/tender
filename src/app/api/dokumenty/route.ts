@@ -38,13 +38,14 @@ async function processArchiveFiles(
     const childExt = extractedFile.name.split(".").pop()?.toLowerCase() ?? "";
     const childBytes = fs.readFileSync(extractedFile.absolutePath);
     const childId = `d-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    if (childExt === "zip" || childExt === "rar") {
+    const nestedArchive = childExt === "zip" || childExt === "rar" || childExt === "7z" || childExt === "tar" || childExt === "gz" || childExt === "tgz" || /\.tar\.gz$/i.test(extractedFile.name);
+    if (nestedArchive) {
       const childStored = await saveUpload(childId, extractedFile.name, childBytes);
       const childExtracted = depth < 1
         ? childExt === "rar"
           ? await extractRarArchiveSafely(extractedFile.name, childBytes, archiveExtractDir(childId))
           : extractArchiveSafely(extractedFile.name, childBytes, archiveExtractDir(childId))
-        : { ok: false, format: childExt as "zip" | "rar", files: [], errors: ["Превышена максимальная глубина вложенных архивов (2)"], skipped: [] };
+        : { ok: false, format: "unsupported" as const, files: [], errors: ["Превышена максимальная глубина вложенных архивов (2)"], skipped: [] };
       const archive = createDocument(userId, {
         orgId, procurementId, title: extractedFile.name, fileName: extractedFile.name,
         fileType: childExt === "zip" ? "zip" : "other", category: "archive",
@@ -115,7 +116,7 @@ function inferCategory(
   if (/smeta|смет/i.test(fileName)) return "estimate";
   if (/dogovor|договор|контракт/i.test(fileName)) return "contract";
   if (/tz|тз|извещ|техническ.{0,12}задан/i.test(fileName)) return "tz";
-  if (/\.zip$/i.test(fileName)) return "archive";
+  if (/\.(zip|rar|7z|tar|gz|tgz)$/i.test(fileName) || /\.tar\.gz$/i.test(fileName)) return "archive";
   return "general";
 }
 

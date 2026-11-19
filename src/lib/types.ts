@@ -233,6 +233,8 @@ export interface Procurement {
   lifecycleOutcome?: "successful" | "not_realized";
   closedAt?: string;
   wonAt?: string;
+  /** Answers kept on the procurement. They are not emailed. */
+  customerAnswers?: Array<{ question: string; answer: string; at: string }>;
   /** Materials / supply cycle (need → quote draft → delivery) — no auto-send. */
   supplyRequestIds?: string[];
 }

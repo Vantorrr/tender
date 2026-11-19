@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import type { KonturSearchFilters } from "@/server/procurement-source";
+import { SEARCH_INDUSTRIES, SEARCH_REGIONS, withIndustries } from "@/lib/search-catalog";
 
 type Props = { busy: boolean; onSearch: (filters: KonturSearchFilters) => void };
 
@@ -23,10 +24,6 @@ function Lines({ label, value, onChange, placeholder, hint }: { label: string; v
   return <Field label={label} hint={hint}><textarea value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} rows={2} className="mt-1 block w-full rounded-md border border-[var(--tk-line)] bg-white px-2 py-1.5 text-sm font-normal" /></Field>;
 }
 
-function NumberList({ label, value, onChange, hint }: { label: string; value: string; onChange: (value: string) => void; hint?: string }) {
-  return <Field label={label} hint={hint}><Input className="mt-1 h-9" inputMode="numeric" value={value} onChange={(e) => onChange(e.target.value)} placeholder="например, 20, 68" /></Field>;
-}
-
 function OptionGroup({ label, options, selected, onChange }: { label: string; options: Array<[number, string]>; selected: number[]; onChange: (next: number[]) => void }) {
   return <fieldset className="rounded-lg border border-[var(--tk-line)] p-3"><legend className="px-1 text-xs font-medium">{label}</legend><div className="grid gap-2 sm:grid-cols-2">{options.map(([value, title]) => <label key={value} className="flex items-start gap-2 text-xs"><Checkbox checked={selected.includes(value)} onCheckedChange={(checked) => onChange(checked ? [...selected, value] : selected.filter((item) => item !== value))} /><span>{title}</span></label>)}</div></fieldset>;
 }
@@ -36,9 +33,9 @@ export function KonturSearchPanel({ busy, onSearch }: Props) {
   const [exclude, setExclude] = useState("");
   const [includeInns, setIncludeInns] = useState("");
   const [excludeInns, setExcludeInns] = useState("");
-  const [regionIds, setRegionIds] = useState("");
+  const [regionIds, setRegionIds] = useState<string[]>([]);
   const [platformIds, setPlatformIds] = useState("");
-  const [categoryIds, setCategoryIds] = useState("");
+  const [industryIds, setIndustryIds] = useState<number[]>([]);
   const [participantInns, setParticipantInns] = useState("");
   const [publishedFrom, setPublishedFrom] = useState(daysAgo(1));
   const [publishedTo, setPublishedTo] = useState(today());
@@ -83,14 +80,13 @@ export function KonturSearchPanel({ busy, onSearch }: Props) {
       ...(splitValues(exclude).length ? { Exclude: splitValues(exclude) } : {}),
       ...(splitValues(includeInns).length ? { IncludeInns: splitValues(includeInns) } : {}),
       ...(splitValues(excludeInns).length ? { ExcludeInns: splitValues(excludeInns) } : {}),
-      ...(splitValues(regionIds).length ? { RegionIds: splitValues(regionIds) } : {}),
+      ...(regionIds.length ? { RegionIds: regionIds } : {}),
       ...(splitValues(participantInns).length ? { ParticipantsInns: splitValues(participantInns) } : {}),
       ...(laws.length ? { Laws: laws } : {}),
       ...(procedures.length ? { Procedures: procedures } : {}),
       ...(statuses.length ? { PurchaseStatuses: statuses } : {}),
       ...(categories.length ? { Categories: categories } : {}),
       ...(numericIds(platformIds).length ? { ElectronicPlaces: numericIds(platformIds) } : {}),
-      ...(numericIds(categoryIds).length ? { CategoryIds: numericIds(categoryIds) } : {}),
       ...(priceFrom.trim() ? { MaxPriceFrom: Number(priceFrom) } : {}),
       ...(priceTo.trim() ? { MaxPriceTo: Number(priceTo) } : {}),
       ...(deadlineFrom ? { ApplicationDeadlineFrom: utcStart(deadlineFrom) } : {}),
@@ -106,26 +102,26 @@ export function KonturSearchPanel({ busy, onSearch }: Props) {
       ...(participantState ? { ParticipantsState: Number(participantState) as 1 | 2 | 3 } : {}),
       ...(participantsFromDocs ? { EnableParticipantsFromDocuments: true } : {}),
     };
-    onSearch(filters);
+    onSearch(withIndustries(filters, industryIds));
   }
 
   return <section className="mb-5 rounded-xl border border-[var(--tk-line)] bg-white/90 p-4" data-testid="kontur-search-panel">
-    <div><h2 className="font-semibold">Поиск закупок в Контуре</h2><p className="mt-1 text-xs text-[var(--tk-muted)]">Ищет по официальному API и добавляет найденные карточки в канбан. Одна страница — один запрос; число страниц ограничено настройкой источника.</p></div>
+    <div><h2 className="font-semibold">Поиск закупок</h2><p className="mt-1 text-xs text-[var(--tk-muted)]">Ищет закупки и добавляет найденные карточки в канбан. Одна страница — один запрос; число страниц ограничено настройкой источника.</p></div>
     <form onSubmit={submit} className="mt-3 space-y-3">
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
         <Lines label="Ключевые слова" value={text} onChange={setText} placeholder="ремонт трубопровода, строительство" />
         <Field label="Опубликовано с"><Input required type="date" className="mt-1 h-9" value={publishedFrom} onChange={(e) => setPublishedFrom(e.target.value)} /></Field>
         <Field label="Опубликовано по"><Input required type="date" className="mt-1 h-9" value={publishedTo} onChange={(e) => setPublishedTo(e.target.value)} /></Field>
-        <Lines label="ID регионов" value={regionIds} onChange={setRegionIds} placeholder="ID, по одному или через запятую" hint="Контур принимает идентификаторы регионов, не названия." />
+        <fieldset className="rounded-lg border border-[var(--tk-line)] p-3"><legend className="px-1 text-xs font-medium">Регион</legend><div className="grid gap-2">{SEARCH_REGIONS.map((region) => <label key={region.label} className="flex items-start gap-2 text-xs"><Checkbox checked={regionIds.includes(region.id)} onCheckedChange={(checked) => setRegionIds(checked ? [...regionIds, region.id] : regionIds.filter((item) => item !== region.id))} /><span>{region.label}</span></label>)}</div></fieldset>
       </div>
       <details className="rounded-lg border border-[var(--tk-line)] px-3 py-2">
-        <summary className="cursor-pointer text-sm font-medium">Расширенные фильтры API</summary>
+        <summary className="cursor-pointer text-sm font-medium">Расширенные фильтры</summary>
         <div className="mt-3 grid gap-3 lg:grid-cols-2">
           <Lines label="Исключить слова" value={exclude} onChange={setExclude} placeholder="закупка отменена" />
           <Lines label="ИНН заказчика — включить" value={includeInns} onChange={setIncludeInns} placeholder="ИНН, по одному или через запятую" />
           <Lines label="ИНН заказчика — исключить" value={excludeInns} onChange={setExcludeInns} placeholder="ИНН, по одному или через запятую" />
           <Lines label="ЭТП — ID площадок" value={platformIds} onChange={setPlatformIds} placeholder="числовые ID площадок" />
-          <NumberList label="Отрасли — ID категорий" value={categoryIds} onChange={setCategoryIds} hint="Числовые CategoryIds из справочника Контура." />
+          <fieldset className="rounded-lg border border-[var(--tk-line)] p-3"><legend className="px-1 text-xs font-medium">Отрасль</legend><div className="grid gap-2">{SEARCH_INDUSTRIES.map((industry) => <label key={industry.label} className="flex items-start gap-2 text-xs"><Checkbox checked={industryIds.includes(industry.id)} onCheckedChange={(checked) => setIndustryIds(checked ? [...industryIds, industry.id] : industryIds.filter((item) => item !== industry.id))} /><span>{industry.label}</span></label>)}</div></fieldset>
           <Lines label="Участники — ИНН" value={participantInns} onChange={setParticipantInns} placeholder="ИНН участника, поставщика или победителя" />
           <Field label="Срок подачи заявок с"><Input type="date" className="mt-1 h-9" value={deadlineFrom} onChange={(e) => setDeadlineFrom(e.target.value)} /></Field>
           <Field label="Срок подачи заявок по"><Input type="date" className="mt-1 h-9" value={deadlineTo} onChange={(e) => setDeadlineTo(e.target.value)} /></Field>
