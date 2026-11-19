@@ -357,6 +357,17 @@ describe("client wave 1 server", () => {
     ensureProcurementChain("u-ruk", created.id);
     const stub = readAppData().schedules.find((item) => item.procurementId === created.id)!;
     expect(stub.stages[0]?.name).toBe("Подготовка");
+    expect(createProcurementSchedule("u-ruk", created.id).outcome).toBe("placeholder");
+    expect(readAppData().schedules.find((item) => item.id === stub.id)!.stages[0]?.name).toBe("Подготовка");
+    mutateAppData((data) => {
+      const schedule = data.schedules.find((item) => item.id === stub.id)!;
+      schedule.calculationId = "stale-calc";
+      return data;
+    });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const relinked = readAppData().schedules.find((item) => item.id === stub.id)!;
+    expect(relinked.stages[0]?.name).toBe("Подготовка");
+    expect(relinked.calculationId).toBe(readAppData().procurements.find((item) => item.id === created.id)!.calculationId);
     mutateAppData((data) => {
       const draft = data.calculations.find((item) => item.procurementId === created.id && item.kind === "resource_draft")!;
       draft.positions = [{

@@ -2207,6 +2207,12 @@ export function createProcurementSchedule(actorId: string, procurementId: string
       audit(data, actorId, "update", "gpr", existing.id, "Заготовка графика заменена разделами сметы");
       return data;
     }
+    if (existing && isNavigationStub(existing)) {
+      existing.calculationId = procurement.calculationId;
+      existing.updatedAt = now;
+      outcome = "placeholder";
+      return data;
+    }
     if (existing) return data;
     const gid = `g-${Date.now()}`;
     const stage1 = `gs-${Date.now()}`;
@@ -2522,7 +2528,7 @@ export function sendProcurementToCalculation(
       }
       data.schedules = data.schedules.map((s) => {
         if (s.id !== p.gprId) return s;
-        if (isNavigationStub(s)) return s;
+        if (isNavigationStub(s)) return { ...s, calculationId: draftId!, updatedAt: now };
 
         // Migrate the old PDF mapping where ФирЕР work rows appeared as people.
         // Preserve user-entered dates, volumes, unrelated resources and facts.
