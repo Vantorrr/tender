@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { AiFailureBanner } from "@/components/ai-failure-banner";
 import { ErrorState } from "@/components/empty-state";
@@ -71,6 +71,7 @@ function NoteEditor({
 
 export default function DocumentDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const { orgDocuments, data, reanalyzeDocument } = useStore();
   const [retryingAi, setRetryingAi] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -99,6 +100,7 @@ export default function DocumentDetailPage() {
         }`}
         actions={
           <>
+            <Button variant="outline" onClick={() => router.push("/cabinet/dokumenty")}>Назад</Button>
             <StatusBadge status={doc.status} />
             <Button
               variant="outline"

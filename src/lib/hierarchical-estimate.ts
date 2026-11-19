@@ -3,6 +3,7 @@
  * Amounts use shared resolveResourceDimensions (same Q/R as cost-engine / export).
  */
 import { roundMoney } from "@/lib/calc-math";
+import { mergeEstimateLeaves } from "@/lib/resource-merge";
 import { classifyDirectCostBucket } from "@/lib/cost-engine";
 import {
   resolveResourceDimensions,
@@ -121,6 +122,10 @@ function leafFromResolved(
     shiftsPerDay: resolved.shiftsPerDay,
     days: resolved.days,
   };
+}
+
+function hourUnit(unit: string): boolean {
+  return /(?:маш|чел|н)\s*[.\u00b7\u2212\u2013\-]*\s*ч|машч|челч|нч|час/iu.test(unit);
 }
 
 function resourceKind(r: GprStageResource): EstimateKind {
@@ -293,24 +298,25 @@ export function buildHierarchicalEstimate(opts: {
         sourceCode: p.code,
         ...(work ? { workName: work.name, workKey: work.key } : {}),
         incomplete: rate == null ? ["rate"] : [],
-        basis: kind === "material" ? "material_qty" : "uncertain",
-        hoursQ: null,
+        basis: kind === "material" ? "material_qty" : hourUnit(p.unit) ? "total_hours" : "uncertain",
+        hoursQ: hourUnit(p.unit) ? p.quantity : null,
       };
       if (match(st.name) || match(leaf.name) || match(KIND_LABEL[kind])) leaves.push(leaf);
       linkedSourceKeys.add(p.id);
     }
     if (leaves.length === 0 && q && !match(st.name)) continue;
-    const groups = groupLeaves(leaves);
+    const stageLeaves = mergeEstimateLeaves(leaves);
+    const groups = groupLeaves(stageLeaves);
     const { subtotal, incomplete } = stageSubtotal(groups);
     const leavesByWork = new Map<string, EstimateLeaf[]>();
-    for (const leaf of leaves) {
+    for (const leaf of stageLeaves) {
       if (!leaf.workKey) continue;
       leavesByWork.set(leaf.workKey, [...(leavesByWork.get(leaf.workKey) ?? []), leaf]);
     }
     const workKeys = [...new Set([...leavesByWork.keys(), ...workVolumes.keys()])];
-    const unassignedGroups = groupLeaves(leaves.filter((leaf) => !leaf.workName));
+    const unassignedGroups = groupLeaves(stageLeaves.filter((leaf) => !leaf.workName));
     const works = workKeys.map((key) => {
-      const workGroups = groupLeaves(leavesByWork.get(key) ?? []);
+      const workGroups = groupLeaves(mergeEstimateLeaves(leavesByWork.get(key) ?? []));
       const summary = stageSubtotal(workGroups);
       const volume = workVolumes.get(key);
       return {
@@ -376,8 +382,8 @@ export function buildHierarchicalEstimate(opts: {
       sourceCode: p.code,
       workName: p.sourceWorkName?.trim() || p.sourceSectionName?.trim() || undefined,
       incomplete: rate == null ? ["rate"] : [],
-      basis: kind === "material" ? "material_qty" : "total_hours",
-      hoursQ: kind === "material" || kind === "other" ? null : p.quantity,
+      basis: kind === "material" ? "material_qty" : hourUnit(p.unit) ? "total_hours" : "uncertain",
+      hoursQ: hourUnit(p.unit) ? p.quantity : null,
     };
     if (match(leaf.name) || match(KIND_LABEL[kind])) unbound.push(leaf);
   }

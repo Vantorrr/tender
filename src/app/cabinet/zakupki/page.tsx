@@ -2,12 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
-import { ReviewBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,8 +30,7 @@ import { kanbanToReview } from "@/lib/pipeline";
 import type { Procurement } from "@/lib/types";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
-import { KonturSearchPanel } from "@/components/kontur-search-panel";
-import type { KonturSearchFilters } from "@/server/procurement-source";
+import { plainUserMessage } from "@/lib/plain-user-message";
 
 export default function ZakupkiPage() {
   const router = useRouter();
@@ -41,14 +39,7 @@ export default function ZakupkiPage() {
   const [region, setRegion] = useState<string>("all");
   const [workType, setWorkType] = useState<string>("all");
   const [syncing, setSyncing] = useState(false);
-  const [source, setSource] = useState<{ id?: string; status: string; detail: string } | null>(null);
-  useEffect(() => {
-    let active = true;
-    api<{ source: { id: string; status: string; detail: string } }>("/api/zakupki")
-      .then((result) => { if (active) setSource(result.source); })
-      .catch(() => { if (active) setSource({ status: "error", detail: "Не удалось получить статус источника. Повторите загрузку страницы." }); });
-    return () => { active = false; };
-  }, [syncing]);
+  const [showArchive, setShowArchive] = useState(false);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [manualFormOpen, setManualFormOpen] = useState(false);
   const [manualCreating, setManualCreating] = useState(false);
@@ -57,23 +48,6 @@ export default function ZakupkiPage() {
   const [manualRegion, setManualRegion] = useState("");
   const [manualNmck, setManualNmck] = useState("");
   const [manualDeadline, setManualDeadline] = useState("");
-
-  async function searchKontur(filters: KonturSearchFilters) {
-    setSyncing(true);
-    try {
-      const result = await api<{ feed?: { status?: string; detail?: string; insertedHint?: number } }>("/api/jobs", {
-        method: "POST",
-        body: JSON.stringify({ type: "procurement_sync", filters }),
-      });
-      await refresh();
-      if (result.feed?.status === "error") toast.error(result.feed.detail ?? "Контур вернул ошибку при поиске");
-      else toast.success(result.feed?.detail ?? "Поиск завершён. Обновите карточки на доске.");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Не удалось выполнить поиск в Контуре");
-    } finally {
-      setSyncing(false);
-    }
-  }
 
   const regions = useMemo(() => {
     const fromData = [...new Set(orgProcurements.map((p) => p.region))];
@@ -112,15 +86,28 @@ export default function ZakupkiPage() {
         : p.lifecycle === "closed"
           ? p.lifecycleOutcome === "successful" ? "realized" : "closed_not_realized"
           : reviewToKanban(p.reviewStatus);
-      map[column].push(p);
+      if (column === "ne_uchastvuem" || column === "dublikat") {
+        map.closed_not_realized.push(p);
+      } else {
+        map[column].push(p);
+      }
     }
     return map;
   }, [filtered]);
+
+  function columnOf(card: Procurement): KanbanColumnId {
+    if (card.lifecycle === "production") return "in_production";
+    if (card.lifecycle === "closed") {
+      return card.lifecycleOutcome === "successful" ? "realized" : "closed_not_realized";
+    }
+    return reviewToKanban(card.reviewStatus);
+  }
 
   async function moveCard(id: string, column: KanbanColumnId) {
     try {
       const card = orgProcurements.find((item) => item.id === id);
       if (!card) throw new Error("Карточка закупки не найдена");
+      if (columnOf(card) === column) return;
       if (column === "in_production") {
         await api("/api/zakupki", {
           method: "POST",
@@ -202,9 +189,7 @@ export default function ZakupkiPage() {
                 await runSyncJob();
                 toast.success("Синхронизация выполнена");
               } catch (e) {
-                toast.error(
-                  e instanceof Error ? e.message : "Ошибка синхронизации"
-                );
+                toast.error(plainUserMessage(e instanceof Error ? e.message : "", "Не удалось обновить список закупок. Повторите позже."));
               } finally {
                 setSyncing(false);
               }
@@ -235,16 +220,6 @@ export default function ZakupkiPage() {
           </div>
         </form>
       ) : null}
-
-      <Alert className={cn("mb-4", source?.status === "error" ? "border-amber-200 bg-amber-50 text-amber-950" : "border-sky-200 bg-sky-50 text-sky-950")}>
-        <RefreshCw className="h-4 w-4" />
-        <AlertTitle>Источник закупок</AlertTitle>
-        <AlertDescription>
-          {source?.detail ?? "Проверяем подключённый источник…"}
-        </AlertDescription>
-      </Alert>
-
-      {source?.id === "kontur-external-api" ? <KonturSearchPanel busy={syncing} onSearch={(filters) => void searchKontur(filters)} /> : null}
 
       {syncIssues.length > 0 ? (
         <Alert className="mb-6 border-amber-200 bg-amber-50 text-amber-950">
@@ -298,6 +273,15 @@ export default function ZakupkiPage() {
               ))}
           </SelectContent>
         </Select>
+        <Button
+          type="button"
+          variant={showArchive ? "default" : "outline"}
+          aria-pressed={showArchive}
+          data-testid="zakupki-archive-filter"
+          onClick={() => setShowArchive((value) => !value)}
+        >
+          Архив
+        </Button>
         <Select value={workType} onValueChange={(v) => setWorkType(v ?? "all")}>
           <SelectTrigger className="w-full" data-testid="zakupki-worktype">
             <SelectValue placeholder="Вид работ">
@@ -327,7 +311,11 @@ export default function ZakupkiPage() {
           className="flex gap-3 overflow-x-auto pb-4"
           data-testid="zakupki-kanban"
         >
-          {KANBAN_COLUMNS.map((col) => (
+          {KANBAN_COLUMNS.filter((col) => {
+            if (col.id === "ne_uchastvuem" || col.id === "dublikat") return false;
+            if (col.lifecycle === "closed") return showArchive;
+            return true;
+          }).map((col) => (
             <div
               key={col.id}
               className="w-[260px] shrink-0"
@@ -364,17 +352,36 @@ export default function ZakupkiPage() {
                       col.cardClass
                     )}
                   >
+                    <div className="flex items-start justify-between gap-2">
                     <Link
                       href={`/cabinet/zakupki/${p.id}`}
                       className="font-medium text-sm leading-snug text-[var(--tk-ink)] hover:underline"
                     >
                       {p.title}
                     </Link>
+                    <details className="relative shrink-0">
+                      <summary className="cursor-pointer list-none rounded-md px-1.5 text-lg leading-none text-[var(--tk-muted)] hover:bg-stone-100" aria-label={`Меню карточки ${p.title}`}>⋮</summary>
+                      <button
+                        type="button"
+                        className="absolute right-0 z-20 mt-1 whitespace-nowrap rounded-md border border-[var(--tk-line)] bg-white px-3 py-1.5 text-sm text-rose-800 shadow-sm"
+                        onClick={() => {
+                          if (!window.confirm(`Удалить закупку «${p.title}»? Карточка и связанные расчёт, график и документы этой закупки будут удалены.`)) return;
+                          void api("/api/zakupki", {
+                            method: "POST",
+                            body: JSON.stringify({ action: "deleteProcurement", id: p.id }),
+                          }).then(() => refresh()).then(() => toast.success("Закупка удалена")).catch((error: unknown) => {
+                            toast.error(plainUserMessage(error instanceof Error ? error.message : "", "Не удалось удалить закупку"));
+                          });
+                        }}
+                      >
+                        Удалить
+                      </button>
+                    </details>
+                    </div>
                     <div className="mt-1 text-xs text-[var(--tk-muted)]">
                       {p.number}
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                      <ReviewBadge status={p.reviewStatus} />
                       <span>{p.region}</span>
                       {p.workType ? (
                         <span className="rounded bg-stone-100 px-1.5 py-0.5">

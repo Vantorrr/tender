@@ -3,6 +3,7 @@ import {
   analyzeProcurementPackageWithAI,
   attachCustomerEstimate,
   createManualProcurement,
+  deleteProcurement,
   ensureMoneyPlan,
   ensureProcurementChain,
   getBootstrap,
@@ -69,6 +70,7 @@ export async function POST(req: Request) {
         | "analyzeProject"
         | "transferToProduction"
         | "ensureMoney"
+        | "deleteProcurement"
         | "saveMoney"
         | "addMoneyPayment"
         | "refreshKonturDetails";
@@ -124,6 +126,10 @@ export async function POST(req: Request) {
     }
     if (!body.id && body.action !== "saveMoney" && body.action !== "addMoneyPayment") {
       return json({ error: "Не указан id" }, 400);
+    }
+    if (body.action === "deleteProcurement") {
+      deleteProcurement(user.id, body.id!);
+      return json(getBootstrap(user));
     }
     if (body.action === "ensureChain") {
       ensureProcurementChain(user.id, body.id!);

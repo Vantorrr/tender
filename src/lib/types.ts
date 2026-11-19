@@ -609,7 +609,7 @@ export interface GprSchedule {
 
 export interface MoneyPayment {
   id: string;
-  type: "avans" | "postuplenie" | "klyuchevoy";
+  type: "avans" | "postuplenie" | "klyuchevoy" | "spisanie";
   title: string;
   amount: number;
   date: string;

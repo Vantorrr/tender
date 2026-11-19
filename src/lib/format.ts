@@ -26,18 +26,19 @@ export function todayIsoInTimeZone(timeZone = "Europe/Moscow", now = new Date())
 }
 
 /** Calendar day as DD.MM.YYYY (client requirement). Uses UTC noon to avoid TZ shift. */
-export function formatDate(iso: string): string {
+export function formatDate(iso: string | null | undefined): string {
+  if (!iso || !String(iso).trim()) return "не указан";
   const raw = iso.includes("T") ? iso.slice(0, 10) : iso;
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
     const d = new Date(`${raw}T12:00:00Z`);
-    if (Number.isNaN(d.getTime())) return iso;
+    if (Number.isNaN(d.getTime())) return "не указан";
     const dd = String(d.getUTCDate()).padStart(2, "0");
     const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
     const yyyy = d.getUTCFullYear();
     return `${dd}.${mm}.${yyyy}`;
   }
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
+  if (Number.isNaN(d.getTime())) return "не указан";
   const dd = String(d.getUTCDate()).padStart(2, "0");
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
   const yyyy = d.getUTCFullYear();
@@ -54,14 +55,17 @@ export function formatDateRangeShort(startIso: string, endIso: string): string {
   return `${a}–${b}`;
 }
 
-export function formatDateTime(iso: string): string {
+export function formatDateTime(iso: string | null | undefined): string {
+  if (!iso || !String(iso).trim()) return "не указан";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "не указан";
   return new Intl.DateTimeFormat("ru-RU", {
     day: "2-digit",
     month: "short",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(iso));
+  }).format(d);
 }
 
 /** Parse user DD.MM.YYYY (also accepts YYYY-MM-DD) → ISO date YYYY-MM-DD or null. */

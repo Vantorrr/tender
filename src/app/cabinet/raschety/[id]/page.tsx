@@ -29,6 +29,7 @@ import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-pa
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engine";
 import { formatMoney, formatNumber } from "@/lib/format";
+import { humanizeIssues } from "@/lib/issue-text";
 import type { Calculation, GprStageResource, ResourceQuantityBasis } from "@/lib/types";
 import type { EstimateLeaf } from "@/lib/hierarchical-estimate";
 import type { ResourceScheduleParams } from "@/lib/resource-schedule-model";
@@ -513,9 +514,25 @@ export default function RaschetDetailPage() {
       days?: number | null;
       kind?: GprStageResource["kind"];
       quantityBasis?: ResourceQuantityBasis | null;
+      remove?: boolean;
+      moveToStageId?: string;
+      resource?: GprStageResource;
     }
   ) {
     try {
+      if (leaf.source === "stage_resource" && linkedSchedule && (patch.remove || patch.moveToStageId)) {
+        const resource = patch.resource ?? linkedSchedule.stages.flatMap((stage) => stage.resources ?? []).find((item) => item.id === leaf.id);
+        await updateSchedule(linkedSchedule.id, {
+          stages: linkedSchedule.stages.map((stage) => {
+            const without = (stage.resources ?? []).filter((item) => item.id !== leaf.id);
+            if (patch.moveToStageId && stage.id === patch.moveToStageId && resource) {
+              return { ...stage, resources: [...without, resource] };
+            }
+            return { ...stage, resources: without };
+          }),
+        });
+        return;
+      }
       if (leaf.source === "stage_resource" && linkedSchedule) {
         await patchScheduleResource(linkedSchedule.id, {
           resourceId: leaf.id,
@@ -600,6 +617,7 @@ export default function RaschetDetailPage() {
         description={`${directorySubtitle} · ${procurementSubtitle} · ${calcKindSubtitle}`}
         actions={
           <>
+            <Button variant="outline" onClick={() => router.push("/cabinet/raschety")}>Назад</Button>
             {procurement && user && userHasSection(user, "raschety") ? (
               <ProjectAiChat procurementId={calc.procurementId} projectTitle={procurement.title} screen="calculation" />
             ) : null}
@@ -1066,7 +1084,7 @@ export default function RaschetDetailPage() {
           className="cursor-pointer text-sm font-medium"
           data-testid="flat-positions-toggle"
         >
-          Плоская ведомость позиций (техническая; основная смета — дерево выше)
+          Список позиций
         </summary>
         <div className="mt-3 mb-3 grid gap-2 text-sm sm:grid-cols-4">
           <div className="rounded-xl border bg-white/80 p-3">
@@ -1131,7 +1149,7 @@ export default function RaschetDetailPage() {
                       <Input
                         className="ml-auto w-32 text-right"
                         data-testid={`pos-rate-${p.id}`}
-                        placeholder={p.rateMissing ? "нет ставки" : undefined}
+                        placeholder={p.rateMissing ? "ставка не указана" : undefined}
                         value={p.rateMissing ? "" : String(p.rate)}
                         onChange={(e) => {
                           const raw = e.target.value.trim();
@@ -1151,9 +1169,28 @@ export default function RaschetDetailPage() {
                     {p.isWorkItem && calc.kind !== "customer_original"
                       ? "—"
                       : p.rateMissing
-                        ? "—"
+                        ? "ставка не указана"
                         : formatMoney(positionLineSum(p, calc.scenarioFactor || 1))}
                   </TableCell>
+                  {!locked ? (
+                    <TableCell className="text-right">
+                      {p.code === "НР" || p.code === "СП" ? null : (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`Удалить позицию ${p.name}`}
+                          onClick={() => {
+                            if (!window.confirm(`Удалить позицию «${p.name}»?`)) return;
+                            updateCalculation(calc.id, {
+                              positions: calc.positions.filter((item) => item.id !== p.id),
+                            });
+                          }}
+                        >
+                          Удалить
+                        </Button>
+                      )}
+                    </TableCell>
+                  ) : null}
                 </TableRow>
               ))}
             </TableBody>
@@ -1426,13 +1463,12 @@ export default function RaschetDetailPage() {
             <div>
               Неполнота:{" "}
               {calc.costSummary.incomplete.length
-                ? calc.costSummary.incomplete.join(", ")
+                ? humanizeIssues(calc.costSummary.incomplete, new Map(calc.positions.map((position) => [position.id, position.name]))).join("; ")
                 : "—"}
             </div>
           </dl>
           <p className="mt-2 text-xs text-[var(--tk-muted)]">
-            Метод {calc.costSummary.method}. Северные надбавки — только по
-            подтверждённым статьям.
+            Северные надбавки учитываются только по подтверждённым статьям.
           </p>
           {!locked && calc.kind === "resource_draft" ? (
             <VatRateEditor

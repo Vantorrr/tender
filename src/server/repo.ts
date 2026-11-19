@@ -25,6 +25,8 @@ import type {
   User,
 } from "@/lib/types";
 import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
+import { paymentTypeForSave } from "@/lib/money-payments";
+import { mergeStageResources } from "@/lib/resource-merge";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
 import {
@@ -42,7 +44,7 @@ import {
   type BusRouteInput,
   type NorthernInputs,
 } from "@/lib/cost-engine";
-import { assertOrgAccess } from "@/server/acl";
+import { assertOrgAccess, assertSection } from "@/server/acl";
 import {
   overheadsFromWorks,
   scenarioFactor,
@@ -441,6 +443,28 @@ export function updateProcurement(
   });
 }
 
+export function deleteProcurement(actorId: string, id: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    assertSection(actor, "zakupki");
+    const item = data.procurements.find((p) => p.id === id);
+    if (!item) throw new Error("Закупка не найдена");
+    assertOrgAccess(actor, item.orgId, "закупки");
+    data.procurements = data.procurements.filter((p) => p.id !== id);
+    data.documents = data.documents.filter((d) => d.procurementId !== id);
+    data.calculations = data.calculations.filter((c) => c.procurementId !== id);
+    data.schedules = data.schedules.filter((s) => s.procurementId !== id);
+    data.moneyPlans = data.moneyPlans.filter((m) => m.procurementId !== id);
+    data.risks = data.risks.filter((r) => r.procurementId !== id);
+    data.planFacts = data.planFacts.filter((p) => p.procurementId !== id);
+    data.supplyRequests = (data.supplyRequests ?? []).filter((s) => s.procurementId !== id);
+    data.projectChatMessages = (data.projectChatMessages ?? []).filter((m) => m.procurementId !== id);
+    data.smetaExchanges = data.smetaExchanges.filter((s) => !s.name.includes(id));
+    audit(data, actorId, "delete", "procurement", id, "Закупка удалена");
+    return data;
+  });
+}
+
 export function createManualProcurement(
   actorId: string,
   input: { title: string; customer?: string; region: string; nmck?: number | null; deadline?: string }
@@ -623,8 +647,9 @@ export function addCalcPositionFromDirectory(
       (r) => String(r.code ?? r.sku ?? "") === input.code
     );
     if (!row) throw new Error("Позиция не найдена в справочнике");
-    const rate = rateFromRow(row, input.rateKey);
-    if (rate == null) throw new Error("В строке нет ставки");
+    const lookedUp = rateFromRow(row, input.rateKey);
+    const rateMissing = lookedUp == null || !Number.isFinite(lookedUp) || lookedUp <= 0;
+    const rate = rateMissing ? 0 : lookedUp;
     const pos = {
       id: `cp-${Date.now()}`,
       code: String(row.code ?? row.sku ?? input.code),
@@ -635,6 +660,7 @@ export function addCalcPositionFromDirectory(
           : "ед.",
       quantity: input.quantity ?? 1,
       rate,
+      ...(rateMissing ? { rateMissing: true } : {}),
     };
     data.calculations = data.calculations.map((c) =>
       c.id === calcId
@@ -1599,9 +1625,9 @@ export async function analyzeProcurementPackageWithAI(
   actorId: string,
   procurementId: string
 ): Promise<{ warning?: string; usedAi: boolean }> {
-  // Every entry point (including automatic upload analysis) needs the same
-  // current resource draft. Previously only the explicit UI action prepared it.
-  sendProcurementToCalculation(actorId, procurementId);
+  // Opening, downloading and package analysis must not create a calculation
+  // or GPR and must not move the procurement. That happens only on the
+  // explicit «Сформировать расчёт» action.
   const prepared = readAppData();
   const preparedProcurement = prepared.procurements.find((item) => item.id === procurementId);
   const preparedDraft = prepared.calculations.find((item) => item.id === preparedProcurement?.calculationId);
@@ -1967,7 +1993,7 @@ function buildDraftStagesFromEstimate(
       crewSize: 0,
       ...(workName !== sectionName ? { workName } : {}),
       ...(workVolume != null ? { planVolume: workVolume, planUnit: workPositions[0].unit } : {}),
-      resources,
+      resources: mergeStageResources(resources),
     };
   });
 }
@@ -3502,7 +3528,11 @@ export function addMoneyPayment(
     const plan = data.moneyPlans.find((m) => m.id === moneyId);
     if (!plan) throw new Error("Денежный план не найден");
     assertOrgAccess(actor, plan.orgId, "денежного плана");
-    const row: MoneyPayment = { ...payment, id: `pay-${Date.now()}` };
+    const row: MoneyPayment = {
+      ...payment,
+      type: paymentTypeForSave(payment),
+      id: `pay-${Date.now()}`,
+    };
     plan.payments = [...plan.payments, row];
     plan.updatedAt = new Date().toISOString();
     audit(data, actorId, "create", "money_payment", row.id, row.title);

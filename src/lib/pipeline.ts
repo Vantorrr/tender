@@ -106,6 +106,18 @@ export type WorkType = (typeof WORK_TYPES)[number];
 
 export const REGION_PRESETS = ["Норильск", "Ямал"] as const;
 
+export function procurementBoardLabel(input: {
+  reviewStatus: ReviewStatus;
+  lifecycle?: string;
+  lifecycleOutcome?: string;
+}): string {
+  if (input.lifecycle === "production") return "В производстве";
+  if (input.lifecycle === "closed") {
+    return input.lifecycleOutcome === "successful" ? "Успешно реализовано" : "Закрыто";
+  }
+  return KANBAN_COLUMNS.find((column) => column.reviewStatuses.includes(input.reviewStatus))?.label ?? "Новое";
+}
+
 export function reviewToKanban(status: ReviewStatus): KanbanColumnId {
   const hit = KANBAN_COLUMNS.find((c) => c.reviewStatuses.includes(status));
   return hit?.id ?? "novaya";

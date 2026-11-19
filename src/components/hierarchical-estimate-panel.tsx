@@ -45,6 +45,9 @@ type Props = {
     days?: number | null;
     kind?: GprStageResource["kind"];
     quantityBasis?: ResourceQuantityBasis | null;
+    remove?: boolean;
+    moveToStageId?: string;
+    resource?: GprStageResource;
   }) => Promise<void> | void;
   onAddManualResources?: (stageId: string, resources: Array<Omit<GprStageResource, "id">>) => Promise<void>;
   onOpenSchedule?: () => void;
@@ -163,17 +166,17 @@ export function HierarchicalEstimatePanel({
           )}
         </div>
         <div className="text-right text-xs" data-testid={`estimate-q-${leaf.id}`}>
-          {leaf.basis === "material_qty" ? "—" : leaf.hoursQ == null ? "нет данных" : formatNumber(leaf.hoursQ)}
+          {leaf.basis === "material_qty" || leaf.hoursQ == null ? "—" : `${formatNumber(leaf.hoursQ)} ч`}
         </div>
         <div className="text-right">
-          {locked ? (leaf.rate == null ? <span className="text-amber-800" title="нет данных">—</span> : formatNumber(leaf.rate)) : (
+          {locked ? (leaf.rate == null ? <span className="text-amber-800" title="ставка не указана">ставка не указана</span> : formatMoney(leaf.rate)) : (
             <Input
               className="h-8 text-right"
               type="number"
               min={0}
               step="any"
-              placeholder="—"
-              title={leaf.rate == null ? "нет данных" : "Ставка"}
+              placeholder="ставка не указана"
+              title={leaf.rate == null ? "ставка не указана" : "Ставка"}
               aria-label={leaf.rate == null ? `Ставка · ${leaf.name} (нет данных)` : `Ставка · ${leaf.name}`}
               value={leaf.rate == null ? "" : String(leaf.rate)}
               data-testid={`estimate-rate-${leaf.id}`}

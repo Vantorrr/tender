@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
@@ -17,6 +17,7 @@ import { GprResourceTree } from "@/components/gpr-resource-tree";
 import { collectCalendarWarnings } from "@/lib/calendar-availability";
 import { bucketsFromPositions } from "@/lib/cost-engine";
 import { formatMoney } from "@/lib/format";
+import { humanizeIssues } from "@/lib/issue-text";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { useStore } from "@/lib/store";
 import type { CalcPosition, GprStageResource } from "@/lib/types";
@@ -36,6 +37,7 @@ type MaterialsPreview = {
 
 export default function GprDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const materialsFileRef = useRef<HTMLInputElement>(null);
   const [materialsPreview, setMaterialsPreview] = useState<MaterialsPreview | null>(null);
   const [materialsImportBusy, setMaterialsImportBusy] = useState(false);
@@ -213,6 +215,7 @@ export default function GprDetailPage() {
         } смен`}
         actions={
           <>
+            <Button variant="outline" onClick={() => router.push("/cabinet/gpr")}>Назад</Button>
             {userHasSection(user, "gpr") ? (
               <ProjectAiChat
                 procurementId={schedule.procurementId}
@@ -349,8 +352,8 @@ export default function GprDetailPage() {
                 <AlertTitle>Итоги неполны</AlertTitle>
                 <AlertDescription>
                   C0 / цена не считаются подтверждёнными:{" "}
-                  {(cost.incomplete ?? []).slice(0, 8).join("; ") ||
-                    "есть незаполненные ставки/позиции"}
+                  {humanizeIssues(cost.incomplete ?? []).join("; ") ||
+                    "есть незаполненные ставки"}
                 </AlertDescription>
               </Alert>
             )}
@@ -497,6 +500,20 @@ export default function GprDetailPage() {
               key={stage.id}
               className="grid gap-2 rounded-xl border border-[var(--tk-line)] bg-white/80 p-3 sm:grid-cols-2 lg:grid-cols-6"
             >
+              <div className="sm:col-span-2 lg:col-span-6 flex justify-end">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    if (!window.confirm(`Удалить этап «${stage.name}»?`)) return;
+                    updateSchedule(schedule.id, {
+                      stages: schedule.stages.filter((item) => item.id !== stage.id),
+                    });
+                  }}
+                >
+                  Удалить этап
+                </Button>
+              </div>
               <Input
                 value={stage.name}
                 aria-label={`Название этапа ${stage.sequence}`}

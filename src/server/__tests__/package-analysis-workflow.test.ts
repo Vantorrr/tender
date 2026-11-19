@@ -24,21 +24,30 @@ describe("package analysis workflow", () => {
     }));
   });
 
-  it("prepares a draft even when called directly by upload analysis and marks absent totals incomplete", async () => {
+  it("does not create a calculation or move the procurement when analyzing the package", async () => {
     mutateAppData((data) => {
       const procurement = data.procurements.find((item) => item.id === "p-2")!;
       procurement.calculationId = undefined;
+      procurement.gprId = undefined;
       procurement.originalCalculationId = undefined;
+      procurement.reviewStatus = "novaya";
+      procurement.status = "zagruzheno";
       data.documents = data.documents.filter((item) => item.procurementId !== procurement.id);
+      data.calculations = data.calculations.filter((item) => item.procurementId !== procurement.id);
+      data.schedules = data.schedules.filter((item) => item.procurementId !== procurement.id);
       return data;
     });
     const result = await analyzeProcurementPackageWithAI("u-tender", "p-2");
     const data = readAppData();
     const procurement = data.procurements.find((item) => item.id === "p-2")!;
-    const draft = data.calculations.find((item) => item.id === procurement.calculationId)!;
-    expect(draft.kind).toBe("resource_draft");
+    expect(procurement.calculationId).toBeUndefined();
+    expect(procurement.gprId).toBeUndefined();
+    expect(procurement.reviewStatus).toBe("novaya");
+    expect(procurement.status).toBe("zagruzheno");
+    expect(data.calculations.some((item) => item.procurementId === "p-2")).toBe(false);
+    expect(data.schedules.some((item) => item.procurementId === "p-2")).toBe(false);
     expect(model.analyze).toHaveBeenCalledOnce();
-    expect(model.analyze.mock.calls[0][3]).toMatchObject({ cost: null, priceWithVat: null, incomplete: true });
+    expect(model.analyze.mock.calls[0][3]).toBeUndefined();
     expect(procurement.analytics?.recommendation).toBe("insufficient_data");
     expect(result.usedAi).toBe(true);
   });

@@ -106,13 +106,11 @@ function entryForStage(stage: GprStage, entries: PlanFactEntry[]) {
 
 function tickLabel(day: string, scale: Scale) {
   const date = new Date(`${day}T12:00:00Z`);
-  if (scale === "month") {
-    return date.toLocaleDateString("ru-RU", { month: "short", year: "2-digit", timeZone: "UTC" });
-  }
-  if (scale === "week") {
-    return date.toLocaleDateString("ru-RU", { day: "numeric", month: "short", timeZone: "UTC" });
-  }
-  return date.toLocaleDateString("ru-RU", { day: "numeric", month: "short", timeZone: "UTC" });
+  if (Number.isNaN(date.getTime())) return "";
+  const dd = String(date.getUTCDate()).padStart(2, "0");
+  const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
+  if (scale === "month") return `${mm}.${String(date.getUTCFullYear()).slice(2)}`;
+  return `${dd}.${mm}`;
 }
 
 type Props = {
@@ -445,11 +443,15 @@ export function PlanFactGantt({
                 </div>
               </div>
               <div className="relative h-11 overflow-hidden">
-                {ticks.map((tick) => (
-                  <div key={tick.date} className="absolute bottom-0 top-0 border-l border-[var(--tk-line)]/80 pl-1.5 pt-3 text-[11px] font-medium text-[var(--tk-muted)]" style={{ left: tick.offset * dayWidth }} title={formatDate(tick.date)}>
-                    {tick.label}
-                  </div>
-                ))}
+                {ticks.map((tick, index) => {
+                  const next = ticks[index + 1]?.offset ?? totalDays;
+                  const width = Math.max(28, (next - tick.offset) * dayWidth - 4);
+                  return (
+                    <div key={tick.date} className="absolute bottom-0 top-0 overflow-hidden whitespace-nowrap border-l border-[var(--tk-line)]/80 pl-1 pt-3 text-[11px] font-medium tabular-nums text-[var(--tk-muted)]" style={{ left: tick.offset * dayWidth, width }} title={formatDate(tick.date)}>
+                      {tick.label}
+                    </div>
+                  );
+                })}
                 {showToday ? <div className="absolute bottom-0 top-0 z-10 w-px bg-rose-500" style={{ left: todayOffset * dayWidth }} /> : null}
               </div>
             </div>
