@@ -25,6 +25,7 @@ import {
   REGION_PRESETS,
   WORK_TYPES,
   displayedKanbanColumn,
+  visibleProcurementNumber,
   type KanbanColumnId,
 } from "@/lib/pipeline";
 import { kanbanToReview } from "@/lib/pipeline";
@@ -239,7 +240,7 @@ export default function ZakupkiPage() {
           <AlertDescription>
             {syncIssues.map((p) => (
               <span key={p.id} className="mr-3 inline-block text-sm">
-                {p.number}:{" "}
+                {visibleProcurementNumber(p)}:{" "}
                 {p.syncStatus === "ustarelo"
                   ? "данные устарели"
                   : "ошибка синхронизации"}{" "}
@@ -382,7 +383,7 @@ export default function ZakupkiPage() {
                     </details>
                     </div>
                     <div className="mt-1 text-xs text-[var(--tk-muted)]">
-                      {p.number}
+                      {visibleProcurementNumber(p)}
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                       <span>{p.region}</span>

@@ -970,9 +970,10 @@ export default function ZakupkaDetailPage() {
                     className="underline"
                     href={`/cabinet/zakupki/${procurement.duplicateOf}`}
                   >
-                    {data.procurements.find(
-                      (p) => p.id === procurement.duplicateOf
-                    )?.number ?? "карточка"}
+                    {(() => {
+                      const original = data.procurements.find((p) => p.id === procurement.duplicateOf);
+                      return original ? visibleProcurementNumber(original) : "карточка";
+                    })()}
                   </Link>
                 </p>
               ) : null}

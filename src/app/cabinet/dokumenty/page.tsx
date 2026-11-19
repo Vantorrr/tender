@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatDateTime } from "@/lib/format";
+import { visibleProcurementNumber } from "@/lib/pipeline";
 import { useStore } from "@/lib/store";
 
 export default function DokumentyPage() {
@@ -59,7 +60,7 @@ export default function DokumentyPage() {
               ) : null}
               {orgProcurements.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.number}
+                  {visibleProcurementNumber(p)}
                 </option>
               ))}
             </select>

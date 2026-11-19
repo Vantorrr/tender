@@ -34,6 +34,7 @@ import { parseDecimalRu } from "@/lib/decimal-ru";
 import { DEFAULT_MAX_UPLOAD_BYTES, uploadTooLargeMessage } from "@/lib/upload-limit";
 import { formatDate, formatMoney, formatNumber, todayIsoInTimeZone } from "@/lib/format";
 import { userHasSection } from "@/lib/acl";
+import { visibleProcurementNumber } from "@/lib/pipeline";
 import {
   entryDisplayFact,
   entryDisplayRemain,
@@ -509,7 +510,10 @@ export default function ProizvodstvoPage() {
             </div>
             {procurement ? (
               <p className="pb-2 text-sm text-muted-foreground">
-                Закупка № {procurement.number}{procurement.lifecycle === "production" ? " · В производстве" : ""}
+                {visibleProcurementNumber(procurement) === "Ручная закупка"
+                  ? "Ручная закупка"
+                  : `Закупка № ${visibleProcurementNumber(procurement)}`}
+                {procurement.lifecycle === "production" ? " · В производстве" : ""}
               </p>
             ) : null}
             {plan ? (

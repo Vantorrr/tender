@@ -7,6 +7,7 @@ import type {
 } from "@/lib/types";
 import { CHAT_CALC_POSITIONS, CHAT_CITATION_BLOCK_CHARS, CHAT_CITATIONS_PER_DOCUMENT, CHAT_DOCUMENTS, CHAT_ESTIMATE_POSITIONS, CHAT_PROMPT_SOURCE_CHARS, CHAT_PROMPT_SOURCES, PROJECT_CHAT_SYSTEM } from "@/server/ai-prompts";
 import { completeJson, modelConfigured } from "@/server/openrouter";
+import { visibleProcurementNumber } from "@/lib/pipeline";
 import { getBootstrap } from "@/server/repo";
 import { mutateAppData, readAppData } from "@/server/db";
 
@@ -187,7 +188,7 @@ function buildSources(data: AppData, procurementId: string): Source[] {
     "Карточка закупки",
     [
       `Название: ${procurement.title}`,
-      `Номер: ${procurement.number}`,
+      `Номер: ${visibleProcurementNumber(procurement)}`,
       `Заказчик: ${procurement.customer}`,
       `Регион: ${procurement.region}`,
       `Вид работ: ${procurement.workType ?? "не указан"}`,

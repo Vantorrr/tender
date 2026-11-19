@@ -19,6 +19,7 @@ import { collectCalendarWarnings } from "@/lib/calendar-availability";
 import { bucketsFromPositions } from "@/lib/cost-engine";
 import { formatMoney } from "@/lib/format";
 import { gprStageLabel } from "@/lib/gpr-stage-label";
+import { visibleProcurementNumber } from "@/lib/pipeline";
 import { humanizeIssues } from "@/lib/issue-text";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { useStore } from "@/lib/store";
@@ -205,7 +206,7 @@ export default function GprDetailPage() {
           </span>
         ))}
         <span className="ml-auto text-xs text-[var(--tk-muted)]">
-          {procurement?.number ?? `Заявка ${schedule.procurementId}`}
+          {procurement ? visibleProcurementNumber(procurement) : `Заявка ${schedule.procurementId}`}
         </span>
       </nav>
       <PageHeader

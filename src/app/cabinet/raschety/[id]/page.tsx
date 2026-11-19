@@ -758,7 +758,7 @@ export default function RaschetDetailPage() {
           </span>
         ))}
         <span className="ml-auto text-xs text-[var(--tk-muted)]">
-          {procurement?.number ?? `Заявка ${calc.procurementId}`}
+          {procurement ? visibleProcurementNumber(procurement) : `Заявка ${calc.procurementId}`}
         </span>
       </nav>
 

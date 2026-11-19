@@ -1,5 +1,6 @@
 import type { Citation, DocumentItem, ProjectAnalytics, Procurement } from "@/lib/types";
 import { regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
+import { visibleProcurementNumber } from "@/lib/pipeline";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_LABELS } from "@/lib/ai-topics";
 import { NOT_IN_DOCUMENTS, numbersAreGrounded } from "@/server/ai-grounding";
@@ -793,7 +794,7 @@ export async function analyzeProjectPackageWithModel(
       ? "Часть источников требует ручной проверки."
       : "Источников недостаточно для окончательной рекомендации.";
   const packageBrief = [
-    `Закупка: ${procurement.title}${procurement.number ? ` · ${procurement.number}` : ""}. Заказчик: ${procurement.customer || "не указан"}. Регион: ${packageRegion}. Срок подачи: ${packageDeadline}.`,
+    `Закупка: ${procurement.title}${procurement.number ? ` · ${visibleProcurementNumber(procurement)}` : ""}. Заказчик: ${procurement.customer || "не указан"}. Регион: ${packageRegion}. Срок подачи: ${packageDeadline}.`,
     `Пакет: ${packageDocuments.length} документов, ${selectedPackageCitations.length} из ${deterministic.citations.length} выдержек передано модели. ${sourceStatus}`,
     reportedGaps.length ? "Есть пункты для проверки; они перечислены ниже." : "Блокирующих пробелов по покрытию не отмечено.",
     decisionReady && !company?.resourceAvailabilityTracked ? "Решение по экономике и профилю предварительное: календарь фактической загрузки техники/бригад не подключён." : null,
