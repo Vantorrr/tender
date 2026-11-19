@@ -2075,6 +2075,14 @@ export function attachCustomerEstimate(
 }
 
 /** Build work stages from parsed estimate sections and work-item parent rows. */
+function isNavigationStub(schedule: { stages: GprStage[] }): boolean {
+  const names = new Set(["Подготовка", "Подготовка / мобилизация", "Основные работы"]);
+  return schedule.stages.length > 0 && schedule.stages.every((stage) =>
+    names.has(stage.name) &&
+    (stage.resources ?? []).every((resource) => resource.quantity === 0 && (resource.rate == null || resource.rate === 0))
+  );
+}
+
 function buildDraftStagesFromEstimate(
   positions: Calculation["positions"],
   now: string
@@ -2175,16 +2183,31 @@ function mergeEstimateRowsIntoDraft(
  * «Отправить в расчёт»: resource draft only. The schedule is a separate action.
  */
 export function createProcurementSchedule(actorId: string, procurementId: string) {
-  return mutateAppData((data) => {
+  let built = false;
+  mutateAppData((data) => {
     const actor = actorUser(data, actorId);
     const procurement = data.procurements.find((item) => item.id === procurementId);
     if (!procurement) throw new Error("Закупка не найдена");
     assertOrgAccess(actor, procurement.orgId, "закупки");
     if (!procurement.calculationId) throw new Error("Сначала сформируйте расчёт");
-    if (procurement.gprId && data.schedules.some((item) => item.id === procurement.gprId)) return data;
     const now = new Date().toISOString();
     const draft = data.calculations.find((item) => item.id === procurement.calculationId && item.kind !== "customer_original");
     const derived = buildDraftStagesFromEstimate(draft?.positions ?? [], now);
+    const existing = procurement.gprId ? data.schedules.find((item) => item.id === procurement.gprId) : undefined;
+    if (existing && isNavigationStub(existing) && derived.length > 0) {
+      existing.stages = derived;
+      existing.calculationId = procurement.calculationId;
+      existing.updatedAt = now;
+      existing.assumptions = [
+        "Виды работ и вложенные ресурсы сгруппированы по разделам распознанной сметы. Проверьте состав строк и сопоставьте их с видами работ объекта.",
+        "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.",
+        "Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.",
+      ];
+      built = true;
+      audit(data, actorId, "update", "gpr", existing.id, "Заготовка графика заменена разделами сметы");
+      return data;
+    }
+    if (existing) return data;
     const gid = `g-${Date.now()}`;
     const stage1 = `gs-${Date.now()}`;
     const placeholderStages: GprStage[] = [
@@ -2230,9 +2253,11 @@ export function createProcurementSchedule(actorId: string, procurementId: string
       updatedAt: now,
     });
     procurement.gprId = gid;
+    built = true;
     audit(data, actorId, "create", "gpr", gid, "График создан отдельной кнопкой");
     return data;
   });
+  return { built };
 }
 
 export function sendProcurementToCalculation(
@@ -2500,10 +2525,7 @@ export function sendProcurementToCalculation(
       }
       data.schedules = data.schedules.map((s) => {
         if (s.id !== p.gprId) return s;
-        const isPlaceholder = s.stages.every((stage) =>
-          ["Подготовка / мобилизация", "Основные работы"].includes(stage.name) &&
-          (stage.resources ?? []).every((resource) => resource.quantity === 0)
-        );
+        const isPlaceholder = isNavigationStub(s);
         if (derivedGprStages.length > 0 && isPlaceholder) {
           return {
             ...s,

@@ -737,16 +737,16 @@ export default function ZakupkaDetailPage() {
             <Button
               variant="outline"
               data-testid="create-gpr"
-              disabled={busy || !procurement.calculationId || Boolean(procurement.gprId)}
+              disabled={busy || !procurement.calculationId}
               onClick={async () => {
                 setBusy(true);
                 try {
-                  await api("/api/zakupki", {
+                  const result = await api<{ scheduleBuilt?: boolean }>("/api/zakupki", {
                     method: "POST",
                     body: JSON.stringify({ action: "createGpr", id: procurement.id }),
                   });
                   await refresh();
-                  toast.success("График создан");
+                  toast.success(result.scheduleBuilt ? "График создан по смете" : "График уже заполнен");
                 } catch (error) {
                   toast.error(error instanceof Error ? error.message : "Не удалось создать график");
                 } finally {

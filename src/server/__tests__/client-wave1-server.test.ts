@@ -14,6 +14,7 @@ import {
   addCalcPositionFromDirectory,
   addMoneyPayment,
   createManualProcurement,
+  ensureProcurementChain,
   createProcurementSchedule,
   sendProcurementToCalculation,
   updateLinkedResourcesFromCalculation,
@@ -348,6 +349,36 @@ describe("client wave 1 server", () => {
     expect(afterCalc.reviewStatus).toBe("na_rassmotrenii");
     createProcurementSchedule("u-ruk", created.id);
     expect(readAppData().procurements.find((item) => item.id === created.id)?.gprId).toBeTruthy();
+  });
+
+  it("replaces a navigation stub with stages from the estimate", () => {
+    const created = createManualProcurement("u-ruk", { title: "Заготовка графика", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    ensureProcurementChain("u-ruk", created.id);
+    const stub = readAppData().schedules.find((item) => item.procurementId === created.id)!;
+    expect(stub.stages[0]?.name).toBe("Подготовка");
+    mutateAppData((data) => {
+      const draft = data.calculations.find((item) => item.procurementId === created.id && item.kind === "resource_draft")!;
+      draft.positions = [{
+        id: "draft-bit",
+        code: "ФССЦ-01.4.01.03-0146",
+        name: "Долото трехшарошечное III 295,373-ЦВ",
+        unit: "шт",
+        quantity: 16.5396,
+        rate: 0,
+        rateMissing: true,
+        resourceKind: "material",
+        sourceSectionName: "Раздел 1. Бурение скважин",
+        sourceWorkName: "Бурение скважин диаметром 450 мм",
+      }];
+      return data;
+    });
+    expect(createProcurementSchedule("u-ruk", created.id).built).toBe(true);
+    const schedule = readAppData().schedules.find((item) => item.id === stub.id)!;
+    expect(schedule.stages.some((stage) => stage.name === "Подготовка")).toBe(false);
+    expect(schedule.stages.some((stage) => stage.sectionName === "Раздел 1. Бурение скважин")).toBe(true);
+    expect(schedule.stages.flatMap((stage) => stage.resources ?? []).some((resource) => resource.quantity === 16.5396)).toBe(true);
+    expect(createProcurementSchedule("u-ruk", created.id).built).toBe(false);
   });
 
   it("updates the calculation when its last linked resources are cleared and leaves the production plan alone", () => {

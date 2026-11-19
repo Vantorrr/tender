@@ -152,17 +152,22 @@ export function HierarchicalEstimatePanel({
         <div className="text-right" title={quantityPresentation(leaf.quantity, leaf.unit).title}>
           {locked ? quantityPresentation(leaf.quantity, leaf.unit).text : (
             <Input
+              key={`${leaf.id}:${leaf.quantity}`}
               className="h-8 text-right"
-              type="number"
-              min={0}
-              step="any"
-              value={/^шт\.?$/iu.test(leaf.unit.trim()) ? Number(leaf.quantity.toFixed(2)) : leaf.quantity}
+              inputMode="decimal"
+              defaultValue={quantityPresentation(leaf.quantity, leaf.unit).text}
               title={quantityPresentation(leaf.quantity, leaf.unit).title}
               data-testid={`estimate-qty-${leaf.id}`}
-              onChange={(e) => {
-                const quantity = Number(e.target.value) || 0;
-                onPatchLeaf(leaf, { quantity });
-                toast.success("Количество обновлено");
+              onBlur={(e) => {
+                const shown = quantityPresentation(leaf.quantity, leaf.unit).text;
+                if (e.target.value.trim() === shown) return;
+                const quantity = parseDecimalRu(e.target.value);
+                if (quantity == null) {
+                  e.target.value = shown;
+                  toast.error("Введите количество, например 16,54");
+                  return;
+                }
+                void onPatchLeaf(leaf, { quantity });
               }}
             />
           )}
