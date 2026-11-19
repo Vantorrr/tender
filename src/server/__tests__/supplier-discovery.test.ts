@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const complete = vi.hoisted(() => vi.fn());
 vi.mock("@/server/openrouter", () => ({ completeJsonDetailed: complete }));
 
-import { applyLiveSupplierLinks, discoverMaterialSuppliers, filterSupplierCandidates, groundSupplierRegions, isRedirectUrl, probeSupplierUrl, resolveSearchSources } from "@/server/supplier-discovery";
+import { applyLiveSupplierLinks, discoverMaterialSuppliers, filterSupplierCandidates, groundSupplierRegions, hostResolvesToPublicAddress, isRedirectUrl, probeSupplierUrl, resolveSearchSources } from "@/server/supplier-discovery";
 
 describe("open-source supplier discovery", () => {
   beforeEach(() => {
@@ -163,6 +163,21 @@ describe("open-source supplier discovery", () => {
     });
     expect(redirected).toEqual([]);
     expect(calls.some((url) => url.includes("127.0.0.1"))).toBe(false);
+    for (const location of ["http://localhost./latest", "http://metadata.google.internal/computeMetadata/v1/"]) {
+      const hidden: string[] = [];
+      const dropped = await groundSupplierRegions([
+        { name: "Имя", website: "https://vendor.example", materials: ["Труба"], regionEvidence: "Норильск", evidence: "Продажа труб", sourceUrl: "https://vendor.example/name" },
+      ], async (url) => {
+        hidden.push(String(url));
+        if (String(url).includes("vendor.example")) return new Response(null, { status: 302, headers: { location } });
+        return new Response("склад в Норильске", { status: 200 });
+      });
+      expect(dropped).toEqual([]);
+      expect(hidden.every((url) => url.includes("vendor.example"))).toBe(true);
+    }
+    expect(await hostResolvesToPublicAddress("shop.example", async () => [{ address: "127.0.0.1" }])).toBe(false);
+    expect(await hostResolvesToPublicAddress("shop.example", async () => [{ address: "8.8.8.8" }])).toBe(true);
+    expect(await hostResolvesToPublicAddress("localhost.")).toBe(false);
     for (const location of ["http://2130706433/latest", "http://[::ffff:127.0.0.1]/latest", "http://[::ffff:169.254.169.254]/latest"]) {
       const hidden: string[] = [];
       const dropped = await groundSupplierRegions([

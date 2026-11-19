@@ -1,3 +1,4 @@
+import { lookup } from "node:dns/promises";
 import { NOT_IN_DOCUMENTS } from "@/server/ai-grounding";
 import { SUPPLIER_DISCOVERY_SYSTEM } from "@/server/ai-prompts";
 import { completeJsonDetailed } from "@/server/openrouter";
@@ -291,6 +292,19 @@ function embeddedIpv4(host: string): string | null {
   return dotted ? dotted[1] : null;
 }
 
+function hostLabel(value: string): string {
+  return value.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.+$/g, "");
+}
+
+function addressIsPrivate(address: string): boolean {
+  const host = hostLabel(address);
+  if (!host || host === "0.0.0.0" || host === "::" || host === "::1") return true;
+  if (isPrivateIpv4(host)) return true;
+  const embedded = embeddedIpv4(host);
+  if (embedded) return isPrivateIpv4(embedded);
+  return host.includes(":") && (host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80"));
+}
+
 function isPublicSupplierUrl(value: string): boolean {
   let url: URL;
   try {
@@ -299,15 +313,26 @@ function isPublicSupplierUrl(value: string): boolean {
     return false;
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return false;
-  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return false;
-  if (host === "0.0.0.0" || host === "::" || host === "::1") return false;
-  if (isPrivateIpv4(host)) return false;
-  const embedded = embeddedIpv4(host);
-  if (embedded) return !isPrivateIpv4(embedded);
+  const host = hostLabel(url.hostname);
+  if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) return false;
+  if (addressIsPrivate(host)) return false;
   if (host.startsWith("::")) return false;
-  if (host.includes(":") && (host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80"))) return false;
   return true;
+}
+
+type AddressLookup = (hostname: string, options: { all: true; verbatim: true }) => Promise<Array<{ address: string }>>;
+
+/** A name that looks public still has to resolve to a public address. */
+export async function hostResolvesToPublicAddress(hostname: string, lookupImpl: AddressLookup = lookup): Promise<boolean> {
+  const host = hostLabel(hostname);
+  if (!host || !isPublicSupplierUrl(`http://${host.includes(":") ? `[${host}]` : host}/`)) return false;
+  if (isPrivateIpv4(host) || host.includes(":")) return !addressIsPrivate(host);
+  try {
+    const records = await lookupImpl(host, { all: true, verbatim: true });
+    return records.length > 0 && records.every((record) => !addressIsPrivate(record.address));
+  } catch {
+    return true;
+  }
 }
 
 async function readCapped(response: Response, limit: number): Promise<string> {
@@ -337,6 +362,7 @@ async function readCapped(response: Response, limit: number): Promise<string> {
 
 async function readSupplierPage(url: string, fetchImpl: FetchLike, timeoutMs = 4000, hops = 0): Promise<string | null> {
   if (hops > 2 || !isPublicSupplierUrl(url)) return null;
+  if (fetchImpl === fetch && !(await hostResolvesToPublicAddress(new URL(url).hostname))) return null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const response = await fetchImpl(url, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
