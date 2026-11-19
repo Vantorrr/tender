@@ -119,7 +119,7 @@ function cite(
 ): Citation {
   return {
     id,
-    text: (para?.text ?? fallback).slice(0, 400),
+    text: (para?.text ?? fallback).slice(0, 1200),
     page: 1,
     sourceFile: fileName,
     paragraph: para?.index,
@@ -189,10 +189,10 @@ export function analysisFromDocx(
     if (/\b(?:нет данных|не указано в документе|не найдено)\b/iu.test(text)) continue;
     clauseParagraphs.set(paragraph.index, text);
   }
-  for (const [index, text] of [...clauseParagraphs.entries()].slice(0, 12)) {
+  for (const [index, text] of [...clauseParagraphs.entries()].slice(0, 30)) {
     citations.push({
       id: `c-docx-clause-${index}`,
-      text: text.slice(0, 400),
+      text: text.slice(0, 1200),
       page: 1,
       sourceFile: fileName,
       paragraph: index,

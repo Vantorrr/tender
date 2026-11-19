@@ -151,7 +151,13 @@ export interface ProjectAnalytics {
     quote: string;
     citationIds: string[];
     sourceFiles: string[];
+    /** Effect on cost, or «не указано в документах» when the quote has no figure. */
+    costImpact?: string;
+    /** Effect on schedule, or «не указано в документах» when the quote has no figure. */
+    scheduleImpact?: string;
   }>;
+  /** Questions for the customer. Numbers are kept only when they appear in a source. */
+  customerQuestions?: string[];
   generatedAt: string;
   method: string;
   disclaimer: string;

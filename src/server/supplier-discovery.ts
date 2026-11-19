@@ -1,3 +1,4 @@
+import { SUPPLIER_DISCOVERY_SYSTEM } from "@/server/ai-prompts";
 import { completeJson } from "@/server/openrouter";
 
 export type SupplierSearchCandidate = {
@@ -10,9 +11,13 @@ export type SupplierSearchCandidate = {
   sourceUrl: string;
 };
 
-const SYSTEM = `Ты ищешь реальных поставщиков строительных материалов в открытых источниках для российского подрядчика. Используй web search. Не выдумывай организации, сайты, адреса электронной почты, ассортимент или присутствие в регионе.
-В результат включай только организации, для которых поисковый источник подтверждает поставку указанного материала. Email указывай только если он прямо опубликован на доступной странице; иначе email должен быть пустым. sourceUrl — точный URL страницы, подтверждающей сведения; не используй поисковую ссылку вместо первоисточника. Если подтверждений мало, верни пустой список. Не отправляй письма и не считай поисковую выдачу доказательством надёжности.
-Верни только JSON: {"candidates":[{"name":"","website":"","email":"","materials":[""],"regionEvidence":"краткое подтверждение региона или доставки","evidence":"короткая подтверждённая выдержка/пересказ со страницы","sourceUrl":"https://..."}]}. Не более 5 кандидатов.`;
+const SYSTEM = SUPPLIER_DISCOVERY_SYSTEM;
+
+export function buildSupplierQuery(input: { material: string; region: string; work?: string }): string {
+  const material = input.material.trim().slice(0, 180);
+  const region = input.region.trim().slice(0, 120);
+  return `Найди поставщиков материала «${material}» с подтверждённой поставкой в регион «${region}» или с доставкой туда. Объект: ${input.work?.trim().slice(0, 180) || "строительный проект"}. Для Крайнего Севера ищи подтверждение пути: Дудинка, Енисей, зимник, вахта. У каждого кандидата нужен первоисточник, подтверждение ассортимента и региона. Адрес почты — только если он прямо опубликован.`;
+}
 
 function safeUrl(value: unknown) {
   if (typeof value !== "string") return "";
@@ -26,7 +31,7 @@ export async function discoverMaterialSuppliers(input: { material: string; regio
   const material = input.material.trim().slice(0, 180);
   const region = input.region.trim().slice(0, 120);
   if (!material || !region) throw new Error("Укажите материал и регион для поиска");
-  const query = `Найди поставщиков материала «${material}» в регионе «${region}» или с подтверждённой доставкой в этот регион. Объект: ${input.work?.trim().slice(0, 120) || "строительный проект"}. Ищи сайты производителей и официальных дилеров. Для каждого кандидата укажи точный первоисточник, подтверждение ассортимента и региона; email только если он прямо опубликован.`;
+  const query = buildSupplierQuery(input);
   const raw = await completeJson(SYSTEM, query, 0, { webSearch: true });
   const parsed = JSON.parse(raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")) as { candidates?: unknown[] };
   const seen = new Set<string>();

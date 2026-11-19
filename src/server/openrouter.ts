@@ -18,7 +18,28 @@ type CompletionUsage = {
   completion_tokens_details?: { reasoning_tokens?: number };
 };
 
-export async function completeJson(system: string, user: string, attempt = 0, options: { webSearch?: boolean } = {}): Promise<string> {
+export type JsonCompletion = {
+  content: string;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+  elapsedMs: number;
+};
+
+function usageOf(usage: CompletionUsage | undefined): Pick<JsonCompletion, "promptTokens" | "completionTokens" | "totalTokens"> {
+  return {
+    promptTokens: usage?.prompt_tokens ?? null,
+    completionTokens: usage?.completion_tokens ?? null,
+    totalTokens: usage?.total_tokens ?? null,
+  };
+}
+
+async function requestCompletion(
+  system: string,
+  user: string,
+  attempt: number,
+  options: { webSearch?: boolean }
+): Promise<{ content: string; usage: CompletionUsage | undefined }> {
   if (!config.openRouterKey) throw new Error("Ключ модели не задан");
   const retrying = attempt > 0;
   const response = await fetch(ENDPOINT, {
@@ -67,7 +88,7 @@ export async function completeJson(system: string, user: string, attempt = 0, op
       usage: payload.usage ?? null,
       attempt,
     });
-    if (attempt < 1) return completeJson(system, user, attempt + 1, options);
+    if (attempt < 1) return requestCompletion(system, user, attempt + 1, options);
     if (choice?.message?.refusal) throw new Error(`Модель отказала в анализе: ${choice.message.refusal.slice(0, 180)}`);
     throw new Error(`Пустой ответ модели (finish_reason: ${finishReason ?? "не указан"}).`);
   }
@@ -80,8 +101,23 @@ export async function completeJson(system: string, user: string, attempt = 0, op
     // completion budget before surfacing a confusing JSON parser error to users.
   }
   if ((!validJson || finishReason === "length") && attempt < 1) {
-    return completeJson(system, user, attempt + 1, options);
+    return requestCompletion(system, user, attempt + 1, options);
   }
   if (!validJson) throw new Error(`Модель вернула неполный JSON после ${attempt + 1} попыток.`);
-  return content;
+  return { content, usage: payload.usage };
+}
+
+export async function completeJson(system: string, user: string, attempt = 0, options: { webSearch?: boolean } = {}): Promise<string> {
+  return (await requestCompletion(system, user, attempt, options)).content;
+}
+
+export async function completeJsonWithUsage(
+  system: string,
+  user: string,
+  attempt = 0,
+  options: { webSearch?: boolean } = {}
+): Promise<JsonCompletion> {
+  const startedAt = Date.now();
+  const result = await requestCompletion(system, user, attempt, options);
+  return { content: result.content, ...usageOf(result.usage), elapsedMs: Date.now() - startedAt };
 }

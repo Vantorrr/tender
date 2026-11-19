@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import { GRAND_PROFILE } from "@/lib/grand-profile";
+import { OCR_CHUNK_CHARS, OCR_CHUNKS_PER_PAGE } from "@/server/ai-prompts";
 import { refineNote } from "@/server/model-note";
 import { extractDocumentText, ocrConfigured } from "@/server/ocr";
 import type {
@@ -504,7 +505,7 @@ export function analysisFromGrand(parsed: GrandParse, fileName: string): UploadA
     const loc = locatorKey ? parsed.locators[locatorKey] : undefined;
     citations.push({
       id,
-      text: text.slice(0, 400),
+      text: text.slice(0, 900),
       page: 1,
       sourceFile: fileName,
       sheet: loc?.sheet ?? parsed.sheetName,
@@ -696,14 +697,14 @@ export function analysisFromScan(
       const words = sentence.trim().split(/\s+/u);
       for (let offset = 0; offset < words.length;) {
         let piece = "";
-        while (offset < words.length && `${piece} ${words[offset]}`.trim().length <= 700) {
+        while (offset < words.length && `${piece} ${words[offset]}`.trim().length <= OCR_CHUNK_CHARS) {
           piece = `${piece} ${words[offset++]}`.trim();
         }
-        if (!piece && words[offset]) piece = words[offset++].slice(0, 700);
+        if (!piece && words[offset]) piece = words[offset++].slice(0, OCR_CHUNK_CHARS);
         if (piece) chunks.push(piece);
       }
     }
-    return chunks.slice(0, 8).map((chunk, chunkIndex) => ({
+    return chunks.slice(0, OCR_CHUNKS_PER_PAGE).map((chunk, chunkIndex) => ({
       id: `c-ocr-p${pageIndex + 1}-${chunkIndex + 1}`,
       text: chunk,
       page: pageIndex + 1,
@@ -949,7 +950,7 @@ export async function analyzeUpload(
         mimeHint,
         textLayer: Boolean(ocr.text),
         ocrStatus: ocr.status,
-        ocrSnippet: (ocr.text ?? "").slice(0, 400),
+        ocrSnippet: (ocr.text ?? "").slice(0, 2000),
       },
       ocr.text ? [ocr.text.slice(0, 24)] : [],
       useLlm
@@ -975,7 +976,7 @@ export async function analyzeUpload(
           },
         ];
       } else if (ocr.text) {
-        analysis.analyticalNote = `${analysis.analyticalNote}\nOCR (${ocr.provider}): ${ocr.text.slice(0, 400)}`;
+        analysis.analyticalNote = `${analysis.analyticalNote}\nOCR (${ocr.provider}): ${ocr.text.slice(0, 2000)}`;
         analysis.citations = [...analysis.citations, ...analysisFromScan(fileName, ocr).citations];
       }
       return maybeRefineNote(
@@ -1003,7 +1004,7 @@ export async function analyzeUpload(
         pages: ocr.pageCount ?? 1,
         textLayer: Boolean(ocr.text),
         ocrStatus: ocr.status,
-        ocrSnippet: (ocr.text ?? "").slice(0, 400),
+        ocrSnippet: (ocr.text ?? "").slice(0, 2000),
       },
       ocr.text ? [ocr.text.slice(0, 24)] : [],
       useLlm
@@ -1121,7 +1122,7 @@ async function analyzeGenericWorkbook(fileName: string, buf: Buffer): Promise<Up
   // Keep source citations bounded and prioritize terms users need for a bid decision.
   const selected = rows
     .sort((a, b) => b.priority - a.priority || a.row - b.row)
-    .slice(0, 80);
+    .slice(0, 120);
   const selectedPositions = preferredMaterialPositions.length
     ? preferredMaterialPositions
     : positions;
