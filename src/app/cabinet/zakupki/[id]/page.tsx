@@ -741,12 +741,18 @@ export default function ZakupkaDetailPage() {
               onClick={async () => {
                 setBusy(true);
                 try {
-                  const result = await api<{ scheduleBuilt?: boolean }>("/api/zakupki", {
+                  const result = await api<{ scheduleOutcome?: "estimate" | "placeholder" | "unchanged" }>("/api/zakupki", {
                     method: "POST",
                     body: JSON.stringify({ action: "createGpr", id: procurement.id }),
                   });
                   await refresh();
-                  toast.success(result.scheduleBuilt ? "График создан по смете" : "График уже заполнен");
+                  toast.success(
+                    result.scheduleOutcome === "estimate"
+                      ? "График создан по смете"
+                      : result.scheduleOutcome === "placeholder"
+                        ? "График создан. В смете нет разделов, этапы нужно заполнить."
+                        : "График уже заполнен",
+                  );
                 } catch (error) {
                   toast.error(error instanceof Error ? error.message : "Не удалось создать график");
                 } finally {

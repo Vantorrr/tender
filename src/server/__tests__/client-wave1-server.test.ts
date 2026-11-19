@@ -373,12 +373,14 @@ describe("client wave 1 server", () => {
       }];
       return data;
     });
-    expect(createProcurementSchedule("u-ruk", created.id).built).toBe(true);
+    sendProcurementToCalculation("u-ruk", created.id);
+    expect(readAppData().schedules.find((item) => item.id === stub.id)!.stages[0]?.name).toBe("Подготовка");
+    expect(createProcurementSchedule("u-ruk", created.id).outcome).toBe("estimate");
     const schedule = readAppData().schedules.find((item) => item.id === stub.id)!;
     expect(schedule.stages.some((stage) => stage.name === "Подготовка")).toBe(false);
     expect(schedule.stages.some((stage) => stage.sectionName === "Раздел 1. Бурение скважин")).toBe(true);
     expect(schedule.stages.flatMap((stage) => stage.resources ?? []).some((resource) => resource.quantity === 16.5396)).toBe(true);
-    expect(createProcurementSchedule("u-ruk", created.id).built).toBe(false);
+    expect(createProcurementSchedule("u-ruk", created.id).outcome).toBe("unchanged");
   });
 
   it("updates the calculation when its last linked resources are cleared and leaves the production plan alone", () => {

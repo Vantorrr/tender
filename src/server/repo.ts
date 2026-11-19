@@ -2183,7 +2183,7 @@ function mergeEstimateRowsIntoDraft(
  * «Отправить в расчёт»: resource draft only. The schedule is a separate action.
  */
 export function createProcurementSchedule(actorId: string, procurementId: string) {
-  let built = false;
+  let outcome: "estimate" | "placeholder" | "unchanged" = "unchanged";
   mutateAppData((data) => {
     const actor = actorUser(data, actorId);
     const procurement = data.procurements.find((item) => item.id === procurementId);
@@ -2203,7 +2203,7 @@ export function createProcurementSchedule(actorId: string, procurementId: string
         "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.",
         "Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.",
       ];
-      built = true;
+      outcome = "estimate";
       audit(data, actorId, "update", "gpr", existing.id, "Заготовка графика заменена разделами сметы");
       return data;
     }
@@ -2253,11 +2253,11 @@ export function createProcurementSchedule(actorId: string, procurementId: string
       updatedAt: now,
     });
     procurement.gprId = gid;
-    built = true;
+    outcome = derived.length ? "estimate" : "placeholder";
     audit(data, actorId, "create", "gpr", gid, "График создан отдельной кнопкой");
     return data;
   });
-  return { built };
+  return { outcome };
 }
 
 export function sendProcurementToCalculation(
@@ -2510,9 +2510,6 @@ export function sendProcurementToCalculation(
       }
     }
 
-    const derivedGprStages = buildDraftStagesFromEstimate(positionsFromEstimate, now);
-
-    // GPR scaffold from explicitly parsed estimate sections; unknown dates and rates stay unconfirmed.
     if (p.gprId) {
       const workPositionIds = new Set(
         positionsFromEstimate.filter((position) => position.isWorkItem).map((position) => position.id)
@@ -2525,21 +2522,7 @@ export function sendProcurementToCalculation(
       }
       data.schedules = data.schedules.map((s) => {
         if (s.id !== p.gprId) return s;
-        const isPlaceholder = isNavigationStub(s);
-        if (derivedGprStages.length > 0 && isPlaceholder) {
-          return {
-            ...s,
-            calculationId: draftId!,
-            updatedAt: now,
-            stages: derivedGprStages,
-            assumptions: [
-              ...(s.assumptions ?? []).filter((item) => !item.startsWith("Начальные даты и этапы")),
-              "Виды работ и вложенные ресурсы сгруппированы по разделам распознанной сметы. Проверьте состав строк и сопоставьте их с видами работ объекта.",
-              "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.",
-              "Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.",
-            ],
-          };
-        }
+        if (isNavigationStub(s)) return s;
 
         // Migrate the old PDF mapping where ФирЕР work rows appeared as people.
         // Preserve user-entered dates, volumes, unrelated resources and facts.

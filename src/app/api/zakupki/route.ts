@@ -140,7 +140,7 @@ export async function POST(req: Request) {
     }
     if (body.action === "createGpr") {
       const schedule = createProcurementSchedule(user.id, body.id!);
-      return json({ ...getBootstrap(user), scheduleBuilt: schedule.built });
+      return json({ ...getBootstrap(user), scheduleOutcome: schedule.outcome });
     }
     if (body.action === "sendToCalculation") {
       sendProcurementToCalculation(user.id, body.id!);
