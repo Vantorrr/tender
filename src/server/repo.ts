@@ -26,7 +26,7 @@ import type {
 } from "@/lib/types";
 import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
 import { deleteUpload } from "@/server/uploads";
-import { paymentTypeForSave } from "@/lib/money-payments";
+import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
 import { mergeStageResources } from "@/lib/resource-merge";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
@@ -45,7 +45,7 @@ import {
   type BusRouteInput,
   type NorthernInputs,
 } from "@/lib/cost-engine";
-import { assertOrgAccess, assertSection } from "@/server/acl";
+import { assertGprWrite, assertOrgAccess, assertSection } from "@/server/acl";
 import {
   overheadsFromWorks,
   scenarioFactor,
@@ -446,14 +446,15 @@ export function updateProcurement(
 
 export function deleteProcurement(actorId: string, id: string) {
   const removedFiles: string[] = [];
-  const data = mutateAppData((data) => {
+  let deleted = false;
+  mutateAppData((data) => {
     const actor = actorUser(data, actorId);
     if (actor.role !== "superadmin" && actor.role !== "admin" && actor.role !== "rukovoditel") {
       throw new Error("Удалять закупку могут руководитель и администратор");
     }
     assertSection(actor, "zakupki");
     const item = data.procurements.find((p) => p.id === id);
-    if (!item) throw new Error("Закупка не найдена");
+    if (!item) return data;
     assertOrgAccess(actor, item.orgId, "закупки");
     for (const document of data.documents) {
       if (document.procurementId === id && document.storedPath) removedFiles.push(document.storedPath);
@@ -469,15 +470,26 @@ export function deleteProcurement(actorId: string, id: string) {
     data.projectChatMessages = (data.projectChatMessages ?? []).filter((m) => m.procurementId !== id);
     data.smetaExchanges = data.smetaExchanges.filter((s) => !(s.orgId === item.orgId && s.procurementId === id));
     audit(data, actorId, "delete", "procurement", id, "Закупка удалена");
+    deleted = true;
     return data;
   });
-  for (const storedPath of removedFiles) deleteUpload(storedPath);
-  return data;
+  if (deleted) {
+    for (const storedPath of removedFiles) {
+      try {
+        deleteUpload(storedPath);
+      } catch (error) {
+        const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+        if (code !== "ENOENT") throw error;
+      }
+    }
+  }
+  return { deleted };
 }
 
 export function deleteGprStage(actorId: string, scheduleId: string, stageId: string) {
   return mutateAppData((data) => {
     const actor = actorUser(data, actorId);
+    assertGprWrite(actor);
     const schedule = data.schedules.find((item) => item.id === scheduleId);
     if (!schedule) throw new Error("ГПР не найден");
     assertOrgAccess(actor, schedule.orgId, "ГПР");
@@ -1233,6 +1245,7 @@ export function updateSchedule(
 ) {
   return mutateAppData((data) => {
     const actor = actorUser(data, actorId);
+    assertGprWrite(actor);
     const item = data.schedules.find((s) => s.id === id);
     if (!item) throw new Error("ГПР не найден");
     assertOrgAccess(actor, item.orgId, "ГПР");
@@ -1301,6 +1314,7 @@ export function patchScheduleResourceAndSync(
 ) {
   return mutateAppData((data) => {
     const actor = actorUser(data, actorId);
+    assertGprWrite(actor);
     const schedule = data.schedules.find((s) => s.id === scheduleId);
     if (!schedule) throw new Error("ГПР не найден");
     assertOrgAccess(actor, schedule.orgId, "ГПР");
@@ -1381,6 +1395,12 @@ export function updateMoney(
     const { orgId: _o, id: _i, ...safe } = patch;
     void _o;
     void _i;
+    if (safe.payments) {
+      for (const payment of safe.payments) {
+        const amountError = paymentAmountError(payment.amount);
+        if (amountError) throw new Error(amountError);
+      }
+    }
     data.moneyPlans = data.moneyPlans.map((m) =>
       m.id === id
         ? { ...m, ...safe, updatedAt: new Date().toISOString() }
@@ -2616,6 +2636,7 @@ export function shiftGprStage(
 ) {
   return mutateAppData((data) => {
     const actor = actorUser(data, actorId);
+    assertGprWrite(actor);
     const item = data.schedules.find((s) => s.id === scheduleId);
     if (!item) throw new Error("ГПР не найден");
     assertOrgAccess(actor, item.orgId, "ГПР");
@@ -3578,6 +3599,8 @@ export function addMoneyPayment(
     const plan = data.moneyPlans.find((m) => m.id === moneyId);
     if (!plan) throw new Error("Денежный план не найден");
     assertOrgAccess(actor, plan.orgId, "денежного плана");
+    const amountError = paymentAmountError(payment.amount);
+    if (amountError) throw new Error(amountError);
     const row: MoneyPayment = {
       ...payment,
       type: paymentTypeForSave(payment),

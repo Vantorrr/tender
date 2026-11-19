@@ -126,7 +126,8 @@ describe("client wave 1 server", () => {
     });
     expect(() => deleteProcurement("u-tender", created.id)).toThrow(/руководитель/);
     expect(readAppData().procurements.some((item) => item.id === created.id)).toBe(true);
-    deleteProcurement("u-ruk", created.id);
+    expect(deleteProcurement("u-ruk", created.id).deleted).toBe(true);
+    expect(deleteProcurement("u-ruk", created.id).deleted).toBe(false);
     const after = readAppData();
     expect(after.procurements.some((item) => item.id === created.id)).toBe(false);
     expect(after.documents.some((item) => item.id === "d-wave1-del")).toBe(false);
@@ -134,6 +135,69 @@ describe("client wave 1 server", () => {
     expect(after.smetaExchanges.some((item) => item.id === "sx-wave1-other")).toBe(true);
     expect(fs.existsSync(path.join(config.dataDir, stored.storedPath))).toBe(false);
     expect(fs.existsSync(path.join(config.dataDir, other.storedPath))).toBe(true);
+  });
+
+  it("returns 404 when the same procurement is deleted twice", async () => {
+    const created = createManualProcurement("u-ruk", { title: "Повторное удаление", region: "Ямал" });
+    const stored = await saveUpload("wave1-twice", "ещё.txt", Buffer.from("ещё"));
+    mutateAppData((data) => {
+      const procurement = data.procurements.find((item) => item.id === created.id)!;
+      data.documents.unshift({
+        id: "d-wave1-twice",
+        orgId: procurement.orgId,
+        procurementId: procurement.id,
+        title: "Файл",
+        fileName: "ещё.txt",
+        fileType: "other",
+        status: "zagruzheno",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: stored.storedPath,
+      });
+      return data;
+    });
+    const { POST } = await import("@/app/api/zakupki/route");
+    const call = () => POST(new Request("http://local/api/zakupki", {
+      method: "POST",
+      headers: { authorization: `Bearer ${createSession("u-ruk")}`, "content-type": "application/json" },
+      body: JSON.stringify({ action: "deleteProcurement", id: created.id }),
+    }));
+    const [first, second] = await Promise.all([call(), call()]);
+    const statuses = [first.status, second.status].sort();
+    expect(statuses).toEqual([200, 404]);
+    expect(readAppData().procurements.some((item) => item.id === created.id)).toBe(false);
+    expect(fs.existsSync(path.join(config.dataDir, stored.storedPath))).toBe(false);
+    const again = await call();
+    expect(again.status).toBe(404);
+  });
+
+  it("rejects a tender specialist without GPR access from deleting or editing a stage", async () => {
+    const before = readAppData().schedules.find((item) => item.id === "g-1")!;
+    const { PATCH } = await import("@/app/api/gpr/route");
+    const call = (body: unknown) => PATCH(new Request("http://local/api/gpr", {
+      method: "PATCH",
+      headers: { authorization: `Bearer ${createSession("u-tender")}`, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }));
+    expect((await call({ id: "g-1", action: "deleteStage", stageId: "gs-2" })).status).toBe(403);
+    expect((await call({ id: "g-1", patch: { title: "Чужая правка" } })).status).toBe(403);
+    const after = readAppData().schedules.find((item) => item.id === "g-1")!;
+    expect(after.stages.some((item) => item.id === "gs-2")).toBe(true);
+    expect(after.title).toBe(before.title);
+  });
+
+  it("rejects a payment amount of zero or an invalid number", () => {
+    const plan = readAppData().moneyPlans[0];
+    const before = plan.payments.length;
+    const row = { type: "avans" as const, title: "Пустая сумма", date: "2026-12-01", week: 49, month: 12 };
+    expect(() => addMoneyPayment("u-smet", plan.id, { ...row, amount: 0 })).toThrow(/больше нуля/);
+    expect(() => addMoneyPayment("u-smet", plan.id, { ...row, amount: Number.NaN })).toThrow(/больше нуля/);
+    expect(() => addMoneyPayment("u-smet", plan.id, { ...row, amount: -5 })).toThrow(/больше нуля/);
+    expect(readAppData().moneyPlans.find((item) => item.id === plan.id)!.payments).toHaveLength(before);
   });
 
   it("removes a GPR stage together with dependencies and resource links", () => {

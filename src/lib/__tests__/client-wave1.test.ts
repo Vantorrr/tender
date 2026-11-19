@@ -3,7 +3,7 @@ import { parseDecimalRu } from "@/lib/decimal-ru";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
 import { humanizeIssue, humanizeIssues } from "@/lib/issue-text";
-import { paymentBucket, paymentTotals } from "@/lib/money-payments";
+import { paymentAmountError, paymentBucket, paymentTotals } from "@/lib/money-payments";
 import { displayedKanbanColumn } from "@/lib/pipeline";
 import type { GprStage } from "@/lib/types";
 
@@ -55,6 +55,10 @@ describe("client wave 1 wording and money", () => {
     expect(parseDecimalRu("300,5")).toBe(300.5);
     expect(parseDecimalRu("1 000 000,25")).toBe(1_000_000.25);
     expect(parseDecimalRu("1 000")).not.toBe(0);
+    expect(paymentAmountError(parseDecimalRu("0"))).toMatch(/больше нуля/);
+    expect(paymentAmountError(parseDecimalRu(""))).toMatch(/больше нуля/);
+    expect(paymentAmountError(parseDecimalRu("абв"))).toMatch(/больше нуля/);
+    expect(paymentAmountError(parseDecimalRu("300 000"))).toBeNull();
   });
 
   it("does not throw when a manual procurement has no deadline", () => {

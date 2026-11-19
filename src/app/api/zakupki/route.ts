@@ -128,7 +128,8 @@ export async function POST(req: Request) {
       return json({ error: "Не указан id" }, 400);
     }
     if (body.action === "deleteProcurement") {
-      deleteProcurement(user.id, body.id!);
+      const result = deleteProcurement(user.id, body.id!);
+      if (!result.deleted) return json({ error: "Закупка не найдена" }, 404);
       return json(getBootstrap(user));
     }
     if (body.action === "ensureChain") {

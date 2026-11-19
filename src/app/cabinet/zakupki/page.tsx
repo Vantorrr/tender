@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 import { EmptyState } from "@/components/empty-state";
@@ -43,6 +43,7 @@ export default function ZakupkiPage() {
   const [showArchive, setShowArchive] = useState(false);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [moved, setMoved] = useState<Record<string, Partial<Procurement>>>({});
+  const moveSeq = useRef<Record<string, number>>({});
   const [pendingDelete, setPendingDelete] = useState<Procurement | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [manualFormOpen, setManualFormOpen] = useState(false);
@@ -110,7 +111,18 @@ export default function ZakupkiPage() {
       : column === "realized" || column === "closed_not_realized"
         ? { lifecycle: "closed", lifecycleOutcome: column === "realized" ? "successful" : "not_realized", closedAt: new Date().toISOString() }
         : { reviewStatus: kanbanToReview(column), lifecycle: "procurement" };
+    const seq = (moveSeq.current[id] ?? 0) + 1;
+    moveSeq.current[id] = seq;
     setMoved((current) => ({ ...current, [id]: { ...current[id], ...next } }));
+    const dropOverlay = () => {
+      if (moveSeq.current[id] !== seq) return;
+      setMoved((current) => {
+        if (!(id in current)) return current;
+        const copy = { ...current };
+        delete copy[id];
+        return copy;
+      });
+    };
     try {
       if (column === "in_production") {
         await api("/api/zakupki", {
@@ -134,12 +146,10 @@ export default function ZakupkiPage() {
           });
         }
       }
+      await refresh();
+      dropOverlay();
     } catch (e) {
-      setMoved((current) => {
-        const copy = { ...current };
-        delete copy[id];
-        return copy;
-      });
+      dropOverlay();
       toast.error(plainUserMessage(e instanceof Error ? e.message : "", "Не удалось обновить статус"));
     }
   }

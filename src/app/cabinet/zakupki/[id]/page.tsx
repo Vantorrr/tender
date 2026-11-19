@@ -28,7 +28,7 @@ import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_CHECKLIST } from "@/lib/ai-t
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
 import { procurementBoardLabel } from "@/lib/pipeline";
 import { parseDecimalRu } from "@/lib/decimal-ru";
-import { PAYMENT_BUCKET_LABELS, paymentBucket, paymentTotals, type PaymentBucket } from "@/lib/money-payments";
+import { PAYMENT_AMOUNT_ERROR, PAYMENT_BUCKET_LABELS, paymentBucket, paymentTotals, type PaymentBucket } from "@/lib/money-payments";
 import { userHasSection } from "@/lib/acl";
 import { REVIEW_LABELS, STATUS_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
 import type { Citation, DocumentCategory, ReviewStatus, SupplyRequest, SupplyStatus, SupplierDirectoryEntry, OrganizationCompanyCard } from "@/lib/types";
@@ -1590,8 +1590,8 @@ export default function ZakupkaDetailPage() {
                         defaultValue={String(pay.amount)}
                         onBlur={async (e) => {
                           const amount = parseDecimalRu(e.target.value);
-                          if (amount == null) {
-                            toast.error("Введите сумму, например 300 000 или 300,5");
+                          if (amount == null || amount <= 0) {
+                            toast.error(PAYMENT_AMOUNT_ERROR);
                             e.target.value = String(pay.amount);
                             return;
                           }
@@ -1674,8 +1674,8 @@ export default function ZakupkaDetailPage() {
                     onClick={async () => {
                       if (paySavingRef.current) return;
                       const amount = parseDecimalRu(payAmount);
-                      if (amount == null) {
-                        toast.error("Введите сумму, например 300 000 или 300,5");
+                      if (amount == null || amount <= 0) {
+                        toast.error(PAYMENT_AMOUNT_ERROR);
                         return;
                       }
                       paySavingRef.current = true;

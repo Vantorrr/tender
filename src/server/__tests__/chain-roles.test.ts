@@ -68,7 +68,8 @@ describe("chain edit + recalculate", () => {
     expect(after.scenarioFactor).toBe(1.08);
     expect(after.updatedAt >= before.updatedAt).toBe(true);
 
-    updateSchedule(tender.id, linked.gprId!, {
+    const estimator = byEmail("smeta@alfastroy.ru");
+    updateSchedule(estimator.id, linked.gprId!, {
       title: "ГПР isolated edit",
     });
     expect(

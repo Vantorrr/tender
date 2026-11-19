@@ -32,6 +32,14 @@ export function paymentTypeForSave(payment: { type?: string; title?: string }): 
   return paymentBucket(payment);
 }
 
+export const PAYMENT_AMOUNT_ERROR = "Укажите сумму больше нуля, например 300 000 или 300,5";
+
+/** A typed amount must be a real number above zero. Empty, zero and typos are rejected. */
+export function paymentAmountError(amount: number | null | undefined): string | null {
+  if (amount == null || !Number.isFinite(amount) || amount <= 0) return PAYMENT_AMOUNT_ERROR;
+  return null;
+}
+
 export function paymentTotals(payments: Array<{ type?: string; title?: string; amount: number }>) {
   const totals = { total: 0, avans: 0, postuplenie: 0, spisanie: 0, klyuchevoy: 0 };
   for (const payment of payments) {

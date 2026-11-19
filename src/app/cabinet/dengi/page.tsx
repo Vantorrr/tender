@@ -25,7 +25,7 @@ import {
 import { downloadUrl } from "@/lib/api";
 import { parseDecimalRu } from "@/lib/decimal-ru";
 import { formatMoney } from "@/lib/format";
-import { PAYMENT_BUCKET_LABELS, paymentBucket, paymentTotals } from "@/lib/money-payments";
+import { PAYMENT_AMOUNT_ERROR, PAYMENT_BUCKET_LABELS, paymentBucket, paymentTotals } from "@/lib/money-payments";
 import { PERIOD_LABELS } from "@/lib/roles";
 import { useStore } from "@/lib/store";
 import { DateInputRu } from "@/components/date-input-ru";
@@ -214,8 +214,8 @@ export default function DengiPage() {
                           defaultValue={String(p.amount)}
                           onBlur={(e) => {
                             const amount = parseDecimalRu(e.target.value);
-                            if (amount == null) {
-                              toast.error("Введите сумму, например 300 000 или 300,5");
+                            if (amount == null || amount <= 0) {
+                              toast.error(PAYMENT_AMOUNT_ERROR);
                               e.target.value = String(p.amount);
                               return;
                             }
