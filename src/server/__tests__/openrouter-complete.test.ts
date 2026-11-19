@@ -7,7 +7,7 @@ vi.mock("@/server/config", () => ({
   },
 }));
 
-import { completeJson, completeJsonDetailed } from "@/server/openrouter";
+import { completeJson, completeJsonDetailed, sourceUrlsFromMessage } from "@/server/openrouter";
 
 function completion(body: unknown, finishReason = "stop", usage: Record<string, number> | null = null) {
   return new Response(JSON.stringify({
@@ -68,6 +68,12 @@ describe("completeJson", () => {
     vi.stubGlobal("fetch", fetchMock);
     const result = await completeJsonDetailed("system", "user", 0, { webSearch: true, maxTokens: 4000 });
     expect(result.sourceUrls).toEqual(["https://vendor.example/materials"]);
+    expect(sourceUrlsFromMessage({
+      annotations: [{ url_citation: { url: "https://vertexaisearch.cloud.google.com/grounding-api-redirect/abc", title: "Каталог на vendor.example и other.example" } }],
+    })).toEqual(["https://vertexaisearch.cloud.google.com/grounding-api-redirect/abc"]);
+    expect(sourceUrlsFromMessage({
+      annotations: [{ url_citation: { url: "https://vertexaisearch.cloud.google.com/grounding-api-redirect/abc", title: "vendor.example" } }],
+    })).toContain("https://vendor.example/");
     expect(JSON.parse(String(fetchMock.mock.calls[0][1].body)).max_tokens).toBe(4000);
   });
 

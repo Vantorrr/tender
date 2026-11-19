@@ -69,9 +69,9 @@ describe("estimator prompts", () => {
     }).location).toBe("договор.pdf, стр. 2");
     expect(formatSourceLocation({ sourceFile: "смета.xlsx", sheet: "ЛС", cell: "A12" })).toBe("смета.xlsx, лист ЛС, A12");
     expect(formatSourceLocation({ sourceFile: "смета.xlsx", sheet: "ЛС", page: 1 })).toBe("смета.xlsx, лист ЛС");
-    expect(omitUnsourcedPlaces("Коэффициент стеснённости, стр. 1, ячейка A1.", [
+    expect(omitUnsourcedPlaces("Коэффициент стеснённости, стр. 1, ячейка A1. Чертёж L2, ISO9001.", [
       { id: "c-k", text: "Приказ о коэффициенте стеснённости", page: 1, sourceFile: "смета.xlsx", sheet: "ЛС" },
-    ])).toBe("Коэффициент стеснённости.");
+    ])).toBe("Коэффициент стеснённости. Чертёж L2, ISO9001.");
     const sheetPayload = buildModelNoteUserContent(
       { kind: "local-estimate" },
       [],

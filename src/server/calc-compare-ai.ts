@@ -142,7 +142,8 @@ export function ensureCompareSummary(summary: string, deltaTotal: number | null,
       : deltaTotal > 0
         ? `Черновик дороже сметы заказчика на ${formatted} руб., потому что расхождения разобраны ниже.`
         : "Черновик совпадает со сметой заказчика по итогу.";
-    const mentions = numbersAreGrounded(compact, text) || text.includes(formatted);
+    const flat = text.replace(/[\s\u00a0\u202f\u2009]/g, "").replace(/,/g, ".");
+    const mentions = flat.includes(compact) || numbersAreGrounded(compact, text) || text.includes(formatted);
     const startsWithPhrase = /^[A-Za-zА-Яа-яЁё«"]/u.test(text);
     if (!startsWithPhrase) {
       const rest = text.replace(/^[\s\-−–\d\s.,]+/u, "").trim();

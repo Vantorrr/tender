@@ -44,10 +44,7 @@ export function sourceUrlsFromMessage(message: { annotations?: unknown } | undef
       if (typeof cited.title === "string") {
         const title = cited.title.trim();
         if (/^https?:\/\//i.test(title)) urls.push(title);
-        else {
-          const host = title.match(/(?:[a-z0-9-]+\.)+[a-z]{2,}/i)?.[0];
-          if (host && !/google|vertex/i.test(host)) urls.push(`https://${host}/`);
-        }
+        else if (/^(?:[a-z0-9-]+\.)+[a-z]{2,}$/i.test(title) && !/google|vertex/i.test(title)) urls.push(`https://${title}/`);
       }
     }
     if (typeof record.url === "string") urls.push(record.url);

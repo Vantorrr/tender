@@ -80,7 +80,9 @@ describe("grouped comparison", () => {
     expect(groups.find((group) => group.rowIds.includes("row-27"))?.rowIds).toEqual(["row-27", "row-28"]);
     expect(ensureCompareSummary("Проверьте ставки.", -172204022.31)).toMatch(/^Черновик дешевле сметы заказчика на 172/);
     expect(ensureCompareSummary("172 204 022,31", -172204022.31)).toMatch(/^Черновик дешевле/);
-    expect(ensureCompareSummary("Черновик дешевле сметы заказчика на 172 204 022,31 руб.", -172204022.31, ["Монтаж металлоконструкций"])).toContain("Только в черновике: Монтаж металлоконструкций");
+    const alreadyNamed = "Черновик дешевле сметы заказчика на 172 204 022,31 руб., потому что ставки ниже.";
+    expect(ensureCompareSummary(alreadyNamed, -172204022.31).match(/Черновик дешевле/gu)).toHaveLength(1);
+    expect(ensureCompareSummary(alreadyNamed, -172204022.31, ["Монтаж металлоконструкций"])).toContain("Только в черновике: Монтаж металлоконструкций");
     const sized = groupCompareRows([
       { rowId: "a", name: "Труба стальная 108", unit: "м", section: "Раздел 1", status: "diff", factsText: "Позиция: Труба стальная 108", originalSum: 10, draftSum: 8, deltaSum: -2 },
       { rowId: "b", name: "Труба стальная 159", unit: "м", section: "Раздел 1", status: "diff", factsText: "Позиция: Труба стальная 159", originalSum: 12, draftSum: 9, deltaSum: -3 },
