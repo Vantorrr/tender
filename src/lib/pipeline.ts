@@ -118,6 +118,20 @@ export function procurementBoardLabel(input: {
   return KANBAN_COLUMNS.find((column) => column.reviewStatuses.includes(input.reviewStatus))?.label ?? "Новое";
 }
 
+export function displayedKanbanColumn(input: {
+  reviewStatus: ReviewStatus;
+  lifecycle?: string;
+  lifecycleOutcome?: string;
+}): KanbanColumnId {
+  if (input.lifecycle === "production") return "in_production";
+  if (input.lifecycle === "closed") {
+    return input.lifecycleOutcome === "successful" ? "realized" : "closed_not_realized";
+  }
+  const review = reviewToKanban(input.reviewStatus);
+  if (review === "ne_uchastvuem" || review === "dublikat") return "closed_not_realized";
+  return review;
+}
+
 export function reviewToKanban(status: ReviewStatus): KanbanColumnId {
   const hit = KANBAN_COLUMNS.find((c) => c.reviewStatuses.includes(status));
   return hit?.id ?? "novaya";

@@ -2,6 +2,7 @@ import { roundMoney } from "@/lib/calc-math";
 import type { GprStageResource } from "@/lib/types";
 
 type MergeableLeaf = {
+  id: string;
   kind: string;
   name: string;
   unit: string;
@@ -10,6 +11,7 @@ type MergeableLeaf = {
   amount?: number | null;
   rate?: number | null;
   incomplete: string[];
+  memberIds?: string[];
 };
 
 function norm(value: string) {
@@ -73,6 +75,7 @@ export function mergeEstimateLeaves<T extends MergeableLeaf>(leaves: T[]): T[] {
       amount,
       rate: rates.length === 1 ? rates[0] : list[0].rate,
       incomplete,
+      memberIds: list.flatMap((leaf) => leaf.memberIds?.length ? leaf.memberIds : [leaf.id]),
     });
   }
   return merged;

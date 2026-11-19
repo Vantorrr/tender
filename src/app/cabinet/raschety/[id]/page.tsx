@@ -340,7 +340,6 @@ export default function RaschetDetailPage() {
     user,
     updateCalculation,
     updateSchedule,
-    patchScheduleResource,
     recalcCalculation,
     addCalcFromDirectory,
     refresh,
@@ -521,24 +520,32 @@ export default function RaschetDetailPage() {
     }
   ) {
     try {
-      if (leaf.source === "stage_resource" && linkedSchedule && (patch.remove || patch.moveToStageId)) {
-        const resource = patch.resource ?? linkedSchedule.stages.flatMap((stage) => stage.resources ?? []).find((item) => item.id === leaf.id);
+      if (leaf.source === "stage_resource" && linkedSchedule) {
+        const memberIds = new Set(leaf.memberIds?.length ? leaf.memberIds : [leaf.id]);
+        const members = linkedSchedule.stages.flatMap((stage) => (stage.resources ?? []).filter((item) => memberIds.has(item.id)));
+        const primary = members.find((item) => item.id === leaf.id) ?? members[0];
+        if (!primary) return;
+        const collapsed = patch.remove ? null : {
+          ...primary,
+          ...(patch.resource ?? {}),
+          id: primary.id,
+          name: patch.name ?? primary.name,
+          unit: patch.unit ?? primary.unit,
+          kind: patch.kind ?? primary.kind,
+          quantity: patch.quantity ?? (members.length > 1 ? leaf.quantity : primary.quantity),
+          rate: patch.rate === undefined ? primary.rate : patch.rate,
+          hoursPerShift: patch.hoursPerShift === undefined ? primary.hoursPerShift : patch.hoursPerShift,
+          shiftsPerDay: patch.shiftsPerDay === undefined ? primary.shiftsPerDay : patch.shiftsPerDay,
+          days: patch.days === undefined ? primary.days : patch.days,
+          quantityBasis: patch.quantityBasis === undefined ? primary.quantityBasis : patch.quantityBasis ?? undefined,
+        };
+        const targetStageId = patch.moveToStageId ?? leaf.stageId;
         await updateSchedule(linkedSchedule.id, {
           stages: linkedSchedule.stages.map((stage) => {
-            const without = (stage.resources ?? []).filter((item) => item.id !== leaf.id);
-            if (patch.moveToStageId && stage.id === patch.moveToStageId && resource) {
-              return { ...stage, resources: [...without, resource] };
-            }
+            const without = (stage.resources ?? []).filter((item) => !memberIds.has(item.id));
+            if (collapsed && stage.id === targetStageId) return { ...stage, resources: [...without, collapsed] };
             return { ...stage, resources: without };
           }),
-        });
-        return;
-      }
-      if (leaf.source === "stage_resource" && linkedSchedule) {
-        await patchScheduleResource(linkedSchedule.id, {
-          resourceId: leaf.id,
-          stageId: leaf.stageId,
-          ...patch,
         });
         return;
       }

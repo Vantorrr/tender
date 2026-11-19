@@ -40,6 +40,8 @@ export type EstimateLeaf = {
   workName?: string;
   workKey?: string;
   incomplete: string[];
+  /** Stored resource ids collapsed into this visible row. */
+  memberIds?: string[];
   basis?: ResourceQuantityBasis;
   /** Q hours when applicable (count_per_shift / total_hours). */
   hoursQ?: number | null;

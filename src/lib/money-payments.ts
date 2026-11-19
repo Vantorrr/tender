@@ -36,8 +36,9 @@ export function paymentTotals(payments: Array<{ type?: string; title?: string; a
   const totals = { total: 0, avans: 0, postuplenie: 0, spisanie: 0, klyuchevoy: 0 };
   for (const payment of payments) {
     const amount = Number(payment.amount) || 0;
-    totals.total += amount;
-    totals[paymentBucket(payment)] += amount;
+    const bucket = paymentBucket(payment);
+    totals[bucket] += amount;
+    totals.total += bucket === "spisanie" ? -amount : amount;
   }
   return totals;
 }

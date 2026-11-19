@@ -24,7 +24,7 @@ import {
   KANBAN_COLUMNS,
   REGION_PRESETS,
   WORK_TYPES,
-  reviewToKanban,
+  displayedKanbanColumn,
   type KanbanColumnId,
 } from "@/lib/pipeline";
 import { kanbanToReview } from "@/lib/pipeline";
@@ -89,26 +89,13 @@ export default function ZakupkiPage() {
       closed_not_realized: [],
     };
     for (const p of filtered) {
-      const column = p.lifecycle === "production"
-        ? "in_production"
-        : p.lifecycle === "closed"
-          ? p.lifecycleOutcome === "successful" ? "realized" : "closed_not_realized"
-          : reviewToKanban(p.reviewStatus);
-      if (column === "ne_uchastvuem" || column === "dublikat") {
-        map.closed_not_realized.push(p);
-      } else {
-        map[column].push(p);
-      }
+      map[displayedKanbanColumn(p)].push(p);
     }
     return map;
   }, [filtered]);
 
   function columnOf(card: Procurement): KanbanColumnId {
-    if (card.lifecycle === "production") return "in_production";
-    if (card.lifecycle === "closed") {
-      return card.lifecycleOutcome === "successful" ? "realized" : "closed_not_realized";
-    }
-    return reviewToKanban(card.reviewStatus);
+    return displayedKanbanColumn(card);
   }
 
   async function moveCard(id: string, column: KanbanColumnId) {

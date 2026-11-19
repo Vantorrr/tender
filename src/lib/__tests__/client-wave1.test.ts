@@ -4,6 +4,7 @@ import { formatDate, formatDateTime } from "@/lib/format";
 import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
 import { humanizeIssue, humanizeIssues } from "@/lib/issue-text";
 import { paymentBucket, paymentTotals } from "@/lib/money-payments";
+import { displayedKanbanColumn } from "@/lib/pipeline";
 import type { GprStage } from "@/lib/types";
 
 describe("client wave 1 wording and money", () => {
@@ -34,7 +35,18 @@ describe("client wave 1 wording and money", () => {
       postuplenie: 300_000,
       klyuchevoy: 4_000_000,
       spisanie: 50_000,
+      total: 4_350_000,
     });
+    expect(paymentTotals([
+      { type: "postuplenie", title: "2 этап", amount: 4_300_000 },
+      { type: "spisanie", title: "Списание", amount: 50_000 },
+    ]).total).toBe(4_250_000);
+  });
+
+  it("shows a rejected card in the archive column it already occupies", () => {
+    expect(displayedKanbanColumn({ reviewStatus: "otklonena" })).toBe("closed_not_realized");
+    expect(displayedKanbanColumn({ reviewStatus: "dublirovana" })).toBe("closed_not_realized");
+    expect(displayedKanbanColumn({ reviewStatus: "novaya" })).toBe("novaya");
   });
 
   it("reads Russian money the way it is typed", () => {
@@ -70,6 +82,7 @@ describe("client wave 1 wording and money", () => {
     const materials = node.groups.find((group) => group.kind === "material")!.leaves;
     const water = materials.find((leaf) => leaf.name.includes("Вода"))!;
     const bit = materials.find((leaf) => leaf.name.includes("Долото"))!;
+    expect(water.memberIds).toEqual(["w1", "w2"]);
     expect(water.name.startsWith("Возврат:")).toBe(true);
     expect(water.quantity).toBeCloseTo(2728.28, 2);
     expect(water.quantity).toBeGreaterThan(0);
