@@ -10,7 +10,7 @@ import {
   formatSourceLocation,
 } from "@/server/ai-prompts";
 import { scoreModelResponse } from "@/server/ai-prompt-score";
-import { buildModelNoteUserContent, noteRejectionReason, omitUnsourcedPlaces, requireSourceCells } from "@/server/model-note";
+import { buildModelNoteUserContent, keepCellsThatSupportFact, noteRejectionReason, omitUnsourcedPlaces } from "@/server/model-note";
 import { citationForModel, parseProjectAnalysisResult, sanitizeCustomerQuestions, validateProjectEvidence } from "@/server/project-analysis-ai";
 import { validateCalcCompareAiResult, pricingTextForCompare } from "@/server/calc-compare-ai";
 import { validateProductionVarianceResult } from "@/server/production-variance-ai";
@@ -46,8 +46,8 @@ describe("estimator prompts", () => {
     expect(CALC_COMPARE_SYSTEM).toContain("pricingText");
     expect(PRODUCTION_VARIANCE_SYSTEM).toContain('"sourceQuote"');
     expect(SUPPLIER_DISCOVERY_SYSTEM).toContain("Перевозчика");
-    expect(PROJECT_ANALYSIS_SYSTEM).toContain("НР Свайные работы");
-    expect(MODEL_NOTE_SYSTEM).toContain("cells");
+    expect(PROJECT_ANALYSIS_SYSTEM).toContain("authoritativeSections");
+    expect(MODEL_NOTE_SYSTEM).toContain("трёх ячеек");
   });
 
   it("puts the file name and page into the model-note payload", () => {
@@ -90,17 +90,25 @@ describe("estimator prompts", () => {
       sheet: "ЛС",
       cell,
     }));
-    const cellPayload = buildModelNoteUserContent(
+    const cellPayload = JSON.parse(buildModelNoteUserContent(
       { kind: "local-estimate" },
       [{ id: "h-cost", text: "Факт A20", reason: "шапка", severity: "info", page: 1 }],
       sourcedCells
-    );
-    for (const cell of ["A20", "A13", "C28", "G10", "B43"]) expect(cellPayload).toContain(cell);
-    expect(cellPayload).toContain('"cells"');
-    const named = omitUnsourcedPlaces("Стоимость на листе ЛС, A20. Объём в ячейке A13. Диаметр C28, итог G10, коэффициент B43.", sourcedCells);
-    for (const cell of ["A20", "A13", "C28", "G10", "B43"]) expect(named).toContain(cell);
-    const restored = requireSourceCells(omitUnsourcedPlaces("Стоимость на листе ЛС.", sourcedCells), sourcedCells);
-    for (const cell of ["A20", "A13", "C28", "G10", "B43"]) expect(restored).toContain(cell);
+    )) as { sources: Array<{ cell?: string }>; highlights: Array<{ location: string }> };
+    expect(cellPayload.sources.map((source) => source.cell)).toEqual(["A20", "A13", "C28", "G10", "B43"]);
+    expect(cellPayload.highlights[0]?.location).toContain("A20");
+    expect(cellPayload.highlights[0]?.location).not.toContain("A13");
+    const named = omitUnsourcedPlaces("Стоимость на листе ЛС, A20. Объём в ячейке A13.", sourcedCells);
+    expect(named).toContain("A20");
+    expect(named).toContain("A13");
+    const indexed = sourcedCells.map((citation) => ({
+      ...citation,
+      text: citation.cell === "A20" ? "Индексы к расценкам" : citation.cell === "A13" ? "Акт об оплате труда" : "Отрицательная позиция",
+    }));
+    const bound = keepCellsThatSupportFact("Индексы в ячейках A20, A13, C28, G10, B43.", indexed);
+    expect(bound).toContain("A20");
+    expect(bound).not.toContain("A13");
+    expect(bound).not.toContain("B43");
     const sheetPayload = buildModelNoteUserContent(
       { kind: "local-estimate" },
       [],
@@ -176,6 +184,21 @@ describe("grounded numbers", () => {
     }]);
     expect(result.observations).toHaveLength(1);
     expect(result.summary).toContain("ветра");
+    const located = validateProductionVarianceResult(JSON.stringify({
+      summary: "В комментарии указан простой из-за ветра. Местоположение данных в файле не указано в документах.",
+      observations: [{
+        sourceId: "fact-1",
+        kind: "documented_reason",
+        text: "Простой длился 4 часа из-за ветра. Местоположение данных в файле не указано в документах",
+        sourceQuote: "простой 4 часа, сильный ветер",
+      }],
+    }), [{
+      id: "fact-1",
+      kind: "daily_comment",
+      text: "Дата: 2026-11-09; комментарий: простой 4 часа, сильный ветер",
+    }]);
+    expect(located.summary).not.toMatch(/местоположение данных в файле/iu);
+    expect(located.observations[0]?.text).not.toMatch(/местоположение данных в файле/iu);
   });
 });
 

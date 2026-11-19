@@ -8,7 +8,7 @@ function round(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
 
-function isOverheadNorm(position: { code?: string; name?: string }): boolean {
+export function isOverheadPosition(position: { code?: string; name?: string }): boolean {
   const code = position.code?.trim() ?? "";
   const name = position.name?.trim() ?? "";
   return /^(?:нр|сп)(?:$|[\s.-])/iu.test(code) || /^(?:нр|сп)(?:$|\s)/iu.test(name);
@@ -27,8 +27,8 @@ export function rollupWorkSections(positions: Array<{
   quantity?: number;
   isWorkItem?: boolean;
 }>): WorkSectionRollup {
-  const works = positions.filter((position) => position.isWorkItem && !isOverheadNorm(position));
-  const rows = (works.length ? works : positions.filter((position) => !isOverheadNorm(position))).filter((position) =>
+  const works = positions.filter((position) => position.isWorkItem && !isOverheadPosition(position));
+  const rows = (works.length ? works : positions.filter((position) => !isOverheadPosition(position))).filter((position) =>
     typeof position.quantity === "number" && Number.isFinite(position.quantity) && position.quantity !== 0
     && !isOverheadHeading(position.sectionName?.trim() || "")
   );
@@ -70,4 +70,38 @@ export function rollupWorkSections(positions: Array<{
     totalsByUnit: [...totals.entries()].map(([unit, value]) => ({ unit, quantity: value.quantity, rows: value.rows })),
     titledCounts: [...titled.entries()].map(([unit, quantity]) => ({ unit, quantity })),
   };
+}
+
+const VOLUME_SKIP = new Set(["раздел", "работ", "работы", "работа", "итого", "всего", "смета", "позиц"]);
+
+function volumeStems(name: string): string[] {
+  return (name.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").match(/[а-я]{4,}/gu) ?? [])
+    .map((word) => word.slice(0, 5))
+    .filter((stem) => stem.length >= 4 && !VOLUME_SKIP.has(stem));
+}
+
+/** A quantity keeps the work named in the section heading. A norm line cannot rename it. */
+export function alignVolumeToSections(text: string, rollup: WorkSectionRollup): string {
+  const claims = [
+    ...rollup.sections.map((section) => ({ quantity: section.quantity, unit: section.unit, name: section.section })),
+    ...rollup.sections.flatMap((section) => {
+      const match = section.section.match(/(\d[\d\s]*)\s*шт(?![а-яё])/iu);
+      if (!match) return [];
+      const quantity = Number(match[1]!.replace(/\s/g, ""));
+      return Number.isFinite(quantity) ? [{ quantity, unit: "шт", name: section.section }] : [];
+    }),
+  ];
+  let next = text;
+  for (const claim of claims) {
+    const stems = volumeStems(claim.name);
+    if (!stems.length) continue;
+    const qty = String(Math.trunc(claim.quantity));
+    const pattern = new RegExp(`(?:[А-Яа-яЁёA-Za-z-]{3,}\\s+){0,6}${qty}(?:[.,]\\d+)?\\s*(?:шт|м2|м3|м|т|кг)\\.?\\s*(?:[А-Яа-яЁёA-Za-z-]{3,}\\s*){0,4}`, "giu");
+    next = next.replace(pattern, (phrase, offset: number) => {
+      const window = next.slice(Math.max(0, offset - 48), offset + phrase.length + 48).toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+      if (stems.some((stem) => window.includes(stem))) return phrase;
+      return `${claim.name}: ${claim.quantity} ${claim.unit}`;
+    });
+  }
+  return next;
 }

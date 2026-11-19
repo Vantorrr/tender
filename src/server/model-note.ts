@@ -37,8 +37,6 @@ export function buildModelNoteUserContent(
   citations: Citation[] = []
 ): string {
   const spreadsheet = citations.some((citation) => citation.sheet);
-  const sheet = citations.find((citation) => citation.sheet)?.sheet;
-  const cells = [...new Set(citations.map((citation) => citation.cell).filter((cell): cell is string => Boolean(cell)))];
   const sources = citations.slice(0, 40).map((citation) => ({
     file: citation.sourceFile,
     ...(citation.sheet ? { sheet: citation.sheet } : { page: citation.page }),
@@ -53,21 +51,33 @@ export function buildModelNoteUserContent(
     }),
     text: citation.text.slice(0, 700),
   }));
-  const visibleHighlights = highlights.slice(0, 10).map((highlight) => spreadsheet
-    ? {
-      text: highlight.text,
-      reason: highlight.reason,
-      severity: highlight.severity,
-      location: [citations[0]?.sourceFile, sheet ? `лист ${sheet}` : null, cells.length ? cells.join(", ") : null].filter(Boolean).join(", "),
-    }
-    : {
-      text: highlight.text,
-      reason: highlight.reason,
-      severity: highlight.severity,
-      page: highlight.page,
-      location: formatSourceLocation({ sourceFile: citations[0]?.sourceFile, page: highlight.page }),
+  const visibleHighlights = highlights.slice(0, 10).map((highlight) => {
+    const probe = highlight.text.trim().toLocaleLowerCase("ru-RU").slice(0, 48);
+    const matched = citations.find((citation) => {
+      const text = citation.text.toLocaleLowerCase("ru-RU");
+      return probe.length >= 4 && (text.includes(probe) || probe.includes(text.slice(0, 48)));
     });
-  return JSON.stringify({ facts, highlights: visibleHighlights, sources, cells });
+    const source = matched ?? citations.find((citation) => citation.sheet) ?? citations[0];
+    return spreadsheet
+      ? {
+        text: highlight.text,
+        reason: highlight.reason,
+        severity: highlight.severity,
+        location: formatSourceLocation({
+          sourceFile: source?.sourceFile,
+          sheet: source?.sheet,
+          cell: source?.cell,
+        }),
+      }
+      : {
+        text: highlight.text,
+        reason: highlight.reason,
+        severity: highlight.severity,
+        page: highlight.page,
+        location: formatSourceLocation({ sourceFile: source?.sourceFile, page: highlight.page }),
+      };
+  });
+  return JSON.stringify({ facts, highlights: visibleHighlights, sources });
 }
 
 const CELL_TOKEN = "[A-Z]{1,3}\\d{1,5}(?::[A-Z]{1,3}\\d{1,5})?";
@@ -95,14 +105,41 @@ export function omitUnsourcedPlaces(note: string, citations: Citation[]): string
     .trim();
 }
 
-/** A cell from the excerpts is part of the note. Missing ones are added, known ones stay. */
-export function requireSourceCells(note: string, citations: Citation[]): string {
-  const cells = [...new Set(citations.map((citation) => citation.cell).filter((cell): cell is string => Boolean(cell)))];
-  const missing = cells.filter((cell) => !new RegExp(`(?<![A-Z])${cell.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!\\d)`, "i").test(note));
-  if (!missing.length) return note.trim();
-  const sheet = citations.find((citation) => citation.sheet)?.sheet;
-  const place = sheet ? `лист ${sheet}, ${missing.join(", ")}` : missing.join(", ");
-  return `${note.trim()}\n• Место в файле: ${place}.`;
+/** Keep a cell on a fact only when that cell's excerpt shares the fact's word or number. At most three cells per fact. */
+export function keepCellsThatSupportFact(note: string, citations: Citation[]): string {
+  const byCell = new Map<string, string>();
+  for (const citation of citations) {
+    if (!citation.cell) continue;
+    const key = citation.cell.toUpperCase();
+    byCell.set(key, `${byCell.get(key) ?? ""} ${citation.text}`);
+  }
+  const words = (value: string) => value.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").match(/[а-яa-z]{4,}/gu) ?? [];
+  const numbers = (value: string) => value.match(/\d+(?:[.,]\d+)?/g) ?? [];
+  return note.split(/(?<=\n)/).map((line) => {
+    const found = [...line.matchAll(new RegExp(CELL_TOKEN, "gi"))].map((match) => match[0].toUpperCase());
+    const unique = [...new Set(found)];
+    if (!unique.length) return line;
+    const factWords = new Set(words(line.replace(new RegExp(CELL_TOKEN, "gi"), " ")));
+    const factNumbers = new Set(numbers(line.replace(new RegExp(CELL_TOKEN, "gi"), " ")));
+    const supported = unique.filter((cell) => {
+      const source = byCell.get(cell) ?? "";
+      const sourceWords = new Set(words(source));
+      const sourceNumbers = new Set(numbers(source));
+      return [...factWords].some((word) => sourceWords.has(word)) || [...factNumbers].some((value) => sourceNumbers.has(value));
+    }).slice(0, 3);
+    let next = line;
+    for (const cell of unique) {
+      if (supported.includes(cell)) continue;
+      next = next.replace(new RegExp(`ячейк[аеиу]\\s+${cell}(?::${cell})?\\b`, "gi"), "");
+      next = next.replace(new RegExp(`(?<![A-Z])${cell}\\b`, "gi"), "");
+    }
+    return next;
+  }).join("")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+([,.;])/g, "$1")
+    .replace(/,\s*(?=[,.]|$)/g, "")
+    .replace(/ячейк[аеиу]\s*(?=[,.]|$)/gi, "")
+    .trim();
 }
 
 function digits(value: string) {
@@ -162,7 +199,7 @@ async function writeNote(
     return { failure: reason };
   }
   let note = readNote(raw);
-  if (note) note = requireSourceCells(omitUnsourcedPlaces(note, citations), citations);
+  if (note) note = keepCellsThatSupportFact(omitUnsourcedPlaces(note, citations), citations);
   if (!note) {
     console.error("model note skipped: пустой ответ модели");
     return { failure: "пустой ответ модели" };

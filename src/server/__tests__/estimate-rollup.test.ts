@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { rollupWorkSections } from "@/server/estimate-rollup";
+import { alignVolumeToSections, rollupWorkSections } from "@/server/estimate-rollup";
 import { parseGrandBuffer } from "@/server/grand-smeta";
 
 describe("estimate section rollup", () => {
@@ -20,5 +20,15 @@ describe("estimate section rollup", () => {
       { sectionName: "НР Свайные работы", name: "НР Свайные работы", code: "НР", unit: "шт", quantity: 3044, isWorkItem: true },
     ]);
     expect(rollup.sections.map((section) => section.section)).toEqual(["Раздел 1. Бурение скважин"]);
+  });
+
+  it("keeps a counted well as a well when a norm line says piles", () => {
+    const rollup = rollupWorkSections([
+      { sectionName: "Раздел 2. Бурение скважин 3044 шт", name: "Бурение скважин", code: "ФЕР01", unit: "м", quantity: 18544, isWorkItem: true },
+      { sectionName: "НР Свайные работы", name: "НР Свайные работы", code: "НР", unit: "шт", quantity: 3044, isWorkItem: true },
+    ]);
+    expect(alignVolumeToSections("и установку 3044 шт. свай", rollup)).toContain("скважин");
+    expect(alignVolumeToSections("и установку 3044 шт. свай", rollup)).not.toContain("свай");
+    expect(alignVolumeToSections("4 раздела бурения на 18544 м", rollup)).toContain("бурения");
   });
 });

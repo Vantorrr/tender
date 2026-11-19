@@ -3,12 +3,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const complete = vi.hoisted(() => vi.fn());
 vi.mock("@/server/openrouter", () => ({ completeJsonDetailed: complete }));
 
-import { applyLiveSupplierLinks, discoverMaterialSuppliers, filterSupplierCandidates, isRedirectUrl, resolveSearchSources } from "@/server/supplier-discovery";
+import { applyLiveSupplierLinks, discoverMaterialSuppliers, filterSupplierCandidates, groundSupplierRegions, isRedirectUrl, resolveSearchSources } from "@/server/supplier-discovery";
 
 describe("open-source supplier discovery", () => {
   beforeEach(() => {
     complete.mockReset();
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("<p>Доставка в Норильск за 5 дней</p>", { status: 200 })));
   });
 
   it("uses web search and only returns evidenced candidates with safe links", async () => {
@@ -90,6 +90,27 @@ describe("open-source supplier discovery", () => {
       { name: "НордСталь", website: "https://vendor.example", email: "steel@vendor.example", materials: ["Труба"], regionEvidence: "Дудинка", evidence: "Поставщик труб, логистика до Дудинки", sourceUrl: "https://vendor.example/materials" },
     ] });
     expect(filterSupplierCandidates(vagueRegion, resolved).map((item) => item.name)).toEqual(["Склад Севера", "СеверСнаб", "НордСталь"]);
+  });
+
+  it("quotes the region from the source page and drops a page that does not name it", async () => {
+    const candidates = filterSupplierCandidates(JSON.stringify({ candidates: [
+      { name: "Горное дело", website: "https://gorndelo.ru", materials: ["Труба"], regionEvidence: "Норильск, 8-14 дней", evidence: "Продажа труб", sourceUrl: "https://gorndelo.ru/catalog" },
+      { name: "Экспотех", website: "https://po-expotech.ru", materials: ["Насос"], regionEvidence: "Дудинка", evidence: "Поставка насосов", sourceUrl: "https://po-expotech.ru/" },
+    ] }), ["https://gorndelo.ru/catalog", "https://po-expotech.ru/"]);
+    let gorndeloReads = 0;
+    const grounded = await groundSupplierRegions(candidates, async (url) => {
+      if (String(url).includes("gorndelo")) {
+        gorndeloReads += 1;
+        if (gorndeloReads === 1) return new Response("temporary", { status: 503 });
+        return new Response("<p>Норильск – 5 дней</p>", { status: 200 });
+      }
+      return new Response("<p>Каталог оборудования</p>", { status: 200 });
+    });
+    expect(grounded.map((item) => item.name)).toEqual(["Горное дело"]);
+    expect(grounded[0]?.regionEvidence).toContain("5 дней");
+    expect(grounded[0]?.regionEvidence).not.toContain("8-14");
+    const down = await groundSupplierRegions(candidates.slice(0, 1), async () => new Response("down", { status: 502 }));
+    expect(down).toEqual([]);
   });
 
   it("requires both a material and a delivery region", async () => {

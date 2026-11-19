@@ -3,7 +3,7 @@ import { regionFromCitations, submissionDeadlineFromCitations } from "@/lib/cita
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_LABELS } from "@/lib/ai-topics";
 import { NOT_IN_DOCUMENTS, numbersAreGrounded } from "@/server/ai-grounding";
-import { rollupWorkSections } from "@/server/estimate-rollup";
+import { rollupWorkSections, alignVolumeToSections, isOverheadPosition } from "@/server/estimate-rollup";
 import {
   PROJECT_ANALYSIS_CITATION_CHARS,
   PROJECT_ANALYSIS_CITATION_LIMIT,
@@ -36,6 +36,10 @@ type ModelResult = {
   customerQuestions: string[];
   evidence: ModelEvidence[];
 };
+
+function describesConflict(item: string): boolean {
+  return /противореч|конфликт/iu.test(item);
+}
 
 type AnalysisEconomics = {
   cost: number | null;
@@ -435,8 +439,14 @@ export async function analyzeProjectPackageWithModel(
           ? { text, reason, severity, location: formatSourceLocation({ sourceFile: document.fileName, sheet }) }
           : { text, reason, severity, page, location: formatSourceLocation({ sourceFile: document.fileName, page }) };
       }),
-      estimatePositions: (document.estimatePositions ?? []).slice(0, PROJECT_ANALYSIS_POSITIONS),
+      estimatePositions: (document.estimatePositions ?? []).filter((position) => !isOverheadPosition(position)).slice(0, PROJECT_ANALYSIS_POSITIONS),
       sectionRollup: rollupWorkSections(document.estimatePositions ?? []),
+      authoritativeSections: rollupWorkSections(document.estimatePositions ?? []).sections.map((section) => ({
+        name: section.section,
+        unit: section.unit,
+        quantity: section.quantity,
+        rows: section.rows,
+      })),
       citations: (documentCitations.get(document.id) ?? []).map((citation) => citationForModel({ ...citation, id: citation.promptId })),
     })),
     citationBudget: { available: deterministic.citations.length, sentToModel: selectedPackageCitations.length },
@@ -497,7 +507,7 @@ export async function analyzeProjectPackageWithModel(
   // are not source-grounded and must not be presented as verified gaps.
   const companyGaps = companyAnalysisMissingInputs(company);
   const visibleCorpus = [...visibleCitationIds].map((id) => byPromptId.get(id)?.text ?? "").join("\n");
-  const modelGaps = sanitizeCustomerQuestions(result.missingInputs, visibleCorpus);
+  const modelGaps = sanitizeCustomerQuestions(result.missingInputs, visibleCorpus).filter((item) => !describesConflict(item));
   const modelNamedGaps = result.recommendation !== "insufficient_data" || modelGaps.length > 0;
   const packageSectionCount = packageDocuments.reduce((count, document) => count + rollupWorkSections(document.estimatePositions ?? []).sections.length, 0);
   const missingInputs = [...new Set([
@@ -544,9 +554,7 @@ export async function analyzeProjectPackageWithModel(
   const hasDataConflict = accepted.some((item) => item.topic === "conflict");
   recommendation = recommendationAfterConflict(recommendation, hasDataConflict, priceStop || profitStop);
   let reportedGaps = missingInputs;
-  if (hasDataConflict && !priceStop && !profitStop && !reportedGaps.some((item) => /противореч/iu.test(item))) {
-    reportedGaps = [...reportedGaps, "В документах есть противоречие. Уточните у заказчика, какая формулировка действует."].slice(0, 40);
-  }
+  const conflictNotes = sanitizeCustomerQuestions(result.missingInputs, visibleCorpus).filter(describesConflict);
 
   const economicSummary = !economics
     ? "Черновая себестоимость не рассчитана."
@@ -572,6 +580,8 @@ export async function analyzeProjectPackageWithModel(
     reportedGaps.length ? "Есть пункты для проверки; они перечислены ниже." : "Блокирующих пробелов по покрытию не отмечено.",
     decisionReady && !company?.resourceAvailabilityTracked ? "Решение по экономике и профилю предварительное: календарь фактической загрузки техники/бригад не подключён." : null,
   ].filter(Boolean).join("\n");
+  const volumeRollups = packageDocuments.map((document) => rollupWorkSections(document.estimatePositions ?? []));
+  const alignVolume = (text: string) => volumeRollups.reduce((current, rollup) => alignVolumeToSections(current, rollup), text);
 
   return {
     ...deterministic,
@@ -590,7 +600,7 @@ export async function analyzeProjectPackageWithModel(
         .map(({ topic, importance, text, quote, citationIds, sourceFiles, costImpact, scheduleImpact }) => ({
           topic: TOPIC_LABELS[topic] ?? TOPIC_LABELS.other,
           importance: importance as NonNullable<ProjectAnalytics["findings"]>[number]["importance"],
-          text,
+          text: alignVolume(text),
           quote,
           citationIds: (() => {
             const holders = citationIdsForFact(quote, [...byPromptId.values()]);
@@ -599,6 +609,18 @@ export async function analyzeProjectPackageWithModel(
           sourceFiles,
           costImpact,
           scheduleImpact,
+        })),
+      ...conflictNotes
+        .filter((item) => !accepted.some((entry) => entry.topic === "conflict" && entry.text.includes(item.slice(0, 80))))
+        .map((item) => ({
+          topic: TOPIC_LABELS.conflict,
+          importance: "high" as const,
+          text: item,
+          quote: item,
+          citationIds: [] as string[],
+          sourceFiles: [] as string[],
+          costImpact: NOT_IN_DOCUMENTS,
+          scheduleImpact: NOT_IN_DOCUMENTS,
         })),
       ...promptInjectionExcerpts(packageDocuments.flatMap((document) => [
         { file: document.fileName, text: document.analyticalNote ?? "" },

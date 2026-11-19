@@ -133,8 +133,12 @@ export async function probeSupplierUrl(url: string, fetchImpl: FetchLike = fetch
       response = await fetchImpl(url, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
     }
     if (response.status === 404 || response.status === 410) status = "missing";
-    else if (response.status >= 500) status = "down";
-    else if (response.status >= 200 && response.status < 400) status = "ok";
+    else if (response.status >= 500) {
+      const again = await fetchImpl(url, { method: response.status === 501 ? "GET" : "HEAD", redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+      if (again.status === 404 || again.status === 410) status = "missing";
+      else if (again.status >= 500) status = "down";
+      else if (again.status >= 200 && again.status < 400) status = "ok";
+    } else if (response.status >= 200 && response.status < 400) status = "ok";
   } catch {
     status = "unknown";
   }
@@ -206,6 +210,58 @@ export async function applyLiveSupplierLinks(
   return out;
 }
 
+const REGION_ON_PAGE = /норильск|дудинк|таймыр|красноярский край/iu;
+const PAGE_TEXT_LIMIT = 200_000;
+
+function pagePlainText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/giu, " ")
+    .replace(/<style[\s\S]*?<\/style>/giu, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function regionExcerpt(text: string): string | null {
+  const plain = pagePlainText(text).slice(0, PAGE_TEXT_LIMIT);
+  const match = plain.match(REGION_ON_PAGE);
+  if (!match || match.index == null) return null;
+  const start = Math.max(0, match.index - 80);
+  const end = Math.min(plain.length, match.index + match[0].length + 120);
+  return plain.slice(start, end).trim().slice(0, 240);
+}
+
+async function readSupplierPage(url: string, fetchImpl: FetchLike, timeoutMs = 4000): Promise<string | null> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetchImpl(url, { method: "GET", redirect: "follow", signal: AbortSignal.timeout(timeoutMs) });
+      if (response.status >= 500) continue;
+      if (response.status < 200 || response.status >= 400) return null;
+      const declared = Number(response.headers.get("content-length") ?? 0);
+      if (declared > PAGE_TEXT_LIMIT) return null;
+      return await response.text();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+/** Keep a supplier only when the source page itself names the delivery region, and quote that page. */
+export async function groundSupplierRegions(
+  candidates: SupplierSearchCandidate[],
+  fetchImpl: FetchLike = fetch
+): Promise<SupplierSearchCandidate[]> {
+  const out: SupplierSearchCandidate[] = [];
+  for (const candidate of candidates) {
+    const page = await readSupplierPage(candidate.sourceUrl, fetchImpl);
+    const excerpt = page ? regionExcerpt(page) : null;
+    if (!excerpt) continue;
+    out.push({ ...candidate, regionEvidence: excerpt });
+  }
+  return out;
+}
+
 export async function discoverMaterialSuppliers(input: { material: string; region: string; work?: string }): Promise<SupplierSearchCandidate[]> {
   const material = input.material.trim().slice(0, 180);
   const region = input.region.trim().slice(0, 120);
@@ -213,5 +269,5 @@ export async function discoverMaterialSuppliers(input: { material: string; regio
   const query = buildSupplierQuery(input);
   const completion = await completeJsonDetailed(SYSTEM, query, 0, { webSearch: true });
   const resolved = await resolveSearchSources(completion.sourceUrls);
-  return applyLiveSupplierLinks(filterSupplierCandidates(completion.content, resolved), resolved);
+  return groundSupplierRegions(await applyLiveSupplierLinks(filterSupplierCandidates(completion.content, resolved), resolved));
 }
