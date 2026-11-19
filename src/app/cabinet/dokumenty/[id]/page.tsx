@@ -88,7 +88,7 @@ export default function DocumentDetailPage() {
 
   const author = (id: string) =>
     data.users.find((u) => u.id === id)?.name ?? id;
-  const displayCitations = readableCitations(doc.citations);
+  const displayCitations = readableCitations(doc.citations.filter((citation) => citation.confidence !== "ocr" && citation.sourceVersion !== "ocr-extract"));
 
   return (
     <div>
@@ -237,11 +237,19 @@ export default function DocumentDetailPage() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
-          <NoteEditor
-            key={`${doc.id}:${doc.versions.length}:${doc.analyticalNote.slice(0, 24)}`}
-            docId={doc.id}
-            initialNote={doc.analyticalNote}
-          />
+          {/OCR\s*\(/u.test(doc.analyticalNote) ? (
+            <section className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
+              <h2 className="font-[family-name:var(--font-display)] text-base">Записка</h2>
+              <p className="mt-2 text-sm">Текст распознан автоматически, сверьте с оригиналом</p>
+              <Button className="mt-3" variant="outline" onClick={() => setPreviewOpen(true)}>Открыть документ</Button>
+            </section>
+          ) : (
+            <NoteEditor
+              key={`${doc.id}:${doc.versions.length}:${doc.analyticalNote.slice(0, 24)}`}
+              docId={doc.id}
+              initialNote={doc.analyticalNote}
+            />
+          )}
 
           <section className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
             <h2 className="font-[family-name:var(--font-display)] text-base">

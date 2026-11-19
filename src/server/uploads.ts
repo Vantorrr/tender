@@ -31,6 +31,15 @@ export async function saveUpload(
   return { storedPath: relative, fileSize: bytes.length };
 }
 
+export function deleteUpload(storedPath: string) {
+  if (!storedPath || storedPath.includes("..")) return;
+  const absolute = path.join(
+    /*turbopackIgnore: true*/ config.dataDir,
+    storedPath
+  );
+  if (fs.existsSync(absolute)) fs.unlinkSync(absolute);
+}
+
 export function readUpload(storedPath: string): Buffer | null {
   if (!storedPath || storedPath.includes("..")) return null;
   const absolute = path.join(

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseDecimalRu } from "@/lib/decimal-ru";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
 import { humanizeIssue, humanizeIssues } from "@/lib/issue-text";
@@ -17,15 +18,31 @@ describe("client wave 1 wording and money", () => {
     expect(humanizeIssue("hours_inputs:res-9")).not.toMatch(/hours_inputs|res-/);
   });
 
-  it("counts a stage payment as a receipt, not an advance", () => {
+  it("keeps the chosen payment type and does not rewrite legacy key payments", () => {
+    expect(paymentBucket({ type: "spisanie", title: "Аванс 2 этап" })).toBe("spisanie");
+    expect(paymentBucket({ type: "klyuchevoy", title: "Оплата этапа отделки" })).toBe("klyuchevoy");
+    expect(paymentBucket({ type: "postuplenie", title: "2 этап" })).toBe("postuplenie");
+    expect(paymentBucket({ title: "2 этап" })).toBe("postuplenie");
     const totals = paymentTotals([
-      { type: "avans", title: "1 этап", amount: 4_000_000 },
-      { type: "avans", title: "2 этап", amount: 300_000 },
       { type: "avans", title: "Аванс 30%", amount: 100_000 },
-      { type: "postuplenie", title: "Списание гарантии", amount: 50_000 },
+      { type: "postuplenie", title: "2 этап", amount: 300_000 },
+      { type: "klyuchevoy", title: "Оплата этапа отделки", amount: 4_000_000 },
+      { type: "spisanie", title: "Аванс 2 этап", amount: 50_000 },
     ]);
-    expect(paymentBucket({ type: "avans", title: "2 этап" })).toBe("postuplenie");
-    expect(totals).toMatchObject({ avans: 100_000, postuplenie: 4_300_000, spisanie: 50_000 });
+    expect(totals).toMatchObject({
+      avans: 100_000,
+      postuplenie: 300_000,
+      klyuchevoy: 4_000_000,
+      spisanie: 50_000,
+    });
+  });
+
+  it("reads Russian money the way it is typed", () => {
+    expect(parseDecimalRu("300 000")).toBe(300_000);
+    expect(parseDecimalRu("300\u00a0000")).toBe(300_000);
+    expect(parseDecimalRu("300,5")).toBe(300.5);
+    expect(parseDecimalRu("1 000 000,25")).toBe(1_000_000.25);
+    expect(parseDecimalRu("1 000")).not.toBe(0);
   });
 
   it("does not throw when a manual procurement has no deadline", () => {

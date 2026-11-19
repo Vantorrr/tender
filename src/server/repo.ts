@@ -25,6 +25,7 @@ import type {
   User,
 } from "@/lib/types";
 import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
+import { deleteUpload } from "@/server/uploads";
 import { paymentTypeForSave } from "@/lib/money-payments";
 import { mergeStageResources } from "@/lib/resource-merge";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
@@ -444,12 +445,19 @@ export function updateProcurement(
 }
 
 export function deleteProcurement(actorId: string, id: string) {
-  return mutateAppData((data) => {
+  const removedFiles: string[] = [];
+  const data = mutateAppData((data) => {
     const actor = actorUser(data, actorId);
+    if (actor.role !== "superadmin" && actor.role !== "admin" && actor.role !== "rukovoditel") {
+      throw new Error("Удалять закупку могут руководитель и администратор");
+    }
     assertSection(actor, "zakupki");
     const item = data.procurements.find((p) => p.id === id);
     if (!item) throw new Error("Закупка не найдена");
     assertOrgAccess(actor, item.orgId, "закупки");
+    for (const document of data.documents) {
+      if (document.procurementId === id && document.storedPath) removedFiles.push(document.storedPath);
+    }
     data.procurements = data.procurements.filter((p) => p.id !== id);
     data.documents = data.documents.filter((d) => d.procurementId !== id);
     data.calculations = data.calculations.filter((c) => c.procurementId !== id);
@@ -459,8 +467,49 @@ export function deleteProcurement(actorId: string, id: string) {
     data.planFacts = data.planFacts.filter((p) => p.procurementId !== id);
     data.supplyRequests = (data.supplyRequests ?? []).filter((s) => s.procurementId !== id);
     data.projectChatMessages = (data.projectChatMessages ?? []).filter((m) => m.procurementId !== id);
-    data.smetaExchanges = data.smetaExchanges.filter((s) => !s.name.includes(id));
+    data.smetaExchanges = data.smetaExchanges.filter((s) => !(s.orgId === item.orgId && s.procurementId === id));
     audit(data, actorId, "delete", "procurement", id, "Закупка удалена");
+    return data;
+  });
+  for (const storedPath of removedFiles) deleteUpload(storedPath);
+  return data;
+}
+
+export function deleteGprStage(actorId: string, scheduleId: string, stageId: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const schedule = data.schedules.find((item) => item.id === scheduleId);
+    if (!schedule) throw new Error("ГПР не найден");
+    assertOrgAccess(actor, schedule.orgId, "ГПР");
+    const stage = schedule.stages.find((item) => item.id === stageId);
+    if (!stage) throw new Error("Этап не найден");
+    const removedResourceIds = new Set((stage.resources ?? []).map((resource) => resource.id));
+    const removedWorks = new Set(
+      [stage.name, stage.workName, ...(stage.workNames ?? [])].map((name) => name?.trim()).filter(Boolean) as string[]
+    );
+    schedule.stages = schedule.stages
+      .filter((item) => item.id !== stageId)
+      .map((item) => item.dependsOn === stageId
+        ? { ...item, dependsOn: undefined, dependencyType: undefined, lagDays: undefined }
+        : item);
+    const remainingWorks = new Set(
+      schedule.stages.flatMap((item) => [item.name, item.workName, ...(item.workNames ?? [])].filter(Boolean) as string[])
+    );
+    for (const plan of data.planFacts) {
+      if (plan.procurementId !== schedule.procurementId && plan.id !== data.procurements.find((item) => item.id === schedule.procurementId)?.planFactId) continue;
+      plan.entries = plan.entries.filter((entry) => !removedWorks.has(entry.workName) || remainingWorks.has(entry.workName));
+      plan.dailyFacts = (plan.dailyFacts ?? []).map((fact) => ({
+        ...fact,
+        resourceLines: fact.resourceLines?.filter((line) => !line.sourceResourceId || !removedResourceIds.has(line.sourceResourceId)),
+      }));
+      plan.updatedAt = new Date().toISOString();
+    }
+    const calc = data.calculations.find((item) => item.id === schedule.calculationId);
+    if (calc && !calc.immutable) {
+      calc.positions = calc.positions.filter((position) => !position.sourceResourceId || !removedResourceIds.has(position.sourceResourceId));
+    }
+    schedule.updatedAt = new Date().toISOString();
+    audit(data, actorId, "delete", "gpr_stage", stageId, `Удалён этап ${stage.name}`);
     return data;
   });
 }
@@ -1909,6 +1958,7 @@ export function attachCustomerEstimate(
     data.smetaExchanges.unshift({
       id: `sx-${Date.now()}`,
       orgId: p.orgId,
+      procurementId: p.id,
       name: `Смета заказчика · ${opts?.fileName ?? sourceNames.join(", ")} · ${p.number} · ${p.id}`,
       at: now,
       authorId: actorId,

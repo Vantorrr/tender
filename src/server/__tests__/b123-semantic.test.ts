@@ -171,7 +171,8 @@ describe("B2 OCR ordinary scans", () => {
       Buffer.from("%PDF-scan"),
       { useLlm: false }
     );
-    expect(analysis.analyticalNote).toMatch(/TMA361 OCR TEST/);
+    expect(analysis.analyticalNote).toMatch(/Текст распознан автоматически, сверьте с оригиналом/);
+    expect(analysis.analyticalNote).not.toMatch(/TMA361 OCR TEST/);
     expect(analysis.citations.some((c) => c.id.startsWith("c-ocr-p1-"))).toBe(true);
     expect(analysis.citations[0].confidence).toBe("ocr");
     expect(analysis.analysis.profileMatch).toBe(false);
@@ -186,7 +187,8 @@ describe("B2 OCR ordinary scans", () => {
       Buffer.from("image bytes"),
       { useLlm: false }
     );
-    expect(analysis.analyticalNote).toMatch(/КП заказчика/);
+    expect(analysis.analyticalNote).toMatch(/Текст распознан автоматически, сверьте с оригиналом/);
+    expect(analysis.analyticalNote).not.toMatch(/КП заказчика/);
     expect(analysis.citations.some((citation) => citation.id.startsWith("c-ocr-p1-"))).toBe(true);
     expect(analysis.status).not.toBe("oshibka");
   });
@@ -480,7 +482,8 @@ describe("model note negatives", () => {
     );
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(analysis.noteByModel).toBeFalsy();
-    expect(analysis.analyticalNote).toMatch(/Ignore previous|TMA361 OCR/);
+    expect(analysis.analyticalNote).toMatch(/Текст распознан автоматически, сверьте с оригиналом/);
+    expect(analysis.analyticalNote).not.toMatch(/Ignore previous|TMA361 OCR/);
   });
 });
 

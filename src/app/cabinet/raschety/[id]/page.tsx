@@ -28,6 +28,7 @@ import { api, downloadUrl } from "@/lib/api";
 import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-panel";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engine";
+import { parseDecimalRu } from "@/lib/decimal-ru";
 import { formatMoney, formatNumber } from "@/lib/format";
 import { humanizeIssues } from "@/lib/issue-text";
 import type { Calculation, GprStageResource, ResourceQuantityBasis } from "@/lib/types";
@@ -1118,7 +1119,7 @@ export default function RaschetDetailPage() {
             <TableBody>
               {calc.positions.map((p) => (
                 <TableRow key={p.id}>
-                  <TableCell className="font-mono text-xs">{p.code}</TableCell>
+                  <TableCell className="font-mono text-xs">{/^(?:res|cp|urp|draft|source|gs|pay)-/iu.test(p.code) || (p.code.length > 24 && !/[а-яё]/iu.test(p.code)) ? "" : p.code}</TableCell>
                   <TableCell className="min-w-[12rem]">{p.name}</TableCell>
                   <TableCell>{p.unit}</TableCell>
                   <TableCell className="text-right">
@@ -1126,14 +1127,19 @@ export default function RaschetDetailPage() {
                       formatNumber(p.quantity)
                     ) : (
                       <Input
+                        key={`qty-${p.id}:${p.quantity}`}
                         className="ml-auto w-28 text-right"
                         data-testid={`pos-qty-${p.id}`}
-                        value={String(p.quantity)}
-                        onChange={(e) => {
-                          const v = Number(e.target.value) || 0;
+                        defaultValue={String(p.quantity)}
+                        onBlur={(e) => {
+                          const parsed = parseDecimalRu(e.target.value);
+                          if (parsed == null) {
+                            e.target.value = String(p.quantity);
+                            return;
+                          }
                           updateCalculation(calc.id, {
                             positions: calc.positions.map((x) =>
-                              x.id === p.id ? { ...x, quantity: v } : x
+                              x.id === p.id ? { ...x, quantity: parsed } : x
                             ),
                           });
                         }}
@@ -1144,21 +1150,28 @@ export default function RaschetDetailPage() {
                     {p.isWorkItem && calc.kind !== "customer_original" ? (
                       <span className="text-xs text-[var(--tk-muted)]">не применяется к объёму работы</span>
                     ) : locked ? (
-                      formatMoney(p.rate)
+                      p.rateMissing ? "ставка не указана" : formatMoney(p.rate)
                     ) : (
                       <Input
+                        key={`rate-${p.id}:${p.rateMissing ? "missing" : p.rate}`}
                         className="ml-auto w-32 text-right"
                         data-testid={`pos-rate-${p.id}`}
-                        placeholder={p.rateMissing ? "ставка не указана" : undefined}
-                        value={p.rateMissing ? "" : String(p.rate)}
-                        onChange={(e) => {
+                        placeholder="ставка не указана"
+                        aria-label={`Ставка · ${p.name}`}
+                        defaultValue={p.rateMissing ? "" : String(p.rate)}
+                        onBlur={(e) => {
                           const raw = e.target.value.trim();
-                          const rateMissing = raw === "";
-                          const v = rateMissing ? 0 : Number(raw);
-                          if (!rateMissing && (!Number.isFinite(v) || v < 0)) return;
+                          const parsed = raw === "" ? null : parseDecimalRu(raw);
+                          if (raw !== "" && parsed == null) {
+                            toast.error("Введите ставку, например 756,41");
+                            e.target.value = p.rateMissing ? "" : String(p.rate);
+                            return;
+                          }
                           updateCalculation(calc.id, {
                             positions: calc.positions.map((x) =>
-                              x.id === p.id ? { ...x, rate: v, rateMissing } : x
+                              x.id === p.id
+                                ? { ...x, rate: parsed ?? 0, rateMissing: parsed == null }
+                                : x
                             ),
                           });
                         }}

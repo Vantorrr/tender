@@ -31,7 +31,8 @@ export function mergeEstimateLeaves<T extends MergeableLeaf>(leaves: T[]): T[] {
   const order: string[] = [];
   const groups = new Map<string, T[]>();
   for (const leaf of leaves) {
-    const key = `${leaf.kind}|${norm(leaf.name)}|${norm(leaf.unit)}`;
+    const rateKey = leaf.rate == null ? "none" : String(leaf.rate);
+    const key = `${leaf.kind}|${norm(leaf.name)}|${norm(leaf.unit)}|${rateKey}`;
     const list = groups.get(key);
     if (!list) {
       groups.set(key, [leaf]);
@@ -82,7 +83,8 @@ export function mergeStageResources(resources: GprStageResource[]): GprStageReso
   const order: string[] = [];
   const groups = new Map<string, GprStageResource[]>();
   for (const resource of resources) {
-    const key = `${resource.kind}|${norm(resource.name)}|${norm(resource.unit)}`;
+    const rateKey = resource.rate == null ? "none" : String(resource.rate);
+    const key = `${resource.kind}|${norm(resource.name)}|${norm(resource.unit)}|${rateKey}`;
     const list = groups.get(key);
     if (!list) {
       groups.set(key, [resource]);

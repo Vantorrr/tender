@@ -67,7 +67,13 @@ function QuietNumberInput({
   function commit(raw: string) {
     if (timer.current) clearTimeout(timer.current);
     const trimmed = raw.trim();
-    onCommit(trimmed === "" ? (emptyAsNull ? null : 0) : Number(trimmed.replace(",", ".")) || 0);
+    if (!trimmed) {
+      onCommit(emptyAsNull ? null : 0);
+      return;
+    }
+    const parsed = parseDecimalRu(trimmed);
+    if (parsed == null) return;
+    onCommit(parsed);
   }
   return (
     <Input
@@ -944,6 +950,7 @@ export default function ProizvodstvoPage() {
                       ["Авансы", "avans"],
                       ["Поступления", "postuplenie"],
                       ["Списания", "spisanie"],
+                      ["Ключевые", "klyuchevoy"],
                     ] as const).map(([label, type]) => (
                       <div key={type} className="rounded-lg bg-stone-50 px-3 py-2 text-sm">
                         <span className="text-[var(--tk-muted)]">{label}</span>

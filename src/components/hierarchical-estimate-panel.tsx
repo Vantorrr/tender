@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { parseDecimalRu } from "@/lib/decimal-ru";
 import { formatMoney, formatNumber } from "@/lib/format";
 import {
   buildHierarchicalEstimate,
@@ -171,19 +172,22 @@ export function HierarchicalEstimatePanel({
         <div className="text-right">
           {locked ? (leaf.rate == null ? <span className="text-amber-800" title="ставка не указана">ставка не указана</span> : formatMoney(leaf.rate)) : (
             <Input
+              key={`${leaf.id}:${leaf.rate ?? "missing"}`}
               className="h-8 text-right"
-              type="number"
-              min={0}
-              step="any"
               placeholder="ставка не указана"
               title={leaf.rate == null ? "ставка не указана" : "Ставка"}
-              aria-label={leaf.rate == null ? `Ставка · ${leaf.name} (нет данных)` : `Ставка · ${leaf.name}`}
-              value={leaf.rate == null ? "" : String(leaf.rate)}
+              aria-label={leaf.rate == null ? `Ставка · ${leaf.name} (ставка не указана)` : `Ставка · ${leaf.name}`}
+              defaultValue={leaf.rate == null ? "" : String(leaf.rate)}
               data-testid={`estimate-rate-${leaf.id}`}
-              onChange={(e) => {
+              onBlur={(e) => {
                 const raw = e.target.value.trim();
-                const rate = raw === "" ? null : Number(raw);
-                onPatchLeaf(leaf, { rate: rate == null || Number.isNaN(rate) ? null : rate });
+                const rate = raw === "" ? null : parseDecimalRu(raw);
+                if (raw !== "" && rate == null) {
+                  toast.error("Введите ставку, например 756,41");
+                  e.target.value = leaf.rate == null ? "" : String(leaf.rate);
+                  return;
+                }
+                void onPatchLeaf(leaf, { rate });
               }}
             />
           )}

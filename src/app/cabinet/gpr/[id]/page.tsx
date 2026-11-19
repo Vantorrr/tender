@@ -506,8 +506,11 @@ export default function GprDetailPage() {
                   variant="ghost"
                   onClick={() => {
                     if (!window.confirm(`Удалить этап «${stage.name}»?`)) return;
-                    updateSchedule(schedule.id, {
-                      stages: schedule.stages.filter((item) => item.id !== stage.id),
+                    void api("/api/gpr", {
+                      method: "PATCH",
+                      body: JSON.stringify({ id: schedule.id, action: "deleteStage", stageId: stage.id }),
+                    }).then(() => refresh()).then(() => toast.success("Этап удалён")).catch((error: unknown) => {
+                      toast.error(error instanceof Error ? error.message : "Не удалось удалить этап");
                     });
                   }}
                 >

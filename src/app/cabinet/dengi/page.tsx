@@ -23,6 +23,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { downloadUrl } from "@/lib/api";
+import { parseDecimalRu } from "@/lib/decimal-ru";
 import { formatMoney } from "@/lib/format";
 import { PAYMENT_BUCKET_LABELS, paymentBucket, paymentTotals } from "@/lib/money-payments";
 import { PERIOD_LABELS } from "@/lib/roles";
@@ -209,8 +210,17 @@ export default function DengiPage() {
                           type="number"
                           min={0}
                           step="0.01"
-                          value={String(p.amount)}
-                          onChange={(e) => patchPayment(p.id, { amount: Number(e.target.value) || 0 })}
+                          key={`${p.id}:${p.amount}`}
+                          defaultValue={String(p.amount)}
+                          onBlur={(e) => {
+                            const amount = parseDecimalRu(e.target.value);
+                            if (amount == null) {
+                              toast.error("Введите сумму, например 300 000 или 300,5");
+                              e.target.value = String(p.amount);
+                              return;
+                            }
+                            if (amount !== p.amount) patchPayment(p.id, { amount });
+                          }}
                         />
                       </TableCell>
                       <TableCell className="min-w-56 text-sm text-[var(--tk-muted)]">

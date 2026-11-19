@@ -27,6 +27,7 @@ import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_CHECKLIST } from "@/lib/ai-topics";
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
 import { procurementBoardLabel } from "@/lib/pipeline";
+import { parseDecimalRu } from "@/lib/decimal-ru";
 import { PAYMENT_BUCKET_LABELS, paymentBucket, paymentTotals, type PaymentBucket } from "@/lib/money-payments";
 import { userHasSection } from "@/lib/acl";
 import { REVIEW_LABELS, STATUS_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
@@ -234,6 +235,7 @@ export default function ZakupkaDetailPage() {
   const [payTitle, setPayTitle] = useState("");
   const [payType, setPayType] = useState<PaymentBucket>("postuplenie");
   const [payAmount, setPayAmount] = useState("");
+  const [paySaving, setPaySaving] = useState(false);
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
   const [matName, setMatName] = useState("");
   const [matQty, setMatQty] = useState("1");
@@ -1546,9 +1548,9 @@ export default function ZakupkaDetailPage() {
               <>
                 <p className="font-medium">{money.title}</p>
                 <div className="mt-3 grid gap-2 sm:grid-cols-3" data-testid="money-totals">
-                  {(["avans", "postuplenie", "spisanie"] as const).map((bucket) => (
+                  {(["avans", "postuplenie", "spisanie", "klyuchevoy"] as const).map((bucket) => (
                     <div key={bucket} className="rounded-lg bg-stone-50 px-3 py-2 text-sm">
-                      <span className="text-[var(--tk-muted)]">{bucket === "avans" ? "Авансы" : bucket === "postuplenie" ? "Поступления" : "Списания"}</span>
+                      <span className="text-[var(--tk-muted)]">{bucket === "avans" ? "Авансы" : bucket === "postuplenie" ? "Поступления" : bucket === "spisanie" ? "Списания" : "Ключевые"}</span>
                       <span className="ml-2 font-semibold">{formatMoney(paymentTotals(money.payments)[bucket])}</span>
                     </div>
                   ))}
@@ -1581,10 +1583,18 @@ export default function ZakupkaDetailPage() {
                         }}
                       />
                       <Input
+                        key={`${pay.id}:${pay.amount}`}
                         className="w-32"
-                        value={String(pay.amount)}
-                        onChange={async (e) => {
-                          const amount = Number(e.target.value) || 0;
+                        aria-label={`Сумма платежа ${pay.title}`}
+                        defaultValue={String(pay.amount)}
+                        onBlur={async (e) => {
+                          const amount = parseDecimalRu(e.target.value);
+                          if (amount == null) {
+                            toast.error("Введите сумму, например 300 000 или 300,5");
+                            e.target.value = String(pay.amount);
+                            return;
+                          }
+                          if (amount === pay.amount) return;
                           await api("/api/zakupki", {
                             method: "POST",
                             body: JSON.stringify({
@@ -1634,11 +1644,7 @@ export default function ZakupkaDetailPage() {
                     placeholder="Название, например 2 этап"
                     aria-label="Название платежа"
                     value={payTitle}
-                    onChange={(e) => {
-                      const title = e.target.value;
-                      setPayTitle(title);
-                      setPayType(paymentBucket({ title, type: payType }));
-                    }}
+                        onChange={(e) => setPayTitle(e.target.value)}
                   />
                   <select
                     aria-label="Тип платежа"
@@ -1663,7 +1669,15 @@ export default function ZakupkaDetailPage() {
                   />
                   <Button
                     data-testid="add-money-payment"
+                    disabled={paySaving}
                     onClick={async () => {
+                      if (paySaving) return;
+                      const amount = parseDecimalRu(payAmount);
+                      if (amount == null) {
+                        toast.error("Введите сумму, например 300 000 или 300,5");
+                        return;
+                      }
+                      setPaySaving(true);
                       try {
                         await api("/api/zakupki", {
                           method: "POST",
@@ -1673,7 +1687,7 @@ export default function ZakupkaDetailPage() {
                             payment: {
                               type: payType,
                               title: payTitle || "Платёж",
-                              amount: Number(payAmount) || 0,
+                              amount,
                               date: payDate,
                               week: 1,
                               month: Number(payDate.slice(5, 7)) || 1,
@@ -1681,15 +1695,18 @@ export default function ZakupkaDetailPage() {
                           }),
                         });
                         await refresh();
+                        setPayAmount("");
                         toast.success("Платёж сохранён");
                       } catch (e) {
                         toast.error(
                           e instanceof Error ? e.message : "Ошибка сохранения"
                         );
+                      } finally {
+                        setPaySaving(false);
                       }
                     }}
                   >
-                    Добавить и сохранить
+                    {paySaving ? "Сохраняю…" : "Добавить и сохранить"}
                   </Button>
                 </div>
                 <p className="mt-3 text-xs text-[var(--tk-muted)]">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -293,6 +293,7 @@ export function SpreadsheetEstimateGrid({
   const [pasteText, setPasteText] = useState("");
   const [pasteErrors, setPasteErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const [stageId, setStageId] = useState(stages[0]?.id ?? "");
   const [manual, setManual] = useState({
     name: "",
@@ -318,7 +319,8 @@ export function SpreadsheetEstimateGrid({
   }, [nodes, search]);
 
   async function addRows(rows: ManualResource[]) {
-    if (!selectedStageId || !onAddResources || rows.length === 0) return;
+    if (savingRef.current || !selectedStageId || !onAddResources || rows.length === 0) return;
+    savingRef.current = true;
     setSaving(true);
     try {
       await onAddResources(selectedStageId, rows);
@@ -330,6 +332,7 @@ export function SpreadsheetEstimateGrid({
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось добавить строки");
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }

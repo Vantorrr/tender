@@ -814,6 +814,8 @@ export interface AuditEntry {
 export interface SmetaExchangeVersion {
   id: string;
   orgId: string;
+  /** Set when the exchange belongs to one procurement. Deletes match this id, not the name. */
+  procurementId?: string;
   name: string;
   at: string;
   authorId: string;
