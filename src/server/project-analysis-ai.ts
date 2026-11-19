@@ -3,7 +3,7 @@ import { regionFromCitations, submissionDeadlineFromCitations } from "@/lib/cita
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_LABELS } from "@/lib/ai-topics";
 import { NOT_IN_DOCUMENTS, numbersAreGrounded } from "@/server/ai-grounding";
-import { rollupWorkSections } from "@/server/estimate-rollup";
+import { rollupWorkSections, alignVolumeToSections, isOverheadPosition, stripWorkTypesOutsideSources } from "@/server/estimate-rollup";
 import {
   PROJECT_ANALYSIS_CITATION_CHARS,
   PROJECT_ANALYSIS_CITATION_LIMIT,
@@ -36,6 +36,32 @@ type ModelResult = {
   customerQuestions: string[];
   evidence: ModelEvidence[];
 };
+
+function describesConflict(item: string): boolean {
+  return /противореч|конфликт/iu.test(item);
+}
+
+const REGION_SUBJECTS = [
+  { re: /красноярск/iu, label: "Красноярский край" },
+  { re: /янао|ямало-ненецк/iu, label: "ЯНАО" },
+  { re: /хмао|ханты-мансийск/iu, label: "ХМАО" },
+  { re: /мурманск/iu, label: "Мурманская область" },
+];
+
+/** Two federal subjects in one sentence are a conflict, not one place name. */
+export function splitMergedRegions(text: string): { text: string; conflict: string | null } {
+  const found = REGION_SUBJECTS.filter((subject) => subject.re.test(text));
+  if (found.length < 2) return { text, conflict: null };
+  let next = text;
+  for (const subject of found.slice(1)) {
+    next = next.replace(new RegExp(`\\s*\\([^)]*(?:${subject.re.source})[^)]*\\)`, "giu"), "");
+    if (REGION_SUBJECTS.filter((item) => item.re.test(next)).length >= 2) next = next.replace(subject.re, "");
+  }
+  return {
+    text: next.replace(/\s{2,}/g, " ").replace(/\s+([,.;])/g, "$1").replace(/\(\s*\)/g, "").trim(),
+    conflict: `В документах названы разные регионы: ${found.map((subject) => subject.label).join(" и ")}. Это не одна территория.`,
+  };
+}
 
 type AnalysisEconomics = {
   cost: number | null;
@@ -287,6 +313,105 @@ export function recommendationAfterConflict(
   return recommendation;
 }
 
+function moneyAmounts(text: string): Array<{ raw: string; rubles: number; thousands: boolean }> {
+  const found: Array<{ raw: string; rubles: number; thousands: boolean }> = [];
+  const pattern = /(\d{1,3}(?:[ \u00a0]\d{3})+(?:[,.]\d+)?|\d+(?:[,.]\d+)?)(\s*тыс\.?)?/gu;
+  for (const match of text.matchAll(pattern)) {
+    const numeric = Number(match[1]!.replace(/[ \u00a0]/g, "").replace(",", "."));
+    if (!Number.isFinite(numeric)) continue;
+    const thousands = Boolean(match[2]);
+    found.push({
+      raw: `${match[1]}${match[2] ?? ""}`.replace(/\s+/g, " ").trim(),
+      rubles: thousands ? numeric * 1000 : numeric,
+      thousands,
+    });
+  }
+  return found;
+}
+
+function moneyLabel(rubles: number, thousands: boolean, texts: string[]): string {
+  for (const text of texts) {
+    for (const amount of moneyAmounts(text)) {
+      if (Math.abs(amount.rubles - rubles) <= 1) {
+        const number = amount.raw.replace(/\s*тыс\.?/iu, "").trim();
+        return amount.thousands ? `${number} тыс. руб.` : `${number} руб.`;
+      }
+    }
+  }
+  const value = thousands ? rubles / 1000 : rubles;
+  const [whole, frac] = Math.abs(value).toFixed(2).split(".");
+  const grouped = whole!.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+  return `${grouped},${frac} ${thousands ? "тыс. руб." : "руб."}`;
+}
+
+export type CostConflictFinding = {
+  topic: "Противоречие в стоимости";
+  importance: "high";
+  text: string;
+  quote: string;
+  citationIds: string[];
+  sourceFiles: string[];
+  costImpact: string;
+  scheduleImpact: string;
+};
+
+/** Contract price and the estimate total are different sums, so the package says so on its own. */
+export function costConflictBetween(documents: Array<{
+  fileName: string;
+  title?: string;
+  category?: string;
+  analysis?: { costThousand?: number | null; positionCount?: number } | null;
+  citations?: Array<{ id: string; text: string }>;
+}>): CostConflictFinding | null {
+  const priced = documents.flatMap((document) => {
+    const name = `${document.fileName} ${document.title ?? ""}`.toLocaleLowerCase("ru-RU");
+    const kind = document.category === "contract" || /договор|контракт/iu.test(name)
+      ? "contract"
+      : document.category === "estimate" || /смет/iu.test(name) || (document.analysis?.positionCount ?? 0) > 0
+        ? "estimate"
+        : null;
+    if (!kind || document.analysis?.costThousand == null) return [];
+    const rubles = Math.round(document.analysis.costThousand * 1000 * 100) / 100;
+    const texts = (document.citations ?? []).map((citation) => citation.text);
+    const quote = texts.find((text) => moneyAmounts(text).some((amount) => Math.abs(amount.rubles - rubles) <= 1))
+      ?? texts[0]
+      ?? "";
+    const citation = (document.citations ?? []).find((item) => item.text === quote);
+    return [{
+      kind,
+      rubles,
+      label: moneyLabel(rubles, kind === "estimate", texts),
+      quote,
+      citationId: citation?.id,
+      fileName: document.fileName,
+    }];
+  });
+  const contract = priced.find((item) => item.kind === "contract");
+  const estimate = priced.find((item) => item.kind === "estimate");
+  if (!contract || !estimate || Math.abs(contract.rubles - estimate.rubles) <= 1) return null;
+  return {
+    topic: "Противоречие в стоимости",
+    importance: "high",
+    text: `В договоре указано ${contract.label}, в смете — ${estimate.label}. Это разные суммы.`,
+    quote: contract.quote || estimate.quote,
+    citationIds: [contract.citationId, estimate.citationId].filter((id): id is string => Boolean(id)),
+    sourceFiles: [contract.fileName, estimate.fileName],
+    costImpact: NOT_IN_DOCUMENTS,
+    scheduleImpact: NOT_IN_DOCUMENTS,
+  };
+}
+
+/** A sourced conflict, a conflict named by the model, or two regions in one sentence block participation. */
+export function hasBlockingConflict(input: {
+  topics: string[];
+  missingInputs: string[];
+  texts: string[];
+}): boolean {
+  return input.topics.includes("conflict")
+    || input.missingInputs.some(describesConflict)
+    || input.texts.some((text) => Boolean(splitMergedRegions(text).conflict));
+}
+
 /** Prefer the shortest citation that actually contains the quote, so the link is the paragraph of the fact. */
 export function citationIdsForFact(quote: string, citations: Array<{ id: string; text: string; paragraph?: number | null }>): string[] {
   const needle = quote.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ").trim();
@@ -435,8 +560,14 @@ export async function analyzeProjectPackageWithModel(
           ? { text, reason, severity, location: formatSourceLocation({ sourceFile: document.fileName, sheet }) }
           : { text, reason, severity, page, location: formatSourceLocation({ sourceFile: document.fileName, page }) };
       }),
-      estimatePositions: (document.estimatePositions ?? []).slice(0, PROJECT_ANALYSIS_POSITIONS),
+      estimatePositions: (document.estimatePositions ?? []).filter((position) => !isOverheadPosition(position)).slice(0, PROJECT_ANALYSIS_POSITIONS),
       sectionRollup: rollupWorkSections(document.estimatePositions ?? []),
+      authoritativeSections: rollupWorkSections(document.estimatePositions ?? []).sections.map((section) => ({
+        name: section.section,
+        unit: section.unit,
+        quantity: section.quantity,
+        rows: section.rows,
+      })),
       citations: (documentCitations.get(document.id) ?? []).map((citation) => citationForModel({ ...citation, id: citation.promptId })),
     })),
     citationBudget: { available: deterministic.citations.length, sentToModel: selectedPackageCitations.length },
@@ -497,7 +628,7 @@ export async function analyzeProjectPackageWithModel(
   // are not source-grounded and must not be presented as verified gaps.
   const companyGaps = companyAnalysisMissingInputs(company);
   const visibleCorpus = [...visibleCitationIds].map((id) => byPromptId.get(id)?.text ?? "").join("\n");
-  const modelGaps = sanitizeCustomerQuestions(result.missingInputs, visibleCorpus);
+  const modelGaps = sanitizeCustomerQuestions(result.missingInputs, visibleCorpus).filter((item) => !describesConflict(item));
   const modelNamedGaps = result.recommendation !== "insufficient_data" || modelGaps.length > 0;
   const packageSectionCount = packageDocuments.reduce((count, document) => count + rollupWorkSections(document.estimatePositions ?? []).sections.length, 0);
   const missingInputs = [...new Set([
@@ -541,12 +672,15 @@ export async function analyzeProjectPackageWithModel(
   const priceStop = economics?.priceWithVat != null && procurement.nmck != null && economics.priceWithVat > procurement.nmck;
   const profitStop = Boolean(economics?.profit != null && economics.profit <= 0 && economicsComplete);
   if (priceStop || profitStop) recommendation = "do_not_participate";
-  const hasDataConflict = accepted.some((item) => item.topic === "conflict");
+  const conflictNotes = sanitizeCustomerQuestions(result.missingInputs, visibleCorpus).filter(describesConflict);
+  const priceConflict = costConflictBetween(packageDocuments);
+  const hasDataConflict = hasBlockingConflict({
+    topics: accepted.map((item) => item.topic),
+    missingInputs: conflictNotes,
+    texts: accepted.map((item) => item.text),
+  }) || Boolean(priceConflict);
   recommendation = recommendationAfterConflict(recommendation, hasDataConflict, priceStop || profitStop);
   let reportedGaps = missingInputs;
-  if (hasDataConflict && !priceStop && !profitStop && !reportedGaps.some((item) => /противореч/iu.test(item))) {
-    reportedGaps = [...reportedGaps, "В документах есть противоречие. Уточните у заказчика, какая формулировка действует."].slice(0, 40);
-  }
 
   const economicSummary = !economics
     ? "Черновая себестоимость не рассчитана."
@@ -572,6 +706,18 @@ export async function analyzeProjectPackageWithModel(
     reportedGaps.length ? "Есть пункты для проверки; они перечислены ниже." : "Блокирующих пробелов по покрытию не отмечено.",
     decisionReady && !company?.resourceAvailabilityTracked ? "Решение по экономике и профилю предварительное: календарь фактической загрузки техники/бригад не подключён." : null,
   ].filter(Boolean).join("\n");
+  const volumeRollups = packageDocuments.map((document) => rollupWorkSections(document.estimatePositions ?? []));
+  const sectionNames = volumeRollups.flatMap((rollup) => rollup.sections.map((section) => section.section));
+  const alignVolume = (text: string) => volumeRollups.reduce((current, rollup) => alignVolumeToSections(current, rollup), text);
+  const regionConflicts: Array<{ text: string; quote: string; citationIds: string[]; sourceFiles: string[] }> = [];
+  const presentFinding = (text: string, quote: string, citationIds: string[], sourceFiles: string[]) => {
+    const stripped = stripWorkTypesOutsideSources(alignVolume(text), quote, sectionNames);
+    const split = splitMergedRegions(stripped);
+    if (split.conflict && !regionConflicts.some((item) => item.text === split.conflict)) {
+      regionConflicts.push({ text: split.conflict, quote, citationIds, sourceFiles });
+    }
+    return split.text;
+  };
 
   return {
     ...deterministic,
@@ -587,18 +733,32 @@ export async function analyzeProjectPackageWithModel(
     findings: [
       ...accepted
         .filter((item) => packageSectionCount <= 1 || !/только\s+(?:по\s+)?одн(?:у|ой|а|о)\s+позиц/iu.test(item.text))
-        .map(({ topic, importance, text, quote, citationIds, sourceFiles, costImpact, scheduleImpact }) => ({
-          topic: TOPIC_LABELS[topic] ?? TOPIC_LABELS.other,
-          importance: importance as NonNullable<ProjectAnalytics["findings"]>[number]["importance"],
-          text,
-          quote,
-          citationIds: (() => {
-            const holders = citationIdsForFact(quote, [...byPromptId.values()]);
-            return holders.length ? [...new Set(holders)].slice(0, 4) : citationIds.map((id) => byPromptId.get(id)?.id ?? id);
-          })(),
-          sourceFiles,
-          costImpact,
-          scheduleImpact,
+        .map(({ topic, importance, text, quote, citationIds, sourceFiles, costImpact, scheduleImpact }) => {
+          const holders = citationIdsForFact(quote, [...byPromptId.values()]);
+          const resolvedIds = holders.length ? [...new Set(holders)].slice(0, 4) : citationIds.map((id) => byPromptId.get(id)?.id ?? id);
+          return {
+            topic: TOPIC_LABELS[topic] ?? TOPIC_LABELS.other,
+            importance: importance as NonNullable<ProjectAnalytics["findings"]>[number]["importance"],
+            text: presentFinding(text, quote, resolvedIds, sourceFiles),
+            quote,
+            citationIds: resolvedIds,
+            sourceFiles,
+            costImpact,
+            scheduleImpact,
+          };
+        }),
+      ...(priceConflict && !accepted.some((item) => /противоречие в стоимости/iu.test(item.text)) ? [priceConflict] : []),
+      ...regionConflicts
+        .filter((item) => !accepted.some((entry) => entry.topic === "conflict" && entry.text.includes(item.text.slice(0, 40))))
+        .map((item) => ({
+          topic: TOPIC_LABELS.conflict,
+          importance: "high" as const,
+          text: item.text,
+          quote: item.quote,
+          citationIds: item.citationIds,
+          sourceFiles: item.sourceFiles,
+          costImpact: NOT_IN_DOCUMENTS,
+          scheduleImpact: NOT_IN_DOCUMENTS,
         })),
       ...promptInjectionExcerpts(packageDocuments.flatMap((document) => [
         { file: document.fileName, text: document.analyticalNote ?? "" },

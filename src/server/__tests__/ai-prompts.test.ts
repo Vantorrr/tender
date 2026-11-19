@@ -10,7 +10,7 @@ import {
   formatSourceLocation,
 } from "@/server/ai-prompts";
 import { scoreModelResponse } from "@/server/ai-prompt-score";
-import { buildModelNoteUserContent, noteRejectionReason, omitUnsourcedPlaces } from "@/server/model-note";
+import { buildModelNoteUserContent, cellRelatesToFact, keepCellsThatSupportFact, noteRejectionReason, omitUnsourcedPlaces } from "@/server/model-note";
 import { citationForModel, parseProjectAnalysisResult, sanitizeCustomerQuestions, validateProjectEvidence } from "@/server/project-analysis-ai";
 import { validateCalcCompareAiResult, pricingTextForCompare } from "@/server/calc-compare-ai";
 import { validateProductionVarianceResult } from "@/server/production-variance-ai";
@@ -45,8 +45,9 @@ describe("estimator prompts", () => {
     expect(CALC_COMPARE_SYSTEM).toContain('"sourceExcerpt"');
     expect(CALC_COMPARE_SYSTEM).toContain("pricingText");
     expect(PRODUCTION_VARIANCE_SYSTEM).toContain('"sourceQuote"');
-    expect(SUPPLIER_DISCOVERY_SYSTEM).toContain("web search");
-    expect(SUPPLIER_DISCOVERY_SYSTEM).toContain('"sourceUrl"');
+    expect(SUPPLIER_DISCOVERY_SYSTEM).toContain("Перевозчика");
+    expect(PROJECT_ANALYSIS_SYSTEM).toContain("authoritativeSections");
+    expect(MODEL_NOTE_SYSTEM).toContain("трёх ячеек");
   });
 
   it("puts the file name and page into the model-note payload", () => {
@@ -72,6 +73,76 @@ describe("estimator prompts", () => {
     expect(omitUnsourcedPlaces("Коэффициент стеснённости, стр. 1, ячейка A1. Чертёж L2, ISO9001.", [
       { id: "c-k", text: "Приказ о коэффициенте стеснённости", page: 1, sourceFile: "смета.xlsx", sheet: "ЛС" },
     ])).toBe("Коэффициент стеснённости. Чертёж L2, ISO9001.");
+    expect(omitUnsourcedPlaces("Коэффициент на листе ЛС, A1. Чертёж L2, ISO9001.", [
+      { id: "c-k", text: "Приказ о коэффициенте стеснённости", page: 1, sourceFile: "смета.xlsx", sheet: "ЛС" },
+    ])).toBe("Коэффициент на листе ЛС. Чертёж L2, ISO9001.");
+    expect(omitUnsourcedPlaces("Стоимость на листе ЛС, N20.", [
+      { id: "c-est", text: "Сметная стоимость", page: 1, sourceFile: "смета.xlsx", sheet: "ЛС", cell: "N20" },
+    ])).toContain("N20");
+    expect(omitUnsourcedPlaces("Итог на листе ЛС, G10:G11. На листе указан чертёж, L2 и ISO9001.", [
+      { id: "c-sum", text: "Итог", page: 1, sourceFile: "смета.xlsx", sheet: "ЛС", cell: "G10:G11" },
+    ])).toBe("Итог на листе ЛС, G10:G11. На листе указан чертёж, L2 и ISO9001.");
+    const sourcedCells = ["A20", "A13", "C28", "G10", "B43"].map((cell) => ({
+      id: `c-${cell}`,
+      text: `Факт ${cell}`,
+      page: 1,
+      sourceFile: "смета.xlsx",
+      sheet: "ЛС",
+      cell,
+    }));
+    const cellPayload = JSON.parse(buildModelNoteUserContent(
+      { kind: "local-estimate" },
+      [{ id: "h-cost", text: "Факт A20", reason: "шапка", severity: "info", page: 1 }],
+      sourcedCells
+    )) as { sources: Array<{ cell?: string }>; highlights: Array<{ location: string }> };
+    expect(cellPayload.sources.map((source) => source.cell)).toEqual(["A20", "A13", "C28", "G10", "B43"]);
+    expect(cellPayload.highlights[0]?.location).toContain("A20");
+    expect(cellPayload.highlights[0]?.location).not.toContain("A13");
+    const named = omitUnsourcedPlaces("Стоимость на листе ЛС, A20. Объём в ячейке A13.", sourcedCells);
+    expect(named).toContain("A20");
+    expect(named).toContain("A13");
+    const indexed = sourcedCells.map((citation) => ({
+      ...citation,
+      text: citation.cell === "A20" ? "Индексы к расценкам" : citation.cell === "A13" ? "Акт об оплате труда" : "Отрицательная позиция",
+    }));
+    const bound = keepCellsThatSupportFact("Индексы в ячейках A20, A13, C28, G10, B43.", indexed);
+    expect(bound).toContain("A20");
+    expect(bound).not.toContain("A13");
+    expect(bound).not.toContain("B43");
+    const header = [
+      { id: "c-obj", text: "конденсатопровод Мессояха-Дудинка", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "A13" },
+      { id: "c-idx", text: "Реквизиты письма Минстроя России об индексах изменения сметной стоимости", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "A8" },
+      { id: "c-wage", text: "Реквизиты нормативного правового акта об утверждении оплаты труда", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "A9" },
+      { id: "c-neg", text: "-54786.64", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "N58" },
+    ];
+    const misplaced = keepCellsThatSupportFact("Индексы не заполнены, ячейка A13.\nАкт об оплате труда, ячейка A13.\nОтрицательных позиций 8, ячейка A13.", header);
+    expect(misplaced).not.toContain("A13");
+    expect(cellRelatesToFact("Индексы не заполнены", header[0]!.text)).toBe(false);
+    const placed = keepCellsThatSupportFact("Индексы не заполнены, ячейка A8.\nАкт об оплате труда, ячейка A9.\nОтрицательных позиций 8, ячейка N58.", header);
+    expect(placed).toContain("A8");
+    expect(placed).toContain("A9");
+    expect(placed).toContain("N58");
+    const codes = keepCellsThatSupportFact("Сертификат ISO9001 и код L2 остаются. Диапазон в ячейка G10.", [
+      { id: "range", text: "Диапазон итога", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "G10:G11" },
+    ]);
+    expect(codes).toContain("ISO9001");
+    expect(codes).toContain("L2");
+    const negatives = keepCellsThatSupportFact("8 отрицательных позиций в смете (ячейка A18, N58, N61, N107, N110).", [
+      { id: "c-est", text: "ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЕТ № ЛС 02-02-01-2023", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "A18" },
+      { id: "c-negative-N58", text: "-54786.64", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "N58" },
+      { id: "c-negative-N61", text: "-3335.11", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "N61" },
+      { id: "c-negative-N107", text: "-1129070.08", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "N107" },
+      { id: "c-negative-N110", text: "-48415.23", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "N110" },
+    ]);
+    expect(negatives).not.toContain("A18");
+    expect(negatives).toContain("N58");
+    expect(negatives).toContain("N61");
+    expect(negatives).toContain("N107");
+    expect(negatives).not.toContain("N110");
+    expect(keepCellsThatSupportFact("8 отрицательных позиций (ячейка A18).", [
+      { id: "c-est", text: "ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЕТ № ЛС 02-02-01-2023", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "A18" },
+    ])).not.toMatch(/ячейк/iu);
+    expect(codes).toContain("G10");
     const sheetPayload = buildModelNoteUserContent(
       { kind: "local-estimate" },
       [],
@@ -147,6 +218,21 @@ describe("grounded numbers", () => {
     }]);
     expect(result.observations).toHaveLength(1);
     expect(result.summary).toContain("ветра");
+    const located = validateProductionVarianceResult(JSON.stringify({
+      summary: "В комментарии указан простой из-за ветра. Местоположение данных в файле не указано в документах.",
+      observations: [{
+        sourceId: "fact-1",
+        kind: "documented_reason",
+        text: "Простой длился 4 часа из-за ветра. Местоположение данных в файле не указано в документах",
+        sourceQuote: "простой 4 часа, сильный ветер",
+      }],
+    }), [{
+      id: "fact-1",
+      kind: "daily_comment",
+      text: "Дата: 2026-11-09; комментарий: простой 4 часа, сильный ветер",
+    }]);
+    expect(located.summary).not.toMatch(/местоположение данных в файле/iu);
+    expect(located.observations[0]?.text).not.toMatch(/местоположение данных в файле/iu);
   });
 });
 

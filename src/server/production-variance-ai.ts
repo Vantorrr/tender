@@ -20,6 +20,14 @@ type Source = { id: string; kind: "daily_comment" | "supplier_delay"; text: stri
 
 const SYSTEM = PRODUCTION_VARIANCE_SYSTEM;
 
+function omitUnstatedFilePlace(text: string): string {
+  return text
+    .replace(/местоположение данных в файле не указано в документах\.?/giu, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,.;])/g, "$1")
+    .trim();
+}
+
 function parseJson(raw: string): unknown {
   return JSON.parse(raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));
 }
@@ -71,7 +79,7 @@ export function filterDailyFactsByWork(daily: DailyFact[], workName: string): Da
 
 export function validateProductionVarianceResult(raw: string, sources: Source[], numericContext = "") {
   const parsed = parseJson(raw) as { summary?: unknown; observations?: unknown };
-  const summary = typeof parsed.summary === "string" ? parsed.summary.trim() : "";
+    const summary = omitUnstatedFilePlace(typeof parsed.summary === "string" ? parsed.summary.trim() : "");
   const byId = new Map(sources.map((source) => [source.id, source]));
   const observations: ProductionVarianceReport["observations"] = [];
   if (Array.isArray(parsed.observations)) {
@@ -84,7 +92,7 @@ export function validateProductionVarianceResult(raw: string, sources: Source[],
       if (!source) continue;
       if (item.kind !== "documented_reason" && item.kind !== "possible_factor") continue;
       if (item.kind === "documented_reason" && source.kind !== "daily_comment") continue;
-      const text = item.text.trim();
+      const text = omitUnstatedFilePlace(item.text.trim());
       const sourceQuote = item.sourceQuote.trim();
       const corpus = `${source.text}\n${numericContext}`;
       if (text.length > 500 || !numbersAreGrounded(text, corpus) ||
@@ -94,9 +102,9 @@ export function validateProductionVarianceResult(raw: string, sources: Source[],
       observations.push({
         sourceId: source.id,
         kind: documented ? "documented_reason" : "possible_factor",
-        text: documented || item.kind === "possible_factor" || /причина не указана в отчётах/u.test(text)
+        text: omitUnstatedFilePlace(documented || item.kind === "possible_factor" || /причина не указана в отчётах/u.test(text)
           ? text
-          : `${text} Причина не указана в отчётах.`,
+          : `${text} Причина не указана в отчётах.`),
         sourceQuote,
       });
     }

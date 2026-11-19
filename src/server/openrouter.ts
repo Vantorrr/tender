@@ -39,13 +39,8 @@ export function sourceUrlsFromMessage(message: { annotations?: unknown } | undef
     const record = item as Record<string, unknown>;
     const citation = record.url_citation;
     if (citation && typeof citation === "object") {
-      const cited = citation as { url?: unknown; title?: unknown };
+      const cited = citation as { url?: unknown };
       if (typeof cited.url === "string") urls.push(cited.url);
-      if (typeof cited.title === "string") {
-        const title = cited.title.trim();
-        if (/^https?:\/\//i.test(title)) urls.push(title);
-        else if (/^(?:[a-z0-9-]+\.)+[a-z]{2,}$/i.test(title) && !/google|vertex/i.test(title)) urls.push(`https://${title}/`);
-      }
     }
     if (typeof record.url === "string") urls.push(record.url);
   }

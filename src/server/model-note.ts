@@ -37,7 +37,6 @@ export function buildModelNoteUserContent(
   citations: Citation[] = []
 ): string {
   const spreadsheet = citations.some((citation) => citation.sheet);
-  const sheet = citations.find((citation) => citation.sheet)?.sheet;
   const sources = citations.slice(0, 40).map((citation) => ({
     file: citation.sourceFile,
     ...(citation.sheet ? { sheet: citation.sheet } : { page: citation.page }),
@@ -52,31 +51,106 @@ export function buildModelNoteUserContent(
     }),
     text: citation.text.slice(0, 700),
   }));
-  const visibleHighlights = highlights.slice(0, 10).map((highlight) => spreadsheet
-    ? {
-      text: highlight.text,
-      reason: highlight.reason,
-      severity: highlight.severity,
-      location: formatSourceLocation({ sourceFile: citations[0]?.sourceFile, sheet }),
-    }
-    : {
-      text: highlight.text,
-      reason: highlight.reason,
-      severity: highlight.severity,
-      page: highlight.page,
-      location: formatSourceLocation({ sourceFile: citations[0]?.sourceFile, page: highlight.page }),
+  const visibleHighlights = highlights.slice(0, 10).map((highlight) => {
+    const probe = highlight.text.trim().toLocaleLowerCase("ru-RU").slice(0, 48);
+    const matched = citations.find((citation) => {
+      const text = citation.text.toLocaleLowerCase("ru-RU");
+      return probe.length >= 4 && (text.includes(probe) || probe.includes(text.slice(0, 48)));
     });
+    const related = citations.find((citation) => citation.cell && cellRelatesToFact(highlight.text, citation.text));
+    const source = matched && (!matched.cell || cellRelatesToFact(highlight.text, matched.text)) ? matched : related;
+    const sheet = source?.sheet ?? citations.find((citation) => citation.sheet)?.sheet;
+    return spreadsheet
+      ? {
+        text: highlight.text,
+        reason: highlight.reason,
+        severity: highlight.severity,
+        location: formatSourceLocation({
+          sourceFile: source?.sourceFile ?? citations[0]?.sourceFile,
+          sheet,
+          cell: source?.cell,
+        }),
+      }
+      : {
+        text: highlight.text,
+        reason: highlight.reason,
+        severity: highlight.severity,
+        page: highlight.page,
+        location: formatSourceLocation({ sourceFile: source?.sourceFile, page: highlight.page }),
+      };
+  });
   return JSON.stringify({ facts, highlights: visibleHighlights, sources });
 }
+
+const CELL_TOKEN = "[A-Z]{1,3}\\d{1,5}(?::[A-Z]{1,3}\\d{1,5})?";
 
 /** Drop an invented cell label or an Excel page the source did not provide. Codes such as L2 stay. */
 export function omitUnsourcedPlaces(note: string, citations: Citation[]): string {
   const cells = new Set(citations.map((citation) => citation.cell).filter((cell): cell is string => Boolean(cell)).map((cell) => cell.toUpperCase()));
-  let text = note.replace(/ячейк[аеиу]\s+([A-Z]{1,3}\d{1,5})\b/gi, (full, token: string) => cells.has(token.toUpperCase()) ? full : "");
+  const knownCell = (token: string) => {
+    const value = token.toUpperCase();
+    if (cells.has(value)) return true;
+    return [...cells].some((cell) => cell.split(":").includes(value));
+  };
+  let text = note.replace(new RegExp(`ячейк[аеиу]\\s+(${CELL_TOKEN})\\b`, "gi"), (full, token: string) => knownCell(token) ? full : "");
+  text = text.replace(
+    new RegExp(`(лист[а-яё]*\\s+(?:[«"][^»"]{1,40}[»"]|[^\\s,»"]{1,40})\\s*,\\s*)(${CELL_TOKEN})\\b`, "gi"),
+    (full, prefix: string, token: string) => knownCell(token) ? full : prefix.replace(/,\s*$/, "")
+  );
   if (citations.length > 0 && citations.every((citation) => citation.sheet)) {
     text = text.replace(/,?\s*стр\.\s*\d+/gi, "");
   }
   return text
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+([,.;])/g, "$1")
+    .replace(/,\s*(?=[,.]|$)/g, "")
+    .trim();
+}
+
+/** A scanned negative is the cell value itself, not a hyphen inside an estimate header. */
+export function isNegativeAmount(text: string): boolean {
+  return /^-\d+(?:[.,]\d+)?$/.test(text.trim().replace(/\s/g, ""));
+}
+
+/** Keep a cell on a fact only when that cell's own text contains the fact's keyword or number. */
+export function cellRelatesToFact(fact: string, cellText: string): boolean {
+  const factFold = fact.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+  const cellFold = cellText.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+  if (/индекс/.test(factFold)) return /индекс/.test(cellFold);
+  if (/отрицательн/.test(factFold)) return isNegativeAmount(cellText);
+  if (/оплат/.test(factFold) || (/акт/.test(factFold) && /труд/.test(factFold))) return /оплат|труд/.test(cellFold);
+  if (cellFold.length >= 4 && factFold.includes(cellFold.slice(0, 24))) return true;
+  const words = factFold.replace(new RegExp(CELL_TOKEN, "gi"), " ").match(/[а-яa-z]{5,}/gu) ?? [];
+  const numbers = fact.replace(new RegExp(CELL_TOKEN, "gi"), " ").match(/\d+(?:[.,]\d+)?/g) ?? [];
+  const cellWords = new Set(cellFold.match(/[а-яa-z]{5,}/gu) ?? []);
+  return words.some((word) => cellWords.has(word)) || numbers.some((value) => cellText.includes(value));
+}
+
+function cellKeys(cell: string): string[] {
+  const value = cell.toUpperCase();
+  const parts = value.split(":");
+  return [...new Set(parts.length > 1 ? [value, ...parts] : [value])];
+}
+
+export function keepCellsThatSupportFact(note: string, citations: Citation[]): string {
+  const byCell = new Map<string, string>();
+  for (const citation of citations) {
+    if (!citation.cell) continue;
+    for (const key of cellKeys(citation.cell)) byCell.set(key, `${byCell.get(key) ?? ""} ${citation.text}`);
+  }
+  return note.split(/(?<=\n)/).map((line) => {
+    const mention = new RegExp(`ячейк[а-яё]{0,3}\\s+((?:${CELL_TOKEN}\\s*,\\s*)*${CELL_TOKEN})`, "gi");
+    return line.replace(mention, (_full, list: string) => {
+      const tokens = [...new Set(list.split(/\s*,\s*/).map((token) => token.toUpperCase()))];
+      const negativeFact = /отрицательн/.test(line.toLocaleLowerCase("ru-RU").replace(/ё/g, "е"));
+      const supported = tokens.filter((token) => {
+        const text = byCell.get(token) ?? "";
+        if (negativeFact) return isNegativeAmount(text.trim());
+        return cellRelatesToFact(line, text);
+      }).slice(0, 3);
+      return supported.length ? `ячейка ${supported.join(", ")}` : "";
+    });
+  }).join("")
     .replace(/[ \t]{2,}/g, " ")
     .replace(/\s+([,.;])/g, "$1")
     .replace(/,\s*(?=[,.]|$)/g, "")
@@ -140,7 +214,7 @@ async function writeNote(
     return { failure: reason };
   }
   let note = readNote(raw);
-  if (note) note = omitUnsourcedPlaces(note, citations);
+  if (note) note = keepCellsThatSupportFact(omitUnsourcedPlaces(note, citations), citations);
   if (!note) {
     console.error("model note skipped: пустой ответ модели");
     return { failure: "пустой ответ модели" };

@@ -128,6 +128,7 @@ export type GrandParse = {
   totalLocked: boolean;
   sheetName: string;
   locators: Partial<Record<string, FieldLocator>>;
+  factCells: Array<{ kind: "indexes" | "wages" | "negative"; cell: string; text: string }>;
   sourceVersion: string;
 };
 
@@ -268,7 +269,23 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
     totalLocked: false,
     sheetName,
     locators: {},
+    factCells: [],
     sourceVersion: `${GRAND_PROFILE.vendor} ${GRAND_PROFILE.version}`,
+  };
+  const negativeByRow = new Map<number, { col: number; text: string }>();
+  const rememberHeaderCells = (
+    kind: "indexes" | "wages",
+    keyword: string,
+    cells: { col: number; text: string }[],
+    rowNumber: number
+  ) => {
+    const hits = cells.filter((cell) => cell.text.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").includes(keyword));
+    if (!hits.length) return;
+    const first = hits[0]!;
+    const last = hits[hits.length - 1]!;
+    for (const cell of first.col === last.col ? [first] : [first, last]) {
+      parsed.factCells.push({ kind, cell: a1(rowNumber, cell.col), text: cell.text.slice(0, 300) });
+    }
   };
   const mark = (key: string, row: number, col: number) => {
     parsed.locators[key] = {
@@ -288,6 +305,13 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
   ws.eachRow((row, rowNumber) => {
     const cells = rowCells(row, 16);
     if (!cells.length) return;
+    for (const cell of cells) {
+      const amount = asNumber(cell.value);
+      if (amount != null && amount < 0) {
+        const previous = negativeByRow.get(rowNumber);
+        if (!previous || cell.col >= previous.col) negativeByRow.set(rowNumber, { col: cell.col, text: cell.text || String(amount) });
+      }
+    }
     const label = cells[0]?.text ?? "";
 
     if (rowNumber <= 40) {
@@ -302,11 +326,15 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
         parsed.orders = firstOther(cells, label);
         mark("orders", rowNumber, cells.find((c) => c.col > 1)?.col ?? 7);
       } else if (label.startsWith("Реквизиты письма Минстроя")) {
-        parsed.indexes = firstOther(cells, label);
-        if (parsed.indexes) mark("indexes", rowNumber, cells.find((c) => c.col > 1)?.col ?? 7);
+        const value = cells.find((cell) => cell.col > 1 && cell.text !== label && !cell.text.startsWith("("));
+        parsed.indexes = value?.text ?? "";
+        if (value) mark("indexes", rowNumber, value.col);
+        rememberHeaderCells("indexes", "индекс", cells, rowNumber);
       } else if (label.startsWith("Реквизиты нормативного правового акта")) {
-        parsed.wages = firstOther(cells, label);
-        if (parsed.wages) mark("wages", rowNumber, cells.find((c) => c.col > 1)?.col ?? 7);
+        const value = cells.find((cell) => cell.col > 1 && cell.text !== label && !cell.text.startsWith("("));
+        parsed.wages = value?.text ?? "";
+        if (value) mark("wages", rowNumber, value.col);
+        rememberHeaderCells("wages", "оплат", cells, rowNumber);
       } else if (label.startsWith("Наименование субъекта")) {
         parsed.region = firstOther(cells, label);
         mark("region", rowNumber, cells.find((c) => c.col > 1 && c.text === parsed.region)?.col ?? 7);
@@ -434,6 +462,9 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
     }
     parsed.positions.push(lastPosition);
   });
+  for (const [row, value] of [...negativeByRow.entries()].slice(0, 8)) {
+    parsed.factCells.push({ kind: "negative", cell: a1(row, value.col), text: value.text });
+  }
 
   if (!parsed.product.includes("ГРАНД-Смета") && !parsed.estimateNumber) return null;
   return parsed;
@@ -555,6 +586,18 @@ export function analysisFromGrand(parsed: GrandParse, fileName: string): UploadA
     );
   }
   if (parsed.coefficientNotes[0]) quote("c-k", parsed.coefficientNotes[0], "coefficient", "heuristic");
+  for (const fact of parsed.factCells ?? []) {
+    citations.push({
+      id: `c-${fact.kind}-${fact.cell}`,
+      text: fact.text.slice(0, 900),
+      page: 1,
+      sourceFile: fileName,
+      sheet: parsed.sheetName,
+      cell: fact.cell,
+      sourceVersion: parsed.sourceVersion,
+      confidence: "confirmed",
+    });
+  }
 
   const costLine =
     parsed.costCurrentThousand != null
@@ -863,6 +906,11 @@ export async function analyzeUpload(
             sections: parsed.sections.slice(0, 12),
             sectionRollup: rollupWorkSections(parsed.positions),
             negativePositions: parsed.negativePositions,
+            factCells: {
+              indexes: parsed.factCells.filter((fact) => fact.kind === "indexes"),
+              wages: parsed.factCells.filter((fact) => fact.kind === "wages"),
+              negative: parsed.factCells.filter((fact) => fact.kind === "negative"),
+            },
             coefficientNotes: parsed.coefficientNotes.slice(0, 3),
             largest,
             profileMatch: analysis.analysis.profileMatch,
