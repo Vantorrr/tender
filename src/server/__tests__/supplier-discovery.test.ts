@@ -14,7 +14,7 @@ describe("open-source supplier discovery", () => {
   it("uses web search and only returns evidenced candidates with safe links", async () => {
     complete.mockResolvedValueOnce({
       content: JSON.stringify({ candidates: [
-        { name: "СеверСнаб", website: "https://vendor.example", email: "sales@vendor.example", materials: ["Труба стальная"], regionEvidence: "Доставка в регион", evidence: "Поставляем трубы", sourceUrl: "https://vendor.example/materials" },
+        { name: "СеверСнаб", website: "https://vendor.example", email: "sales@vendor.example", materials: ["Труба стальная"], regionEvidence: "Доставка в Норильск", evidence: "Поставляем трубы", sourceUrl: "https://vendor.example/materials" },
         { name: "Без источника", website: "javascript:alert(1)", materials: ["Трубы"], regionEvidence: "", evidence: "Поставляем", sourceUrl: "javascript:alert(1)" },
         { name: "Выдуманный", website: "https://invented.example", materials: ["Долото"], regionEvidence: "Норильск", evidence: "Поставляем долота на север", sourceUrl: "https://invented.example/bit" },
         { name: "Пустое доказательство", website: "https://vendor2.example", materials: ["Песок"], evidence: "", sourceUrl: "https://vendor2.example/about" },
@@ -71,10 +71,23 @@ describe("open-source supplier discovery", () => {
       async () => "missing"
     );
     expect(dropped).toEqual([]);
+    const down = await applyLiveSupplierLinks(
+      filterSupplierCandidates(raw, resolved),
+      resolved,
+      async () => "down"
+    );
+    expect(down).toEqual([]);
     const unconfirmed = JSON.stringify({ candidates: [
       { name: "Без региона", website: "https://vendor.example", materials: ["Труба стальная"], regionEvidence: "не указано в документах", evidence: "Поставляем трубы на север", sourceUrl: "https://vendor.example/materials" },
     ] });
     expect(filterSupplierCandidates(unconfirmed, resolved)).toEqual([]);
+    const vagueRegion = JSON.stringify({ candidates: [
+      { name: "Помбур", website: "https://vendor.example", materials: ["Долото"], regionEvidence: "северные регионы", evidence: "Продажа долот", sourceUrl: "https://vendor.example/materials" },
+      { name: "Енисей-Норд", website: "https://vendor.example", materials: ["Труба"], regionEvidence: "Норильск", evidence: "Перевозка грузов в Норильск", sourceUrl: "https://vendor.example/materials" },
+      { name: "Грузовой экспресс", website: "https://vendor.example", materials: ["Оборудование"], regionEvidence: "Дудинка", evidence: "Транспортная компания, доставка на Таймыр", sourceUrl: "https://vendor.example/materials" },
+      { name: "Склад Севера", website: "https://vendor.example", materials: ["Труба стальная"], regionEvidence: "Красноярский край, отгрузка в Норильск", evidence: "Продажа труб со склада", sourceUrl: "https://vendor.example/materials" },
+    ] });
+    expect(filterSupplierCandidates(vagueRegion, resolved).map((item) => item.name)).toEqual(["Склад Севера"]);
   });
 
   it("requires both a material and a delivery region", async () => {

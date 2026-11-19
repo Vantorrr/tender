@@ -10,7 +10,7 @@ import {
   formatSourceLocation,
 } from "@/server/ai-prompts";
 import { scoreModelResponse } from "@/server/ai-prompt-score";
-import { buildModelNoteUserContent, noteRejectionReason, omitUnsourcedPlaces } from "@/server/model-note";
+import { buildModelNoteUserContent, noteRejectionReason, omitUnsourcedPlaces, requireSourceCells } from "@/server/model-note";
 import { citationForModel, parseProjectAnalysisResult, sanitizeCustomerQuestions, validateProjectEvidence } from "@/server/project-analysis-ai";
 import { validateCalcCompareAiResult, pricingTextForCompare } from "@/server/calc-compare-ai";
 import { validateProductionVarianceResult } from "@/server/production-variance-ai";
@@ -45,8 +45,9 @@ describe("estimator prompts", () => {
     expect(CALC_COMPARE_SYSTEM).toContain('"sourceExcerpt"');
     expect(CALC_COMPARE_SYSTEM).toContain("pricingText");
     expect(PRODUCTION_VARIANCE_SYSTEM).toContain('"sourceQuote"');
-    expect(SUPPLIER_DISCOVERY_SYSTEM).toContain("web search");
-    expect(SUPPLIER_DISCOVERY_SYSTEM).toContain('"sourceUrl"');
+    expect(SUPPLIER_DISCOVERY_SYSTEM).toContain("Перевозчика");
+    expect(PROJECT_ANALYSIS_SYSTEM).toContain("НР Свайные работы");
+    expect(MODEL_NOTE_SYSTEM).toContain("cells");
   });
 
   it("puts the file name and page into the model-note payload", () => {
@@ -81,6 +82,25 @@ describe("estimator prompts", () => {
     expect(omitUnsourcedPlaces("Итог на листе ЛС, G10:G11. На листе указан чертёж, L2 и ISO9001.", [
       { id: "c-sum", text: "Итог", page: 1, sourceFile: "смета.xlsx", sheet: "ЛС", cell: "G10:G11" },
     ])).toBe("Итог на листе ЛС, G10:G11. На листе указан чертёж, L2 и ISO9001.");
+    const sourcedCells = ["A20", "A13", "C28", "G10", "B43"].map((cell) => ({
+      id: `c-${cell}`,
+      text: `Факт ${cell}`,
+      page: 1,
+      sourceFile: "смета.xlsx",
+      sheet: "ЛС",
+      cell,
+    }));
+    const cellPayload = buildModelNoteUserContent(
+      { kind: "local-estimate" },
+      [{ id: "h-cost", text: "Факт A20", reason: "шапка", severity: "info", page: 1 }],
+      sourcedCells
+    );
+    for (const cell of ["A20", "A13", "C28", "G10", "B43"]) expect(cellPayload).toContain(cell);
+    expect(cellPayload).toContain('"cells"');
+    const named = omitUnsourcedPlaces("Стоимость на листе ЛС, A20. Объём в ячейке A13. Диаметр C28, итог G10, коэффициент B43.", sourcedCells);
+    for (const cell of ["A20", "A13", "C28", "G10", "B43"]) expect(named).toContain(cell);
+    const restored = requireSourceCells(omitUnsourcedPlaces("Стоимость на листе ЛС.", sourcedCells), sourcedCells);
+    for (const cell of ["A20", "A13", "C28", "G10", "B43"]) expect(restored).toContain(cell);
     const sheetPayload = buildModelNoteUserContent(
       { kind: "local-estimate" },
       [],

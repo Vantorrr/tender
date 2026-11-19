@@ -38,6 +38,7 @@ export function buildModelNoteUserContent(
 ): string {
   const spreadsheet = citations.some((citation) => citation.sheet);
   const sheet = citations.find((citation) => citation.sheet)?.sheet;
+  const cells = [...new Set(citations.map((citation) => citation.cell).filter((cell): cell is string => Boolean(cell)))];
   const sources = citations.slice(0, 40).map((citation) => ({
     file: citation.sourceFile,
     ...(citation.sheet ? { sheet: citation.sheet } : { page: citation.page }),
@@ -57,7 +58,7 @@ export function buildModelNoteUserContent(
       text: highlight.text,
       reason: highlight.reason,
       severity: highlight.severity,
-      location: formatSourceLocation({ sourceFile: citations[0]?.sourceFile, sheet }),
+      location: [citations[0]?.sourceFile, sheet ? `лист ${sheet}` : null, cells.length ? cells.join(", ") : null].filter(Boolean).join(", "),
     }
     : {
       text: highlight.text,
@@ -66,7 +67,7 @@ export function buildModelNoteUserContent(
       page: highlight.page,
       location: formatSourceLocation({ sourceFile: citations[0]?.sourceFile, page: highlight.page }),
     });
-  return JSON.stringify({ facts, highlights: visibleHighlights, sources });
+  return JSON.stringify({ facts, highlights: visibleHighlights, sources, cells });
 }
 
 const CELL_TOKEN = "[A-Z]{1,3}\\d{1,5}(?::[A-Z]{1,3}\\d{1,5})?";
@@ -92,6 +93,16 @@ export function omitUnsourcedPlaces(note: string, citations: Citation[]): string
     .replace(/\s+([,.;])/g, "$1")
     .replace(/,\s*(?=[,.]|$)/g, "")
     .trim();
+}
+
+/** A cell from the excerpts is part of the note. Missing ones are added, known ones stay. */
+export function requireSourceCells(note: string, citations: Citation[]): string {
+  const cells = [...new Set(citations.map((citation) => citation.cell).filter((cell): cell is string => Boolean(cell)))];
+  const missing = cells.filter((cell) => !new RegExp(`(?<![A-Z])${cell.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!\\d)`, "i").test(note));
+  if (!missing.length) return note.trim();
+  const sheet = citations.find((citation) => citation.sheet)?.sheet;
+  const place = sheet ? `лист ${sheet}, ${missing.join(", ")}` : missing.join(", ");
+  return `${note.trim()}\n• Место в файле: ${place}.`;
 }
 
 function digits(value: string) {
@@ -151,7 +162,7 @@ async function writeNote(
     return { failure: reason };
   }
   let note = readNote(raw);
-  if (note) note = omitUnsourcedPlaces(note, citations);
+  if (note) note = requireSourceCells(omitUnsourcedPlaces(note, citations), citations);
   if (!note) {
     console.error("model note skipped: пустой ответ модели");
     return { failure: "пустой ответ модели" };

@@ -12,12 +12,12 @@ export type SupplierSearchCandidate = {
   sourceUrl: string;
 };
 
-export type UrlProbe = (url: string) => Promise<"ok" | "missing" | "unknown">;
+export type UrlProbe = (url: string) => Promise<"ok" | "missing" | "down" | "unknown">;
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 const SYSTEM = SUPPLIER_DISCOVERY_SYSTEM;
 const unwrapCache = new Map<string, string>();
-const probeCache = new Map<string, "ok" | "missing" | "unknown">();
+const probeCache = new Map<string, "ok" | "missing" | "down" | "unknown">();
 
 export function buildSupplierQuery(input: { material: string; region: string; work?: string }): string {
   const material = input.material.trim().slice(0, 180);
@@ -122,23 +122,37 @@ export async function resolveSearchSources(urls: string[], options?: {
     .filter((url) => url && !isRedirectUrl(url)))];
 }
 
-export async function probeSupplierUrl(url: string, fetchImpl: FetchLike = fetch, timeoutMs = 2500): Promise<"ok" | "missing" | "unknown"> {
+export async function probeSupplierUrl(url: string, fetchImpl: FetchLike = fetch, timeoutMs = 2500): Promise<"ok" | "missing" | "down" | "unknown"> {
   const key = canonicalUrl(url) ?? url;
   const cached = probeCache.get(key);
   if (cached) return cached;
-  let status: "ok" | "missing" | "unknown" = "unknown";
+  let status: "ok" | "missing" | "down" | "unknown" = "unknown";
   try {
     let response = await fetchImpl(url, { method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
     if (response.status === 405 || response.status === 501) {
       response = await fetchImpl(url, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
     }
     if (response.status === 404 || response.status === 410) status = "missing";
+    else if (response.status >= 500) status = "down";
     else if (response.status >= 200 && response.status < 400) status = "ok";
   } catch {
     status = "unknown";
   }
   probeCache.set(key, status);
   return status;
+}
+
+function confirmsDeliveryPlace(value: string): boolean {
+  const text = value.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+  if (!text || text.includes(NOT_IN_DOCUMENTS)) return false;
+  return /норильск|дудинк|таймыр|красноярск/.test(text);
+}
+
+function looksLikeHauler(name: string, evidence: string): boolean {
+  const text = `${name}. ${evidence}`.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+  const hauler = /перевозчик|перевозк|грузоперевоз|экспедитор|логист|транспортная компания|транспортной компании/.test(text);
+  const seller = /прода|поставк|каталог|прайс|в наличии/.test(text);
+  return hauler && !seller;
 }
 
 export function filterSupplierCandidates(raw: string, sourceUrls: string[]): SupplierSearchCandidate[] {
@@ -154,7 +168,7 @@ export function filterSupplierCandidates(raw: string, sourceUrls: string[]): Sup
     if (!urlFromSearch(sourceUrl, sourceUrls)) return [];
     const evidence = typeof row.evidence === "string" ? row.evidence.trim().slice(0, 600) : "";
     const regionEvidence = typeof row.regionEvidence === "string" ? row.regionEvidence.trim().slice(0, 240) : "";
-    if (!regionEvidence || regionEvidence.toLocaleLowerCase("ru-RU").includes(NOT_IN_DOCUMENTS)) return [];
+    if (!confirmsDeliveryPlace(regionEvidence) || looksLikeHauler(name, evidence)) return [];
     const email = typeof row.email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.email.trim())
       ? row.email.trim().toLowerCase() : undefined;
     const materials = Array.isArray(row.materials)
@@ -178,10 +192,12 @@ export async function applyLiveSupplierLinks(
     const domain = supplierDomain(candidate.sourceUrl);
     const source = sourceUrls.find((url) => supplierDomain(url) === domain && !isRedirectUrl(url));
     const status = await probe(candidate.sourceUrl);
+    if (status === "down") continue;
     if (status === "missing") {
       if (!source) continue;
       const samePage = source.replace(/\/$/, "") === candidate.sourceUrl.replace(/\/$/, "");
-      if (samePage || await probe(source) === "missing") continue;
+      const sourceStatus = samePage ? status : await probe(source);
+      if (samePage || sourceStatus === "missing" || sourceStatus === "down") continue;
       out.push({ ...candidate, sourceUrl: source, website: candidate.website || new URL(source).origin });
       continue;
     }

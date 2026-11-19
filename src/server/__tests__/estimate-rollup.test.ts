@@ -13,4 +13,12 @@ describe("estimate section rollup", () => {
     expect(rollup.totalsByUnit).toEqual([{ unit: "м", quantity: 18544, rows: 4 }]);
     expect(rollup.titledCounts).toEqual([{ unit: "шт", quantity: 3044 }]);
   });
+
+  it("does not count an overhead norm as a drilling section", () => {
+    const rollup = rollupWorkSections([
+      { sectionName: "Раздел 1. Бурение скважин", name: "Бурение", code: "ФЕР01", unit: "м", quantity: 716, isWorkItem: true },
+      { sectionName: "НР Свайные работы", name: "НР Свайные работы", code: "НР", unit: "шт", quantity: 3044, isWorkItem: true },
+    ]);
+    expect(rollup.sections.map((section) => section.section)).toEqual(["Раздел 1. Бурение скважин"]);
+  });
 });

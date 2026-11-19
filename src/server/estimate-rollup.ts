@@ -8,16 +8,29 @@ function round(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
 
-/** Sum every work line by section. Resource rows are used only when the file has no work lines. */
+function isOverheadNorm(position: { code?: string; name?: string }): boolean {
+  const code = position.code?.trim() ?? "";
+  const name = position.name?.trim() ?? "";
+  return /^(?:нр|сп)(?:$|[\s.-])/iu.test(code) || /^(?:нр|сп)(?:$|\s)/iu.test(name);
+}
+
+function isOverheadHeading(section: string): boolean {
+  return /^(?:нр|сп)(?:\s|$)/iu.test(section.trim());
+}
+
+/** Sum every work line by section. Resource rows are used only when the file has no work lines. Overhead norms are not sections. */
 export function rollupWorkSections(positions: Array<{
   sectionName?: string;
+  name?: string;
+  code?: string;
   unit?: string;
   quantity?: number;
   isWorkItem?: boolean;
 }>): WorkSectionRollup {
-  const works = positions.filter((position) => position.isWorkItem);
-  const rows = (works.length ? works : positions).filter((position) =>
+  const works = positions.filter((position) => position.isWorkItem && !isOverheadNorm(position));
+  const rows = (works.length ? works : positions.filter((position) => !isOverheadNorm(position))).filter((position) =>
     typeof position.quantity === "number" && Number.isFinite(position.quantity) && position.quantity !== 0
+    && !isOverheadHeading(position.sectionName?.trim() || "")
   );
   const sections: WorkSectionRollup["sections"] = [];
   const index = new Map<string, number>();
