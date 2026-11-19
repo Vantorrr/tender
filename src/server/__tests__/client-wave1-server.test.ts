@@ -6,6 +6,7 @@ import { roundMoney } from "@/lib/calc-math";
 import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
 import { resolveResourceDimensions } from "@/lib/resource-dimensions";
 import { mergeStageResources } from "@/lib/resource-merge";
+import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
 import type { GprStage, GprStageResource } from "@/lib/types";
 import { closeDb, ensureReady, mutateAppData, readAppData } from "@/server/db";
 import { parseGrandBuffer } from "@/server/grand-smeta";
@@ -15,6 +16,7 @@ import {
   createManualProcurement,
   createProcurementSchedule,
   sendProcurementToCalculation,
+  updateLinkedResourcesFromCalculation,
   deleteGprStage,
   deleteProcurement,
   updateDocument,
@@ -346,6 +348,33 @@ describe("client wave 1 server", () => {
     expect(afterCalc.reviewStatus).toBe("na_rassmotrenii");
     createProcurementSchedule("u-ruk", created.id);
     expect(readAppData().procurements.find((item) => item.id === created.id)?.gprId).toBeTruthy();
+  });
+
+  it("updates the calculation when its last linked resources are cleared and leaves the production plan alone", () => {
+    mutateAppData((data) => {
+      const calc = data.calculations.find((item) => item.id === "c-1")!;
+      calc.resourceScheduleParams = { ...EXCEL_RESOURCE_SCHEDULE_DEFAULTS };
+      const schedule = data.schedules.find((item) => item.id === "g-1")!;
+      const stage = schedule.stages.find((item) => item.id === "gs-2")!;
+      stage.resources = [{ id: "res-clear", kind: "material", name: "Кирпич", unit: "шт", quantity: 4, rate: 10 }];
+      return data;
+    });
+    const before = readAppData();
+    const schedule = before.schedules.find((item) => item.id === "g-1")!;
+    const planBefore = JSON.stringify(before.planFacts.find((item) => item.procurementId === schedule.procurementId)?.entries ?? []);
+    const workNames = schedule.stages.map((stage) => stage.workName ?? stage.name);
+    updateLinkedResourcesFromCalculation("u-tender", "c-1", schedule.stages);
+    const linked = readAppData().calculations.find((item) => item.id === "c-1")!;
+    expect(linked.positions.some((position) => position.name === "Кирпич")).toBe(true);
+    const cleared = readAppData().schedules.find((item) => item.id === "g-1")!.stages.map((stage) =>
+      stage.id === "gs-2" ? { ...stage, resources: [] } : stage
+    );
+    updateLinkedResourcesFromCalculation("u-tender", "c-1", cleared);
+    const after = readAppData();
+    expect(after.schedules.find((item) => item.id === "g-1")!.stages.find((stage) => stage.id === "gs-2")?.resources ?? []).toEqual([]);
+    expect(after.calculations.find((item) => item.id === "c-1")!.positions.some((position) => position.name === "Кирпич")).toBe(false);
+    expect(after.schedules.find((item) => item.id === "g-1")!.stages.map((stage) => stage.workName ?? stage.name)).toEqual(workNames);
+    expect(JSON.stringify(after.planFacts.find((item) => item.procurementId === schedule.procurementId)?.entries ?? [])).toBe(planBefore);
   });
 
   it("rejects a payment amount of zero or an invalid number", () => {

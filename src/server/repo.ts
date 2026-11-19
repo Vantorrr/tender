@@ -1345,26 +1345,18 @@ export function updateLinkedResourcesFromCalculation(
     ) {
       throw new Error("Для изменения этапов нужен раздел «ГПР»");
     }
-    const physicalPlanSignature = (items: GprStage[]) => JSON.stringify(items.map((stage) => ({
-      name: stage.name,
-      workName: stage.workName,
-      workNames: stage.workNames,
-      planVolume: stage.planVolume,
-      planUnit: stage.planUnit,
-    })));
-    const previousPhysicalPlan = physicalPlanSignature(schedule.stages);
-    const nextStages = schedule.stages.map((stage) => ({
+    const stagePlanBefore = schedule.stages.map(stagePlanKey);
+    schedule.stages = schedule.stages.map((stage) => ({
       ...stage,
       resources: incomingById.get(stage.id)?.resources ?? stage.resources,
     }));
-    schedule.stages = linkEstimateWorksToStages(nextStages, calc.positions ?? []);
     schedule.updatedAt = new Date().toISOString();
-    if (isResourceLinkedDraft(calc) && scheduleHasPopulatedResources(schedule.stages)) {
+    if (schedule.stages.some((stage, index) => stagePlanKey(stage) !== stagePlanBefore[index])) {
+      throw new Error("Для изменения этапов нужен раздел «ГПР»");
+    }
+    if (isResourceLinkedDraft(calc)) {
       const synced = syncDraftFromStages(calc, schedule.stages, { replacePositions: true });
       Object.assign(calc, synced.calc);
-    }
-    if (previousPhysicalPlan !== physicalPlanSignature(schedule.stages)) {
-      syncProductionPlanFromSchedule(data, schedule);
     }
     audit(data, actorId, "update", "calculation", calculationId, "Ресурсы расчёта синхронизированы с графиком");
     return data;
