@@ -355,6 +355,16 @@ export type CostConflictFinding = {
   scheduleImpact: string;
 };
 
+function citedPrice(texts: Array<{ id: string; text: string }>): { rubles: number; quote: string; citationId: string; thousands: boolean } | null {
+  const hits = texts.flatMap((citation) => {
+    if (!/цен|стоим|нмцк/iu.test(citation.text)) return [];
+    return moneyAmounts(citation.text)
+      .filter((amount) => amount.rubles >= 1000)
+      .map((amount) => ({ ...amount, quote: citation.text, citationId: citation.id }));
+  });
+  return hits.sort((left, right) => right.rubles - left.rubles)[0] ?? null;
+}
+
 /** Contract price and the estimate total are different sums, so the package says so on its own. */
 export function costConflictBetween(documents: Array<{
   fileName: string;
@@ -365,24 +375,33 @@ export function costConflictBetween(documents: Array<{
 }>): CostConflictFinding | null {
   const priced = documents.flatMap((document) => {
     const name = `${document.fileName} ${document.title ?? ""}`.toLocaleLowerCase("ru-RU");
-    const kind = document.category === "contract" || /договор|контракт/iu.test(name)
-      ? "contract"
-      : document.category === "estimate" || /смет/iu.test(name) || (document.analysis?.positionCount ?? 0) > 0
-        ? "estimate"
-        : null;
-    if (!kind || document.analysis?.costThousand == null) return [];
-    const rubles = Math.round(document.analysis.costThousand * 1000 * 100) / 100;
-    const texts = (document.citations ?? []).map((citation) => citation.text);
-    const quote = texts.find((text) => moneyAmounts(text).some((amount) => Math.abs(amount.rubles - rubles) <= 1))
-      ?? texts[0]
+    const kind = document.category === "estimate" || (document.analysis?.positionCount ?? 0) > 0
+      ? "estimate"
+      : document.category === "contract"
+        ? "contract"
+        : /смет/iu.test(name)
+          ? "estimate"
+          : /договор|контракт/iu.test(name)
+            ? "contract"
+            : null;
+    if (!kind) return [];
+    const texts = document.citations ?? [];
+    const fromScan = document.analysis?.costThousand != null
+      ? Math.round(document.analysis.costThousand * 1000 * 100) / 100
+      : null;
+    const fromCitation = fromScan == null ? citedPrice(texts) : null;
+    const rubles = fromScan ?? fromCitation?.rubles ?? null;
+    if (rubles == null) return [];
+    const quote = texts.find((citation) => moneyAmounts(citation.text).some((amount) => Math.abs(amount.rubles - rubles) <= 1))?.text
+      ?? fromCitation?.quote
       ?? "";
-    const citation = (document.citations ?? []).find((item) => item.text === quote);
+    const citation = texts.find((item) => item.text === quote);
     return [{
       kind,
       rubles,
-      label: moneyLabel(rubles, kind === "estimate", texts),
+      label: moneyLabel(rubles, kind === "estimate" || Boolean(fromCitation?.thousands), texts.map((item) => item.text)),
       quote,
-      citationId: citation?.id,
+      citationId: citation?.id ?? fromCitation?.citationId,
       fileName: document.fileName,
     }];
   });

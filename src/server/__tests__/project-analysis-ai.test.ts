@@ -208,6 +208,14 @@ describe("grounded project analysis", () => {
       { fileName: "договор.docx", category: "contract", analysis: { costThousand: 1250 }, citations: [{ id: "c-price", text: "Цена договора составляет 1 250 000,50 руб." }] },
       { fileName: "смета.xlsx", category: "estimate", analysis: { costThousand: 1250 }, citations: [{ id: "c-cost", text: "Сметная стоимость: 1 250,00 тыс. руб." }] },
     ])).toBeNull();
+    const fromCitation = costConflictBetween([
+      { fileName: "договор.docx", category: "contract", analysis: { costThousand: null }, citations: [{ id: "c-price", text: "Цена договора составляет 1 250 000,50 руб." }] },
+      { fileName: "смета.xlsx", title: "Смета к договору", category: "estimate", analysis: { costThousand: 469269.22, positionCount: 40 }, citations: [{ id: "c-cost", text: "Сметная стоимость: 469 269,22 тыс. руб." }] },
+    ]);
+    expect(fromCitation?.topic).toBe("Противоречие в стоимости");
+    expect(fromCitation?.text).toContain("1 250 000,50");
+    expect(fromCitation?.text).toContain("469 269,22 тыс");
+    expect(fromCitation?.sourceFiles).toEqual(["договор.docx", "смета.xlsx"]);
   });
 
   it("points a finding at the paragraph that contains the fact", () => {
