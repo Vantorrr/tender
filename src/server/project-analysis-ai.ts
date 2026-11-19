@@ -313,8 +313,11 @@ export function recommendationAfterConflict(
   return recommendation;
 }
 
-const TOTAL_PRICE = /(?<![\p{L}\p{N}_])(?:(?:цен(?:а|ы|у|е|ой|ою)|стоимост(?:ь|и|ью))\s+(?:[\p{L}-]+\s+){0,3}?(?:договор(?:а|у|ом|е)?|контракт(?:а|у|ом|е)?|работ(?:ы|а|у|е|ой|ою)?)(?![\p{L}\p{N}_])|общ(?:ая|ей|ую)\s+стоимост(?:ь|и|ью)(?![\p{L}\p{N}_])|нмцк(?![\p{L}\p{N}_]))/giu;
+const STRONG_PRICE = /(?<![\p{L}\p{N}_])(?:цен(?:а|ы|у|е|ой|ою)\s+(?:[\p{L}-]+\s+){0,3}?(?:договор(?:а|у|ом|е)?|контракт(?:а|у|ом|е)?)(?![\p{L}\p{N}_])|общ(?:ая|ей|ую)\s+стоимост(?:ь|и|ью)(?![\p{L}\p{N}_])|нмцк(?![\p{L}\p{N}_]))/giu;
+const WEAK_PRICE = /(?<![\p{L}\p{N}_])(?:стоимост(?:ь|и|ью)\s+(?:[\p{L}-]+\s+){0,3}?(?:договор(?:а|у|ом|е)?|контракт(?:а|у|ом|е)?|работ(?:ы|а|у|е|ой|ою)?)(?![\p{L}\p{N}_])|цен(?:а|ы|у|е|ой|ою)\s+(?:[\p{L}-]+\s+){0,3}?работ(?:ы|а|у|е|ой|ою)?(?![\p{L}\p{N}_]))/giu;
 const UNIT_PRICE = /(?<![\p{L}\p{N}_])(?:за\s+единиц[\p{L}-]*|за\s+м\s*(?:3|³|\^3)?(?![\p{L}])|за\s+т(?![\p{L}])|за\s+шт\.?(?![\p{L}])|за\s+п\s*\.?\s*м\.?|единичн(?:ая|ой|ую|ые|ых)\s+расценк[\p{L}-]*)/giu;
+const PAYMENT_WORD = /(?<![\p{L}\p{N}_])(?:аванс[\p{L}-]*|штраф[\p{L}-]*|пен(?:я|и|ю|е|ей|ям|ями)|обеспечени[\p{L}-]*|задаток[\p{L}-]*|неустойк[\p{L}-]*)(?![\p{L}\p{N}_])/giu;
+const SENTENCE_BOUNDARY = /[.!?](?=\s+\p{Lu})|[\n\r]+/gu;
 const CURRENCY_AMOUNT = /(\d{1,3}(?:[ \u00a0\u202f]\d{3})+(?:[,.]\d+)?|\d+(?:[,.]\d+)?)(?:\s*(тыс\.?|млн\.?))?\s*(?:руб(?:\.|лей|ля|ль)?|₽)/giu;
 
 type MoneyScale = "ruble" | "thousand" | "million";
@@ -327,10 +330,23 @@ function matchSpans(text: string, pattern: RegExp): Array<{ start: number; end: 
   });
 }
 
-function spanGap(left: { start: number; end: number }, right: { start: number; end: number }): number {
-  if (right.start >= left.end) return right.start - left.end;
-  if (left.start >= right.end) return left.start - right.end;
-  return 0;
+function sentenceSpans(text: string): Array<{ start: number; end: number }> {
+  const spans: Array<{ start: number; end: number }> = [];
+  let start = 0;
+  SENTENCE_BOUNDARY.lastIndex = 0;
+  for (const match of text.matchAll(SENTENCE_BOUNDARY)) {
+    const index = match.index ?? 0;
+    const lineBreak = /[\n\r]/.test(match[0]);
+    const end = lineBreak ? index : index + match[0].length;
+    if (end > start) spans.push({ start, end });
+    start = index + match[0].length;
+  }
+  if (start < text.length) spans.push({ start, end: text.length });
+  return spans;
+}
+
+function overlapsGap(span: { start: number; end: number }, from: number, to: number): boolean {
+  return span.end > from && span.start < to;
 }
 
 function moneyAmounts(text: string): Array<{ number: string; rubles: number; scale: MoneyScale; index: number; end: number }> {
@@ -382,33 +398,44 @@ export type CostConflictFinding = {
 };
 
 function citedPrice(texts: Array<{ id: string; text: string }>): { rubles: number; quote: string; citationId: string; scale: MoneyScale } | null {
-  let best: { rubles: number; quote: string; citationId: string; scale: MoneyScale; distance: number } | null = null;
+  const found: Array<{ rubles: number; quote: string; citationId: string; scale: MoneyScale; rank: number }> = [];
   for (const citation of texts) {
-    const totals = matchSpans(citation.text, TOTAL_PRICE);
+    const amounts = moneyAmounts(citation.text);
     const units = matchSpans(citation.text, UNIT_PRICE);
-    if (totals.length === 0) continue;
-    for (const amount of moneyAmounts(citation.text)) {
-      const amountSpan = { start: amount.index, end: amount.end };
-      let nearestTotal = totals[0]!;
-      let totalDistance = spanGap(nearestTotal, amountSpan);
-      for (const total of totals.slice(1)) {
-        const distance = spanGap(total, amountSpan);
-        if (distance < totalDistance) {
-          nearestTotal = total;
-          totalDistance = distance;
+    const payments = matchSpans(citation.text, PAYMENT_WORD);
+    const phrases = [
+      ...matchSpans(citation.text, STRONG_PRICE).map((span) => ({ ...span, rank: 2 })),
+      ...matchSpans(citation.text, WEAK_PRICE).map((span) => ({ ...span, rank: 1 })),
+    ];
+    for (const sentence of sentenceSpans(citation.text)) {
+      for (const phrase of phrases) {
+        if (phrase.start < sentence.start || phrase.end > sentence.end) continue;
+        const following = amounts.filter((amount) => amount.index >= phrase.end && amount.index < sentence.end);
+        let cursor = phrase.end;
+        for (const amount of following) {
+          const blocked = units.some((unit) => overlapsGap(unit, cursor, amount.index))
+            || payments.some((payment) => overlapsGap(payment, cursor, amount.index));
+          if (!blocked) {
+            found.push({
+              rubles: amount.rubles,
+              quote: citation.text,
+              citationId: citation.id,
+              scale: amount.scale,
+              rank: phrase.rank,
+            });
+            break;
+          }
+          cursor = amount.end;
         }
-      }
-      const unitDistance = units.reduce((nearest, unit) => Math.min(nearest, spanGap(unit, amountSpan)), Number.POSITIVE_INFINITY);
-      const from = Math.min(nearestTotal.start, amount.index);
-      const to = Math.max(nearestTotal.end, amount.index);
-      const unitInside = units.some((unit) => unit.start < to && unit.end > from);
-      if (unitDistance <= totalDistance || unitInside) continue;
-      if (!best || totalDistance < best.distance) {
-        best = { rubles: amount.rubles, quote: citation.text, citationId: citation.id, scale: amount.scale, distance: totalDistance };
       }
     }
   }
-  return best;
+  if (!found.length) return null;
+  const bestRank = Math.max(...found.map((item) => item.rank));
+  const top = found.filter((item) => item.rank === bestRank);
+  const first = top[0]!;
+  if (top.some((item) => Math.abs(item.rubles - first.rubles) > 1)) return null;
+  return first;
 }
 
 /** Contract price and the estimate total are different sums, so the package says so on its own. */

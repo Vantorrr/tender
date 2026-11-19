@@ -282,6 +282,55 @@ describe("grounded project analysis", () => {
     ]);
     expect(withTotal?.text).toContain("1 250 000,50 руб.");
     expect(withTotal?.text).not.toContain("8555,41");
+    const advance = costConflictBetween([
+      {
+        fileName: "договор.docx",
+        category: "contract",
+        analysis: { costThousand: null },
+        citations: [{ id: "c-advance", text: "Аванс 300 000 руб. Цена договора составляет 1 250 000,50 руб." }],
+      },
+      estimate,
+    ]);
+    expect(advance?.text).toContain("1 250 000,50 руб.");
+    expect(advance?.text).not.toContain("300 000");
+    expect(costConflictBetween([
+      {
+        fileName: "договор.docx",
+        category: "contract",
+        analysis: { costThousand: null },
+        citations: [{ id: "c-fine", text: "Штраф 10 000 руб. Стоимость работ уточняется." }],
+      },
+      estimate,
+    ])).toBeNull();
+    expect(costConflictBetween([
+      {
+        fileName: "договор.docx",
+        category: "contract",
+        analysis: { costThousand: null },
+        citations: [{ id: "c-pay", text: "Пени 5 000 руб. Задаток 7 000 руб. Неустойка 9 000 руб. Стоимость работ уточняется." }],
+      },
+      estimate,
+    ])).toBeNull();
+    const preferred = costConflictBetween([
+      {
+        fileName: "договор.docx",
+        category: "contract",
+        analysis: { costThousand: null },
+        citations: [{ id: "c-rank", text: "Стоимость работ составляет 10 000 руб. Цена договора составляет 1 250 000,50 руб." }],
+      },
+      estimate,
+    ]);
+    expect(preferred?.text).toContain("1 250 000,50 руб.");
+    expect(preferred?.text).not.toContain("10 000");
+    expect(costConflictBetween([
+      {
+        fileName: "договор.docx",
+        category: "contract",
+        analysis: { costThousand: null },
+        citations: [{ id: "c-ambiguous", text: "Цена договора составляет 1 250 000,50 руб. НМЦК составляет 900 000 руб." }],
+      },
+      estimate,
+    ])).toBeNull();
     expect(costConflictBetween([
       {
         fileName: "договор.docx",
