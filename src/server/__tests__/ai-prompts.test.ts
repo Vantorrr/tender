@@ -78,6 +78,9 @@ describe("estimator prompts", () => {
     expect(omitUnsourcedPlaces("Стоимость на листе ЛС, N20.", [
       { id: "c-est", text: "Сметная стоимость", page: 1, sourceFile: "смета.xlsx", sheet: "ЛС", cell: "N20" },
     ])).toContain("N20");
+    expect(omitUnsourcedPlaces("Итог на листе ЛС, G10:G11. На листе указан чертёж, L2 и ISO9001.", [
+      { id: "c-sum", text: "Итог", page: 1, sourceFile: "смета.xlsx", sheet: "ЛС", cell: "G10:G11" },
+    ])).toBe("Итог на листе ЛС, G10:G11. На листе указан чертёж, L2 и ISO9001.");
     const sheetPayload = buildModelNoteUserContent(
       { kind: "local-estimate" },
       [],
