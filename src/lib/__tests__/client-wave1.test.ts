@@ -4,6 +4,9 @@ import { formatDate, formatDateTime } from "@/lib/format";
 import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
 import { humanizeIssue, humanizeIssues } from "@/lib/issue-text";
 import { presentAnalyticalNote } from "@/lib/analytical-note";
+import { plainExchangeTitle } from "@/lib/exchange-label";
+import { quantityPresentation } from "@/lib/format";
+import { rowDeleteConfirmed } from "@/lib/row-delete";
 import { paymentAmountError, paymentBucket, paymentTotals } from "@/lib/money-payments";
 import { displayedKanbanColumn, procurementBoardLabel } from "@/lib/pipeline";
 import { patchMergedResources } from "@/lib/resource-merge";
@@ -122,6 +125,24 @@ describe("client wave 1 wording and money", () => {
     expect(rated.every((item) => item.rate === 25)).toBe(true);
     const resized = patchMergedResources(members, { name: "Возврат: Вода" }, { quantity: 100 });
     expect(resized.reduce((sum, item) => sum + item.quantity, 0)).toBeCloseTo(-100, 5);
+  });
+
+  it("removes a calculation row only after an explicit confirm", () => {
+    expect(rowDeleteConfirmed("dismiss")).toBe(false);
+    expect(rowDeleteConfirmed("confirm")).toBe(true);
+  });
+
+  it("shows a piece quantity from a norm with two decimals and an explanation", () => {
+    const shown = quantityPresentation(16.5396, "шт");
+    expect(shown.text).toBe("16,54");
+    expect(shown.title).toMatch(/норме сметы/);
+    expect(quantityPresentation(4, "шт").title).toBeUndefined();
+  });
+
+  it("hides internal ids in an exchange title", () => {
+    expect(plainExchangeTitle("Смета заказчика · смета.xlsx · РУЧНАЯ-20261119-abc · p-manual-1")).toBe(
+      "Смета заказчика · смета.xlsx",
+    );
   });
 
   it("names a rejected card the same way as the closed column", () => {

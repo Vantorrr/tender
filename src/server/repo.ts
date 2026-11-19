@@ -2062,7 +2062,7 @@ export function attachCustomerEstimate(
       id: `sx-${Date.now()}`,
       orgId: p.orgId,
       procurementId: p.id,
-      name: `Смета заказчика · ${opts?.fileName ?? sourceNames.join(", ")} · ${p.number} · ${p.id}`,
+      name: opts?.fileName ?? (sourceNames.join(", ") || "Смета заказчика"),
       at: now,
       authorId: actorId,
       positionsMapped: mappedCount,
@@ -2139,12 +2139,11 @@ function buildDraftStagesFromEstimate(
     return {
       id: stageId,
       name: workName,
-      ...(workName !== sectionName ? { sectionName } : {}),
+      ...(workName !== sectionName ? { sectionName, workName } : {}),
       start: now.slice(0, 10),
       end: now.slice(0, 10),
       sequence: index + 1,
       crewSize: 0,
-      ...(workName !== sectionName ? { workName } : {}),
       ...(workVolume != null ? { planVolume: workVolume, planUnit: workPositions[0].unit } : {}),
       resources: mergeStageResources(resources),
     };
@@ -2181,9 +2180,69 @@ function mergeEstimateRowsIntoDraft(
 }
 
 /**
- * «Отправить в расчёт»: resource draft + GPR, preserve docs,
- * freeze customer estimate as immutable original when present.
+ * «Отправить в расчёт»: resource draft only. The schedule is a separate action.
  */
+export function createProcurementSchedule(actorId: string, procurementId: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const procurement = data.procurements.find((item) => item.id === procurementId);
+    if (!procurement) throw new Error("Закупка не найдена");
+    assertOrgAccess(actor, procurement.orgId, "закупки");
+    if (!procurement.calculationId) throw new Error("Сначала сформируйте расчёт");
+    if (procurement.gprId && data.schedules.some((item) => item.id === procurement.gprId)) return data;
+    const now = new Date().toISOString();
+    const draft = data.calculations.find((item) => item.id === procurement.calculationId && item.kind !== "customer_original");
+    const derived = buildDraftStagesFromEstimate(draft?.positions ?? [], now);
+    const gid = `g-${Date.now()}`;
+    const stage1 = `gs-${Date.now()}`;
+    const placeholderStages: GprStage[] = [
+      ensureStageResources({
+        id: stage1,
+        name: "Подготовка / мобилизация",
+        start: now.slice(0, 10),
+        end: now.slice(0, 10),
+        sequence: 1,
+        crewSize: 0,
+      }),
+      ensureStageResources({
+        id: `gs-${Date.now() + 1}`,
+        name: "Основные работы",
+        start: now.slice(0, 10),
+        end: now.slice(0, 10),
+        sequence: 2,
+        dependsOn: stage1,
+        dependencyType: "FS",
+        crewSize: 0,
+      }),
+    ];
+    data.schedules.unshift({
+      id: gid,
+      orgId: procurement.orgId,
+      procurementId: procurement.id,
+      calculationId: procurement.calculationId,
+      title: `ГПР (черновик) — ${procurement.title.slice(0, 48)}`,
+      status: "v_rabote",
+      version: 1,
+      authorId: actorId,
+      assumptions: derived.length
+        ? [
+            "Виды работ и вложенные ресурсы сгруппированы по разделам распознанной сметы. Проверьте состав строк и сопоставьте их с видами работ объекта.",
+            "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.",
+            "Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.",
+          ]
+        : [
+            "Начальные даты и этапы — только навигационная заготовка; замените их по ТЗ, производительности и календарю объекта",
+            "Состав и количество ресурсов не подтверждены: заполните строки перед использованием итогов",
+          ],
+      stages: derived.length ? derived : placeholderStages,
+      updatedAt: now,
+    });
+    procurement.gprId = gid;
+    audit(data, actorId, "create", "gpr", gid, "График создан отдельной кнопкой");
+    return data;
+  });
+}
+
 export function sendProcurementToCalculation(
   actorId: string,
   procurementId: string
@@ -2437,55 +2496,7 @@ export function sendProcurementToCalculation(
     const derivedGprStages = buildDraftStagesFromEstimate(positionsFromEstimate, now);
 
     // GPR scaffold from explicitly parsed estimate sections; unknown dates and rates stay unconfirmed.
-    if (!p.gprId) {
-      const gid = `g-${Date.now()}`;
-      const stage1 = `gs-${Date.now()}`;
-      const placeholderStages: GprStage[] = [
-        ensureStageResources({
-          id: stage1,
-          name: "Подготовка / мобилизация",
-          start: now.slice(0, 10),
-          end: now.slice(0, 10),
-          sequence: 1,
-          crewSize: 0,
-        }),
-        ensureStageResources({
-          id: `gs-${Date.now() + 1}`,
-          name: "Основные работы",
-          start: now.slice(0, 10),
-          end: now.slice(0, 10),
-          sequence: 2,
-          dependsOn: stage1,
-          dependencyType: "FS",
-          crewSize: 0,
-        }),
-      ];
-      data.schedules.unshift({
-        id: gid,
-        orgId: p.orgId,
-        procurementId: p.id,
-        calculationId: draftId!,
-        title: `ГПР (черновик) — ${p.title.slice(0, 48)}`,
-        status: "v_rabote",
-        version: 1,
-        authorId: actorId,
-        assumptions: [
-          ...(derivedGprStages.length
-            ? [
-                "Виды работ и вложенные ресурсы сгруппированы по разделам распознанной сметы. Проверьте состав строк и сопоставьте их с видами работ объекта.",
-                "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.",
-                "Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.",
-              ]
-            : [
-                "Начальные даты и этапы — только навигационная заготовка; замените их по ТЗ, производительности и календарю объекта",
-                "Состав и количество ресурсов не подтверждены: заполните строки перед использованием итогов",
-              ]),
-        ],
-        stages: derivedGprStages.length ? derivedGprStages : placeholderStages,
-        updatedAt: now,
-      });
-      p.gprId = gid;
-    } else {
+    if (p.gprId) {
       const workPositionIds = new Set(
         positionsFromEstimate.filter((position) => position.isWorkItem).map((position) => position.id)
       );

@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { parseDecimalRu } from "@/lib/decimal-ru";
-import { formatMoney, formatNumber } from "@/lib/format";
+import { formatMoney, formatNumber, quantityPresentation } from "@/lib/format";
 import {
   buildHierarchicalEstimate,
   estimateBudgetCards,
@@ -149,14 +149,15 @@ export function HierarchicalEstimatePanel({
         title={leaf.sourceCode ? `Код сметы: ${leaf.sourceCode}` : undefined}
       >
         <div className="min-w-0 truncate">{leaf.name}</div>
-        <div className="text-right">
-          {locked ? formatNumber(leaf.quantity) : (
+        <div className="text-right" title={quantityPresentation(leaf.quantity, leaf.unit).title}>
+          {locked ? quantityPresentation(leaf.quantity, leaf.unit).text : (
             <Input
               className="h-8 text-right"
               type="number"
               min={0}
               step="any"
-              value={leaf.quantity}
+              value={/^шт\.?$/iu.test(leaf.unit.trim()) ? Number(leaf.quantity.toFixed(2)) : leaf.quantity}
+              title={quantityPresentation(leaf.quantity, leaf.unit).title}
               data-testid={`estimate-qty-${leaf.id}`}
               onChange={(e) => {
                 const quantity = Number(e.target.value) || 0;
@@ -167,7 +168,7 @@ export function HierarchicalEstimatePanel({
           )}
         </div>
         <div className="text-right text-xs" data-testid={`estimate-q-${leaf.id}`}>
-          {leaf.basis === "material_qty" || leaf.hoursQ == null ? "—" : `${formatNumber(leaf.hoursQ)} ч`}
+          {leaf.kind === "material" ? "" : leaf.hoursQ == null ? "—" : `${formatNumber(leaf.hoursQ)} ч`}
         </div>
         <div className="text-right">
           {locked ? (leaf.rate == null ? <span className="text-amber-800" title="ставка не указана">ставка не указана</span> : formatMoney(leaf.rate)) : (
@@ -547,6 +548,9 @@ export function HierarchicalEstimatePanel({
                   <span className="mr-2 text-[var(--tk-muted)]">
                     {isOpen(node.id) ? "▾" : "▸"}
                   </span>
+                  {node.sectionName && node.sectionName !== node.name ? (
+                    <span className="mr-2 text-xs font-normal text-[var(--tk-muted)]">{node.sectionName}</span>
+                  ) : null}
                   {node.name}
                   {node.incomplete ? (
                     <span className="ml-2 text-xs font-normal text-amber-800">

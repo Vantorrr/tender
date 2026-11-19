@@ -3,8 +3,10 @@
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { formatMoney, formatNumber } from "@/lib/format";
+import { rowDeleteConfirmed } from "@/lib/row-delete";
 import { diffDays } from "@/lib/cost-engine";
 import type { EstimateLeaf, EstimateStageNode } from "@/lib/hierarchical-estimate";
 import { resolveResourceDimensions } from "@/lib/resource-dimensions";
@@ -293,6 +295,7 @@ export function SpreadsheetEstimateGrid({
   const [pasteText, setPasteText] = useState("");
   const [pasteErrors, setPasteErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<EstimateLeaf | null>(null);
   const savingRef = useRef(false);
   const [stageId, setStageId] = useState(stages[0]?.id ?? "");
   const [manual, setManual] = useState({
@@ -438,7 +441,7 @@ export function SpreadsheetEstimateGrid({
                 const row = <tr key={leaf.id} className="group bg-white hover:bg-amber-50/40" data-testid={`resource-grid-row-${leaf.id}`}>
                   <td style={{ left: 0 }} className="sticky z-10 w-[72px] min-w-[72px] border-b border-r border-[var(--tk-line)]/70 bg-white px-2 py-1 text-[var(--tk-muted)]">↳</td>
                   <td style={{ left: 72 }} className="sticky z-10 w-48 min-w-48 border-b border-r border-[var(--tk-line)]/70 bg-white px-2 py-1">{node.name}</td>
-                  <td style={{ left: 264 }} className="sticky z-10 w-64 min-w-64 border-b border-r border-[var(--tk-line)]/70 bg-white px-1 py-1">{tableInput(leaf, "name")}{!locked && stage && leaf.source === "stage_resource" ? <div className="mt-1 flex flex-wrap items-center gap-1"><select aria-label={`Перенести ${leaf.name}`} className="h-7 max-w-[9rem] rounded border px-1 text-[11px]" value={stage.id} onChange={(event) => { const targetId = event.target.value; if (!targetId || targetId === stage.id) return; const resource = stage.resources?.find((item) => item.id === leaf.id); if (!resource) return; void onPatchLeaf(leaf, { moveToStageId: targetId, resource }); }}>{stages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button type="button" className="text-[11px] text-rose-800 underline" onClick={() => { if (window.confirm(`Удалить «${leaf.name}»?`)) void onPatchLeaf(leaf, { remove: true }); }}>Удалить</button></div> : null}</td>
+                  <td style={{ left: 264 }} className="sticky z-10 w-64 min-w-64 border-b border-r border-[var(--tk-line)]/70 bg-white px-1 py-1">{tableInput(leaf, "name")}{!locked && stage && leaf.source === "stage_resource" ? <div className="mt-1 flex flex-wrap items-center gap-1"><select aria-label={`Перенести ${leaf.name}`} className="h-7 max-w-[9rem] rounded border px-1 text-[11px]" value={stage.id} onChange={(event) => { const targetId = event.target.value; if (!targetId || targetId === stage.id) return; const resource = stage.resources?.find((item) => item.id === leaf.id); if (!resource) return; void onPatchLeaf(leaf, { moveToStageId: targetId, resource }); }}>{stages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button type="button" className="text-[11px] text-rose-800 underline" onClick={() => setPendingDelete(leaf)}>Удалить</button></div> : null}</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-1 py-1">{tableInput(leaf, "unit")}</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-1 py-1 text-right">{formatNumber(leaf.quantity)}</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-2 py-1 text-right">{plannedDays ?? "—"}</td>
@@ -452,7 +455,7 @@ export function SpreadsheetEstimateGrid({
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-1 py-1">{stage && leaf.source === "stage_resource" ? tableInput(leaf, "hoursPerShift") : "—"}</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-1 py-1">{stage && leaf.source === "stage_resource" ? tableInput(leaf, "shiftsPerDay") : "—"}</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-1 py-1">{stage && leaf.source === "stage_resource" ? tableInput(leaf, "days") : "—"}</td>
-                  <td className="border-b border-r border-[var(--tk-line)]/70 px-2 py-1 text-right" data-testid={`grid-hours-${leaf.id}`}>{leaf.hoursQ == null ? "—" : `${formatNumber(leaf.hoursQ)} ч`}</td>
+                  <td className="border-b border-r border-[var(--tk-line)]/70 px-2 py-1 text-right" data-testid={`grid-hours-${leaf.id}`}>{leaf.kind === "material" ? "" : leaf.hoursQ == null ? "—" : `${formatNumber(leaf.hoursQ)} ч`}</td>
                   <td className={`border-b border-r border-[var(--tk-line)]/70 px-2 py-1 text-right font-medium ${leaf.amount == null ? "text-amber-800" : ""}`} title={leaf.amount == null ? "нет данных" : undefined}>{leaf.amount == null ? "—" : formatMoney(leaf.amount)}</td>
                   <ResourceCostCells leaf={leaf} params={params} />
                 </tr>;
@@ -481,6 +484,22 @@ export function SpreadsheetEstimateGrid({
         </table>
       </div>
       <p className="mt-2 text-xs text-[var(--tk-muted)]">Ставку и количество можно править в строке. Даты этапа меняются в графике.</p>
+      <Dialog open={pendingDelete != null} onOpenChange={(open) => { if (!open) setPendingDelete(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Удалить строку?</DialogTitle>
+            <DialogDescription>Строка «{pendingDelete?.name}» будет удалена из расчёта.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingDelete(null)}>Отмена</Button>
+            <Button onClick={() => {
+              const leaf = pendingDelete;
+              setPendingDelete(null);
+              if (leaf && rowDeleteConfirmed("confirm")) void onPatchLeaf(leaf, { remove: true });
+            }}>Удалить</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

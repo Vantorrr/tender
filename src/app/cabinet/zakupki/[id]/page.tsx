@@ -26,11 +26,11 @@ import { citationTopicLabel, readableCitations, regionFromCitations, submissionD
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_CHECKLIST } from "@/lib/ai-topics";
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
-import { procurementBoardLabel } from "@/lib/pipeline";
 import { parseDecimalRu } from "@/lib/decimal-ru";
 import { PAYMENT_AMOUNT_ERROR, PAYMENT_BUCKET_LABELS, paymentBucket, paymentTotals, type PaymentBucket } from "@/lib/money-payments";
 import { userHasSection } from "@/lib/acl";
-import { REVIEW_LABELS, STATUS_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
+import { plainExchangeTitle } from "@/lib/exchange-label";
+import { STATUS_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
 import type { Citation, DocumentCategory, ReviewStatus, SupplyRequest, SupplyStatus, SupplierDirectoryEntry, OrganizationCompanyCard } from "@/lib/types";
 import type { SupplierSearchCandidate } from "@/server/supplier-discovery";
 import { useStore } from "@/lib/store";
@@ -674,9 +674,6 @@ export default function ZakupkaDetailPage() {
             {user && userHasSection(user, "zakupki") ? (
               <ProjectAiChat procurementId={procurement.id} projectTitle={procurement.title} screen="procurement" />
             ) : null}
-            <span className="inline-flex h-8 items-center rounded-lg border border-[var(--tk-line)] bg-white px-2.5 text-sm font-medium" data-testid="procurement-single-status">
-              {procurementBoardLabel(procurement)}
-            </span>
             {procurement.lifecycle !== "production" && user?.sections.includes("zakupki") ? (
               <Button
                 variant="outline"
@@ -723,7 +720,7 @@ export default function ZakupkaDetailPage() {
                       );
                     } else {
                       toast.warning(
-                        "Созданы расчёт и ГПР, но сметные строки не распознаны. Загрузите смету XLSX или добавьте позиции вручную."
+                        "Расчёт создан, но сметные строки не распознаны. Загрузите смету XLSX или добавьте позиции вручную."
                       );
                     }
                 } catch (e) {
@@ -736,6 +733,28 @@ export default function ZakupkaDetailPage() {
               }}
             >
               Сформировать расчёт (расчёт по формулам, без ИИ)
+            </Button>
+            <Button
+              variant="outline"
+              data-testid="create-gpr"
+              disabled={busy || !procurement.calculationId || Boolean(procurement.gprId)}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  await api("/api/zakupki", {
+                    method: "POST",
+                    body: JSON.stringify({ action: "createGpr", id: procurement.id }),
+                  });
+                  await refresh();
+                  toast.success("График создан");
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : "Не удалось создать график");
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Создать ГПР
             </Button>
           </div>
         }
@@ -870,12 +889,12 @@ export default function ZakupkaDetailPage() {
               >
                 <p className="font-medium">Результат обмена со сметным ПО</p>
                 <p className="mt-1 text-xs text-[var(--tk-muted)]">
-                  {lastExchange.name} · {formatDateTime(lastExchange.at)} · позиций{" "}
-                  {lastExchange.positionsMapped}
-                  {lastExchange.confirmed ? " · подтверждён" : " · ожидает подтверждения"}
+                  Файл: {plainExchangeTitle(lastExchange.name)}. Позиций {lastExchange.positionsMapped}.{" "}
+                  {lastExchange.confirmed ? "Подтверждено." : "Ожидает подтверждения."}
                   {lastExchange.discrepancies.length
-                    ? ` · расхождений ${lastExchange.discrepancies.length}`
-                    : " · без расхождений"}
+                    ? ` Расхождений: ${lastExchange.discrepancies.length}.`
+                    : " Без расхождений."}
+                  {" "}{formatDateTime(lastExchange.at)}
                 </p>
                 <Link href="/cabinet/obmen" className="mt-1 inline-block text-xs text-sky-800 underline">
                   Открыть раздел «Обмен»
@@ -963,12 +982,18 @@ export default function ZakupkaDetailPage() {
                   <SelectTrigger className="mt-3 w-full">
                     <SelectValue>
                       {(value) =>
-                        REVIEW_LABELS[value as ReviewStatus] ?? "Рассмотрение"
+                        ({
+                          novaya: "Новое",
+                          na_rassmotrenii: "В работе",
+                          odobrena: "Участвуем",
+                          otklonena: "Не участвуем",
+                          dublirovana: "Дубликат",
+                        } as Record<string, string>)[String(value)] ?? "Рассмотрение"
                       }
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="novaya">Новая</SelectItem>
+                    <SelectItem value="novaya">Новое</SelectItem>
                     <SelectItem value="na_rassmotrenii">В работе</SelectItem>
                     <SelectItem value="odobrena">Участвуем</SelectItem>
                     <SelectItem value="otklonena">Не участвуем</SelectItem>
@@ -1503,7 +1528,7 @@ export default function ZakupkaDetailPage() {
               </>
             ) : (
               <p className="text-[var(--tk-muted)]">
-                ГПР появится после «Сформировать расчёт (расчёт по формулам, без ИИ)».
+                График создаётся кнопкой «Создать ГПР».
               </p>
             )}
           </div>
@@ -1697,6 +1722,7 @@ export default function ZakupkaDetailPage() {
                           }),
                         });
                         await refresh();
+                        setPayTitle("");
                         setPayAmount("");
                         toast.success("Платёж сохранён");
                       } catch (e) {

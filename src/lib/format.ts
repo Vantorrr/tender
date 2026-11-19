@@ -13,6 +13,17 @@ export function formatNumber(value: number, digits = 2): string {
   }).format(value);
 }
 
+/** Piece counts from a norm are fractional. Show two decimals and explain the source. */
+export function quantityPresentation(quantity: number, unit: string): { text: string; title?: string } {
+  const piece = /^шт\.?$/iu.test(unit.trim());
+  const text = formatNumber(quantity, 2);
+  if (!piece || Math.abs(quantity - Math.round(quantity)) < 1e-6) return { text };
+  return {
+    text,
+    title: `По норме сметы ${formatNumber(quantity, 4)} ${unit}. Дробь получается из нормы на единицу объёма, на экране — до 2 знаков.`,
+  };
+}
+
 /** Today's calendar date in the project's operating timezone, not UTC. */
 export function todayIsoInTimeZone(timeZone = "Europe/Moscow", now = new Date()): string {
   const parts = new Intl.DateTimeFormat("en-CA", {

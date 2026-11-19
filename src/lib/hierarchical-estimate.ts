@@ -71,6 +71,7 @@ export type EstimateWorkNode = {
 export type EstimateStageNode = {
   id: string;
   name: string;
+  sectionName?: string;
   groups: EstimateGroup[];
   works: EstimateWorkNode[];
   unassignedGroups: EstimateGroup[];
@@ -333,6 +334,7 @@ export function buildHierarchicalEstimate(opts: {
     nodes.push({
       id: st.id,
       name: st.name,
+      sectionName: st.sectionName,
       groups,
       works,
       unassignedGroups,

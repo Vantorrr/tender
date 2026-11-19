@@ -13,6 +13,8 @@ import {
   addCalcPositionFromDirectory,
   addMoneyPayment,
   createManualProcurement,
+  createProcurementSchedule,
+  sendProcurementToCalculation,
   deleteGprStage,
   deleteProcurement,
   updateDocument,
@@ -322,6 +324,28 @@ describe("client wave 1 server", () => {
     expect(() => updateMoney("u-smet", plan.id, {
       payments: saved.payments.map((payment) => payment.id === "pay-legacy-0" ? payment : { ...payment, amount: 0 }),
     })).toThrow(/больше нуля/);
+  });
+
+  it("keeps calculation creation separate from the schedule and reads burenie hours", async () => {
+    const parsed = await parseGrandBuffer(fs.readFileSync(path.join(process.cwd(), "fixtures/grand-smeta/ls-02-02-01-burenie.xlsx")));
+    const labor = (parsed?.positions ?? []).filter((position) => position.name === "Затраты труда рабочих");
+    const machines = (parsed?.positions ?? []).filter((position) => position.name === "Затраты труда машинистов");
+    expect(labor.length).toBeGreaterThan(0);
+    expect(machines.length).toBeGreaterThan(0);
+    expect(labor[0]?.unit).toMatch(/ч/);
+    expect(labor[0]?.quantity).toBeGreaterThan(1);
+    const bits = (parsed?.positions ?? []).filter((position) => position.name.startsWith("Долото трехшарошечное III 295"));
+    const sections = new Set(bits.map((position) => position.sectionName));
+    expect(bits).toHaveLength(3);
+    expect(sections.size).toBe(3);
+    const created = createManualProcurement("u-ruk", { title: "Только расчёт", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const afterCalc = readAppData().procurements.find((item) => item.id === created.id)!;
+    expect(afterCalc.calculationId).toBeTruthy();
+    expect(afterCalc.gprId).toBeUndefined();
+    expect(afterCalc.reviewStatus).toBe("na_rassmotrenii");
+    createProcurementSchedule("u-ruk", created.id);
+    expect(readAppData().procurements.find((item) => item.id === created.id)?.gprId).toBeTruthy();
   });
 
   it("rejects a payment amount of zero or an invalid number", () => {

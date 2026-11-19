@@ -9,6 +9,7 @@ import {
   getBootstrap,
   recomputeCalculationCost,
   refreshProcurementAnalytics,
+  createProcurementSchedule,
   sendProcurementToCalculation,
   setProcurementReview,
   transferProcurementToProduction,
@@ -65,6 +66,7 @@ export async function POST(req: Request) {
         | "ensureChain"
         | "createManual"
         | "sendToCalculation"
+        | "createGpr"
         | "attachCustomerEstimate"
         | "refreshAnalytics"
         | "analyzeProject"
@@ -134,6 +136,10 @@ export async function POST(req: Request) {
     }
     if (body.action === "ensureChain") {
       ensureProcurementChain(user.id, body.id!);
+      return json(getBootstrap(user));
+    }
+    if (body.action === "createGpr") {
+      createProcurementSchedule(user.id, body.id!);
       return json(getBootstrap(user));
     }
     if (body.action === "sendToCalculation") {

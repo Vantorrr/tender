@@ -8,6 +8,7 @@ import { ErrorState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -30,7 +31,8 @@ import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engine";
 import { parseDecimalRu } from "@/lib/decimal-ru";
 import { patchMergedResources } from "@/lib/resource-merge";
-import { formatMoney, formatNumber } from "@/lib/format";
+import { formatMoney, formatNumber, quantityPresentation } from "@/lib/format";
+import { rowDeleteConfirmed } from "@/lib/row-delete";
 import { humanizeIssues } from "@/lib/issue-text";
 import type { Calculation, GprStageResource, ResourceQuantityBasis } from "@/lib/types";
 import type { EstimateLeaf } from "@/lib/hierarchical-estimate";
@@ -359,6 +361,7 @@ export default function RaschetDetailPage() {
   } | null>(null);
   const [aiCompareLoading, setAiCompareLoading] = useState(false);
   const [attachEstimateLoading, setAttachEstimateLoading] = useState(false);
+  const [pendingPositionId, setPendingPositionId] = useState<string | null>(null);
 
   const calc = user
     ? data.calculations.find(
@@ -1110,23 +1113,28 @@ export default function RaschetDetailPage() {
               {calc.positions.map((p) => (
                 <TableRow key={p.id}>
                   <TableCell className="font-mono text-xs">{/^(?:res|cp|urp|draft|source|gs|pay)-/iu.test(p.code) || (p.code.length > 24 && !/[а-яё]/iu.test(p.code)) ? "" : p.code}</TableCell>
-                  <TableCell className="min-w-[12rem]">{p.name}</TableCell>
+                  <TableCell className="min-w-[12rem]">
+                    {p.name}
+                    {p.sourceSectionName ? <div className="text-xs text-[var(--tk-muted)]">{p.sourceSectionName}</div> : null}
+                  </TableCell>
                   <TableCell>{p.unit}</TableCell>
-                  <TableCell className="text-right">
+                  <TableCell className="text-right" title={quantityPresentation(p.quantity, p.unit).title}>
                     {locked ? (
-                      formatNumber(p.quantity)
+                      quantityPresentation(p.quantity, p.unit).text
                     ) : (
                       <Input
                         key={`qty-${p.id}:${p.quantity}`}
                         className="ml-auto w-28 text-right"
                         data-testid={`pos-qty-${p.id}`}
-                        defaultValue={String(p.quantity)}
+                        defaultValue={quantityPresentation(p.quantity, p.unit).text}
+                        title={quantityPresentation(p.quantity, p.unit).title}
                         onBlur={(e) => {
                           const parsed = parseDecimalRu(e.target.value);
                           if (parsed == null) {
-                            e.target.value = String(p.quantity);
+                            e.target.value = quantityPresentation(p.quantity, p.unit).text;
                             return;
                           }
+                          if (e.target.value.trim() === quantityPresentation(p.quantity, p.unit).text) return;
                           updateCalculation(calc.id, {
                             positions: calc.positions.map((x) =>
                               x.id === p.id ? { ...x, quantity: parsed } : x
@@ -1182,12 +1190,7 @@ export default function RaschetDetailPage() {
                           size="sm"
                           variant="ghost"
                           aria-label={`Удалить позицию ${p.name}`}
-                          onClick={() => {
-                            if (!window.confirm(`Удалить позицию «${p.name}»?`)) return;
-                            updateCalculation(calc.id, {
-                              positions: calc.positions.filter((item) => item.id !== p.id),
-                            });
-                          }}
+                          onClick={() => setPendingPositionId(p.id)}
                         >
                           Удалить
                         </Button>
@@ -1721,6 +1724,27 @@ export default function RaschetDetailPage() {
           </p>
         )}
       </section>
+      <Dialog open={pendingPositionId != null} onOpenChange={(open) => { if (!open) setPendingPositionId(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Удалить позицию?</DialogTitle>
+            <DialogDescription>
+              Позиция «{calc.positions.find((item) => item.id === pendingPositionId)?.name ?? ""}» будет удалена из расчёта.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingPositionId(null)}>Отмена</Button>
+            <Button onClick={() => {
+              const id = pendingPositionId;
+              setPendingPositionId(null);
+              if (!id || !rowDeleteConfirmed("confirm")) return;
+              updateCalculation(calc.id, {
+                positions: calc.positions.filter((item) => item.id !== id),
+              });
+            }}>Удалить</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
