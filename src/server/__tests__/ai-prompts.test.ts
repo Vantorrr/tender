@@ -10,7 +10,7 @@ import {
   formatSourceLocation,
 } from "@/server/ai-prompts";
 import { scoreModelResponse } from "@/server/ai-prompt-score";
-import { buildModelNoteUserContent, noteRejectionReason } from "@/server/model-note";
+import { buildModelNoteUserContent, noteRejectionReason, omitUnsourcedPlaces } from "@/server/model-note";
 import { citationForModel, parseProjectAnalysisResult, sanitizeCustomerQuestions, validateProjectEvidence } from "@/server/project-analysis-ai";
 import { validateCalcCompareAiResult, pricingTextForCompare } from "@/server/calc-compare-ai";
 import { validateProductionVarianceResult } from "@/server/production-variance-ai";
@@ -68,6 +68,10 @@ describe("estimator prompts", () => {
       sourceFile: "договор.pdf",
     }).location).toBe("договор.pdf, стр. 2");
     expect(formatSourceLocation({ sourceFile: "смета.xlsx", sheet: "ЛС", cell: "A12" })).toBe("смета.xlsx, лист ЛС, A12");
+    expect(formatSourceLocation({ sourceFile: "смета.xlsx", sheet: "ЛС", page: 1 })).toBe("смета.xlsx, лист ЛС");
+    expect(omitUnsourcedPlaces("Коэффициент стеснённости, стр. 1, ячейка A1.", [
+      { id: "c-k", text: "Приказ о коэффициенте стеснённости", page: 1, sourceFile: "смета.xlsx", sheet: "ЛС" },
+    ])).toBe("Коэффициент стеснённости.");
     const sheetPayload = buildModelNoteUserContent(
       { kind: "local-estimate" },
       [],

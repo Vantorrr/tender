@@ -78,7 +78,26 @@ describe("grouped comparison", () => {
     expect(groups).toHaveLength(2);
     expect(groups.find((group) => group.rowIds.includes("row-16"))).toMatchObject({ impact: -140, rowIds: ["row-16", "row-17"] });
     expect(groups.find((group) => group.rowIds.includes("row-27"))?.rowIds).toEqual(["row-27", "row-28"]);
-    expect(ensureCompareSummary("Проверьте ставки.", -172000000)).toContain("172");
+    expect(ensureCompareSummary("Проверьте ставки.", -172204022.31)).toMatch(/^Черновик дешевле сметы заказчика на 172/);
+    expect(ensureCompareSummary("172 204 022,31", -172204022.31)).toMatch(/^Черновик дешевле/);
+    expect(ensureCompareSummary("Черновик дешевле сметы заказчика на 172 204 022,31 руб.", -172204022.31, ["Монтаж металлоконструкций"])).toContain("Только в черновике: Монтаж металлоконструкций");
+    const sized = groupCompareRows([
+      { rowId: "a", name: "Труба стальная 108", unit: "м", section: "Раздел 1", status: "diff", factsText: "Позиция: Труба стальная 108", originalSum: 10, draftSum: 8, deltaSum: -2 },
+      { rowId: "b", name: "Труба стальная 159", unit: "м", section: "Раздел 1", status: "diff", factsText: "Позиция: Труба стальная 159", originalSum: 12, draftSum: 9, deltaSum: -3 },
+    ]);
+    expect(sized).toHaveLength(2);
+  });
+
+  it("does not let one group reuse numbers from another group", () => {
+    const result = validateCalcCompareAiResult(
+      JSON.stringify({
+        summary: "Проверьте ставки.",
+        findings: [{ rowId: "row-1", text: "Разница 999 руб.", sourceExcerpt: "Позиция: Труба" }],
+      }),
+      [{ rowId: "row-1", factsText: "Позиция: Труба; Разница: -2" }],
+      { summaryCorpus: "Проверьте ставки. 999", sharedFacts: "Накладные: 43% от прямых затрат." }
+    );
+    expect(result.findings).toEqual([]);
   });
 });
 

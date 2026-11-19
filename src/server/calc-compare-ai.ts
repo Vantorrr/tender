@@ -74,9 +74,9 @@ export function validateCalcCompareAiResult(
 
 export function compareClusterKey(name: string, unit: string): string {
   const normalized = name.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
-  const diameter = normalized.match(/\d+(?:[.,]\d+)?\s*мм/u)?.[0].replace(/\s+/g, "").replace(",", ".") ?? "";
+  const numbers = [...normalized.matchAll(/\d+(?:[.,]\d+)?/gu)].map((match) => match[0].replace(",", ".")).join(",");
   const words = normalized.replace(/[^\p{L}\p{N}]+/gu, " ").split(/\s+/u).filter((word) => word.length >= 4 && !/^\d+$/u.test(word));
-  return `${words.slice(0, 3).join(" ")}|${diameter}|${unit.toLocaleLowerCase("ru-RU").replace(/ё/g, "е")}`;
+  return `${words.slice(0, 3).join(" ")}|${numbers}|${unit.toLocaleLowerCase("ru-RU").replace(/ё/g, "е")}`;
 }
 
 export type CompareGroupInput = {
@@ -132,12 +132,31 @@ export function selectMaterialGroups<T extends { impact: number }>(groups: T[], 
   };
 }
 
-export function ensureCompareSummary(summary: string, deltaTotal: number | null): string {
-  if (deltaTotal == null || !Number.isFinite(deltaTotal)) return summary;
-  const compact = String(Math.abs(deltaTotal));
-  if (numbersAreGrounded(compact, summary)) return summary;
-  const formatted = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(deltaTotal);
-  return `${summary} Итоговая разница по смете: ${formatted} ₽.`.trim();
+export function ensureCompareSummary(summary: string, deltaTotal: number | null, exclusiveDraft: string[] = []): string {
+  let text = summary.trim();
+  if (deltaTotal != null && Number.isFinite(deltaTotal)) {
+    const compact = String(Math.abs(deltaTotal));
+    const formatted = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Math.abs(deltaTotal));
+    const lead = deltaTotal < 0
+      ? `Черновик дешевле сметы заказчика на ${formatted} руб., потому что расхождения разобраны ниже.`
+      : deltaTotal > 0
+        ? `Черновик дороже сметы заказчика на ${formatted} руб., потому что расхождения разобраны ниже.`
+        : "Черновик совпадает со сметой заказчика по итогу.";
+    const mentions = numbersAreGrounded(compact, text) || text.includes(formatted);
+    const startsWithPhrase = /^[A-Za-zА-Яа-яЁё«"]/u.test(text);
+    if (!startsWithPhrase) {
+      const rest = text.replace(/^[\s\-−–\d\s.,]+/u, "").trim();
+      text = rest && !mentions ? `${lead} ${rest}` : rest ? `${lead} ${rest}` : lead;
+    } else if (!mentions) {
+      text = `${lead} ${text}`;
+    }
+  }
+  const missing = exclusiveDraft.filter((name) => {
+    const probe = name.trim().toLocaleLowerCase("ru-RU").slice(0, 40);
+    return probe.length >= 8 && !text.toLocaleLowerCase("ru-RU").includes(probe);
+  });
+  if (missing.length) text = `${text} Только в черновике: ${missing.slice(0, 5).join("; ")}.`.trim();
+  return text.trim();
 }
 
 export function pricingTextForCompare(draft: Calculation | null, original: Calculation | null): string {
@@ -211,6 +230,7 @@ export function buildCalcCompareBatch(
     sections.set(group.section, current);
   }
   const pricingText = pricingTextForCompare(draft, original);
+  const exclusiveDraft = [...new Set(rows.filter((row) => row.status === "only_draft").map((row) => row.name))].slice(0, 8);
   const user = JSON.stringify({
     totals: comparison.totals,
     pricingText,
@@ -222,6 +242,7 @@ export function buildCalcCompareBatch(
       threshold: material.threshold,
       rule: "В детализацию попали группы с модулем разницы не ниже порога, не больше 12. Одинаковая позиция сведена в одну группу.",
     },
+    exclusiveDraft,
     sections: [...sections.entries()].map(([name, value]) => ({ name, rowCount: value.rowCount, impact: value.impact })),
     materialGroups: material.groups.map((group) => ({
       rowId: group.rowId,
@@ -240,7 +261,8 @@ export function buildCalcCompareBatch(
     batch: material.groups.map((group) => ({ rowId: group.rowId, factsText: group.factsText })),
     rowsTotal: rows.length,
     deltaTotal: comparison.totals.deltaTotal,
-    context: { summaryCorpus, sharedFacts: `${pricingText}\n${detail}` },
+    exclusiveDraft,
+    context: { summaryCorpus, sharedFacts: pricingText },
   };
 }
 
@@ -258,7 +280,7 @@ export async function analyzeCalculationComparisonWithAI(
       prepared.batch,
       prepared.context
     );
-  const summary = ensureCompareSummary(validated.summary, prepared.deltaTotal);
+  const summary = ensureCompareSummary(validated.summary, prepared.deltaTotal, prepared.exclusiveDraft);
   const findings = validated.findings;
   const hasBoth = Boolean(original && draft);
   const hasIncompleteRates = comparison.rows.some((row) => row.status === "incomplete") ||

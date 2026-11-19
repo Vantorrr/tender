@@ -184,14 +184,20 @@ export function withRequiredDeviation(input: {
         : item),
     };
   }
-  const source = input.sources[0];
+  const source = input.sources.find((item) => item.text.trim().length >= 12);
+  if (!source) {
+    return {
+      summary: `${summary} Причина не указана в отчётах.`.trim(),
+      observations: [],
+    };
+  }
   return {
     summary,
     observations: [{
-      sourceId: source?.id ?? "gap",
+      sourceId: source.id,
       kind: "possible_factor",
       text: `${direction} ${percent}% от плана. Причина не указана в отчётах.`,
-      sourceQuote: source?.text.slice(0, 180) ?? "причина не указана в отчётах",
+      sourceQuote: source.text.slice(0, 180),
     }],
   };
 }

@@ -256,14 +256,45 @@ export function citationForModel(citation: Pick<Citation, "id" | "text" | "page"
   return {
     id: citation.id,
     sourceFile: citation.sourceFile,
-    page: citation.sheet ? undefined : citation.page,
-    paragraph: citation.paragraph ?? null,
-    sheet: citation.sheet ?? null,
-    cell: citation.cell ?? null,
-    location: formatSourceLocation(citation),
-    confidence: citation.confidence ?? null,
+    ...(citation.sheet ? { sheet: citation.sheet } : { page: citation.page }),
+    ...(citation.paragraph != null ? { paragraph: citation.paragraph } : {}),
+    ...(citation.cell ? { cell: citation.cell } : {}),
+    location: formatSourceLocation({
+      sourceFile: citation.sourceFile,
+      sheet: citation.sheet,
+      cell: citation.cell,
+      paragraph: citation.paragraph,
+      page: citation.sheet ? undefined : citation.page,
+    }),
+    ...(citation.confidence ? { confidence: citation.confidence } : {}),
     text: citation.text.slice(0, PROJECT_ANALYSIS_CITATION_CHARS),
   };
+}
+
+const LOGISTICS_PATTERN = /зимник|завоз|навигац|вахт/iu;
+
+export function logisticsCustomerQuestion(texts: string[]): string | null {
+  if (texts.some((text) => LOGISTICS_PATTERN.test(text))) return null;
+  return "Уточните у заказчика логистику: завоз, зимник и вахту. В переданных документах это не описано.";
+}
+
+export function recommendationAfterConflict(
+  recommendation: ProjectAnalytics["recommendation"],
+  hasConflict: boolean,
+  hardStop: boolean
+): ProjectAnalytics["recommendation"] {
+  if (hasConflict && !hardStop) return "insufficient_data";
+  return recommendation;
+}
+
+/** Prefer the shortest citation that actually contains the quote, so the link is the paragraph of the fact. */
+export function citationIdsForFact(quote: string, citations: Array<{ id: string; text: string; paragraph?: number | null }>): string[] {
+  const needle = quote.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ").trim();
+  if (needle.length < 8) return [];
+  return [...citations]
+    .filter((citation) => citation.text.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ").includes(needle))
+    .sort((left, right) => left.text.length - right.text.length || (left.paragraph ?? 999) - (right.paragraph ?? 999))
+    .map((citation) => citation.id);
 }
 
 function normalizeSourceText(value: string): string {
@@ -398,7 +429,12 @@ export async function analyzeProjectPackageWithModel(
       analysis: document.analysis,
       note: document.analyticalNote.slice(0, PROJECT_ANALYSIS_NOTE_CHARS),
       extractionErrors: document.extractionErrors ?? [],
-      highlights: document.highlights.slice(0, PROJECT_ANALYSIS_HIGHLIGHTS).map(({ text, reason, severity, page }) => ({ text, reason, severity, page, location: formatSourceLocation({ sourceFile: document.fileName, page }) })),
+      highlights: document.highlights.slice(0, PROJECT_ANALYSIS_HIGHLIGHTS).map(({ text, reason, severity, page }) => {
+        const sheet = document.citations.find((citation) => citation.sheet)?.sheet;
+        return sheet
+          ? { text, reason, severity, location: formatSourceLocation({ sourceFile: document.fileName, sheet }) }
+          : { text, reason, severity, page, location: formatSourceLocation({ sourceFile: document.fileName, page }) };
+      }),
       estimatePositions: (document.estimatePositions ?? []).slice(0, PROJECT_ANALYSIS_POSITIONS),
       sectionRollup: rollupWorkSections(document.estimatePositions ?? []),
       citations: (documentCitations.get(document.id) ?? []).map((citation) => citationForModel({ ...citation, id: citation.promptId })),
@@ -410,8 +446,11 @@ export async function analyzeProjectPackageWithModel(
   const promptCitations = [...byPromptId.entries()].map(([promptId, citation]) => ({ ...citation, id: promptId }));
   const { accepted, rejected } = validateProjectEvidence(result, promptCitations, visibleCitationIds);
   const evidence = accepted.map((item) => {
-    const sources = item.citationIds.flatMap((id) => {
-      const citation = byPromptId.get(id);
+    const holders = citationIdsForFact(item.quote, [...byPromptId.values()]);
+    const sources = (holders.length ? holders : item.citationIds).flatMap((id) => {
+      const citation = holders.length
+        ? [...byPromptId.values()].find((item) => item.id === id)
+        : byPromptId.get(id);
       if (!citation) return [];
       const location = citation.sheet
         ? `лист ${citation.sheet}${citation.cell ? `, ${citation.cell}` : ""}`
@@ -499,10 +538,14 @@ export async function analyzeProjectPackageWithModel(
     hasCriticalEvidence,
     modelNamedGaps
   );
-  if (economics?.priceWithVat != null && procurement.nmck != null && economics.priceWithVat > procurement.nmck) {
-    recommendation = "do_not_participate";
-  } else if (economics?.profit != null && economics.profit <= 0 && economicsComplete) {
-    recommendation = "do_not_participate";
+  const priceStop = economics?.priceWithVat != null && procurement.nmck != null && economics.priceWithVat > procurement.nmck;
+  const profitStop = Boolean(economics?.profit != null && economics.profit <= 0 && economicsComplete);
+  if (priceStop || profitStop) recommendation = "do_not_participate";
+  const hasDataConflict = accepted.some((item) => item.topic === "conflict");
+  recommendation = recommendationAfterConflict(recommendation, hasDataConflict, priceStop || profitStop);
+  let reportedGaps = missingInputs;
+  if (hasDataConflict && !priceStop && !profitStop && !reportedGaps.some((item) => /противореч/iu.test(item))) {
+    reportedGaps = [...reportedGaps, "В документах есть противоречие. Уточните у заказчика, какая формулировка действует."].slice(0, 40);
   }
 
   const economicSummary = !economics
@@ -526,7 +569,7 @@ export async function analyzeProjectPackageWithModel(
   const packageBrief = [
     `Закупка: ${procurement.title}${procurement.number ? ` · ${procurement.number}` : ""}. Заказчик: ${procurement.customer || "не указан"}. Регион: ${packageRegion}. Срок подачи: ${packageDeadline}.`,
     `Пакет: ${packageDocuments.length} документов, ${selectedPackageCitations.length} из ${deterministic.citations.length} выдержек передано модели. ${sourceStatus}`,
-    missingInputs.length ? "Есть пункты для проверки; они перечислены ниже." : "Блокирующих пробелов по покрытию не отмечено.",
+    reportedGaps.length ? "Есть пункты для проверки; они перечислены ниже." : "Блокирующих пробелов по покрытию не отмечено.",
     decisionReady && !company?.resourceAvailabilityTracked ? "Решение по экономике и профилю предварительное: календарь фактической загрузки техники/бригад не подключён." : null,
   ].filter(Boolean).join("\n");
 
@@ -540,7 +583,7 @@ export async function analyzeProjectPackageWithModel(
         ? `ИИ подготовил ${evidence.length} вывода с проверяемыми источниками.`
         : "Модель не вернула тезис, прошедший проверку цитаты; оставлена локальная сводка.",
     ].join("\n\n"),
-    missingInputs,
+    missingInputs: reportedGaps,
     findings: [
       ...accepted
         .filter((item) => packageSectionCount <= 1 || !/только\s+(?:по\s+)?одн(?:у|ой|а|о)\s+позиц/iu.test(item.text))
@@ -549,7 +592,10 @@ export async function analyzeProjectPackageWithModel(
           importance: importance as NonNullable<ProjectAnalytics["findings"]>[number]["importance"],
           text,
           quote,
-          citationIds: citationIds.map((id) => byPromptId.get(id)?.id ?? id),
+          citationIds: (() => {
+            const holders = citationIdsForFact(quote, [...byPromptId.values()]);
+            return holders.length ? [...new Set(holders)].slice(0, 4) : citationIds.map((id) => byPromptId.get(id)?.id ?? id);
+          })(),
           sourceFiles,
           costImpact,
           scheduleImpact,
@@ -568,10 +614,16 @@ export async function analyzeProjectPackageWithModel(
         scheduleImpact: NOT_IN_DOCUMENTS,
       })),
     ],
-    customerQuestions: sanitizeCustomerQuestions(
-      result.customerQuestions,
-      [...visibleCitationIds].map((id) => byPromptId.get(id)?.text ?? "").join("\n")
-    ),
+    customerQuestions: (() => {
+      const corpus = [...visibleCitationIds].map((id) => byPromptId.get(id)?.text ?? "");
+      const questions = sanitizeCustomerQuestions(result.customerQuestions, corpus.join("\n"));
+      const logistics = logisticsCustomerQuestion([
+        ...corpus,
+        ...packageDocuments.map((document) => document.analyticalNote ?? ""),
+      ]);
+      if (!logistics || questions.some((question) => /логистик|зимник|завоз|вахт/iu.test(question))) return questions;
+      return [...questions, logistics].slice(0, 12);
+    })(),
     generatedAt: new Date().toISOString(),
       method: "разбор пакета по цитатам документов",
     disclaimer: "ИИ не вычисляет сметные итоги. Показаны только тезисы с цитатой из файла; риск и рекомендацию проверьте по оригиналу. Это не экспертное заключение и не обещание статистической точности.",

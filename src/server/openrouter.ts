@@ -38,8 +38,17 @@ export function sourceUrlsFromMessage(message: { annotations?: unknown } | undef
     if (!item || typeof item !== "object") continue;
     const record = item as Record<string, unknown>;
     const citation = record.url_citation;
-    if (citation && typeof citation === "object" && typeof (citation as { url?: unknown }).url === "string") {
-      urls.push((citation as { url: string }).url);
+    if (citation && typeof citation === "object") {
+      const cited = citation as { url?: unknown; title?: unknown };
+      if (typeof cited.url === "string") urls.push(cited.url);
+      if (typeof cited.title === "string") {
+        const title = cited.title.trim();
+        if (/^https?:\/\//i.test(title)) urls.push(title);
+        else {
+          const host = title.match(/(?:[a-z0-9-]+\.)+[a-z]{2,}/i)?.[0];
+          if (host && !/google|vertex/i.test(host)) urls.push(`https://${host}/`);
+        }
+      }
     }
     if (typeof record.url === "string") urls.push(record.url);
   }
@@ -73,7 +82,7 @@ async function requestCompletion(
     body: JSON.stringify({
       model: options.model || config.openRouterModel,
       temperature: 0.2,
-      max_tokens: retrying ? (options.maxTokens ?? RETRY_MAX_TOKENS) : (options.maxTokens ?? PRIMARY_MAX_TOKENS),
+      max_tokens: retrying ? Math.max(options.maxTokens ?? 0, RETRY_MAX_TOKENS) : (options.maxTokens ?? PRIMARY_MAX_TOKENS),
       reasoning: { effort: "low", exclude: true },
       response_format: { type: "json_object" },
       ...(options.webSearch ? { tools: [{ type: "openrouter:web_search", parameters: { max_results: 5 } }] } : {}),

@@ -71,6 +71,17 @@ describe("completeJson", () => {
     expect(JSON.parse(String(fetchMock.mock.calls[0][1].body)).max_tokens).toBe(4000);
   });
 
+  it("raises a caller token cap on the length retry", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(completion("", "length"))
+      .mockResolvedValueOnce(completion(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await completeJson("system", "user", 0, { maxTokens: 4000 });
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1].body)).max_tokens).toBe(4000);
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1].body)).max_tokens).toBe(12000);
+  });
+
   it("does not retry a second time when the length retry is still empty", async () => {
     const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(completion("", "length", { total_tokens: 12000 })));
     vi.stubGlobal("fetch", fetchMock);

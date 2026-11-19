@@ -3,6 +3,7 @@ import {
   filterDailyFactsByPeriod,
   filterDailyFactsByWork,
   validateProductionVarianceResult,
+  withRequiredDeviation,
 } from "@/server/production-variance-ai";
 
 describe("validateProductionVarianceResult", () => {
@@ -71,6 +72,19 @@ describe("validateProductionVarianceResult", () => {
     }), sources);
     expect(result.summary).toContain("не сформировал");
     expect(result.observations).toHaveLength(0);
+  });
+
+  it("does not invent a citation when the gap has no source", () => {
+    const filled = withRequiredDeviation({
+      summary: "В дневных отчётах нет записанной причины отклонения.",
+      observations: [],
+      plan: 100,
+      fact: 40,
+      sources: [],
+    });
+    expect(filled.observations).toEqual([]);
+    expect(filled.summary).toContain("60%");
+    expect(filled.summary).toContain("Причина не указана в отчётах.");
   });
 });
 

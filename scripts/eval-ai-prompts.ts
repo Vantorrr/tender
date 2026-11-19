@@ -15,7 +15,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scoreModelResponse, renderScoreSummary, type PromptScore } from "../src/server/ai-prompt-score";
 import { rollupWorkSections } from "../src/server/estimate-rollup";
-import { filterSupplierCandidates } from "../src/server/supplier-discovery";
+import { applyLiveSupplierLinks, filterSupplierCandidates, resolveSearchSources } from "../src/server/supplier-discovery";
 import {
   MODEL_NOTE_SYSTEM,
   PRODUCTION_VARIANCE_SYSTEM,
@@ -375,8 +375,14 @@ async function runCase(evalCase: EvalCase): Promise<{ score: PromptScore; raw: s
       maxTokens: evalCase.maxTokens,
       model: evalModel,
     });
+    const resolvedSources = evalCase.webSearch ? await resolveSearchSources(completion.sourceUrls) : completion.sourceUrls;
     const raw = evalCase.webSearch
-      ? JSON.stringify({ model: JSON.parse(completion.content), kept: filterSupplierCandidates(completion.content, completion.sourceUrls), sourceUrls: completion.sourceUrls })
+      ? JSON.stringify({
+        model: JSON.parse(completion.content),
+        kept: await applyLiveSupplierLinks(filterSupplierCandidates(completion.content, resolvedSources), resolvedSources),
+        sourceUrls: completion.sourceUrls,
+        resolvedSources,
+      })
       : completion.content;
     return {
       raw,

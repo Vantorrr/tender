@@ -36,16 +36,52 @@ export function buildModelNoteUserContent(
   highlights: Highlight[],
   citations: Citation[] = []
 ): string {
+  const spreadsheet = citations.some((citation) => citation.sheet);
+  const sheet = citations.find((citation) => citation.sheet)?.sheet;
   const sources = citations.slice(0, 40).map((citation) => ({
     file: citation.sourceFile,
-    page: citation.sheet ? null : citation.page,
-    paragraph: citation.paragraph ?? null,
-    sheet: citation.sheet ?? null,
-    cell: citation.cell ?? null,
-    location: formatSourceLocation(citation),
+    ...(citation.sheet ? { sheet: citation.sheet } : { page: citation.page }),
+    ...(citation.paragraph != null ? { paragraph: citation.paragraph } : {}),
+    ...(citation.cell ? { cell: citation.cell } : {}),
+    location: formatSourceLocation({
+      sourceFile: citation.sourceFile,
+      sheet: citation.sheet,
+      cell: citation.cell,
+      paragraph: citation.paragraph,
+      page: citation.sheet ? undefined : citation.page,
+    }),
     text: citation.text.slice(0, 700),
   }));
-  return JSON.stringify({ facts, highlights, sources });
+  const visibleHighlights = highlights.slice(0, 10).map((highlight) => spreadsheet
+    ? {
+      text: highlight.text,
+      reason: highlight.reason,
+      severity: highlight.severity,
+      location: formatSourceLocation({ sourceFile: citations[0]?.sourceFile, sheet }),
+    }
+    : {
+      text: highlight.text,
+      reason: highlight.reason,
+      severity: highlight.severity,
+      page: highlight.page,
+      location: formatSourceLocation({ sourceFile: citations[0]?.sourceFile, page: highlight.page }),
+    });
+  return JSON.stringify({ facts, highlights: visibleHighlights, sources });
+}
+
+/** Drop a cell or an Excel page the source did not actually provide. */
+export function omitUnsourcedPlaces(note: string, citations: Citation[]): string {
+  const cells = new Set(citations.map((citation) => citation.cell).filter((cell): cell is string => Boolean(cell)));
+  let text = note.replace(/\b[A-Z]{1,3}\d{1,5}\b/g, (token) => cells.has(token) ? token : "");
+  text = text.replace(/ячейк[аеиу]\s*/gi, "");
+  if (citations.length > 0 && citations.every((citation) => citation.sheet)) {
+    text = text.replace(/,?\s*стр\.\s*\d+/gi, "");
+  }
+  return text
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\s+([,.;])/g, "$1")
+    .replace(/,\s*(?=[,.]|$)/g, "")
+    .trim();
 }
 
 function digits(value: string) {
@@ -105,6 +141,7 @@ async function writeNote(
     return { failure: reason };
   }
   let note = readNote(raw);
+  if (note) note = omitUnsourcedPlaces(note, citations);
   if (!note) {
     console.error("model note skipped: пустой ответ модели");
     return { failure: "пустой ответ модели" };

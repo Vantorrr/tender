@@ -397,6 +397,7 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
     const code = cells.find((cell) => cell.col === 2)?.text ?? "";
     if (/приказ/i.test(code) && parsed.coefficientNotes.length < 4) {
       parsed.coefficientNotes.push(`${code}. ${name}`.slice(0, 280));
+      if (!parsed.locators.coefficient) mark("coefficient", rowNumber, 2);
     }
     const unit = cells.find((cell) => cell.col === 6)?.text ?? "";
     const namedLaborResource = /^(?:чел\.?\s*[-.]?\s*час|чел\.?\s*[-.]?\s*ч|н\s*[-.]\s*ч)$/iu.test(unit.trim()) &&
@@ -553,7 +554,7 @@ export function analysisFromGrand(parsed: GrandParse, fileName: string): UploadA
       "firstPosition"
     );
   }
-  if (parsed.coefficientNotes[0]) quote("c-k", parsed.coefficientNotes[0], undefined, "heuristic");
+  if (parsed.coefficientNotes[0]) quote("c-k", parsed.coefficientNotes[0], "coefficient", "heuristic");
 
   const costLine =
     parsed.costCurrentThousand != null

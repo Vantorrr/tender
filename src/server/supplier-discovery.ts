@@ -11,7 +11,12 @@ export type SupplierSearchCandidate = {
   sourceUrl: string;
 };
 
+export type UrlProbe = (url: string) => Promise<"ok" | "missing" | "unknown">;
+type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+
 const SYSTEM = SUPPLIER_DISCOVERY_SYSTEM;
+const unwrapCache = new Map<string, string>();
+const probeCache = new Map<string, "ok" | "missing" | "unknown">();
 
 export function buildSupplierQuery(input: { material: string; region: string; work?: string }): string {
   const material = input.material.trim().slice(0, 180);
@@ -39,15 +44,101 @@ function canonicalUrl(value: string): string | null {
   }
 }
 
-/** A candidate link is allowed only when that page was among the search results. */
+export function supplierDomain(value: string): string | null {
+  const canon = canonicalUrl(value);
+  if (!canon) return null;
+  try {
+    return new URL(canon).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/** Grounding-api and Google redirect wrappers are not the supplier's site. */
+export function isRedirectUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    return host === "vertexaisearch.cloud.google.com"
+      || host.endsWith(".vertexaisearch.cloud.google.com")
+      || url.pathname.includes("grounding-api-redirect")
+      || (host === "google.com" && url.pathname === "/url");
+  } catch {
+    return false;
+  }
+}
+
+/** A candidate passes only when its domain is one of the unwrapped search pages. */
 export function urlFromSearch(candidate: string, sourceUrls: string[]): boolean {
-  const left = canonicalUrl(candidate);
-  if (!left || !sourceUrls.length) return false;
-  return sourceUrls.some((source) => {
-    const right = canonicalUrl(source);
-    if (!right) return false;
-    return left === right || right.startsWith(`${left}/`) || left.startsWith(`${right}/`);
-  });
+  const domain = supplierDomain(candidate);
+  if (!domain || isRedirectUrl(candidate)) return false;
+  return sourceUrls.some((source) => !isRedirectUrl(source) && supplierDomain(source) === domain);
+}
+
+export async function unwrapRedirect(url: string, options?: {
+  fetchImpl?: FetchLike;
+  timeoutMs?: number;
+  cache?: Map<string, string>;
+}): Promise<string> {
+  const cache = options?.cache ?? unwrapCache;
+  const cached = cache.get(url);
+  if (cached) return cached;
+  if (!isRedirectUrl(url)) {
+    cache.set(url, url);
+    return url;
+  }
+  const fetchImpl = options?.fetchImpl ?? fetch;
+  const timeoutMs = options?.timeoutMs ?? 4000;
+  let current = url;
+  for (let hop = 0; hop < 4; hop += 1) {
+    if (hop > 0 && !isRedirectUrl(current)) break;
+    try {
+      let response = await fetchImpl(current, { method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+      if (response.status === 405 || response.status === 501) {
+        response = await fetchImpl(current, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+      }
+      const location = response.headers.get("location");
+      if (location && response.status >= 300 && response.status < 400) {
+        current = new URL(location, current).toString();
+        continue;
+      }
+      break;
+    } catch {
+      break;
+    }
+  }
+  cache.set(url, current);
+  return current;
+}
+
+export async function resolveSearchSources(urls: string[], options?: {
+  fetchImpl?: FetchLike;
+  timeoutMs?: number;
+  cache?: Map<string, string>;
+}): Promise<string[]> {
+  const resolved = await Promise.all(urls.map((url) => unwrapRedirect(url, options)));
+  return [...new Set(resolved
+    .map((url) => canonicalUrl(url) ?? "")
+    .filter((url) => url && !isRedirectUrl(url)))];
+}
+
+export async function probeSupplierUrl(url: string, fetchImpl: FetchLike = fetch, timeoutMs = 2500): Promise<"ok" | "missing" | "unknown"> {
+  const key = canonicalUrl(url) ?? url;
+  const cached = probeCache.get(key);
+  if (cached) return cached;
+  let status: "ok" | "missing" | "unknown" = "unknown";
+  try {
+    let response = await fetchImpl(url, { method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+    if (response.status === 405 || response.status === 501) {
+      response = await fetchImpl(url, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+    }
+    if (response.status === 404 || response.status === 410) status = "missing";
+    else if (response.status >= 200 && response.status < 400) status = "ok";
+  } catch {
+    status = "unknown";
+  }
+  probeCache.set(key, status);
+  return status;
 }
 
 export function filterSupplierCandidates(raw: string, sourceUrls: string[]): SupplierSearchCandidate[] {
@@ -75,11 +166,33 @@ export function filterSupplierCandidates(raw: string, sourceUrls: string[]): Sup
   }).slice(0, 5);
 }
 
+/** A candidate page that answers 404 is replaced by the search page of the same domain. */
+export async function applyLiveSupplierLinks(
+  candidates: SupplierSearchCandidate[],
+  sourceUrls: string[],
+  probe: UrlProbe = probeSupplierUrl
+): Promise<SupplierSearchCandidate[]> {
+  const out: SupplierSearchCandidate[] = [];
+  for (const candidate of candidates) {
+    const domain = supplierDomain(candidate.sourceUrl);
+    const source = sourceUrls.find((url) => supplierDomain(url) === domain && !isRedirectUrl(url));
+    const status = await probe(candidate.sourceUrl);
+    if (status === "missing") {
+      if (!source) continue;
+      out.push({ ...candidate, sourceUrl: source, website: candidate.website || new URL(source).origin });
+      continue;
+    }
+    out.push(candidate);
+  }
+  return out;
+}
+
 export async function discoverMaterialSuppliers(input: { material: string; region: string; work?: string }): Promise<SupplierSearchCandidate[]> {
   const material = input.material.trim().slice(0, 180);
   const region = input.region.trim().slice(0, 120);
   if (!material || !region) throw new Error("Укажите материал и регион для поиска");
   const query = buildSupplierQuery(input);
   const completion = await completeJsonDetailed(SYSTEM, query, 0, { webSearch: true });
-  return filterSupplierCandidates(completion.content, completion.sourceUrls);
+  const resolved = await resolveSearchSources(completion.sourceUrls);
+  return applyLiveSupplierLinks(filterSupplierCandidates(completion.content, resolved), resolved);
 }
