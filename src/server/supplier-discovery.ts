@@ -128,17 +128,13 @@ export async function probeSupplierUrl(url: string, fetchImpl: FetchLike = fetch
   if (cached) return cached;
   let status: "ok" | "missing" | "down" | "unknown" = "unknown";
   try {
-    let response = await fetchImpl(url, { method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
-    if (response.status === 405 || response.status === 501) {
+    let response = await fetchImpl(url, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+    if (response.status >= 500) {
       response = await fetchImpl(url, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
     }
     if (response.status === 404 || response.status === 410) status = "missing";
-    else if (response.status >= 500) {
-      const again = await fetchImpl(url, { method: response.status === 501 ? "GET" : "HEAD", redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
-      if (again.status === 404 || again.status === 410) status = "missing";
-      else if (again.status >= 500) status = "down";
-      else if (again.status >= 200 && again.status < 400) status = "ok";
-    } else if (response.status >= 200 && response.status < 400) status = "ok";
+    else if (response.status >= 500) status = "down";
+    else if (response.status >= 200 && response.status < 400) status = "ok";
   } catch {
     status = "unknown";
   }
@@ -222,13 +218,22 @@ function pagePlainText(html: string): string {
     .trim();
 }
 
-function regionExcerpt(text: string): string | null {
-  const plain = pagePlainText(text).slice(0, PAGE_TEXT_LIMIT);
+function regionExcerpt(raw: string): string | null {
+  const limited = raw.slice(0, PAGE_TEXT_LIMIT);
+  const rawMatch = limited.match(REGION_ON_PAGE);
+  if (rawMatch && rawMatch.index != null) {
+    const start = Math.max(0, rawMatch.index - 60);
+    const end = Math.min(limited.length, rawMatch.index + rawMatch[0].length + 80);
+    const excerpt = limited.slice(start, end).trim().slice(0, 240);
+    if (excerpt && !excerpt.includes("<") && limited.includes(excerpt)) return excerpt;
+  }
+  const plain = pagePlainText(limited);
   const match = plain.match(REGION_ON_PAGE);
   if (!match || match.index == null) return null;
-  const start = Math.max(0, match.index - 80);
-  const end = Math.min(plain.length, match.index + match[0].length + 120);
-  return plain.slice(start, end).trim().slice(0, 240);
+  const start = Math.max(0, match.index - 60);
+  const end = Math.min(plain.length, match.index + match[0].length + 80);
+  const excerpt = plain.slice(start, end).trim().slice(0, 240);
+  return excerpt && plain.includes(excerpt) ? excerpt : null;
 }
 
 async function readSupplierPage(url: string, fetchImpl: FetchLike, timeoutMs = 4000): Promise<string | null> {
@@ -256,7 +261,8 @@ export async function groundSupplierRegions(
   for (const candidate of candidates) {
     const page = await readSupplierPage(candidate.sourceUrl, fetchImpl);
     const excerpt = page ? regionExcerpt(page) : null;
-    if (!excerpt) continue;
+    const plain = page ? pagePlainText(page) : "";
+    if (!excerpt || (!page!.includes(excerpt) && !plain.includes(excerpt))) continue;
     out.push({ ...candidate, regionEvidence: excerpt });
   }
   return out;

@@ -105,3 +105,32 @@ export function alignVolumeToSections(text: string, rollup: WorkSectionRollup): 
   }
   return next;
 }
+
+const WORK_TERM = /(?:установк\w*|бурени\w*|скважин\w*|свайн\w*|свай\w*|монтаж\w*|демонтаж\w*|укладк\w*|прокладк\w*|разработк\w*|погружен\w*|забивк\w*|бетонирован\w*|разборк\w*|изоляц\w*|сварк\w*)/giu;
+
+function workStem(term: string): string {
+  const folded = term.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+  if (folded.startsWith("свай")) return "свай";
+  if (folded.startsWith("сква")) return "сква";
+  return folded.slice(0, 5);
+}
+
+function tidyWorkGap(text: string): string {
+  return text
+    .replace(/(?:включая|а также)\s+(?=и\b|[,.]|$)/giu, "")
+    .replace(/\s+и\s+(?=[,.]|$)/giu, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,.;])/g, "$1")
+    .replace(/,\s*(?=[,.]|$)/g, "")
+    .trim();
+}
+
+/** A work word stays only when the section list and the cited excerpt both contain it. */
+export function stripWorkTypesOutsideSources(text: string, quote: string, sectionNames: string[]): string {
+  const sections = sectionNames.join("\n").toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+  const quoted = quote.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+  return tidyWorkGap(text.replace(WORK_TERM, (term) => {
+    const stem = workStem(term);
+    return sections.includes(stem) && quoted.includes(stem) ? term : "";
+  }));
+}

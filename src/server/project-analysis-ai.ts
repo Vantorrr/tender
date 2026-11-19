@@ -3,7 +3,7 @@ import { regionFromCitations, submissionDeadlineFromCitations } from "@/lib/cita
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_LABELS } from "@/lib/ai-topics";
 import { NOT_IN_DOCUMENTS, numbersAreGrounded } from "@/server/ai-grounding";
-import { rollupWorkSections, alignVolumeToSections, isOverheadPosition } from "@/server/estimate-rollup";
+import { rollupWorkSections, alignVolumeToSections, isOverheadPosition, stripWorkTypesOutsideSources } from "@/server/estimate-rollup";
 import {
   PROJECT_ANALYSIS_CITATION_CHARS,
   PROJECT_ANALYSIS_CITATION_LIMIT,
@@ -39,6 +39,28 @@ type ModelResult = {
 
 function describesConflict(item: string): boolean {
   return /противореч|конфликт/iu.test(item);
+}
+
+const REGION_SUBJECTS = [
+  { re: /красноярск/iu, label: "Красноярский край" },
+  { re: /янао|ямало-ненецк/iu, label: "ЯНАО" },
+  { re: /хмао|ханты-мансийск/iu, label: "ХМАО" },
+  { re: /мурманск/iu, label: "Мурманская область" },
+];
+
+/** Two federal subjects in one sentence are a conflict, not one place name. */
+export function splitMergedRegions(text: string): { text: string; conflict: string | null } {
+  const found = REGION_SUBJECTS.filter((subject) => subject.re.test(text));
+  if (found.length < 2) return { text, conflict: null };
+  let next = text;
+  for (const subject of found.slice(1)) {
+    next = next.replace(new RegExp(`\\s*\\([^)]*(?:${subject.re.source})[^)]*\\)`, "giu"), "");
+    if (REGION_SUBJECTS.filter((item) => item.re.test(next)).length >= 2) next = next.replace(subject.re, "");
+  }
+  return {
+    text: next.replace(/\s{2,}/g, " ").replace(/\s+([,.;])/g, "$1").replace(/\(\s*\)/g, "").trim(),
+    conflict: `В документах названы разные регионы: ${found.map((subject) => subject.label).join(" и ")}. Это не одна территория.`,
+  };
 }
 
 type AnalysisEconomics = {
@@ -581,7 +603,15 @@ export async function analyzeProjectPackageWithModel(
     decisionReady && !company?.resourceAvailabilityTracked ? "Решение по экономике и профилю предварительное: календарь фактической загрузки техники/бригад не подключён." : null,
   ].filter(Boolean).join("\n");
   const volumeRollups = packageDocuments.map((document) => rollupWorkSections(document.estimatePositions ?? []));
+  const sectionNames = volumeRollups.flatMap((rollup) => rollup.sections.map((section) => section.section));
   const alignVolume = (text: string) => volumeRollups.reduce((current, rollup) => alignVolumeToSections(current, rollup), text);
+  const regionConflicts: string[] = [];
+  const presentFinding = (text: string, quote: string) => {
+    const stripped = stripWorkTypesOutsideSources(alignVolume(text), quote, sectionNames);
+    const split = splitMergedRegions(stripped);
+    if (split.conflict && !regionConflicts.includes(split.conflict)) regionConflicts.push(split.conflict);
+    return split.text;
+  };
 
   return {
     ...deterministic,
@@ -600,7 +630,7 @@ export async function analyzeProjectPackageWithModel(
         .map(({ topic, importance, text, quote, citationIds, sourceFiles, costImpact, scheduleImpact }) => ({
           topic: TOPIC_LABELS[topic] ?? TOPIC_LABELS.other,
           importance: importance as NonNullable<ProjectAnalytics["findings"]>[number]["importance"],
-          text: alignVolume(text),
+          text: presentFinding(text, quote),
           quote,
           citationIds: (() => {
             const holders = citationIdsForFact(quote, [...byPromptId.values()]);
@@ -609,6 +639,18 @@ export async function analyzeProjectPackageWithModel(
           sourceFiles,
           costImpact,
           scheduleImpact,
+        })),
+      ...regionConflicts
+        .filter((item) => !accepted.some((entry) => entry.topic === "conflict" && entry.text.includes(item.slice(0, 40))))
+        .map((item) => ({
+          topic: TOPIC_LABELS.conflict,
+          importance: "high" as const,
+          text: item,
+          quote: item,
+          citationIds: [] as string[],
+          sourceFiles: [] as string[],
+          costImpact: NOT_IN_DOCUMENTS,
+          scheduleImpact: NOT_IN_DOCUMENTS,
         })),
       ...conflictNotes
         .filter((item) => !accepted.some((entry) => entry.topic === "conflict" && entry.text.includes(item.slice(0, 80))))

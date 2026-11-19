@@ -10,6 +10,7 @@ import {
   logisticsCustomerQuestion,
   recommendationAfterConflict,
   packDocumentCitations,
+  splitMergedRegions,
   economicMissingInputs,
   companyAnalysisMissingInputs,
   buildProjectAnalysisFallback,
@@ -170,6 +171,12 @@ describe("grounded project analysis", () => {
     expect(logisticsCustomerQuestion(["Завоз по зимнику."])).toBeNull();
     expect(recommendationAfterConflict("do_not_participate", true, false)).toBe("insufficient_data");
     expect(recommendationAfterConflict("do_not_participate", true, true)).toBe("do_not_participate");
+    const merged = splitMergedRegions("Площадка относится к 5-й зоне Красноярского края (ЯНАО).");
+    expect(merged.text).not.toMatch(/янао/iu);
+    expect(merged.text).toMatch(/красноярск/iu);
+    expect(merged.conflict).toMatch(/Красноярский край/);
+    expect(merged.conflict).toMatch(/ЯНАО/);
+    expect(splitMergedRegions("Норильск, Красноярский край").conflict).toBeNull();
   });
 
   it("points a finding at the paragraph that contains the fact", () => {

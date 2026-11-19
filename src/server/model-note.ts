@@ -57,15 +57,17 @@ export function buildModelNoteUserContent(
       const text = citation.text.toLocaleLowerCase("ru-RU");
       return probe.length >= 4 && (text.includes(probe) || probe.includes(text.slice(0, 48)));
     });
-    const source = matched ?? citations.find((citation) => citation.sheet) ?? citations[0];
+    const related = citations.find((citation) => citation.cell && cellRelatesToFact(highlight.text, citation.text));
+    const source = matched && (!matched.cell || cellRelatesToFact(highlight.text, matched.text)) ? matched : related;
+    const sheet = source?.sheet ?? citations.find((citation) => citation.sheet)?.sheet;
     return spreadsheet
       ? {
         text: highlight.text,
         reason: highlight.reason,
         severity: highlight.severity,
         location: formatSourceLocation({
-          sourceFile: source?.sourceFile,
-          sheet: source?.sheet,
+          sourceFile: source?.sourceFile ?? citations[0]?.sourceFile,
+          sheet,
           cell: source?.cell,
         }),
       }
@@ -105,7 +107,20 @@ export function omitUnsourcedPlaces(note: string, citations: Citation[]): string
     .trim();
 }
 
-/** Keep a cell on a fact only when that cell's excerpt shares the fact's word or number. At most three cells per fact. */
+/** Keep a cell on a fact only when that cell's own text contains the fact's keyword or number. */
+export function cellRelatesToFact(fact: string, cellText: string): boolean {
+  const factFold = fact.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+  const cellFold = cellText.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+  if (/индекс/.test(factFold)) return /индекс/.test(cellFold);
+  if (/отрицательн/.test(factFold)) return /-\s?\d/.test(cellText);
+  if (/оплат/.test(factFold) || (/акт/.test(factFold) && /труд/.test(factFold))) return /оплат|труд/.test(cellFold);
+  if (cellFold.length >= 4 && factFold.includes(cellFold.slice(0, 24))) return true;
+  const words = factFold.replace(new RegExp(CELL_TOKEN, "gi"), " ").match(/[а-яa-z]{5,}/gu) ?? [];
+  const numbers = fact.replace(new RegExp(CELL_TOKEN, "gi"), " ").match(/\d+(?:[.,]\d+)?/g) ?? [];
+  const cellWords = new Set(cellFold.match(/[а-яa-z]{5,}/gu) ?? []);
+  return words.some((word) => cellWords.has(word)) || numbers.some((value) => cellText.includes(value));
+}
+
 export function keepCellsThatSupportFact(note: string, citations: Citation[]): string {
   const byCell = new Map<string, string>();
   for (const citation of citations) {
@@ -113,20 +128,11 @@ export function keepCellsThatSupportFact(note: string, citations: Citation[]): s
     const key = citation.cell.toUpperCase();
     byCell.set(key, `${byCell.get(key) ?? ""} ${citation.text}`);
   }
-  const words = (value: string) => value.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").match(/[а-яa-z]{4,}/gu) ?? [];
-  const numbers = (value: string) => value.match(/\d+(?:[.,]\d+)?/g) ?? [];
   return note.split(/(?<=\n)/).map((line) => {
     const found = [...line.matchAll(new RegExp(CELL_TOKEN, "gi"))].map((match) => match[0].toUpperCase());
     const unique = [...new Set(found)];
     if (!unique.length) return line;
-    const factWords = new Set(words(line.replace(new RegExp(CELL_TOKEN, "gi"), " ")));
-    const factNumbers = new Set(numbers(line.replace(new RegExp(CELL_TOKEN, "gi"), " ")));
-    const supported = unique.filter((cell) => {
-      const source = byCell.get(cell) ?? "";
-      const sourceWords = new Set(words(source));
-      const sourceNumbers = new Set(numbers(source));
-      return [...factWords].some((word) => sourceWords.has(word)) || [...factNumbers].some((value) => sourceNumbers.has(value));
-    }).slice(0, 3);
+    const supported = unique.filter((cell) => cellRelatesToFact(line, byCell.get(cell) ?? "")).slice(0, 3);
     let next = line;
     for (const cell of unique) {
       if (supported.includes(cell)) continue;

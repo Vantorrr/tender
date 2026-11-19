@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const complete = vi.hoisted(() => vi.fn());
 vi.mock("@/server/openrouter", () => ({ completeJsonDetailed: complete }));
 
-import { applyLiveSupplierLinks, discoverMaterialSuppliers, filterSupplierCandidates, groundSupplierRegions, isRedirectUrl, resolveSearchSources } from "@/server/supplier-discovery";
+import { applyLiveSupplierLinks, discoverMaterialSuppliers, filterSupplierCandidates, groundSupplierRegions, isRedirectUrl, probeSupplierUrl, resolveSearchSources } from "@/server/supplier-discovery";
 
 describe("open-source supplier discovery", () => {
   beforeEach(() => {
@@ -111,6 +111,29 @@ describe("open-source supplier discovery", () => {
     expect(grounded[0]?.regionEvidence).not.toContain("8-14");
     const down = await groundSupplierRegions(candidates.slice(0, 1), async () => new Response("down", { status: 502 }));
     expect(down).toEqual([]);
+  });
+
+  it("drops a page that stays on 500 and quotes the page text verbatim", async () => {
+    const catalog = "https://geo-mining.ru/catalog/burovoy-instrument/sharoshechnye-dolota";
+    let reads = 0;
+    const probe = await probeSupplierUrl(catalog, async () => {
+      reads += 1;
+      return new Response("unavailable", { status: 500 });
+    });
+    expect(probe).toBe("down");
+    expect(reads).toBe(2);
+    const page = "<p>Труба есть на складе в Норильске круглый год.</p>";
+    const kept = await groundSupplierRegions([
+      { name: "РусМет", website: "https://rusmet.example", materials: ["Труба"], regionEvidence: "Склад в Норильске", evidence: "Продажа труб", sourceUrl: "https://rusmet.example/sklad" },
+    ], async () => new Response(page, { status: 200 }));
+    expect(kept).toHaveLength(1);
+    expect(page).toContain(kept[0]!.regionEvidence);
+    expect(kept[0]!.regionEvidence).toContain("на складе в Норильске");
+    expect(kept[0]!.regionEvidence).not.toBe("Склад в Норильске");
+    const failed = await groundSupplierRegions([
+      { name: "Геомайнинг", website: "https://geo-mining.ru", materials: ["Долото"], regionEvidence: "Норильск", evidence: "Продажа долот", sourceUrl: catalog },
+    ], async () => new Response("unavailable", { status: 500 }));
+    expect(failed).toEqual([]);
   });
 
   it("requires both a material and a delivery region", async () => {

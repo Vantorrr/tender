@@ -10,7 +10,7 @@ import {
   formatSourceLocation,
 } from "@/server/ai-prompts";
 import { scoreModelResponse } from "@/server/ai-prompt-score";
-import { buildModelNoteUserContent, keepCellsThatSupportFact, noteRejectionReason, omitUnsourcedPlaces } from "@/server/model-note";
+import { buildModelNoteUserContent, cellRelatesToFact, keepCellsThatSupportFact, noteRejectionReason, omitUnsourcedPlaces } from "@/server/model-note";
 import { citationForModel, parseProjectAnalysisResult, sanitizeCustomerQuestions, validateProjectEvidence } from "@/server/project-analysis-ai";
 import { validateCalcCompareAiResult, pricingTextForCompare } from "@/server/calc-compare-ai";
 import { validateProductionVarianceResult } from "@/server/production-variance-ai";
@@ -109,6 +109,19 @@ describe("estimator prompts", () => {
     expect(bound).toContain("A20");
     expect(bound).not.toContain("A13");
     expect(bound).not.toContain("B43");
+    const header = [
+      { id: "c-obj", text: "конденсатопровод Мессояха-Дудинка", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "A13" },
+      { id: "c-idx", text: "Реквизиты письма Минстроя России об индексах изменения сметной стоимости", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "A8" },
+      { id: "c-wage", text: "Реквизиты нормативного правового акта об утверждении оплаты труда", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "A9" },
+      { id: "c-neg", text: "-54786.64", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "N58" },
+    ];
+    const misplaced = keepCellsThatSupportFact("Индексы не заполнены, ячейка A13.\nАкт об оплате труда, ячейка A13.\nОтрицательных позиций 8, ячейка A13.", header);
+    expect(misplaced).not.toContain("A13");
+    expect(cellRelatesToFact("Индексы не заполнены", header[0]!.text)).toBe(false);
+    const placed = keepCellsThatSupportFact("Индексы не заполнены, ячейка A8.\nАкт об оплате труда, ячейка A9.\nОтрицательных позиций 8, ячейка N58.", header);
+    expect(placed).toContain("A8");
+    expect(placed).toContain("A9");
+    expect(placed).toContain("N58");
     const sheetPayload = buildModelNoteUserContent(
       { kind: "local-estimate" },
       [],
