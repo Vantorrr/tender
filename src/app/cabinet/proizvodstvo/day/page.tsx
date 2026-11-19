@@ -7,9 +7,12 @@ import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { DateInputRu } from "@/components/date-input-ru";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
+import { parseDecimalRu } from "@/lib/decimal-ru";
+import { DEFAULT_MAX_UPLOAD_BYTES, uploadTooLargeMessage } from "@/lib/upload-limit";
 import {
   planResourceLinesForDay,
   stagesForWork,
@@ -113,6 +116,8 @@ function DayDetailsInner() {
   const savingRef = useRef(false);
   const pendingFactIdRef = useRef<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [factError, setFactError] = useState<string | null>(null);
 
   const planFactId = sp.get("planFactId") ?? "";
   const [date, setDate] = useState(
@@ -200,25 +205,55 @@ function DayDetailsInner() {
 
   async function save(withPhoto: boolean) {
     if (savingRef.current || !entry) return;
-    if (withPhoto && !photoRef.current?.files?.[0]) {
-      toast.error("Сначала выберите фото кнопкой «Загрузить фото»");
+    const photo = photoFile ?? photoRef.current?.files?.[0] ?? null;
+    if (withPhoto && !photo) {
+      const message = "Сначала выберите фото кнопкой «Загрузить фото»";
+      setFactError(message);
+      toast.error(message);
       return;
     }
-    const quantity = Number(qty) - (dayQty - (latestDayFact?.quantity ?? 0));
+    const entered = parseDecimalRu(qty);
+    if (entered == null) {
+      const message = "Укажите объём числом, например 1,5";
+      setFactError(message);
+      toast.error(message);
+      return;
+    }
+    const quantity = entered - (dayQty - (latestDayFact?.quantity ?? 0));
     if (!Number.isFinite(quantity) || quantity < 0) {
-      toast.error("Объём не может быть меньше других записей этого дня. Исправьте предыдущие записи в производстве.");
+      const message = "Объём не может быть меньше других записей этого дня. Исправьте предыдущие записи в производстве.";
+      setFactError(message);
+      toast.error(message);
       return;
     }
+    const photoTooLarge = Boolean(withPhoto && photo && photo.size > DEFAULT_MAX_UPLOAD_BYTES);
     savingRef.current = true;
     setSaving(true);
+    setFactError(null);
     const factId = pendingFactIdRef.current ?? latestDayFact?.id ?? createDailyFactId();
     pendingFactIdRef.current = factId;
+    const resourceLines = displayLines.map((l) => ({
+      ...l,
+      factQty: l.factQty,
+    }));
     try {
-      const resourceLines = displayLines.map((l) => ({
-        ...l,
-        factQty: l.factQty,
-      }));
-      if (withPhoto && photoRef.current?.files?.[0]) {
+      await api("/api/proizvodstvo", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "dailyFact",
+          planFactId: plan!.id,
+          fact: {
+            factId,
+            date,
+            workName: selectedWork,
+            unit: entry?.unit ?? "%",
+            quantity,
+            resourceLines,
+            comment: caption.trim() || undefined,
+          },
+        }),
+      });
+      if (withPhoto && photo && !photoTooLarge) {
         const form = new FormData();
         form.append("factId", factId);
         form.append("planFactId", plan!.id);
@@ -228,34 +263,31 @@ function DayDetailsInner() {
         form.append("quantity", String(quantity));
         form.append("resourceLines", JSON.stringify(resourceLines));
         if (caption.trim()) form.append("caption", caption.trim());
-        form.append("photo", photoRef.current.files[0]);
+        form.append("photo", photo);
         await api("/api/proizvodstvo", { method: "POST", body: form });
-      } else {
-        await api("/api/proizvodstvo", {
-          method: "POST",
-          body: JSON.stringify({
-            action: "dailyFact",
-            planFactId: plan!.id,
-            fact: {
-              factId,
-              date,
-              workName: selectedWork,
-              unit: entry?.unit ?? "%",
-              quantity,
-              resourceLines,
-              comment: caption.trim() || undefined,
-            },
-          }),
-        });
       }
       await refresh();
       pendingFactIdRef.current = null;
       setLines(null);
       if (photoRef.current) photoRef.current.value = "";
+      setPhotoFile(null);
       setCaption("");
-      toast.success("Сохранено");
+      if (photoTooLarge) {
+        const message = `${uploadTooLargeMessage()}. Строка факта сохранена без фото.`;
+        setFactError(message);
+        toast.error(message);
+      } else {
+        toast.success("Сохранено");
+      }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Ошибка сохранения");
+      const message = e instanceof Error ? e.message : "Ошибка сохранения";
+      setFactError(message);
+      toast.error(message);
+      try {
+        await refresh();
+      } catch {
+        /* The fact row may already be stored; keep the error on screen. */
+      }
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -265,7 +297,7 @@ function DayDetailsInner() {
   const photos = dayFacts.flatMap((d) => d.photos ?? []);
   // The input value is exactly what save() sends. An explicitly cleared or
   // zero quantity must not silently fall back to the previous total.
-  const factVal = qty.trim() === "" ? 0 : Number(qty) || 0;
+  const factVal = parseDecimalRu(qty) ?? 0;
   const delta = factVal - dayPlan;
   const isTest =
     isT25uTestId(plan.id) ||
@@ -481,8 +513,8 @@ function DayDetailsInner() {
             </p>
             <Input
               className="w-32"
-              type="number"
-              step="any"
+              type="text"
+              inputMode="decimal"
               data-testid="day-qty"
               value={qty}
               onChange={(e) => setQty(e.target.value)}
@@ -502,9 +534,18 @@ function DayDetailsInner() {
             type="file"
             accept="image/*"
             ref={photoRef}
-            className="hidden"
+            className="sr-only"
             data-testid="day-upload-input"
+            onChange={(event) => {
+              setPhotoFile(event.target.files?.[0] ?? null);
+              setFactError(null);
+            }}
           />
+          {photoFile ? (
+            <span className="self-end text-xs text-[var(--tk-muted)]" data-testid="day-photo-name">
+              {photoFile.name}
+            </span>
+          ) : null}
           <Button
             type="button"
             variant="outline"
@@ -535,6 +576,12 @@ function DayDetailsInner() {
             Обновить
           </Button>
         </div>
+        {factError ? (
+          <Alert className="mb-3 border-rose-200 bg-rose-50 text-rose-950" data-testid="day-fact-error">
+            <AlertTitle>Сохранение факта</AlertTitle>
+            <AlertDescription>{factError}</AlertDescription>
+          </Alert>
+        ) : null}
         <div
           className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
           data-testid="day-photo-report"

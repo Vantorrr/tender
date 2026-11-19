@@ -1,4 +1,5 @@
 import type { Citation, DocumentAnalysis, Highlight } from "@/lib/types";
+import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { config } from "@/server/config";
 import { completeJson, modelConfigured } from "@/server/openrouter";
 
@@ -8,6 +9,7 @@ type Noted = {
   analysis: DocumentAnalysis;
   citations?: Citation[];
   noteByModel?: boolean;
+  aiFailure?: string;
 };
 
 /** Citations always come from parsed source file — never invented by the LLM. */
@@ -78,17 +80,28 @@ async function writeNote(
   facts: Record<string, unknown>,
   checks: Array<string | null>,
   highlights: Highlight[]
-): Promise<string | null> {
-  if (!modelConfigured()) return null;
-  const raw = await completeJson(
-    ANALYSIS_SYSTEM_PROMPT,
-    JSON.stringify({ facts, highlights })
-  );
+): Promise<{ note: string } | { failure: string }> {
+  if (!modelConfigured()) return { failure: "ключ модели не задан" };
+  let raw: string;
+  try {
+    raw = await completeJson(
+      ANALYSIS_SYSTEM_PROMPT,
+      JSON.stringify({ facts, highlights })
+    );
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "ошибка модели";
+    console.error("model note skipped:", reason);
+    return { failure: reason };
+  }
   let note = readNote(raw);
-  if (!note) return null;
-  if (rejectsExternalActions(note)) {
-    console.error("model note rejected: external action claim");
-    return null;
+  if (!note) {
+    console.error("model note skipped: пустой ответ модели");
+    return { failure: "пустой ответ модели" };
+  }
+  const external = rejectsExternalActions(note);
+  if (external) {
+    console.error("model note rejected:", external);
+    return { failure: external };
   }
   if (rejection(note, checks, facts)?.startsWith("нет факта зона 5") && /зон/i.test(note)) {
     note = `${note.replace(/\s+$/, "")} Зона 5.`;
@@ -96,9 +109,9 @@ async function writeNote(
   const reason = rejection(note, checks, facts);
   if (reason) {
     console.error("model note rejected:", reason);
-    return null;
+    return { failure: reason };
   }
-  return note;
+  return { note };
 }
 
 function rejection(
@@ -156,19 +169,26 @@ export async function refineNote<T extends Noted>(
   }
 
   try {
-    const note = await writeNote(facts, checks, analysis.highlights);
-    if (!note) return withCitations;
+    const written = await writeNote(facts, checks, analysis.highlights);
+    if ("failure" in written) {
+      return {
+        ...withCitations,
+        aiFailure: aiAnalysisFailureStatus(written.failure),
+      };
+    }
     return {
       ...withCitations,
-      analyticalNote: note,
+      analyticalNote: written.note,
       noteByModel: true,
+      aiFailure: undefined,
       analysis: { ...analysis.analysis, narrator: config.openRouterModel },
     };
   } catch (error) {
-    console.error(
-      "model note skipped:",
-      error instanceof Error ? error.message.slice(0, 200) : "error"
-    );
-    return withCitations;
+    const reason = error instanceof Error ? error.message : "ошибка модели";
+    console.error("model note skipped:", reason);
+    return {
+      ...withCitations,
+      aiFailure: aiAnalysisFailureStatus(reason),
+    };
   }
 }

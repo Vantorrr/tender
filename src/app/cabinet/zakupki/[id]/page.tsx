@@ -18,7 +18,8 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DateInputRu } from "@/components/date-input-ru";
-import { api } from "@/lib/api";
+import { AiFailureBanner } from "@/components/ai-failure-banner";
+import { api, getClientToken } from "@/lib/api";
 import { DocumentWebPreview } from "@/components/document-web-preview";
 import { cleanLabel } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney, formatNumber } from "@/lib/format";
@@ -207,6 +208,7 @@ export default function ZakupkaDetailPage() {
     sendToCalculation,
     refreshAnalytics,
     analyzeProjectWithAI,
+    reanalyzeDocument,
     createDocumentUpload,
     updateRisk,
     parseRiskContract,
@@ -628,9 +630,14 @@ export default function ZakupkaDetailPage() {
     setBusy(true);
     setUploadError(null);
     try {
+      const token = getClientToken();
       const response = await fetch("/api/zakupki/source-file", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        credentials: "include",
+        headers: {
+          "content-type": "application/json",
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
         body: JSON.stringify({ procurementId: procurement!.id, attachmentId: attachment.id }),
       });
       if (!response.ok) {
@@ -733,7 +740,7 @@ export default function ZakupkaDetailPage() {
                 }
               }}
             >
-              Сформировать расчёт
+              Сформировать расчёт (расчёт по формулам, без ИИ)
             </Button>
           </div>
         }
@@ -764,6 +771,31 @@ export default function ZakupkaDetailPage() {
           e.target.value = "";
         }}
       />
+
+      {(() => {
+        const failedDocument = docs.find((document) => document.aiFailure);
+        const aiFailure = procurement.analytics?.aiFailure ?? failedDocument?.aiFailure;
+        if (!aiFailure) return null;
+        return (
+          <div className="mb-4">
+            <AiFailureBanner
+              status={aiFailure}
+              pending={aiAnalyzing}
+              onRetry={() => {
+                if (procurement.analytics?.aiFailure || !failedDocument) {
+                  void analyzeProjectPackage();
+                  return;
+                }
+                setAiAnalyzing(true);
+                void reanalyzeDocument(failedDocument.id, { useLlm: true })
+                  .then(() => toast.success("Повторный анализ документа завершён"))
+                  .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось повторить анализ"))
+                  .finally(() => setAiAnalyzing(false));
+              }}
+            />
+          </div>
+        );
+      })()}
 
       <Tabs value={activeTab} onValueChange={setSelectedTab} className="mt-2">
         <TabsList className="mb-4 flex h-auto flex-wrap gap-1">
@@ -829,10 +861,15 @@ export default function ZakupkaDetailPage() {
                 <Button variant="outline" disabled={analyticsBusy} onClick={() => void refreshProjectAnalytics()}>
                   {analyticsBusy ? "Обновляю…" : "Обновить сводку"}
                 </Button>
-                {docs.some((document) => document.citations.length > 0) ? (
-                  <Button disabled={aiAnalyzing} onClick={() => void analyzeProjectPackage()}>
-                    {aiAnalyzing ? "ИИ анализирует…" : "ИИ-анализ пакета"}
-                  </Button>
+                <Button
+                  disabled={aiAnalyzing || docs.length === 0}
+                  title={docs.length === 0 ? "Сначала загрузите документы" : undefined}
+                  onClick={() => void analyzeProjectPackage()}
+                >
+                  {aiAnalyzing ? "ИИ анализирует…" : "ИИ-анализ пакета"}
+                </Button>
+                {docs.length === 0 ? (
+                  <span className="text-xs text-[var(--tk-muted)]">Сначала загрузите документы</span>
                 ) : null}
                 <Button variant="ghost" onClick={() => setSelectedTab("analytics")}>Подробная аналитика</Button>
               </div>
@@ -1168,12 +1205,15 @@ export default function ZakupkaDetailPage() {
                 </Button>
                 <Button
                   size="sm"
-                  disabled={aiAnalyzing || docs.length === 0 || !docs.some((document) => document.citations.length > 0)}
-                  title="Модель может вернуть только тезисы с дословной цитатой из загруженных документов"
+                  disabled={aiAnalyzing || docs.length === 0}
+                  title={docs.length === 0 ? "Сначала загрузите документы" : "Модель может вернуть только тезисы с дословной цитатой из загруженных документов"}
                   onClick={() => void analyzeProjectPackage()}
                 >
                   {aiAnalyzing ? "ИИ анализирует пакет…" : "ИИ-анализ всего пакета"}
                 </Button>
+                {docs.length === 0 ? (
+                  <span className="self-center text-xs text-[var(--tk-muted)]">Сначала загрузите документы</span>
+                ) : null}
               </div>
             </div>
             <p className="mb-3 text-xs text-[var(--tk-muted)]">
@@ -1408,7 +1448,7 @@ export default function ZakupkaDetailPage() {
               </Link>
             ) : (
               <p className="text-sm text-[var(--tk-muted)]">
-                Черновика нет — нажмите «Отправить в расчёт».
+                Черновика нет — нажмите «Сформировать расчёт (расчёт по формулам, без ИИ)».
               </p>
             )}
             {original ? (
@@ -1458,7 +1498,7 @@ export default function ZakupkaDetailPage() {
               </>
             ) : (
               <p className="text-[var(--tk-muted)]">
-                ГПР появится после «Отправить в расчёт».
+                ГПР появится после «Сформировать расчёт (расчёт по формулам, без ИИ)».
               </p>
             )}
           </div>

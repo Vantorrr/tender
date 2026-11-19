@@ -28,7 +28,7 @@ export default function RaschetyPage() {
       {items.length === 0 ? (
         <EmptyState
           title="Расчётов нет"
-          description="Нажмите «Отправить в расчёт» в карточке закупки."
+          description="Нажмите «Сформировать расчёт (расчёт по формулам, без ИИ)» в карточке закупки."
         />
       ) : (
         <div className="space-y-8">

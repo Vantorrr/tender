@@ -3,6 +3,12 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   experimental: {
     agentUpgrade: "security",
+    // Phone photos are often larger than the 10MB proxy buffer. The route
+    // still rejects anything above MAX_UPLOAD_BYTES (25MB) with a clear error.
+    proxyClientMaxBodySize: "32mb",
+    serverActions: {
+      bodySizeLimit: "32mb",
+    },
   },
   // API + SQLite session routes need request-time rendering
   cacheComponents: false,

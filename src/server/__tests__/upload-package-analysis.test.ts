@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   refreshProcurementAnalytics: vi.fn(),
   analyzeProcurementPackageWithAI: vi.fn(),
+  recordProcurementAiFailure: vi.fn(),
   config: { openRouterOnUpload: false },
 }));
 
 vi.mock("@/server/repo", () => ({
   refreshProcurementAnalytics: mocks.refreshProcurementAnalytics,
   analyzeProcurementPackageWithAI: mocks.analyzeProcurementPackageWithAI,
+  recordProcurementAiFailure: mocks.recordProcurementAiFailure,
 }));
 vi.mock("@/server/config", () => ({ config: mocks.config }));
 
@@ -33,11 +35,12 @@ describe("refreshAndMaybeAnalyzePackage", () => {
   it("keeps a successful upload successful when the model provider is unavailable", async () => {
     mocks.config.openRouterOnUpload = true;
     mocks.analyzeProcurementPackageWithAI.mockRejectedValueOnce(new Error("provider unavailable"));
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
 
     await expect(refreshAndMaybeAnalyzePackage("user-1", "proc-1")).resolves.toBeUndefined();
     expect(mocks.refreshProcurementAnalytics).toHaveBeenCalledOnce();
-    expect(warn).toHaveBeenCalledWith("[documents] automatic package analysis failed (Error)");
-    warn.mockRestore();
+    expect(errorLog).toHaveBeenCalledWith("[documents] automatic package analysis failed: provider unavailable");
+    expect(mocks.recordProcurementAiFailure).toHaveBeenCalledWith("user-1", "proc-1", "provider unavailable");
+    errorLog.mockRestore();
   });
 });

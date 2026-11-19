@@ -45,7 +45,10 @@ describe("Kontur procurement attachments", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("application/pdf");
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
-    expect(fetch).toHaveBeenCalledWith(expect.any(URL), expect.objectContaining({ redirect: "error" }));
+    expect(fetch).toHaveBeenCalledWith(expect.any(URL), expect.objectContaining({
+      redirect: "manual",
+      headers: expect.objectContaining({ "user-agent": "TMA361 procurement feed/1.0" }),
+    }));
   });
 
   it("rejects a Kontur attachment hosted outside the configured source domains", async () => {

@@ -155,6 +155,8 @@ export interface ProjectAnalytics {
   generatedAt: string;
   method: string;
   disclaimer: string;
+  /** Set when the model call failed. Exact prefix: «ИИ-анализ не выполнен:». */
+  aiFailure?: string;
   /** Source coverage and evidence validation; this is not an accuracy percentage. */
   quality?: {
     status: "insufficient_sources" | "needs_review" | "evidence_backed";
@@ -370,6 +372,8 @@ export interface DocumentItem {
     sectionName?: string;
     workName?: string;
   }>;
+  /** Model note or package pass failed; local parse is kept. */
+  aiFailure?: string;
   /** Visible archive / parse failures — never silent. */
   extractionErrors?: string[];
   extractedFiles?: Array<{ name: string; size: number; relativePath: string }>;

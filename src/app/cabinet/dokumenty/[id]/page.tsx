@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useParams } from "next/navigation";
 import { toast } from "sonner";
+import { AiFailureBanner } from "@/components/ai-failure-banner";
 import { ErrorState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { DocumentWebPreview } from "@/components/document-web-preview";
@@ -71,6 +72,7 @@ function NoteEditor({
 export default function DocumentDetailPage() {
   const params = useParams<{ id: string }>();
   const { orgDocuments, data, reanalyzeDocument } = useStore();
+  const [retryingAi, setRetryingAi] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const doc = orgDocuments.find((d) => d.id === params.id);
 
@@ -182,6 +184,22 @@ export default function DocumentDetailPage() {
           </>
         }
       />
+
+      {doc.aiFailure ? (
+        <div className="mb-4">
+          <AiFailureBanner
+            status={doc.aiFailure}
+            pending={retryingAi}
+            onRetry={() => {
+              setRetryingAi(true);
+              void reanalyzeDocument(doc.id, { useLlm: true })
+                .then(() => toast.success("Повторный анализ документа завершён"))
+                .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось повторить анализ"))
+                .finally(() => setRetryingAi(false));
+            }}
+          />
+        </div>
+      ) : null}
 
       {previewOpen ? (
         <section className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white p-3">
