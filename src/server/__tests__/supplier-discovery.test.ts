@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const complete = vi.hoisted(() => vi.fn());
 vi.mock("@/server/openrouter", () => ({ completeJsonDetailed: complete }));
 
-import { applyLiveSupplierLinks, discoverMaterialSuppliers, filterSupplierCandidates, resolveSearchSources } from "@/server/supplier-discovery";
+import { applyLiveSupplierLinks, discoverMaterialSuppliers, filterSupplierCandidates, isRedirectUrl, resolveSearchSources } from "@/server/supplier-discovery";
 
 describe("open-source supplier discovery", () => {
   beforeEach(() => {
@@ -46,6 +46,10 @@ describe("open-source supplier discovery", () => {
     const resolved = await resolveSearchSources([redirect, "https://vendor.example/materials"], { fetchImpl, cache: new Map() });
     expect(resolved).toEqual(["https://vendor.example/materials"]);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(isRedirectUrl("https://evil.example/grounding-api-redirect/abc")).toBe(false);
+    const foreign = vi.fn(async () => new Response(null, { status: 302, headers: { location: "https://attacker.example/catalog" } }));
+    await expect(resolveSearchSources(["https://evil.example/grounding-api-redirect/abc"], { fetchImpl: foreign, cache: new Map() })).resolves.toEqual(["https://evil.example/grounding-api-redirect/abc"]);
+    expect(foreign).not.toHaveBeenCalled();
     const again = await resolveSearchSources([redirect], { fetchImpl, cache: new Map([[redirect, "https://vendor.example/materials"]]) });
     expect(again).toEqual(["https://vendor.example/materials"]);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
