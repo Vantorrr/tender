@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { api, downloadUrl } from "@/lib/api";
@@ -17,6 +18,7 @@ import { GprResourceTree } from "@/components/gpr-resource-tree";
 import { collectCalendarWarnings } from "@/lib/calendar-availability";
 import { bucketsFromPositions } from "@/lib/cost-engine";
 import { formatMoney } from "@/lib/format";
+import { gprStageLabel } from "@/lib/gpr-stage-label";
 import { humanizeIssues } from "@/lib/issue-text";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { useStore } from "@/lib/store";
@@ -41,6 +43,7 @@ export default function GprDetailPage() {
   const materialsFileRef = useRef<HTMLInputElement>(null);
   const [materialsPreview, setMaterialsPreview] = useState<MaterialsPreview | null>(null);
   const [materialsImportBusy, setMaterialsImportBusy] = useState(false);
+  const [pendingStageId, setPendingStageId] = useState<string | null>(null);
   const { data, user, updateSchedule, updateCalculation, refresh } = useStore();
 
   if (!user) return null;
@@ -501,24 +504,16 @@ export default function GprDetailPage() {
               className="grid gap-2 rounded-xl border border-[var(--tk-line)] bg-white/80 p-3 sm:grid-cols-2 lg:grid-cols-6"
             >
               <div className="sm:col-span-2 lg:col-span-6 flex justify-end">
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => {
-                    if (!window.confirm(`Удалить этап «${stage.name}»?`)) return;
-                    void api("/api/gpr", {
-                      method: "PATCH",
-                      body: JSON.stringify({ id: schedule.id, action: "deleteStage", stageId: stage.id }),
-                    }).then(() => refresh()).then(() => toast.success("Этап удалён")).catch((error: unknown) => {
-                      toast.error(error instanceof Error ? error.message : "Не удалось удалить этап");
-                    });
-                  }}
-                >
+                <Button size="sm" variant="ghost" onClick={() => setPendingStageId(stage.id)}>
                   Удалить этап
                 </Button>
               </div>
+              <div className="sm:col-span-2 lg:col-span-6 text-sm font-medium" title={gprStageLabel(stage).title}>
+                {gprStageLabel(stage).text}
+              </div>
               <Input
                 value={stage.name}
+                title={gprStageLabel(stage).title}
                 aria-label={`Название этапа ${stage.sequence}`}
                 onChange={(e) => {
                   updateSchedule(schedule.id, {
@@ -645,6 +640,30 @@ export default function GprDetailPage() {
             </div>
           ))}
       </div>
+      <Dialog open={pendingStageId != null} onOpenChange={(open) => { if (!open) setPendingStageId(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Удалить этап?</DialogTitle>
+            <DialogDescription>
+              Этап «{schedule.stages.find((item) => item.id === pendingStageId)?.name ?? ""}» будет удалён из графика.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingStageId(null)}>Отмена</Button>
+            <Button onClick={() => {
+              const stageId = pendingStageId;
+              setPendingStageId(null);
+              if (!stageId) return;
+              void api("/api/gpr", {
+                method: "PATCH",
+                body: JSON.stringify({ id: schedule.id, action: "deleteStage", stageId }),
+              }).then(() => refresh()).then(() => toast.success("Этап удалён")).catch((error: unknown) => {
+                toast.error(error instanceof Error ? error.message : "Не удалось удалить этап");
+              });
+            }}>Удалить</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

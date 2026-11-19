@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { diffDays } from "@/lib/cost-engine";
 import { formatDate, formatDateRangeShort, formatMoney, formatNumber } from "@/lib/format";
 import { stageResourceSummary } from "@/lib/gpr-stage-cost";
+import { gprStageLabel } from "@/lib/gpr-stage-label";
 import { entryDisplayFact } from "@/lib/plan-fact-agg";
 import { gprCoveredDays } from "@/lib/plan-from-gpr";
 import type { DailyFact, GprStage, PlanFactEntry } from "@/lib/types";
@@ -490,11 +491,10 @@ export function PlanFactGantt({
                   <div className="sticky left-0 z-10 border-r border-[var(--tk-line)] bg-inherit px-3 py-3">
                     <div className="grid grid-cols-[1.4fr_0.55fr_0.55fr_0.7fr] gap-1 text-xs">
                       <div className="min-w-0">
-                        <div className="break-words text-sm font-semibold leading-snug text-[var(--tk-ink)]">
+                        <div className="break-words text-sm font-semibold leading-snug text-[var(--tk-ink)]" title={gprStageLabel(stage).title}>
                           <span className="mr-1 text-[10px] text-[var(--tk-muted)]">{stage.sequence}.</span>
-                          {stage.name}
+                          {gprStageLabel(stage).text}
                         </div>
-                        {stage.sectionName ? <div className="mt-0.5 truncate text-[10px] text-[var(--tk-muted)]" title={stage.sectionName}>{stage.sectionName}</div> : null}
                         <div className={`mt-1 tabular-nums ${preview ? "rounded-md bg-[var(--tk-brand)] px-1.5 py-1 text-xs font-semibold text-white" : "text-[11px] text-[var(--tk-muted)]"}`} aria-live={preview ? "polite" : undefined}>
                           {formatDate(previewStart)} – {formatDate(previewEnd)}{preview ? ` · ${widthDays} дн.` : ""}
                         </div>

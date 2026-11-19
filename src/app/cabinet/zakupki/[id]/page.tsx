@@ -8,6 +8,7 @@ import { ErrorState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -236,6 +237,12 @@ export default function ZakupkaDetailPage() {
   const [payType, setPayType] = useState<PaymentBucket>("postuplenie");
   const [payAmount, setPayAmount] = useState("");
   const [paySaving, setPaySaving] = useState(false);
+  const [ask, setAsk] = useState<
+    | null
+    | { kind: "payment"; id: string; title: string }
+    | { kind: "rfq"; supply: SupplyRequest; supplier: SupplierDirectoryEntry }
+    | { kind: "supplier"; id: string; name: string }
+  >(null);
   const paySavingRef = useRef(false);
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
   const [matName, setMatName] = useState("");
@@ -534,7 +541,6 @@ export default function ZakupkaDetailPage() {
   }
 
   async function sendSupplierRfq(supply: SupplyRequest, supplier: SupplierDirectoryEntry) {
-    if (!window.confirm(`Отправить запрос КП на ${supply.materialName} поставщику «${supplier.name}» (${supplier.email})? К письму будет приложена карточка предприятия.`)) return;
     try {
       await api("/api/supply", { method: "POST", body: JSON.stringify({ action: "sendRfq", id: supply.id, supplierId: supplier.id, confirmed: true }) });
       await refresh();
@@ -1648,23 +1654,7 @@ export default function ZakupkaDetailPage() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        onClick={async () => {
-                          if (!window.confirm(`Удалить платёж «${pay.title}»?`)) return;
-                          try {
-                            await api("/api/zakupki", {
-                              method: "POST",
-                              body: JSON.stringify({
-                                action: "saveMoney",
-                                moneyId: money.id,
-                                patch: { payments: money.payments.filter((item) => item.id !== pay.id) },
-                              }),
-                            });
-                            await refresh();
-                            toast.success("Платёж удалён");
-                          } catch (error) {
-                            toast.error(error instanceof Error ? error.message : "Не удалось удалить платёж");
-                          }
-                        }}
+                        onClick={() => setAsk({ kind: "payment", id: pay.id, title: pay.title })}
                       >
                         Удалить
                       </Button>
@@ -1783,7 +1773,7 @@ export default function ZakupkaDetailPage() {
                 <Input placeholder="Сайт (необязательно)" value={supplierWebsiteNew} onChange={(event) => setSupplierWebsiteNew(event.target.value)} />
                 <Button disabled={supplierSaving} onClick={() => void saveSupplierDirectoryEntry()}>{supplierSaving ? "Сохраняю…" : "Добавить поставщика"}</Button>
               </div>
-              {suppliers.length ? <ul className="mt-3 grid gap-2 md:grid-cols-2">{suppliers.map((supplier) => <li key={supplier.id} className="flex items-start justify-between gap-2 rounded-md bg-stone-50 px-3 py-2 text-xs" data-testid={`supplier-directory-${supplier.id}`}><div><span className="font-medium">{supplier.name}</span> · {supplier.email}<div className="mt-1 text-[var(--tk-muted)]">Ассортимент: {supplier.materialKeywords.join(", ")}{supplier.regions.length ? ` · Регион: ${supplier.regions.join(", ")}` : ""}</div></div><Button size="sm" variant="ghost" onClick={async () => { if (!window.confirm(`Удалить поставщика «${supplier.name}» из справочника?`)) return; try { await api("/api/supply", { method: "POST", body: JSON.stringify({ action: "deleteSupplier", supplierId: supplier.id }) }); await refresh(); toast.success("Поставщик удалён"); } catch (error) { toast.error(error instanceof Error ? error.message : "Не удалось удалить поставщика"); } }}>Удалить</Button></li>)}</ul> : <p className="mt-3 text-xs text-[var(--tk-muted)]">Справочник пока пуст. Добавьте поставщиков и укажите их ассортимент.</p>}
+              {suppliers.length ? <ul className="mt-3 grid gap-2 md:grid-cols-2">{suppliers.map((supplier) => <li key={supplier.id} className="flex items-start justify-between gap-2 rounded-md bg-stone-50 px-3 py-2 text-xs" data-testid={`supplier-directory-${supplier.id}`}><div><span className="font-medium">{supplier.name}</span> · {supplier.email}<div className="mt-1 text-[var(--tk-muted)]">Ассортимент: {supplier.materialKeywords.join(", ")}{supplier.regions.length ? ` · Регион: ${supplier.regions.join(", ")}` : ""}</div></div><Button size="sm" variant="ghost" onClick={() => setAsk({ kind: "supplier", id: supplier.id, name: supplier.name })}>Удалить</Button></li>)}</ul> : <p className="mt-3 text-xs text-[var(--tk-muted)]">Справочник пока пуст. Добавьте поставщиков и укажите их ассортимент.</p>}
             </section>
 
             <Button data-testid="generate-material-manifest" disabled={manifestBusy} onClick={() => void generateMaterialManifest()}>{manifestBusy ? "Собираю ведомость…" : "Сформировать ведомость материалов"}</Button>
@@ -1994,7 +1984,7 @@ export default function ZakupkaDetailPage() {
                         const supplier = suppliers.find((item) => item.id === supplierId);
                         if (!supplier) return null;
                         const alreadySent = (s.sentToSupplierIds ?? []).includes(supplierId);
-                        return <div key={supplierId} className="flex flex-wrap items-center gap-2 rounded border bg-white px-2 py-1 text-xs"><span>{supplier.name} · {supplier.email}</span>{alreadySent ? <span className="text-emerald-800">Запрос отправлен</span> : <Button size="sm" variant="outline" disabled={!supplyMailReady || !companyCard} title={!companyCard ? "Загрузите карточку предприятия" : !supplyMailReady ? supplyMailDetail : undefined} onClick={() => void sendSupplierRfq(s, supplier)}>Отправить запрос КП</Button>}</div>;
+                        return <div key={supplierId} className="flex flex-wrap items-center gap-2 rounded border bg-white px-2 py-1 text-xs"><span>{supplier.name} · {supplier.email}</span>{alreadySent ? <span className="text-emerald-800">Запрос отправлен</span> : <Button size="sm" variant="outline" disabled={!supplyMailReady || !companyCard} title={!companyCard ? "Загрузите карточку предприятия" : !supplyMailReady ? supplyMailDetail : undefined} onClick={() => setAsk({ kind: "rfq", supply: s, supplier })}>Отправить запрос КП</Button>}</div>;
                       })}</div> : <p className="mt-1 text-xs text-[var(--tk-muted)]">В справочнике нет поставщика с подходящим ассортиментом.</p>}
                       {supplierSearchErrors[s.id] ? <p className="mt-2 text-xs text-amber-800" role="alert">{supplierSearchErrors[s.id]}</p> : null}
                       {(supplierSearchResults[s.id]?.length ?? 0) > 0 ? <ul className="mt-2 space-y-2">{supplierSearchResults[s.id].map((candidate) => <li key={candidate.sourceUrl} className="rounded border bg-white p-2 text-xs" data-testid={`supplier-search-result-${s.id}`}>
@@ -2242,6 +2232,53 @@ export default function ZakupkaDetailPage() {
           </div>
         </TabsContent>
       </Tabs>
+      <Dialog open={ask != null} onOpenChange={(open) => { if (!open) setAsk(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {ask?.kind === "payment" ? "Удалить платёж?" : ask?.kind === "supplier" ? "Удалить поставщика?" : "Отправить запрос КП?"}
+            </DialogTitle>
+            <DialogDescription>
+              {ask?.kind === "payment"
+                ? `Платёж «${ask.title}» будет удалён.`
+                : ask?.kind === "supplier"
+                  ? `Поставщик «${ask.name}» будет удалён из справочника.`
+                  : ask?.kind === "rfq"
+                    ? `Отправить запрос КП на ${ask.supply.materialName} поставщику «${ask.supplier.name}» (${ask.supplier.email})? К письму будет приложена карточка предприятия.`
+                    : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAsk(null)}>Отмена</Button>
+            <Button onClick={() => {
+              const action = ask;
+              setAsk(null);
+              if (!action) return;
+              if (action.kind === "payment" && money) {
+                void api("/api/zakupki", {
+                  method: "POST",
+                  body: JSON.stringify({
+                    action: "saveMoney",
+                    moneyId: money.id,
+                    patch: { payments: money.payments.filter((item) => item.id !== action.id) },
+                  }),
+                }).then(() => refresh()).then(() => toast.success("Платёж удалён")).catch((error: unknown) => {
+                  toast.error(error instanceof Error ? error.message : "Не удалось удалить платёж");
+                });
+                return;
+              }
+              if (action.kind === "supplier") {
+                void api("/api/supply", { method: "POST", body: JSON.stringify({ action: "deleteSupplier", supplierId: action.id }) })
+                  .then(() => refresh())
+                  .then(() => toast.success("Поставщик удалён"))
+                  .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось удалить поставщика"));
+                return;
+              }
+              if (action.kind === "rfq") void sendSupplierRfq(action.supply, action.supplier);
+            }}>{ask?.kind === "rfq" ? "Отправить" : "Удалить"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

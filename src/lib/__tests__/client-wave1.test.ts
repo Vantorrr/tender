@@ -8,7 +8,9 @@ import { plainExchangeTitle } from "@/lib/exchange-label";
 import { quantityPresentation } from "@/lib/format";
 import { rowDeleteConfirmed } from "@/lib/row-delete";
 import { paymentAmountError, paymentBucket, paymentTotals } from "@/lib/money-payments";
+import { gprStageLabel } from "@/lib/gpr-stage-label";
 import { displayedKanbanColumn, procurementBoardLabel } from "@/lib/pipeline";
+import { REVIEW_LABELS } from "@/lib/roles";
 import { patchMergedResources } from "@/lib/resource-merge";
 import type { GprStage } from "@/lib/types";
 
@@ -143,6 +145,31 @@ describe("client wave 1 wording and money", () => {
     expect(plainExchangeTitle("Смета заказчика · смета.xlsx · РУЧНАЯ-20261119-abc · p-manual-1")).toBe(
       "Смета заказчика · смета.xlsx",
     );
+  });
+
+  it("gives identical works distinct stage names by section number", () => {
+    const work = "Бурение скважин диаметром 450 мм вращательным (роторным) способом";
+    const first = gprStageLabel({
+      name: work,
+      workName: work,
+      sectionName: "Раздел 1. Бурение скважин под неподвижные опоры П-12Р(325) 118 шт",
+    });
+    const third = gprStageLabel({
+      name: work,
+      workName: work,
+      sectionName: "Раздел 3. Бурение скважин под опоры П-2к и П-4к (325) 72 шт",
+    });
+    expect(first.text.startsWith("1.")).toBe(true);
+    expect(third.text.startsWith("3.")).toBe(true);
+    expect(first.text).not.toBe(third.text);
+    expect(first.title).toContain("П-12Р");
+    expect(third.title).toContain("П-2к");
+  });
+
+  it("uses the same words for the board and the review status", () => {
+    expect(REVIEW_LABELS.novaya).toBe("Новое");
+    expect(REVIEW_LABELS.na_rassmotrenii).toBe("В работе");
+    expect(REVIEW_LABELS.na_rassmotrenii).toBe(procurementBoardLabel({ reviewStatus: "na_rassmotrenii" }));
   });
 
   it("names a rejected card the same way as the closed column", () => {

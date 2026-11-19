@@ -10,6 +10,7 @@ import { DocumentWebPreview } from "@/components/document-web-preview";
 import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { downloadUrl } from "@/lib/api";
 import { downloadTextFile, formatDateTime } from "@/lib/format";
 import { presentAnalyticalNote } from "@/lib/analytical-note";
@@ -76,6 +77,7 @@ export default function DocumentDetailPage() {
   const { orgDocuments, data, reanalyzeDocument } = useStore();
   const [retryingAi, setRetryingAi] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [askModel, setAskModel] = useState(false);
   const doc = orgDocuments.find((d) => d.id === params.id);
 
   if (!doc) {
@@ -134,23 +136,7 @@ export default function DocumentDetailPage() {
             >
               Переразобрать
             </Button>
-            <Button
-              variant="outline"
-              onClick={async () => {
-                const ok = window.confirm(
-                  "Сформировать записку через внешний сервис анализа? Это платный вызов."
-                );
-                if (!ok) return;
-                try {
-                  await reanalyzeDocument(doc.id, { useLlm: true });
-                  toast.success("Записка обновлена с участием модели");
-                } catch (e) {
-                  toast.error(
-                    e instanceof Error ? e.message : "Ошибка анализа моделью"
-                  );
-                }
-              }}
-            >
+            <Button variant="outline" onClick={() => setAskModel(true)}>
               Записка моделью
             </Button>
             <Button
@@ -355,6 +341,23 @@ export default function DocumentDetailPage() {
           </ol>
         </section>
       </div>
+      <Dialog open={askModel} onOpenChange={setAskModel}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Сформировать записку моделью?</DialogTitle>
+            <DialogDescription>Это платный вызов внешнего сервиса анализа.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAskModel(false)}>Отмена</Button>
+            <Button onClick={() => {
+              setAskModel(false);
+              void reanalyzeDocument(doc.id, { useLlm: true })
+                .then(() => toast.success("Записка обновлена с участием модели"))
+                .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Ошибка анализа моделью"));
+            }}>Сформировать</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
