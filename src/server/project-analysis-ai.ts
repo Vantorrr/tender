@@ -313,17 +313,58 @@ export function recommendationAfterConflict(
   return recommendation;
 }
 
-function moneyAmounts(text: string): Array<{ raw: string; rubles: number; thousands: boolean }> {
-  const found: Array<{ raw: string; rubles: number; thousands: boolean }> = [];
-  const pattern = /(\d{1,3}(?:[ \u00a0]\d{3})+(?:[,.]\d+)?|\d+(?:[,.]\d+)?)(\s*тыс\.?)?/gu;
-  for (const match of text.matchAll(pattern)) {
-    const numeric = Number(match[1]!.replace(/[ \u00a0]/g, "").replace(",", "."));
+const STRONG_PRICE = /(?<![\p{L}\p{N}_])(?:цен(?:а|ы|у|е|ой|ою)\s+(?:[\p{L}-]+\s+){0,3}?(?:договор(?:а|у|ом|е)?|контракт(?:а|у|ом|е)?)(?![\p{L}\p{N}_])|общ(?:ая|ей|ую)\s+стоимост(?:ь|и|ью)(?![\p{L}\p{N}_])|нмцк(?![\p{L}\p{N}_]))/giu;
+const WEAK_PRICE = /(?<![\p{L}\p{N}_])(?:стоимост(?:ь|и|ью)\s+(?:[\p{L}-]+\s+){0,3}?(?:договор(?:а|у|ом|е)?|контракт(?:а|у|ом|е)?|работ(?:ы|а|у|е|ой|ою)?)(?![\p{L}\p{N}_])|цен(?:а|ы|у|е|ой|ою)\s+(?:[\p{L}-]+\s+){0,3}?работ(?:ы|а|у|е|ой|ою)?(?![\p{L}\p{N}_]))/giu;
+const UNIT_PRICE = /(?<![\p{L}\p{N}_])(?:за\s+единиц[\p{L}-]*|за\s+м\s*(?:3|³|\^3)?(?![\p{L}])|за\s+т(?![\p{L}])|за\s+шт\.?(?![\p{L}])|за\s+п\s*\.?\s*м\.?|единичн(?:ая|ой|ую|ые|ых)\s+расценк[\p{L}-]*)/giu;
+const PAYMENT_WORD = /(?<![\p{L}\p{N}_])(?:аванс[\p{L}-]*|штраф[\p{L}-]*|пен(?:я|и|ю|е|ей|ям|ями)|обеспечени[\p{L}-]*|задаток[\p{L}-]*|неустойк[\p{L}-]*)(?![\p{L}\p{N}_])/giu;
+const SENTENCE_BOUNDARY = /[.!?](?=\s+\p{Lu})|[\n\r]+/gu;
+const CURRENCY_AMOUNT = /(\d{1,3}(?:[ \u00a0\u202f]\d{3})+(?:[,.]\d+)?|\d+(?:[,.]\d+)?)(?:\s*(тыс\.?|млн\.?))?\s*(?:руб(?:\.|лей|ля|ль)?|₽)/giu;
+
+type MoneyScale = "ruble" | "thousand" | "million";
+
+function matchSpans(text: string, pattern: RegExp): Array<{ start: number; end: number }> {
+  pattern.lastIndex = 0;
+  return [...text.matchAll(pattern)].map((match) => {
+    const start = match.index ?? 0;
+    return { start, end: start + match[0].length };
+  });
+}
+
+function sentenceSpans(text: string): Array<{ start: number; end: number }> {
+  const spans: Array<{ start: number; end: number }> = [];
+  let start = 0;
+  SENTENCE_BOUNDARY.lastIndex = 0;
+  for (const match of text.matchAll(SENTENCE_BOUNDARY)) {
+    const index = match.index ?? 0;
+    const lineBreak = /[\n\r]/.test(match[0]);
+    const end = lineBreak ? index : index + match[0].length;
+    if (end > start) spans.push({ start, end });
+    start = index + match[0].length;
+  }
+  if (start < text.length) spans.push({ start, end: text.length });
+  return spans;
+}
+
+function overlapsGap(span: { start: number; end: number }, from: number, to: number): boolean {
+  return span.end > from && span.start < to;
+}
+
+function moneyAmounts(text: string): Array<{ number: string; rubles: number; scale: MoneyScale; index: number; end: number }> {
+  const found: Array<{ number: string; rubles: number; scale: MoneyScale; index: number; end: number }> = [];
+  CURRENCY_AMOUNT.lastIndex = 0;
+  for (const match of text.matchAll(CURRENCY_AMOUNT)) {
+    const numeric = Number(match[1]!.replace(/[ \u00a0\u202f]/g, "").replace(",", "."));
     if (!Number.isFinite(numeric)) continue;
-    const thousands = Boolean(match[2]);
+    const unit = (match[2] ?? "").toLocaleLowerCase("ru-RU");
+    const scale: MoneyScale = unit.startsWith("млн") ? "million" : unit.startsWith("тыс") ? "thousand" : "ruble";
+    const multiplier = scale === "million" ? 1_000_000 : scale === "thousand" ? 1_000 : 1;
+    const index = match.index ?? 0;
     found.push({
-      raw: `${match[1]}${match[2] ?? ""}`.replace(/\s+/g, " ").trim(),
-      rubles: thousands ? numeric * 1000 : numeric,
-      thousands,
+      number: match[1]!.replace(/\s+/g, " ").trim(),
+      rubles: Math.round(numeric * multiplier * 100) / 100,
+      scale,
+      index,
+      end: index + match[0]!.length,
     });
   }
   return found;
@@ -333,8 +374,9 @@ function moneyLabel(rubles: number, thousands: boolean, texts: string[]): string
   for (const text of texts) {
     for (const amount of moneyAmounts(text)) {
       if (Math.abs(amount.rubles - rubles) <= 1) {
-        const number = amount.raw.replace(/\s*тыс\.?/iu, "").trim();
-        return amount.thousands ? `${number} тыс. руб.` : `${number} руб.`;
+        if (amount.scale === "million") return `${amount.number} млн руб.`;
+        if (amount.scale === "thousand") return `${amount.number} тыс. руб.`;
+        return `${amount.number} руб.`;
       }
     }
   }
@@ -355,6 +397,47 @@ export type CostConflictFinding = {
   scheduleImpact: string;
 };
 
+function citedPrice(texts: Array<{ id: string; text: string }>): { rubles: number; quote: string; citationId: string; scale: MoneyScale } | null {
+  const found: Array<{ rubles: number; quote: string; citationId: string; scale: MoneyScale; rank: number }> = [];
+  for (const citation of texts) {
+    const amounts = moneyAmounts(citation.text);
+    const units = matchSpans(citation.text, UNIT_PRICE);
+    const payments = matchSpans(citation.text, PAYMENT_WORD);
+    const phrases = [
+      ...matchSpans(citation.text, STRONG_PRICE).map((span) => ({ ...span, rank: 2 })),
+      ...matchSpans(citation.text, WEAK_PRICE).map((span) => ({ ...span, rank: 1 })),
+    ];
+    for (const sentence of sentenceSpans(citation.text)) {
+      for (const phrase of phrases) {
+        if (phrase.start < sentence.start || phrase.end > sentence.end) continue;
+        const following = amounts.filter((amount) => amount.index >= phrase.end && amount.index < sentence.end);
+        let cursor = phrase.end;
+        for (const amount of following) {
+          const blocked = units.some((unit) => overlapsGap(unit, cursor, amount.index))
+            || payments.some((payment) => overlapsGap(payment, cursor, amount.index));
+          if (!blocked) {
+            found.push({
+              rubles: amount.rubles,
+              quote: citation.text,
+              citationId: citation.id,
+              scale: amount.scale,
+              rank: phrase.rank,
+            });
+            break;
+          }
+          cursor = amount.end;
+        }
+      }
+    }
+  }
+  if (!found.length) return null;
+  const bestRank = Math.max(...found.map((item) => item.rank));
+  const top = found.filter((item) => item.rank === bestRank);
+  const first = top[0]!;
+  if (top.some((item) => Math.abs(item.rubles - first.rubles) > 1)) return null;
+  return first;
+}
+
 /** Contract price and the estimate total are different sums, so the package says so on its own. */
 export function costConflictBetween(documents: Array<{
   fileName: string;
@@ -365,24 +448,33 @@ export function costConflictBetween(documents: Array<{
 }>): CostConflictFinding | null {
   const priced = documents.flatMap((document) => {
     const name = `${document.fileName} ${document.title ?? ""}`.toLocaleLowerCase("ru-RU");
-    const kind = document.category === "contract" || /договор|контракт/iu.test(name)
-      ? "contract"
-      : document.category === "estimate" || /смет/iu.test(name) || (document.analysis?.positionCount ?? 0) > 0
-        ? "estimate"
-        : null;
-    if (!kind || document.analysis?.costThousand == null) return [];
-    const rubles = Math.round(document.analysis.costThousand * 1000 * 100) / 100;
-    const texts = (document.citations ?? []).map((citation) => citation.text);
-    const quote = texts.find((text) => moneyAmounts(text).some((amount) => Math.abs(amount.rubles - rubles) <= 1))
-      ?? texts[0]
+    const kind = document.category === "estimate" || (document.analysis?.positionCount ?? 0) > 0
+      ? "estimate"
+      : document.category === "contract"
+        ? "contract"
+        : /смет/iu.test(name)
+          ? "estimate"
+          : /договор|контракт/iu.test(name)
+            ? "contract"
+            : null;
+    if (!kind) return [];
+    const texts = document.citations ?? [];
+    const fromScan = document.analysis?.costThousand != null
+      ? Math.round(document.analysis.costThousand * 1000 * 100) / 100
+      : null;
+    const fromCitation = fromScan == null ? citedPrice(texts) : null;
+    const rubles = fromScan ?? fromCitation?.rubles ?? null;
+    if (rubles == null) return [];
+    const quote = texts.find((citation) => moneyAmounts(citation.text).some((amount) => Math.abs(amount.rubles - rubles) <= 1))?.text
+      ?? fromCitation?.quote
       ?? "";
-    const citation = (document.citations ?? []).find((item) => item.text === quote);
+    const citation = texts.find((item) => item.text === quote);
     return [{
       kind,
       rubles,
-      label: moneyLabel(rubles, kind === "estimate", texts),
+      label: moneyLabel(rubles, kind === "estimate" || fromCitation?.scale === "thousand", texts.map((item) => item.text)),
       quote,
-      citationId: citation?.id,
+      citationId: citation?.id ?? fromCitation?.citationId,
       fileName: document.fileName,
     }];
   });
@@ -392,7 +484,7 @@ export function costConflictBetween(documents: Array<{
   return {
     topic: "Противоречие в стоимости",
     importance: "high",
-    text: `В договоре указано ${contract.label}, в смете — ${estimate.label}. Это разные суммы.`,
+    text: `В договоре указано ${contract.label}, в смете — ${estimate.label}. Это разные суммы.`.replace(/руб\.\./g, "руб."),
     quote: contract.quote || estimate.quote,
     citationIds: [contract.citationId, estimate.citationId].filter((id): id is string => Boolean(id)),
     sourceFiles: [contract.fileName, estimate.fileName],

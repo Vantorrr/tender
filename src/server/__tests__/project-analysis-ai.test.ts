@@ -201,13 +201,145 @@ describe("grounded project analysis", () => {
     ]);
     expect(conflict?.topic).toBe("Противоречие в стоимости");
     expect(conflict?.text).toContain("1 250 000,50");
-    expect(conflict?.text).toContain("469 269,22 тыс");
+    expect(conflict?.text).toContain("469 269,22 тыс. руб. Это разные суммы.");
+    expect(conflict?.text).not.toContain("руб..");
     expect(conflict?.quote).toContain("1 250 000,50");
     expect(conflict?.citationIds).toEqual(["c-price", "c-cost"]);
     expect(costConflictBetween([
       { fileName: "договор.docx", category: "contract", analysis: { costThousand: 1250 }, citations: [{ id: "c-price", text: "Цена договора составляет 1 250 000,50 руб." }] },
       { fileName: "смета.xlsx", category: "estimate", analysis: { costThousand: 1250 }, citations: [{ id: "c-cost", text: "Сметная стоимость: 1 250,00 тыс. руб." }] },
     ])).toBeNull();
+    const fromCitation = costConflictBetween([
+      { fileName: "договор.docx", category: "contract", analysis: { costThousand: null }, citations: [{ id: "c-price", text: "Цена договора составляет 1 250 000,50 руб." }] },
+      { fileName: "смета.xlsx", title: "Смета к договору", category: "estimate", analysis: { costThousand: 469269.22, positionCount: 40 }, citations: [{ id: "c-cost", text: "Сметная стоимость: 469 269,22 тыс. руб." }] },
+    ]);
+    expect(fromCitation?.topic).toBe("Противоречие в стоимости");
+    expect(fromCitation?.text).toContain("1 250 000,50");
+    expect(fromCitation?.text).toContain("469 269,22 тыс");
+    expect(fromCitation?.sourceFiles).toEqual(["договор.docx", "смета.xlsx"]);
+    const estimate = {
+      fileName: "смета.xlsx",
+      category: "estimate" as const,
+      analysis: { costThousand: 469269.22, positionCount: 40 },
+      citations: [{ id: "c-cost", text: "Сметная стоимость: 469 269,22 тыс. руб." }],
+    };
+    expect(costConflictBetween([
+      {
+        fileName: "договор.docx",
+        category: "contract",
+        analysis: { costThousand: null },
+        citations: [{ id: "c-noise", text: "Гарантия 10% действует до 2026 г. Лицензия № 12345. Расценка бурения 18 544 м. Оценка 95. Процент выполнения 80." }],
+      },
+      estimate,
+    ])).toBeNull();
+    const adjacent = costConflictBetween([
+      {
+        fileName: "договор.docx",
+        category: "contract",
+        analysis: { costThousand: null },
+        citations: [{ id: "c-price", text: "Гарантия 10% до 2026 г. Лицензия № 12345. Расценка 18 544 м. Цена договора составляет 1 250 000,50 руб. Обеспечение заявки 50 000 000 руб." }],
+      },
+      estimate,
+    ]);
+    expect(adjacent?.text).toContain("1 250 000,50 руб.");
+    expect(adjacent?.text).toContain("469 269,22 тыс. руб. Это разные суммы.");
+    expect(adjacent?.text).not.toContain("50 000 000");
+    expect(adjacent?.text).not.toContain("18 544");
+    expect(adjacent?.text).not.toContain("руб..");
+    expect(costConflictBetween([
+      {
+        fileName: "договор.docx",
+        category: "contract",
+        analysis: { costThousand: null },
+        citations: [{ id: "c-nmck", text: "НМЦК составляет 2,5 млн руб." }],
+      },
+      estimate,
+    ])?.text).toContain("2,5 млн руб.");
+    const unitPrices = [
+      "Цена за единицу 8555,41 руб.",
+      "Цена за м 8555,41 руб.",
+      "Цена за т 8555,41 руб.",
+      "Цена за м3 8555,41 руб.",
+      "Цена за шт 8555,41 руб.",
+      "Цена за п.м. 8555,41 руб.",
+      "Единичная расценка 8555,41 руб.",
+      "Цена договора за единицу 8555,41 руб.",
+    ];
+    for (const text of unitPrices) {
+      expect(costConflictBetween([
+        { fileName: "договор.docx", category: "contract", analysis: { costThousand: null }, citations: [{ id: "c-unit", text }] },
+        estimate,
+      ]), text).toBeNull();
+    }
+    const withTotal = costConflictBetween([
+      {
+        fileName: "договор.docx",
+        category: "contract",
+        analysis: { costThousand: null },
+        citations: [{ id: "c-price", text: "Цена за единицу 8555,41 руб. Цена договора составляет 1 250 000,50 руб." }],
+      },
+      estimate,
+    ]);
+    expect(withTotal?.text).toContain("1 250 000,50 руб.");
+    expect(withTotal?.text).not.toContain("8555,41");
+    const advance = costConflictBetween([
+      {
+        fileName: "договор.docx",
+        category: "contract",
+        analysis: { costThousand: null },
+        citations: [{ id: "c-advance", text: "Аванс 300 000 руб. Цена договора составляет 1 250 000,50 руб." }],
+      },
+      estimate,
+    ]);
+    expect(advance?.text).toContain("1 250 000,50 руб.");
+    expect(advance?.text).not.toContain("300 000");
+    expect(costConflictBetween([
+      {
+        fileName: "договор.docx",
+        category: "contract",
+        analysis: { costThousand: null },
+        citations: [{ id: "c-fine", text: "Штраф 10 000 руб. Стоимость работ уточняется." }],
+      },
+      estimate,
+    ])).toBeNull();
+    expect(costConflictBetween([
+      {
+        fileName: "договор.docx",
+        category: "contract",
+        analysis: { costThousand: null },
+        citations: [{ id: "c-pay", text: "Пени 5 000 руб. Задаток 7 000 руб. Неустойка 9 000 руб. Стоимость работ уточняется." }],
+      },
+      estimate,
+    ])).toBeNull();
+    const preferred = costConflictBetween([
+      {
+        fileName: "договор.docx",
+        category: "contract",
+        analysis: { costThousand: null },
+        citations: [{ id: "c-rank", text: "Стоимость работ составляет 10 000 руб. Цена договора составляет 1 250 000,50 руб." }],
+      },
+      estimate,
+    ]);
+    expect(preferred?.text).toContain("1 250 000,50 руб.");
+    expect(preferred?.text).not.toContain("10 000");
+    expect(costConflictBetween([
+      {
+        fileName: "договор.docx",
+        category: "contract",
+        analysis: { costThousand: null },
+        citations: [{ id: "c-ambiguous", text: "Цена договора составляет 1 250 000,50 руб. НМЦК составляет 900 000 руб." }],
+      },
+      estimate,
+    ])).toBeNull();
+    expect(costConflictBetween([
+      {
+        fileName: "договор.docx",
+        category: "contract",
+        analysis: { costThousand: null },
+        citations: [{ id: "c-total", text: "Общая стоимость работ составляет 1 250 000,50 руб." }],
+      },
+      estimate,
+    ])?.text).toContain("1 250 000,50 руб.");
   });
 
   it("points a finding at the paragraph that contains the fact", () => {
