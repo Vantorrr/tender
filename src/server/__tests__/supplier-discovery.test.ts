@@ -144,6 +144,18 @@ describe("open-source supplier discovery", () => {
     });
     expect(redirected).toEqual([]);
     expect(calls.some((url) => url.includes("127.0.0.1"))).toBe(false);
+    for (const location of ["http://2130706433/latest", "http://[::ffff:127.0.0.1]/latest", "http://[::ffff:169.254.169.254]/latest"]) {
+      const hidden: string[] = [];
+      const dropped = await groundSupplierRegions([
+        { name: "Обход", website: "https://vendor.example", materials: ["Труба"], regionEvidence: "Норильск", evidence: "Продажа труб", sourceUrl: "https://vendor.example/go" },
+      ], async (url) => {
+        hidden.push(String(url));
+        if (String(url).includes("vendor.example")) return new Response(null, { status: 302, headers: { location } });
+        return new Response("склад в Норильске", { status: 200 });
+      });
+      expect(dropped).toEqual([]);
+      expect(hidden.every((url) => url.includes("vendor.example"))).toBe(true);
+    }
     const followed = await groundSupplierRegions([
       { name: "Склад", website: "https://shop.example", materials: ["Труба"], regionEvidence: "Норильск", evidence: "Продажа труб", sourceUrl: "https://shop.example/go" },
     ], async (url) => {

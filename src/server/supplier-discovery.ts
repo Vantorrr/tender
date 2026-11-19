@@ -236,6 +236,34 @@ function regionExcerpt(raw: string): string | null {
   return excerpt && plain.includes(excerpt) ? excerpt : null;
 }
 
+function isPrivateIpv4(host: string): boolean {
+  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!ipv4) return false;
+  const parts = ipv4.slice(1).map(Number);
+  if (parts.some((part) => part > 255)) return true;
+  const [a, b] = parts;
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  return a === 100 && b >= 64 && b <= 127;
+}
+
+function ipv4FromHextets(high: string, low: string): string | null {
+  const left = Number.parseInt(high, 16);
+  const right = Number.parseInt(low, 16);
+  if (left > 0xffff || right > 0xffff) return null;
+  return `${left >> 8}.${left & 255}.${right >> 8}.${right & 255}`;
+}
+
+function embeddedIpv4(host: string): string | null {
+  const mapped = host.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
+    ?? host.match(/^::([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+  if (mapped) return ipv4FromHextets(mapped[1], mapped[2]);
+  const dotted = host.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
+  return dotted ? dotted[1] : null;
+}
+
 function isPublicSupplierUrl(value: string): boolean {
   let url: URL;
   try {
@@ -247,20 +275,11 @@ function isPublicSupplierUrl(value: string): boolean {
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (!host || host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return false;
   if (host === "0.0.0.0" || host === "::" || host === "::1") return false;
-  const ipv4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipv4) {
-    const parts = ipv4.slice(1).map(Number);
-    if (parts.some((part) => part > 255)) return false;
-    const [a, b] = parts;
-    if (a === 0 || a === 10 || a === 127) return false;
-    if (a === 169 && b === 254) return false;
-    if (a === 172 && b >= 16 && b <= 31) return false;
-    if (a === 192 && b === 168) return false;
-    if (a === 100 && b >= 64 && b <= 127) return false;
-  }
-  const mapped = host.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
-  if (mapped) return isPublicSupplierUrl(`http://${mapped[1]}/`);
-  if (host.includes(":") && (host === "::1" || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80"))) return false;
+  if (isPrivateIpv4(host)) return false;
+  const embedded = embeddedIpv4(host);
+  if (embedded) return !isPrivateIpv4(embedded);
+  if (host.startsWith("::")) return false;
+  if (host.includes(":") && (host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80"))) return false;
   return true;
 }
 
