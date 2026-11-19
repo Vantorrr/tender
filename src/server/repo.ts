@@ -444,6 +444,45 @@ export function updateProcurement(
   });
 }
 
+function uploadPathsInUse(data: AppData): Set<string> {
+  const paths = new Set<string>();
+  for (const document of data.documents) {
+    if (document.storedPath) paths.add(document.storedPath);
+  }
+  for (const card of data.companyCards ?? []) {
+    if (card.storedPath) paths.add(card.storedPath);
+  }
+  for (const plan of data.planFacts) {
+    for (const fact of plan.dailyFacts ?? []) {
+      for (const photo of fact.photos ?? []) {
+        if (photo.storedPath) paths.add(photo.storedPath);
+      }
+    }
+  }
+  return paths;
+}
+
+function dailyFactsWithoutPlantedPaths(existing: PlanFact, incoming: DailyFact[]): DailyFact[] {
+  const known = new Map<string, string>();
+  for (const fact of existing.dailyFacts ?? []) {
+    for (const photo of fact.photos ?? []) {
+      if (photo.storedPath) known.set(photo.id, photo.storedPath);
+    }
+  }
+  return incoming.map((fact) => ({
+    ...fact,
+    photos: (fact.photos ?? []).map((photo) => {
+      const storedPath = known.get(photo.id);
+      if (!storedPath) {
+        const { storedPath: _planted, ...rest } = photo;
+        void _planted;
+        return rest;
+      }
+      return { ...photo, storedPath };
+    }),
+  }));
+}
+
 export function deleteProcurement(actorId: string, id: string) {
   const removedFiles: string[] = [];
   let deleted = false;
@@ -482,7 +521,9 @@ export function deleteProcurement(actorId: string, id: string) {
     return data;
   });
   if (deleted) {
+    const stillUsed = uploadPathsInUse(readAppData());
     for (const storedPath of removedFiles) {
+      if (stillUsed.has(storedPath)) continue;
       try {
         deleteUpload(storedPath);
       } catch (error) {
@@ -1519,9 +1560,12 @@ export function updatePlanFact(
     const item = data.planFacts.find((p) => p.id === id);
     if (!item) throw new Error("План/факт не найден");
     assertOrgAccess(actor, item.orgId, "план/факт");
-    const { orgId: _o, id: _i, ...safe } = patch;
+    const { orgId: _o, id: _i, ...rest } = patch;
     void _o;
     void _i;
+    const safe = rest.dailyFacts
+      ? { ...rest, dailyFacts: dailyFactsWithoutPlantedPaths(item, rest.dailyFacts) }
+      : rest;
     data.planFacts = data.planFacts.map((p) =>
       p.id === id
         ? { ...p, ...safe, updatedAt: new Date().toISOString() }
@@ -3208,8 +3252,17 @@ export function addDailyProductionFact(
       : undefined;
     const incomingPhotos = fact.photos ?? [];
     const photos = [...(existing?.photos ?? [])];
+    const usedPaths = uploadPathsInUse(data);
     for (const photo of incomingPhotos) {
-      if (!photos.some((existing) => existing.id === photo.id)) photos.push(photo);
+      if (photos.some((item) => item.id === photo.id)) continue;
+      if (photo.storedPath && usedPaths.has(photo.storedPath)) {
+        const { storedPath: _planted, ...rest } = photo;
+        void _planted;
+        photos.push(rest);
+        continue;
+      }
+      photos.push(photo);
+      if (photo.storedPath) usedPaths.add(photo.storedPath);
     }
     const entry: DailyFact = {
       id: existing?.id ?? fact.factId ?? `df-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,

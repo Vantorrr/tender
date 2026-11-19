@@ -19,9 +19,11 @@ import {
   sendProcurementToCalculation,
   updateLinkedResourcesFromCalculation,
   deleteGprStage,
+  addDailyProductionFact,
   deleteProcurement,
   updateDocument,
   updateMoney,
+  updatePlanFact,
 } from "@/server/repo";
 import { deleteUpload, resolveUploadPath, saveUpload } from "@/server/uploads";
 import { config } from "@/server/config";
@@ -164,6 +166,98 @@ describe("client wave 1 server", () => {
     expect(fs.existsSync(path.join(config.dataDir, stored.storedPath))).toBe(false);
     expect(fs.existsSync(path.join(config.dataDir, other.storedPath))).toBe(true);
     expect(fs.existsSync(path.join(config.dataDir, photo.storedPath))).toBe(false);
+  });
+
+  it("does not let a plan-fact photo take or delete another upload", async () => {
+    const created = createManualProcurement("u-ruk", { title: "Чужой файл", region: "Ямал" });
+    const victim = await saveUpload("wave1-victim", "чужой.txt", Buffer.from("чужой"));
+    const own = await saveUpload("wave1-own", "свой.jpg", Buffer.from("свой"));
+    mutateAppData((data) => {
+      const procurement = data.procurements.find((item) => item.id === created.id)!;
+      const other = data.procurements.find((item) => item.orgId === procurement.orgId && item.id !== procurement.id);
+      if (!other) throw new Error("нет второй закупки");
+      data.documents.unshift({
+        id: "d-wave1-victim",
+        orgId: other.orgId,
+        procurementId: other.id,
+        title: "Чужой",
+        fileName: "чужой.txt",
+        fileType: "other",
+        status: "zagruzheno",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: victim.storedPath,
+      });
+      data.planFacts.unshift({
+        id: "pf-wave1-plant",
+        orgId: procurement.orgId,
+        objectId: "obj-wave1",
+        procurementId: procurement.id,
+        title: "Фото",
+        status: "v_rabote",
+        entries: [{ id: "e1", workName: "Работа", unit: "м2", plan: 1, fact: 0 }],
+        updatedAt: new Date().toISOString(),
+        dailyFacts: [{
+          id: "df-wave1-plant",
+          date: "2026-12-01",
+          workName: "Работа",
+          unit: "м2",
+          quantity: 1,
+          photos: [{ id: "ph-own", fileName: "свой.jpg", storedPath: own.storedPath, at: "2026-12-01T00:00:00Z" }],
+          authorId: "u-ruk",
+          at: "2026-12-01T00:00:00Z",
+        }],
+      });
+      return data;
+    });
+    updatePlanFact("u-tender", "pf-wave1-plant", {
+      dailyFacts: [{
+        id: "df-wave1-plant",
+        date: "2026-12-01",
+        workName: "Работа",
+        unit: "м2",
+        quantity: 1,
+        photos: [
+          { id: "ph-own", fileName: "свой.jpg", storedPath: victim.storedPath, at: "2026-12-01T00:00:00Z" },
+          { id: "ph-new", fileName: "новый.jpg", storedPath: victim.storedPath, at: "2026-12-01T00:00:00Z" },
+        ],
+        authorId: "u-tender",
+        at: "2026-12-01T00:00:00Z",
+      }],
+    });
+    const patched = readAppData().planFacts.find((item) => item.id === "pf-wave1-plant");
+    const photos = patched?.dailyFacts?.[0]?.photos ?? [];
+    expect(photos.find((photo) => photo.id === "ph-own")?.storedPath).toBe(own.storedPath);
+    expect(photos.find((photo) => photo.id === "ph-new")?.storedPath).toBeUndefined();
+    addDailyProductionFact("u-tender", "pf-wave1-plant", {
+      date: "2026-12-02",
+      workName: "Работа",
+      unit: "м2",
+      quantity: 1,
+      photos: [{ id: "ph-json", fileName: "json.jpg", storedPath: victim.storedPath, at: "2026-12-02T00:00:00Z" }],
+    });
+    const plantedFact = readAppData().planFacts
+      .find((item) => item.id === "pf-wave1-plant")
+      ?.dailyFacts?.find((fact) => fact.date === "2026-12-02");
+    expect(plantedFact?.photos[0]?.storedPath).toBeUndefined();
+    mutateAppData((data) => {
+      const plan = data.planFacts.find((item) => item.id === "pf-wave1-plant")!;
+      plan.dailyFacts![0].photos.push({
+        id: "ph-planted",
+        fileName: "чужой.txt",
+        storedPath: victim.storedPath,
+        at: "2026-12-01T00:00:00Z",
+      });
+      return data;
+    });
+    expect(deleteProcurement("u-ruk", created.id).deleted).toBe(true);
+    expect(fs.existsSync(path.join(config.dataDir, victim.storedPath))).toBe(true);
+    expect(fs.existsSync(path.join(config.dataDir, own.storedPath))).toBe(false);
+    expect(readAppData().documents.some((item) => item.id === "d-wave1-victim")).toBe(true);
   });
 
   it("does not delete a file outside the uploads folder and ignores a rewritten path", () => {
