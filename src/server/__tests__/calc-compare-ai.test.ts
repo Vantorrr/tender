@@ -78,12 +78,18 @@ describe("grouped comparison", () => {
     expect(groups).toHaveLength(2);
     expect(groups.find((group) => group.rowIds.includes("row-16"))).toMatchObject({ impact: -140, rowIds: ["row-16", "row-17"] });
     expect(groups.find((group) => group.rowIds.includes("row-27"))?.rowIds).toEqual(["row-27", "row-28"]);
-    expect(ensureCompareSummary("Проверьте ставки.", -172204022.31)).toMatch(/^Черновик дешевле сметы заказчика на 172/);
-    expect(ensureCompareSummary("В строке 1200.", -120)).toMatch(/^Черновик дешевле/);
+    const cheaper = ensureCompareSummary("Проверьте ставки.", -172204022.31);
+    expect(cheaper).toMatch(/^Черновик дешевле сметы заказчика на 172 204 022,31 руб\./);
+    expect(cheaper).not.toMatch(/[-−–]\s*172/);
+    expect(ensureCompareSummary("В строке 1200.", -120)).toMatch(/^Черновик дешевле сметы заказчика на 120,00 руб\./);
     expect(ensureCompareSummary("Разница 120.", -120).match(/Черновик дешевле/gu)).toBeNull();
-    expect(ensureCompareSummary("172 204 022,31", -172204022.31)).toMatch(/^Черновик дешевле/);
-    const alreadyNamed = "Черновик дешевле сметы заказчика на 172 204 022,31 руб., потому что ставки ниже.";
-    expect(ensureCompareSummary(alreadyNamed, -172204022.31).match(/Черновик дешевле/gu)).toHaveLength(1);
+    expect(ensureCompareSummary("−172 204 022,31", -172204022.31)).toBe("Черновик дешевле сметы заказчика на 172 204 022,31 руб., потому что расхождения разобраны ниже.");
+    const alreadyNamed = "Черновик дешевле сметы заказчика на −172 204 022,31 руб., потому что ставки ниже.";
+    const named = ensureCompareSummary(alreadyNamed, -172204022.31);
+    expect(named.match(/Черновик дешевле/gu)).toHaveLength(1);
+    expect(named).toContain("172 204 022,31 руб.");
+    expect(named).not.toMatch(/[-−–]\s*172/);
+    expect(ensureCompareSummary("Сверьте состав.", -10, ["Монтаж металлоконструкций", "Окраска", "Сварка", "Доставка", "Лишняя"], 0)).toContain("и ещё 1");
     expect(ensureCompareSummary(alreadyNamed, -172204022.31, ["Монтаж металлоконструкций"])).toContain("Только в черновике: Монтаж металлоконструкций");
     const sized = groupCompareRows([
       { rowId: "a", name: "Труба стальная 108", unit: "м", section: "Раздел 1", status: "diff", factsText: "Позиция: Труба стальная 108", originalSum: 10, draftSum: 8, deltaSum: -2 },

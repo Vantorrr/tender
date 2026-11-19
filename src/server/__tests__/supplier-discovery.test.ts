@@ -65,6 +65,16 @@ describe("open-source supplier discovery", () => {
     expect(kept).toEqual([
       expect.objectContaining({ name: "СеверСнаб", sourceUrl: "https://vendor.example/materials" }),
     ]);
+    const dropped = await applyLiveSupplierLinks(
+      filterSupplierCandidates(raw, resolved),
+      resolved,
+      async () => "missing"
+    );
+    expect(dropped).toEqual([]);
+    const unconfirmed = JSON.stringify({ candidates: [
+      { name: "Без региона", website: "https://vendor.example", materials: ["Труба стальная"], regionEvidence: "не указано в документах", evidence: "Поставляем трубы на север", sourceUrl: "https://vendor.example/materials" },
+    ] });
+    expect(filterSupplierCandidates(unconfirmed, resolved)).toEqual([]);
   });
 
   it("requires both a material and a delivery region", async () => {

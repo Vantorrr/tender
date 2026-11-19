@@ -1,3 +1,4 @@
+import { NOT_IN_DOCUMENTS } from "@/server/ai-grounding";
 import { SUPPLIER_DISCOVERY_SYSTEM } from "@/server/ai-prompts";
 import { completeJsonDetailed } from "@/server/openrouter";
 
@@ -153,6 +154,7 @@ export function filterSupplierCandidates(raw: string, sourceUrls: string[]): Sup
     if (!urlFromSearch(sourceUrl, sourceUrls)) return [];
     const evidence = typeof row.evidence === "string" ? row.evidence.trim().slice(0, 600) : "";
     const regionEvidence = typeof row.regionEvidence === "string" ? row.regionEvidence.trim().slice(0, 240) : "";
+    if (!regionEvidence || regionEvidence.toLocaleLowerCase("ru-RU").includes(NOT_IN_DOCUMENTS)) return [];
     const email = typeof row.email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.email.trim())
       ? row.email.trim().toLowerCase() : undefined;
     const materials = Array.isArray(row.materials)
@@ -178,6 +180,8 @@ export async function applyLiveSupplierLinks(
     const status = await probe(candidate.sourceUrl);
     if (status === "missing") {
       if (!source) continue;
+      const samePage = source.replace(/\/$/, "") === candidate.sourceUrl.replace(/\/$/, "");
+      if (samePage || await probe(source) === "missing") continue;
       out.push({ ...candidate, sourceUrl: source, website: candidate.website || new URL(source).origin });
       continue;
     }

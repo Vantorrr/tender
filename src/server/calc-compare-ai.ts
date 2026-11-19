@@ -132,48 +132,55 @@ export function selectMaterialGroups<T extends { impact: number }>(groups: T[], 
   };
 }
 
-function amountStandsAlone(compact: string, text: string): boolean {
-  const flat = text.replace(/[\s\u00a0\u202f\u2009]/g, "").replace(/,/g, ".");
-  let from = 0;
-  while (from <= flat.length) {
-    const at = flat.indexOf(compact, from);
-    if (at < 0) return false;
-    const before = at === 0 ? "" : flat[at - 1] ?? "";
-    const afterAt = at + compact.length;
-    const after = flat[afterAt] ?? "";
-    const next = flat[afterAt + 1] ?? "";
-    const beforeOk = before === "" || !/[\d.]/.test(before);
-    const afterOk = after === "" || (after !== "." ? !/\d/.test(after) : !/\d/.test(next));
-    if (beforeOk && afterOk) return true;
-    from = at + 1;
-  }
-  return false;
+const EXCLUSIVE_DRAFT_LIMIT = 4;
+
+/** Absolute money for the compare summary: «172 204 022,31 руб.», never a minus. */
+export function formatCompareMoney(amount: number): string {
+  const formatted = new Intl.NumberFormat("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    .format(Math.abs(amount))
+    .replace(/[\u00a0\u202f\u2009]/g, " ");
+  return `${formatted} руб.`;
 }
 
-export function ensureCompareSummary(summary: string, deltaTotal: number | null, exclusiveDraft: string[] = []): string {
+function rewriteTotal(text: string, amount: number, label: string): string {
+  const [whole, frac = ""] = String(Math.abs(amount)).split(".");
+  const grouped = whole.replace(/(\d)(?=(\d{3})+$)/g, "$1[\\s\\u00a0\\u202f\\u2009]?");
+  const decimal = frac ? `(?:[.,]${frac})?` : "";
+  const pattern = new RegExp(`(?:[-−–]\\s*)?${grouped}${decimal}(?!\\d)(?:\\s*руб\\.?)?`, "gu");
+  return text.replace(pattern, (match) => {
+    const digits = match.replace(/\D/g, "");
+    if (digits !== `${whole}${frac}` && digits !== whole) return match;
+    return label;
+  }).replace(/руб\.\./g, "руб.");
+}
+
+export function ensureCompareSummary(summary: string, deltaTotal: number | null, exclusiveDraft: string[] = [], exclusiveDraftMore = 0): string {
   let text = summary.trim();
   if (deltaTotal != null && Number.isFinite(deltaTotal)) {
-    const compact = String(Math.abs(deltaTotal));
-    const formatted = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(Math.abs(deltaTotal));
+    const label = formatCompareMoney(deltaTotal);
     const lead = deltaTotal < 0
-      ? `Черновик дешевле сметы заказчика на ${formatted} руб., потому что расхождения разобраны ниже.`
+      ? `Черновик дешевле сметы заказчика на ${label}, потому что расхождения разобраны ниже.`
       : deltaTotal > 0
-        ? `Черновик дороже сметы заказчика на ${formatted} руб., потому что расхождения разобраны ниже.`
+        ? `Черновик дороже сметы заказчика на ${label}, потому что расхождения разобраны ниже.`
         : "Черновик совпадает со сметой заказчика по итогу.";
-    const mentions = amountStandsAlone(compact, text);
+    text = rewriteTotal(text, deltaTotal, label);
+    const hasLabel = text.replace(/[\s\u00a0\u202f\u2009]/g, "").includes(label.replace(/[\s\u00a0\u202f\u2009]/g, ""));
     const startsWithPhrase = /^[A-Za-zА-Яа-яЁё«"]/u.test(text);
-    if (!startsWithPhrase) {
-      const rest = text.replace(/^[\s\-−–\d\s.,]+/u, "").trim();
-      text = rest && !mentions ? `${lead} ${rest}` : rest ? `${lead} ${rest}` : lead;
-    } else if (!mentions) {
-      text = `${lead} ${text}`;
+    if (!hasLabel) text = startsWithPhrase ? `${lead} ${text}` : lead;
+    else if (!startsWithPhrase) {
+      const rest = text.replace(/^[\s\d.,]+руб\.?\s*/u, "").trim();
+      text = rest ? `${lead} ${rest}` : lead;
     }
   }
   const missing = exclusiveDraft.filter((name) => {
     const probe = name.trim().toLocaleLowerCase("ru-RU").slice(0, 40);
     return probe.length >= 8 && !text.toLocaleLowerCase("ru-RU").includes(probe);
-  });
-  if (missing.length) text = `${text} Только в черновике: ${missing.slice(0, 5).join("; ")}.`.trim();
+  }).slice(0, EXCLUSIVE_DRAFT_LIMIT);
+  const hidden = exclusiveDraftMore + Math.max(0, exclusiveDraft.length - EXCLUSIVE_DRAFT_LIMIT);
+  if (missing.length) {
+    const tail = hidden > 0 ? ` и ещё ${hidden}` : "";
+    text = `${text} Только в черновике: ${missing.join("; ")}${tail}.`.trim();
+  }
   return text.trim();
 }
 
@@ -248,7 +255,9 @@ export function buildCalcCompareBatch(
     sections.set(group.section, current);
   }
   const pricingText = pricingTextForCompare(draft, original);
-  const exclusiveDraft = [...new Set(rows.filter((row) => row.status === "only_draft").map((row) => row.name))].slice(0, 8);
+  const allExclusiveDraft = [...new Set(rows.filter((row) => row.status === "only_draft").map((row) => row.name))];
+  const exclusiveDraft = allExclusiveDraft.slice(0, EXCLUSIVE_DRAFT_LIMIT);
+  const exclusiveDraftMore = Math.max(0, allExclusiveDraft.length - exclusiveDraft.length);
   const user = JSON.stringify({
     totals: comparison.totals,
     pricingText,
@@ -261,6 +270,7 @@ export function buildCalcCompareBatch(
       rule: "В детализацию попали группы с модулем разницы не ниже порога, не больше 12. Одинаковая позиция сведена в одну группу.",
     },
     exclusiveDraft,
+    exclusiveDraftMore,
     sections: [...sections.entries()].map(([name, value]) => ({ name, rowCount: value.rowCount, impact: value.impact })),
     materialGroups: material.groups.map((group) => ({
       rowId: group.rowId,
@@ -280,6 +290,7 @@ export function buildCalcCompareBatch(
     rowsTotal: rows.length,
     deltaTotal: comparison.totals.deltaTotal,
     exclusiveDraft,
+    exclusiveDraftMore,
     context: { summaryCorpus, sharedFacts: pricingText },
   };
 }
@@ -298,7 +309,7 @@ export async function analyzeCalculationComparisonWithAI(
       prepared.batch,
       prepared.context
     );
-  const summary = ensureCompareSummary(validated.summary, prepared.deltaTotal, prepared.exclusiveDraft);
+  const summary = ensureCompareSummary(validated.summary, prepared.deltaTotal, prepared.exclusiveDraft, prepared.exclusiveDraftMore);
   const findings = validated.findings;
   const hasBoth = Boolean(original && draft);
   const hasIncompleteRates = comparison.rows.some((row) => row.status === "incomplete") ||
