@@ -152,12 +152,13 @@ function rewriteTotal(text: string, amount: number, label: string): string {
   const grouped = whole.replace(/(\d)(?=(\d{3})+$)/g, "$1[\\s\\u00a0\\u202f\\u2009]?");
   const pattern = new RegExp(`(?<!\\d)(?:[-−–]\\s*)?${grouped}(?:[.,]\\d{1,2})?(?!\\d)(?:\\s*руб\\.?)?`, "gu");
   const expected = Number(`${whole}.${frac}`);
-  return text.replace(pattern, (match) => {
+  return text.replace(pattern, (match, offset: number) => {
     const bare = match.replace(/\s*руб\.?$/i, "").replace(/^[-−–]\s*/, "").replace(/[\s\u00a0\u202f\u2009]/g, "").replace(",", ".");
     const value = Number(bare);
     if (!Number.isFinite(value)) return match;
     const sameKopecks = Math.abs(value - expected) <= 0.001;
-    const rublesOnly = !/[.,]/.test(bare) && bare === whole;
+    const aboutTheTotal = /руб/i.test(match) || /дешевле|дороже|разниц/i.test(text.slice(Math.max(0, offset - 80), offset));
+    const rublesOnly = !/[.,]/.test(bare) && bare === whole && aboutTheTotal;
     if (!sameKopecks && !rublesOnly) return match;
     return label;
   }).replace(/руб\.\./g, "руб.");

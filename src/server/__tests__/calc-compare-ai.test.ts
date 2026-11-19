@@ -93,6 +93,9 @@ describe("grouped comparison", () => {
     expect(withoutKopecks.match(/Черновик дешевле/gu)).toHaveLength(1);
     expect(withoutKopecks).toContain("172 204 022,31 руб.");
     expect(withoutKopecks).not.toContain("022, потому");
+    const count = ensureCompareSummary("В смете 172 204 022 позиций.", -172204022.31);
+    expect(count).toMatch(/^Черновик дешевле сметы заказчика на 172 204 022,31 руб\./);
+    expect(count).toContain("172 204 022 позиций");
     const followedByCount = ensureCompareSummary("Черновик дешевле сметы заказчика на 120,00 руб. по 3 позициям.", -120);
     expect(followedByCount.match(/Черновик дешевле/gu)).toHaveLength(1);
     expect(followedByCount.match(/120,00 руб\./gu)).toHaveLength(1);
