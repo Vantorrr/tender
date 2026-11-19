@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 /**
  * Adapter boundary for external procurement feeds.
  * Nornickel's public local tenders page is read-only and needs no credentials.
@@ -516,6 +518,51 @@ function fieldValue(value: unknown): string {
   return "";
 }
 
+/** HTTPS file on the public Nornickel hosts. Relative /upload paths are resolved against nornickel.ru. */
+export function allowedNornickelFileUrl(raw: string): string | undefined {
+  try {
+    const candidate = raw.startsWith("/") ? new URL(raw, "https://nornickel.ru") : new URL(raw);
+    if (candidate.protocol !== "https:" || candidate.port || candidate.username || candidate.password) return undefined;
+    const host = candidate.hostname.toLowerCase();
+    const onNornickel = host === "nornickel.ru" || host === "www.nornickel.ru";
+    const onYandex = host === "nornik-upload.storage.yandexcloud.net";
+    const path = candidate.pathname;
+    const allowed = (onNornickel && path.startsWith("/upload/"))
+      || (onYandex && (path.startsWith("/iblock/") || path.includes("/iblock/")));
+    return allowed ? candidate.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The public page labels a procedure as "174734 Title", "20061113/2: Title",
+ * "№ 174942 …" or "лот 188/26". Cards without any of these are unnamed.
+ */
+export function nornickelNoticeIdentity(name: string): { number: string; title: string } | null {
+  const cleaned = name
+    .replace(/&quot;/g, "\"")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return null;
+  const leading = /^(\d[\d/.-]*):?\s+([\s\S]+)$/.exec(cleaned);
+  if (leading) {
+    const number = leading[1].replace(/[:.]$/, "").trim();
+    const titleSource = leading[2].trim();
+    const nested = /^(\d{4,}):?\s+([\s\S]+)$/.exec(titleSource);
+    return {
+      number,
+      title: nested ? `${nested[1]} — ${nested[2].trim()}` : titleSource,
+    };
+  }
+  const marked = /(?:^|[\s«"(])№\s*(\d[\d/.-]*)/u.exec(cleaned)
+    ?? /лот\s*№?\s*(\d[\d/.-]*)/iu.exec(cleaned)
+    ?? /анонс\s+(\d[\d/.-]*)/iu.exec(cleaned);
+  if (!marked?.[1]) return null;
+  return { number: marked[1].replace(/[:.]$/, "").trim(), title: cleaned };
+}
+
 /** Public, read-only Norilsk Nickel local procurement feed. */
 export class NornickelLocalProcurementSource implements ProcurementSource {
   readonly id = "nornickel-local-public";
@@ -575,34 +622,22 @@ export class NornickelLocalProcurementSource implements ProcurementSource {
         // Depending on the procurement method, the public page labels an item
         // either "174734 Title" or "20061113/2: 174734 Title". Keep the
         // stable procedure number in number and retain a second lot id in title.
-        const match = /^(\d[\d/.-]*):?\s+([\s\S]+)$/.exec(name);
-        const number = match?.[1]?.replace(/[:.]$/, "").trim() ?? "";
-        const titleSource = match?.[2]?.trim() ?? name;
-        const nestedNumber = /^(\d{4,}):?\s+([\s\S]+)$/.exec(titleSource);
-        const title = nestedNumber
-          ? `${nestedNumber[1]} — ${nestedNumber[2].trim()}`
-          : titleSource;
         const activeTo = Number(item.activeTo);
         const deadline = Number.isFinite(activeTo) && activeTo > 0
           ? new Date(activeTo * 1000).toISOString()
           : "";
-        if (!number || !title || !deadline || new Date(deadline).getTime() < Date.now()) return [];
         const customer = fieldValue(item.customer) || "Заказчик не указан";
         const documentation = item.documentation && typeof item.documentation === "object"
           ? item.documentation as Record<string, unknown>
           : {};
         const path = typeof documentation.link === "string" ? documentation.link : "";
         const fileName = typeof documentation.origName === "string" ? documentation.origName : "";
-        let attachmentUrl: string | undefined;
-        try {
-          const candidate = new URL(path, "https://nornickel.ru");
-          if (
-            (candidate.hostname === "nornickel.ru" && candidate.pathname.startsWith("/upload/")) ||
-            (candidate.hostname === "nornik-upload.storage.yandexcloud.net" && candidate.pathname.startsWith("/iblock/"))
-          ) attachmentUrl = candidate.toString();
-        } catch {
-          // Invalid or untrusted links are omitted from the card.
-        }
+        const attachmentUrl = path ? allowedNornickelFileUrl(path) : undefined;
+        const identity = nornickelNoticeIdentity(name);
+        const number = identity?.number
+          || (attachmentUrl ? `file-${createHash("sha256").update(attachmentUrl).digest("hex").slice(0, 12)}` : "");
+        const title = identity?.title || name.trim();
+        if (!number || !title || !deadline || new Date(deadline).getTime() < Date.now()) return [];
         return [{
           number,
           title,

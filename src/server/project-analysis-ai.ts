@@ -1,5 +1,6 @@
 import type { Citation, DocumentItem, ProjectAnalytics, Procurement } from "@/lib/types";
 import { regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
+import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { completeJson } from "@/server/openrouter";
 
 const SYSTEM = `Ты — специалист тендерного отдела строительного подрядчика. Разбери все переданные документы как один пакет закупки и помоги руководителю принять проверяемое решение. Выделяй условия, которые меняют объём, сроки, цену, возможность выполнить работы и ответственность подрядчика; не пересказывай документы подряд.
@@ -514,6 +515,7 @@ export function buildProjectAnalysisFallback(
     ...deterministic,
     recommendation,
     findings: [],
+    aiFailure: aiAnalysisFailureStatus(failure),
     summary: [
       deterministic.summary,
       "ИИ-анализ не завершился. Ниже сохранён детерминированный расчёт; модельные тезисы и заключение по рискам не сформированы.",

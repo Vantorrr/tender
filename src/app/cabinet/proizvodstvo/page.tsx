@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { ProjectAiChat } from "@/components/project-ai-chat";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -28,6 +29,8 @@ import { DateInputRu } from "@/components/date-input-ru";
 import { ProductionPlanFactChart } from "@/components/production-plan-fact-chart";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { api, downloadUrl } from "@/lib/api";
+import { parseDecimalRu } from "@/lib/decimal-ru";
+import { DEFAULT_MAX_UPLOAD_BYTES, uploadTooLargeMessage } from "@/lib/upload-limit";
 import { formatDate, formatMoney, formatNumber, todayIsoInTimeZone } from "@/lib/format";
 import { userHasSection } from "@/lib/acl";
 import {
@@ -88,6 +91,8 @@ export default function ProizvodstvoPage() {
   const savingDailyRef = useRef(false);
   const pendingFactIdRef = useRef<string | null>(null);
   const photoRef = useRef<HTMLInputElement>(null);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [factError, setFactError] = useState<string | null>(null);
 
   const plans = useMemo(
     () => (user ? data.planFacts.filter((p) => p.orgId === user.orgId) : []),
@@ -325,43 +330,72 @@ export default function ProizvodstvoPage() {
 
   async function submitDaily(withPhoto: boolean) {
     if (!plan || !selectedEntry || savingDailyRef.current) return;
+    const photo = photoFile ?? photoRef.current?.files?.[0] ?? null;
+    if (withPhoto && !photo) {
+      const message = "Сначала выберите фото";
+      setFactError(message);
+      toast.error(message);
+      return;
+    }
+    const quantity = parseDecimalRu(qty);
+    if (quantity == null) {
+      const message = "Укажите объём числом, например 1,5";
+      setFactError(message);
+      toast.error(message);
+      return;
+    }
+    const photoTooLarge = Boolean(withPhoto && photo && photo.size > DEFAULT_MAX_UPLOAD_BYTES);
     savingDailyRef.current = true;
     setSavingDaily(true);
+    setFactError(null);
     const factId = pendingFactIdRef.current ?? createDailyFactId();
     pendingFactIdRef.current = factId;
     try {
-      if (withPhoto && photoRef.current?.files?.[0]) {
+      await api("/api/proizvodstvo", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "dailyFact",
+          planFactId: plan.id,
+          fact: {
+            factId,
+            date,
+            workName: selectedWork,
+            unit: selectedUnit,
+            quantity,
+          },
+        }),
+      });
+      if (withPhoto && photo && !photoTooLarge) {
         const form = new FormData();
         form.append("factId", factId);
         form.append("planFactId", plan.id);
         form.append("date", date);
         form.append("workName", selectedWork);
         form.append("unit", selectedUnit);
-        form.append("quantity", qty);
-        form.append("photo", photoRef.current.files[0]);
+        form.append("quantity", String(quantity));
+        form.append("photo", photo);
         await api("/api/proizvodstvo", { method: "POST", body: form });
-      } else {
-        await api("/api/proizvodstvo", {
-          method: "POST",
-          body: JSON.stringify({
-            action: "dailyFact",
-            planFactId: plan.id,
-            fact: {
-              factId,
-              date,
-              workName: selectedWork,
-              unit: selectedUnit,
-              quantity: Number(qty) || 0,
-            },
-          }),
-        });
       }
       await refresh();
       pendingFactIdRef.current = null;
-      toast.success("Дневной факт сохранён (это не платёж)");
       if (photoRef.current) photoRef.current.value = "";
+      setPhotoFile(null);
+      if (photoTooLarge) {
+        const message = `${uploadTooLargeMessage()}. Строка факта сохранена без фото.`;
+        setFactError(message);
+        toast.error(message);
+      } else {
+        toast.success(withPhoto ? "Дневной факт и фото сохранены (это не платёж)" : "Дневной факт сохранён (это не платёж)");
+      }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Ошибка факта");
+      const message = e instanceof Error ? e.message : "Ошибка факта";
+      setFactError(message);
+      toast.error(message);
+      try {
+        await refresh();
+      } catch {
+        /* The fact row may already be stored; keep the error on screen. */
+      }
     } finally {
       savingDailyRef.current = false;
       setSavingDaily(false);
@@ -976,7 +1010,16 @@ export default function ProizvodstvoPage() {
                     accept="image/*,.pdf"
                     className="text-sm"
                     data-testid="daily-fact-photo-input"
+                    onChange={(event) => {
+                      setPhotoFile(event.target.files?.[0] ?? null);
+                      setFactError(null);
+                    }}
                   />
+                  {photoFile ? (
+                    <span className="pb-2 text-xs text-[var(--tk-muted)]" data-testid="daily-fact-photo-name">
+                      {photoFile.name}
+                    </span>
+                  ) : null}
                   <Button
                     data-testid="daily-fact-save"
                     disabled={savingDaily || !selectedEntry}
@@ -993,6 +1036,12 @@ export default function ProizvodstvoPage() {
                     Факт + фото
                   </Button>
                 </div>
+                {factError ? (
+                  <Alert className="mt-3 border-rose-200 bg-rose-50 text-rose-950" data-testid="daily-fact-error">
+                    <AlertTitle>Сохранение факта</AlertTitle>
+                    <AlertDescription>{factError}</AlertDescription>
+                  </Alert>
+                ) : null}
               </div>
 
               <ProductionPlanFactChart

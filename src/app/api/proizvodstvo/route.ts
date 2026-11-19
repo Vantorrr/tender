@@ -9,6 +9,9 @@ import { withAnySection, json } from "@/server/http";
 import type { DailyResourceLine, PlanFact } from "@/lib/types";
 import type { SupplyStatus } from "@/lib/types";
 import { saveUpload } from "@/server/uploads";
+import { config } from "@/server/config";
+import { parseDecimalRu } from "@/lib/decimal-ru";
+import { uploadTooLargeMessage } from "@/lib/upload-limit";
 import { analyzeProductionVarianceWithAI } from "@/server/production-variance-ai";
 import { allocatePlanForSlice, stagesForWork, type PlanSliceMode } from "@/lib/plan-from-gpr";
 import { entryDisplayFact, sumDailyQty } from "@/lib/plan-fact-agg";
@@ -83,17 +86,26 @@ export async function POST(req: Request) {
   return withAnySection(req, [...SECTIONS], async (user) => {
     const contentType = req.headers.get("content-type") ?? "";
     if (contentType.includes("multipart/form-data")) {
-      const form = await req.formData();
+      let form: FormData;
+      try {
+        form = await req.formData();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "";
+        if (/body|large|size|limit|entity|payload/i.test(message)) {
+          return json({ error: uploadTooLargeMessage(config.maxUploadBytes) }, 413);
+        }
+        throw error;
+      }
       const planFactId = String(form.get("planFactId") ?? "");
       const date = String(form.get("date") ?? "");
       const workName = String(form.get("workName") ?? "");
       const unit = String(form.get("unit") ?? "ед");
-      const quantity = Number(form.get("quantity") ?? 0);
+      const quantity = parseDecimalRu(String(form.get("quantity") ?? ""));
       const factId = String(form.get("factId") ?? "") || undefined;
       if (!planFactId || !date || !workName) {
         return json({ error: "Нужны planFactId, date, workName" }, 400);
       }
-      if (!Number.isFinite(quantity) || quantity < 0) {
+      if (quantity == null) {
         return json({ error: "Факт работы должен быть неотрицательным числом" }, 400);
       }
       const resourceLines = parseResourceLines(form.get("resourceLines"));
@@ -109,6 +121,9 @@ export async function POST(req: Request) {
       }> = [];
       const file = form.get("photo");
       if (file instanceof File && file.size > 0) {
+        if (file.size > config.maxUploadBytes) {
+          return json({ error: uploadTooLargeMessage(config.maxUploadBytes) }, 413);
+        }
         const buf = Buffer.from(await file.arrayBuffer());
         const id = `ph-${Date.now()}`;
         const stored = await saveUpload(id, file.name, buf);

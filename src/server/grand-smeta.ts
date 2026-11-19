@@ -153,6 +153,8 @@ export type UploadAnalysis = {
   analysis: DocumentAnalysis;
   positions: GrandPosition[];
   noteByModel?: boolean;
+  /** «ИИ-анализ не выполнен: …» when the model was asked and did not produce a note. */
+  aiFailure?: string;
 };
 
 function cellText(value: ExcelJS.CellValue): string {

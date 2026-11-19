@@ -1,4 +1,5 @@
 import path from "node:path";
+import { DEFAULT_MAX_UPLOAD_BYTES } from "@/lib/upload-limit";
 
 const DATA_SUBDIR = "data";
 
@@ -29,7 +30,7 @@ export const config = {
     process.env.OPENROUTER_ON_UPLOAD === "1" ||
     process.env.OPENROUTER_ON_UPLOAD === "true",
   /** Max multipart upload size (bytes). Default 25 MiB. */
-  maxUploadBytes: Number(process.env.MAX_UPLOAD_BYTES ?? 25 * 1024 * 1024),
+  maxUploadBytes: Number(process.env.MAX_UPLOAD_BYTES ?? DEFAULT_MAX_UPLOAD_BYTES),
   /** Soft timeout budget for document analysis (ms). */
   analysisTimeoutMs: Number(process.env.ANALYSIS_TIMEOUT_MS ?? 60_000),
 };

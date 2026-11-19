@@ -70,6 +70,7 @@ describe("grounded project analysis", () => {
     expect(fallback.recommendation).toBe("insufficient_data");
     expect(fallback.economics).toMatchObject({ cost: 1000, profit: 200, profitabilityPercent: 20, complete: true });
     expect(fallback.summary).toContain("ИИ-анализ не завершился");
+    expect(fallback.aiFailure).toBe("ИИ-анализ не выполнен: пустой ответ");
     expect(fallback.missingInputs.join(" ")).toContain("календарь занятости");
   });
 

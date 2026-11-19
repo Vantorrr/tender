@@ -25,6 +25,7 @@ import type {
   User,
 } from "@/lib/types";
 import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
+import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
 import {
   analyzeProjectPackageWithModel,
@@ -736,6 +737,8 @@ export function reanalyzeDocument(
         at: new Date().toISOString(),
         note: !prepared
           ? "Файл на сервере не найден, разбор не выполнен"
+          : prepared.aiFailure
+            ? prepared.aiFailure
           : prepared.noteByModel
             ? `Записка модели ${prepared.analysis.narrator} по цифрам сметы`
             : "Повторный разбор по параметрам ГРАНД-Смета 2022.3",
@@ -775,6 +778,7 @@ export function reanalyzeDocument(
         citations: stampCitationSourceVersion(prepared.citations, versionLabel),
         highlights: prepared.highlights,
         analysis: prepared.analysis,
+        aiFailure: prepared.aiFailure,
         estimatePositions,
       };
     });
@@ -829,7 +833,9 @@ export function createDocument(
           version: 1,
           authorId: actorId,
           at: new Date().toISOString(),
-          note: input.prepared?.noteByModel
+          note: input.prepared?.aiFailure
+            ? input.prepared.aiFailure
+            : input.prepared?.noteByModel
             ? `Загрузка. Записка модели ${input.prepared.analysis.narrator} по цифрам сметы`
             : input.prepared
               ? "Загрузка и разбор по параметрам ГРАНД-Смета 2022.3"
@@ -843,6 +849,7 @@ export function createDocument(
         (hasExtractErrors
           ? `Файл сохранён. Ошибки извлечения: ${input.extractionErrors!.join("; ")}`
           : "Файл сохранён. Разбор по форме ГРАНД-Смета не дал результата."),
+      aiFailure: input.prepared?.aiFailure,
       citations: stampCitationSourceVersion(
         input.prepared?.citations ?? [],
         "doc-v1"
@@ -1564,6 +1571,26 @@ export function refreshProcurementAnalytics(
       procurementId,
       `Сводка: ${p.analytics.recommendation}`
     );
+    return data;
+  });
+}
+
+/** Keep the upload successful, but make a failed model pass visible on the card. */
+export function recordProcurementAiFailure(actorId: string, procurementId: string, reason: string) {
+  const status = aiAnalysisFailureStatus(reason);
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const procurement = data.procurements.find((item) => item.id === procurementId);
+    if (!procurement) throw new Error("Закупка не найдена");
+    assertOrgAccess(actor, procurement.orgId, "закупки");
+    const documents = data.documents.filter((document) => document.procurementId === procurement.id);
+    const base = procurement.analytics ?? buildProjectAnalytics(procurement, documents);
+    procurement.analytics = {
+      ...base,
+      aiFailure: status,
+      summary: base.summary.startsWith(status) ? base.summary : `${status}\n\n${base.summary}`,
+    };
+    audit(data, actorId, "analyze_ai_failed", "procurement", procurementId, status);
     return data;
   });
 }

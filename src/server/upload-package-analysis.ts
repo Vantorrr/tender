@@ -1,6 +1,7 @@
 import { config } from "@/server/config";
 import {
   analyzeProcurementPackageWithAI,
+  recordProcurementAiFailure,
   refreshProcurementAnalytics,
 } from "@/server/repo";
 
@@ -19,8 +20,15 @@ export async function refreshAndMaybeAnalyzePackage(userId: string, procurementI
     await analyzeProcurementPackageWithAI(userId, procurementId);
   } catch (error) {
     // Upload and deterministic analysis are already persisted. A provider outage
-    // must not turn a successful document upload into an apparent failure.
-    const errorType = error instanceof Error ? error.name : "unknown error";
-    console.warn(`[documents] automatic package analysis failed (${errorType})`);
+    // must not turn a successful document upload into an apparent failure, but
+    // the failure itself has to stay on the card.
+    const reason = error instanceof Error ? error.message : "неизвестная ошибка";
+    console.error(`[documents] automatic package analysis failed: ${reason}`);
+    try {
+      recordProcurementAiFailure(userId, procurementId, reason);
+    } catch (persistError) {
+      const persistReason = persistError instanceof Error ? persistError.message : "неизвестная ошибка";
+      console.error(`[documents] failed to persist AI status: ${persistReason}`);
+    }
   }
 }

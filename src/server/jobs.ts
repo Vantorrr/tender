@@ -58,6 +58,11 @@ function applyDedup(data: ReturnType<typeof readAppData>): number {
   return duplicates;
 }
 
+function sourceAttachmentId(number: string) {
+  const slug = number.replace(/[^\w.-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
+  return `a-src-${slug || "notice"}`;
+}
+
 function insertNotice(
   data: ReturnType<typeof readAppData>,
   orgId: string,
@@ -65,7 +70,7 @@ function insertNotice(
   now: string
 ) {
   const sourceAttachment = {
-    id: `a-auto-${Date.now()}`,
+    id: sourceAttachmentId(notice.number),
     name: notice.attachmentName ?? "Документы не приложены",
     type: notice.attachmentType ?? "—",
     size: notice.attachmentSize ?? "—",
@@ -87,7 +92,9 @@ function insertNotice(
     if (notice.sourceUrl) imported.sourceUrl = notice.sourceUrl;
     if (imported.nmck == null) imported.nmck = notice.nmck;
     imported.attachments = [
-      ...imported.attachments.filter((attachment) => !attachment.id.startsWith("a-auto-")),
+      ...imported.attachments.filter((attachment) =>
+        !attachment.id.startsWith("a-auto-") && !attachment.id.startsWith("a-src-")
+      ),
       sourceAttachment,
     ];
     imported.tags = [...new Set([...imported.tags, ...(notice.tags ?? [])])];

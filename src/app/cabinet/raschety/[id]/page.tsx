@@ -688,7 +688,7 @@ export default function RaschetDetailPage() {
                     }
                   }}
                 >
-                  Пересчитать итоги
+                  Пересчитать итоги (расчёт по формулам, без ИИ)
                 </Button>
               </>
             ) : null}
