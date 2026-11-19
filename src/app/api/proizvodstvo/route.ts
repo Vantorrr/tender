@@ -263,8 +263,10 @@ export async function POST(req: Request) {
       if (resourceLines === null) {
         return json({ error: "Проверьте фактические количества ресурсов: значения должны быть неотрицательными числами" }, 400);
       }
+      const { photos: _photos, ...fact } = body.fact as typeof body.fact & { photos?: unknown };
+      void _photos;
       addDailyProductionFact(user.id, body.planFactId, {
-        ...body.fact,
+        ...fact,
         resourceLines,
       });
       return json(getBootstrap(user));

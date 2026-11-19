@@ -260,6 +260,77 @@ describe("client wave 1 server", () => {
     expect(readAppData().documents.some((item) => item.id === "d-wave1-victim")).toBe(true);
   });
 
+  it("does not bind or delete an upload through a path alias", async () => {
+    const created = createManualProcurement("u-ruk", { title: "Псевдоним файла", region: "Ямал" });
+    const victim = await saveUpload("wave1-alias", "чужой.txt", Buffer.from("чужой"));
+    const aliases = [
+      victim.storedPath.replace(/^uploads\//, "uploads/./"),
+      victim.storedPath.replace(/^uploads\//, "uploads//"),
+      victim.storedPath.replaceAll("/", "\\"),
+    ];
+    mutateAppData((data) => {
+      const procurement = data.procurements.find((item) => item.id === created.id)!;
+      const other = data.procurements.find((item) => item.orgId === procurement.orgId && item.id !== procurement.id);
+      if (!other) throw new Error("нет второй закупки");
+      data.documents.unshift({
+        id: "d-wave1-alias",
+        orgId: other.orgId,
+        procurementId: other.id,
+        title: "Чужой",
+        fileName: "чужой.txt",
+        fileType: "other",
+        status: "zagruzheno",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: victim.storedPath,
+      });
+      data.planFacts.unshift({
+        id: "pf-wave1-alias",
+        orgId: procurement.orgId,
+        objectId: "obj-wave1",
+        procurementId: procurement.id,
+        title: "Фото",
+        status: "v_rabote",
+        entries: [{ id: "e1", workName: "Работа", unit: "м2", plan: 1, fact: 0 }],
+        updatedAt: new Date().toISOString(),
+        dailyFacts: [],
+      });
+      return data;
+    });
+    for (const [index, alias] of aliases.entries()) {
+      addDailyProductionFact("u-tender", "pf-wave1-alias", {
+        date: `2026-12-0${index + 1}`,
+        workName: "Работа",
+        unit: "м2",
+        quantity: 1,
+        photos: [{ id: `ph-alias-${index}`, fileName: "json.jpg", storedPath: alias, at: "2026-12-01T00:00:00Z" }],
+      });
+    }
+    const facts = readAppData().planFacts.find((item) => item.id === "pf-wave1-alias")?.dailyFacts ?? [];
+    expect(facts.flatMap((fact) => fact.photos).every((photo) => photo.storedPath == null)).toBe(true);
+    mutateAppData((data) => {
+      const plan = data.planFacts.find((item) => item.id === "pf-wave1-alias")!;
+      plan.dailyFacts = [{
+        id: "df-alias",
+        date: "2026-12-04",
+        workName: "Работа",
+        unit: "м2",
+        quantity: 1,
+        photos: [{ id: "ph-alias-kept", fileName: "чужой.txt", storedPath: aliases[0], at: "2026-12-04T00:00:00Z" }],
+        authorId: "u-tender",
+        at: "2026-12-04T00:00:00Z",
+      }];
+      return data;
+    });
+    expect(deleteProcurement("u-ruk", created.id).deleted).toBe(true);
+    expect(fs.existsSync(path.join(config.dataDir, victim.storedPath))).toBe(true);
+    expect(readAppData().documents.some((item) => item.id === "d-wave1-alias")).toBe(true);
+  });
+
   it("does not delete a file outside the uploads folder and ignores a rewritten path", () => {
     const outside = path.join(config.dataDir, "not-an-upload.txt");
     fs.writeFileSync(outside, "keep");

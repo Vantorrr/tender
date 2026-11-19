@@ -25,7 +25,7 @@ import type {
   User,
 } from "@/lib/types";
 import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
-import { deleteUpload } from "@/server/uploads";
+import { canonicalUploadPath, deleteUpload } from "@/server/uploads";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
 import { mergeStageResources } from "@/lib/resource-merge";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
@@ -444,19 +444,18 @@ export function updateProcurement(
   });
 }
 
+function rememberUploadPath(paths: Set<string>, storedPath?: string) {
+  const canonical = storedPath ? canonicalUploadPath(storedPath) : null;
+  if (canonical) paths.add(canonical);
+}
+
 function uploadPathsInUse(data: AppData): Set<string> {
   const paths = new Set<string>();
-  for (const document of data.documents) {
-    if (document.storedPath) paths.add(document.storedPath);
-  }
-  for (const card of data.companyCards ?? []) {
-    if (card.storedPath) paths.add(card.storedPath);
-  }
+  for (const document of data.documents) rememberUploadPath(paths, document.storedPath);
+  for (const card of data.companyCards ?? []) rememberUploadPath(paths, card.storedPath);
   for (const plan of data.planFacts) {
     for (const fact of plan.dailyFacts ?? []) {
-      for (const photo of fact.photos ?? []) {
-        if (photo.storedPath) paths.add(photo.storedPath);
-      }
+      for (const photo of fact.photos ?? []) rememberUploadPath(paths, photo.storedPath);
     }
   }
   return paths;
@@ -523,9 +522,10 @@ export function deleteProcurement(actorId: string, id: string) {
   if (deleted) {
     const stillUsed = uploadPathsInUse(readAppData());
     for (const storedPath of removedFiles) {
-      if (stillUsed.has(storedPath)) continue;
+      const canonical = canonicalUploadPath(storedPath);
+      if (!canonical || stillUsed.has(canonical)) continue;
       try {
-        deleteUpload(storedPath);
+        deleteUpload(canonical);
       } catch (error) {
         const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
         if (code !== "ENOENT") throw error;
@@ -3255,14 +3255,15 @@ export function addDailyProductionFact(
     const usedPaths = uploadPathsInUse(data);
     for (const photo of incomingPhotos) {
       if (photos.some((item) => item.id === photo.id)) continue;
-      if (photo.storedPath && usedPaths.has(photo.storedPath)) {
+      const canonical = photo.storedPath ? canonicalUploadPath(photo.storedPath) : null;
+      if (!canonical || usedPaths.has(canonical)) {
         const { storedPath: _planted, ...rest } = photo;
         void _planted;
         photos.push(rest);
         continue;
       }
-      photos.push(photo);
-      if (photo.storedPath) usedPaths.add(photo.storedPath);
+      photos.push({ ...photo, storedPath: canonical });
+      usedPaths.add(canonical);
     }
     const entry: DailyFact = {
       id: existing?.id ?? fact.factId ?? `df-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,

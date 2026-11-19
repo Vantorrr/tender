@@ -44,6 +44,15 @@ export function resolveUploadPath(storedPath: string): string | null {
   return absolute;
 }
 
+/** Relative `uploads/...` path after the same checks as `resolveUploadPath`. Aliases collapse to one key. */
+export function canonicalUploadPath(storedPath: string): string | null {
+  const absolute = resolveUploadPath(storedPath);
+  if (!absolute) return null;
+  const relative = path.relative(path.resolve(/*turbopackIgnore: true*/ config.dataDir), absolute).split(path.sep).join("/");
+  if (!relative.startsWith("uploads/") || relative.endsWith("/") || relative.includes("..")) return null;
+  return relative;
+}
+
 export function deleteUpload(storedPath: string) {
   const absolute = resolveUploadPath(storedPath);
   if (!absolute || !fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) return;
