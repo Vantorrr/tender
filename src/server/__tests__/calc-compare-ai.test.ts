@@ -89,6 +89,13 @@ describe("grouped comparison", () => {
     expect(ensureCompareSummary("Позиция 1200.", 0)).toContain("1200");
     const integerNamed = ensureCompareSummary("Черновик дешевле сметы заказчика на 120,00 руб., потому что ставки ниже.", -120);
     expect(integerNamed.match(/120,00 руб\./gu)).toHaveLength(1);
+    const withoutKopecks = ensureCompareSummary("Черновик дешевле сметы заказчика на 172 204 022, потому что ставки ниже.", -172204022.31);
+    expect(withoutKopecks.match(/Черновик дешевле/gu)).toHaveLength(1);
+    expect(withoutKopecks).toContain("172 204 022,31 руб.");
+    expect(withoutKopecks).not.toContain("022, потому");
+    const followedByCount = ensureCompareSummary("Черновик дешевле сметы заказчика на 120,00 руб. по 3 позициям.", -120);
+    expect(followedByCount.match(/Черновик дешевле/gu)).toHaveLength(1);
+    expect(followedByCount.match(/120,00 руб\./gu)).toHaveLength(1);
     expect(ensureCompareSummary("Разница 120.", -120).match(/Черновик дешевле/gu)).toBeNull();
     expect(ensureCompareSummary("−172 204 022,31", -172204022.31)).toBe("Черновик дешевле сметы заказчика на 172 204 022,31 руб., потому что расхождения разобраны ниже.");
     const alreadyNamed = "Черновик дешевле сметы заказчика на −172 204 022,31 руб., потому что ставки ниже.";

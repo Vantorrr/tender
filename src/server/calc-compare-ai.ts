@@ -155,7 +155,10 @@ function rewriteTotal(text: string, amount: number, label: string): string {
   return text.replace(pattern, (match) => {
     const bare = match.replace(/\s*руб\.?$/i, "").replace(/^[-−–]\s*/, "").replace(/[\s\u00a0\u202f\u2009]/g, "").replace(",", ".");
     const value = Number(bare);
-    if (!Number.isFinite(value) || Math.abs(value - expected) > 0.001) return match;
+    if (!Number.isFinite(value)) return match;
+    const sameKopecks = Math.abs(value - expected) <= 0.001;
+    const rublesOnly = !/[.,]/.test(bare) && bare === whole;
+    if (!sameKopecks && !rublesOnly) return match;
     return label;
   }).replace(/руб\.\./g, "руб.");
 }
@@ -169,7 +172,8 @@ function labelStandsAlone(text: string, label: string): boolean {
     if (at < 0) return false;
     const before = flat[at - 1] ?? "";
     const after = flat[at + needle.length] ?? "";
-    if (!/\d/.test(before) && !/\d/.test(after)) return true;
+    const closedByRubles = needle.endsWith("руб.");
+    if (!/\d/.test(before) && (closedByRubles || !/\d/.test(after))) return true;
     from = at + 1;
   }
   return false;
