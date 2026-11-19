@@ -107,12 +107,17 @@ export function omitUnsourcedPlaces(note: string, citations: Citation[]): string
     .trim();
 }
 
+/** A scanned negative is the cell value itself, not a hyphen inside an estimate header. */
+export function isNegativeAmount(text: string): boolean {
+  return /^-\d+(?:[.,]\d+)?$/.test(text.trim().replace(/\s/g, ""));
+}
+
 /** Keep a cell on a fact only when that cell's own text contains the fact's keyword or number. */
 export function cellRelatesToFact(fact: string, cellText: string): boolean {
   const factFold = fact.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
   const cellFold = cellText.toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
   if (/индекс/.test(factFold)) return /индекс/.test(cellFold);
-  if (/отрицательн/.test(factFold)) return /-\s?\d/.test(cellText);
+  if (/отрицательн/.test(factFold)) return isNegativeAmount(cellText);
   if (/оплат/.test(factFold) || (/акт/.test(factFold) && /труд/.test(factFold))) return /оплат|труд/.test(cellFold);
   if (cellFold.length >= 4 && factFold.includes(cellFold.slice(0, 24))) return true;
   const words = factFold.replace(new RegExp(CELL_TOKEN, "gi"), " ").match(/[а-яa-z]{5,}/gu) ?? [];
@@ -137,7 +142,12 @@ export function keepCellsThatSupportFact(note: string, citations: Citation[]): s
     const mention = new RegExp(`ячейк[а-яё]{0,3}\\s+((?:${CELL_TOKEN}\\s*,\\s*)*${CELL_TOKEN})`, "gi");
     return line.replace(mention, (_full, list: string) => {
       const tokens = [...new Set(list.split(/\s*,\s*/).map((token) => token.toUpperCase()))];
-      const supported = tokens.filter((token) => cellRelatesToFact(line, byCell.get(token) ?? "")).slice(0, 3);
+      const negativeFact = /отрицательн/.test(line.toLocaleLowerCase("ru-RU").replace(/ё/g, "е"));
+      const supported = tokens.filter((token) => {
+        const text = byCell.get(token) ?? "";
+        if (negativeFact) return isNegativeAmount(text.trim());
+        return cellRelatesToFact(line, text);
+      }).slice(0, 3);
       return supported.length ? `ячейка ${supported.join(", ")}` : "";
     });
   }).join("")

@@ -127,6 +127,21 @@ describe("estimator prompts", () => {
     ]);
     expect(codes).toContain("ISO9001");
     expect(codes).toContain("L2");
+    const negatives = keepCellsThatSupportFact("8 отрицательных позиций в смете (ячейка A18, N58, N61, N107, N110).", [
+      { id: "c-est", text: "ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЕТ № ЛС 02-02-01-2023", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "A18" },
+      { id: "c-negative-N58", text: "-54786.64", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "N58" },
+      { id: "c-negative-N61", text: "-3335.11", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "N61" },
+      { id: "c-negative-N107", text: "-1129070.08", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "N107" },
+      { id: "c-negative-N110", text: "-48415.23", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "N110" },
+    ]);
+    expect(negatives).not.toContain("A18");
+    expect(negatives).toContain("N58");
+    expect(negatives).toContain("N61");
+    expect(negatives).toContain("N107");
+    expect(negatives).not.toContain("N110");
+    expect(keepCellsThatSupportFact("8 отрицательных позиций (ячейка A18).", [
+      { id: "c-est", text: "ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЕТ № ЛС 02-02-01-2023", page: 1, sourceFile: "s.xlsx", sheet: "ЛС", cell: "A18" },
+    ])).not.toMatch(/ячейк/iu);
     expect(codes).toContain("G10");
     const sheetPayload = buildModelNoteUserContent(
       { kind: "local-estimate" },

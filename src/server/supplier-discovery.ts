@@ -68,6 +68,24 @@ export function isRedirectUrl(value: string): boolean {
   }
 }
 
+const DIRECTORY_HOST = /(?:^|\.)(?:2gis\.(?:ru|com)|zoon\.ru|yell\.ru|flamp\.ru|orgpage\.ru|rusprofile\.ru|list-org\.com|spark-interfax\.ru|checko\.ru|pulscen\.ru|tiu\.ru|blizko\.ru|jsprav\.ru|cataloxy\.ru)$/i;
+
+/** Maps and company catalogs are not the supplier's own site. */
+export function isDirectoryUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    if (DIRECTORY_HOST.test(host) || host.startsWith("maps.")) return true;
+    const path = url.pathname.toLowerCase();
+    const yandex = host === "yandex.ru" || host === "yandex.com" || host.endsWith(".yandex.ru") || host.endsWith(".yandex.com");
+    if (yandex && path.includes("/maps")) return true;
+    const google = host === "google.com" || host === "google.ru" || host === "maps.google.com";
+    return google && path.includes("/maps");
+  } catch {
+    return false;
+  }
+}
+
 /** A candidate passes only when its domain is one of the unwrapped search pages. */
 export function urlFromSearch(candidate: string, sourceUrls: string[]): boolean {
   const domain = supplierDomain(candidate);
@@ -166,6 +184,9 @@ export function filterSupplierCandidates(raw: string, sourceUrls: string[]): Sup
     const website = safeUrl(row.website);
     const sourceUrl = safeUrl(row.sourceUrl);
     if (!urlFromSearch(sourceUrl, sourceUrls)) return [];
+    const websiteHost = website ? supplierDomain(website) : null;
+    const sourceHost = supplierDomain(sourceUrl);
+    if (isDirectoryUrl(sourceUrl) || (website && isDirectoryUrl(website)) || (websiteHost && sourceHost && websiteHost !== sourceHost)) return [];
     const evidence = typeof row.evidence === "string" ? row.evidence.trim().slice(0, 600) : "";
     const regionEvidence = typeof row.regionEvidence === "string" ? row.regionEvidence.trim().slice(0, 240) : "";
     if (!confirmsDeliveryPlace(regionEvidence) || looksLikeHauler(name, evidence)) return [];
@@ -192,6 +213,7 @@ export async function applyLiveSupplierLinks(
     const domain = supplierDomain(candidate.sourceUrl);
     const source = sourceUrls.find((url) => supplierDomain(url) === domain && !isRedirectUrl(url));
     const status = await probe(candidate.sourceUrl);
+    // A page that stays on 5xx after one retry is not a source.
     if (status === "down") continue;
     if (status === "missing") {
       if (!source) continue;
@@ -218,22 +240,27 @@ function pagePlainText(html: string): string {
     .trim();
 }
 
+function foldSpace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function pageSegments(raw: string): string[] {
+  const parts = raw.split(/<[^>]*>/g).map((part) => part.trim()).filter(Boolean);
+  return parts.length ? parts : [raw];
+}
+
+/** Quote the page's own characters. Whitespace is folded only to decide that the region is there. */
 function regionExcerpt(raw: string): string | null {
   const limited = raw.slice(0, PAGE_TEXT_LIMIT);
-  const rawMatch = limited.match(REGION_ON_PAGE);
-  if (rawMatch && rawMatch.index != null) {
-    const start = Math.max(0, rawMatch.index - 60);
-    const end = Math.min(limited.length, rawMatch.index + rawMatch[0].length + 80);
-    const excerpt = limited.slice(start, end).trim().slice(0, 240);
-    if (excerpt && !excerpt.includes("<") && limited.includes(excerpt)) return excerpt;
+  for (const segment of pageSegments(limited)) {
+    const match = segment.match(REGION_ON_PAGE);
+    if (!match || match.index == null) continue;
+    const start = Math.max(0, match.index - 60);
+    const end = Math.min(segment.length, match.index + match[0].length + 80);
+    const excerpt = segment.slice(start, end).trim().slice(0, 240);
+    if (excerpt && limited.includes(excerpt) && foldSpace(limited).includes(foldSpace(excerpt))) return excerpt;
   }
-  const plain = pagePlainText(limited);
-  const match = plain.match(REGION_ON_PAGE);
-  if (!match || match.index == null) return null;
-  const start = Math.max(0, match.index - 60);
-  const end = Math.min(plain.length, match.index + match[0].length + 80);
-  const excerpt = plain.slice(start, end).trim().slice(0, 240);
-  return excerpt && plain.includes(excerpt) ? excerpt : null;
+  return null;
 }
 
 function isPrivateIpv4(host: string): boolean {
@@ -340,7 +367,7 @@ export async function groundSupplierRegions(
     const page = await readSupplierPage(candidate.sourceUrl, fetchImpl);
     const excerpt = page ? regionExcerpt(page) : null;
     const plain = page ? pagePlainText(page) : "";
-    if (!excerpt || (!page!.includes(excerpt) && !plain.includes(excerpt))) continue;
+    if (!excerpt || (!page!.includes(excerpt) && !foldSpace(page!).includes(foldSpace(excerpt)) && !foldSpace(plain).includes(foldSpace(excerpt)))) continue;
     out.push({ ...candidate, regionEvidence: excerpt });
   }
   return out;

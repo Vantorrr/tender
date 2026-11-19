@@ -130,10 +130,29 @@ describe("open-source supplier discovery", () => {
     expect(page).toContain(kept[0]!.regionEvidence);
     expect(kept[0]!.regionEvidence).toContain("на складе в Норильске");
     expect(kept[0]!.regionEvidence).not.toBe("Склад в Норильске");
+    const broken = "<p>Труба есть на складе\nв Норильске круглый год.</p>";
+    const spaced = await groundSupplierRegions([
+      { name: "РусМет", website: "https://rusmet.example", materials: ["Труба"], regionEvidence: "на складе в Норильске", evidence: "Продажа труб", sourceUrl: "https://rusmet.example/line" },
+    ], async () => new Response(broken, { status: 200 }));
+    expect(broken).toContain(spaced[0]!.regionEvidence);
+    expect(spaced[0]!.regionEvidence).toContain("на складе\nв Норильске");
+    expect(spaced[0]!.regionEvidence).not.toBe("на складе в Норильске");
     const failed = await groundSupplierRegions([
       { name: "Геомайнинг", website: "https://geo-mining.ru", materials: ["Долото"], regionEvidence: "Норильск", evidence: "Продажа долот", sourceUrl: catalog },
     ], async () => new Response("unavailable", { status: 500 }));
     expect(failed).toEqual([]);
+    const downUrl = "https://geo-mining.ru/catalog/fail-500";
+    let downReads = 0;
+    const downStatus = await probeSupplierUrl(downUrl, async () => {
+      downReads += 1;
+      return new Response("unavailable", { status: 500 });
+    });
+    expect(downStatus).toBe("down");
+    expect(downReads).toBe(2);
+    const dropped = await applyLiveSupplierLinks([
+      { name: "Геомайнинг", website: "https://geo-mining.ru", materials: ["Долото"], regionEvidence: "Норильск", evidence: "Продажа долот", sourceUrl: downUrl },
+    ], [downUrl], (page) => probeSupplierUrl(page));
+    expect(dropped).toEqual([]);
     const calls: string[] = [];
     const redirected = await groundSupplierRegions([
       { name: "Открытый редирект", website: "https://vendor.example", materials: ["Труба"], regionEvidence: "Норильск", evidence: "Продажа труб", sourceUrl: "https://vendor.example/go" },
@@ -163,6 +182,22 @@ describe("open-source supplier discovery", () => {
       return new Response("<p>Труба есть на складе в Норильске.</p>", { status: 200 });
     });
     expect(followed[0]?.regionEvidence).toContain("на складе в Норильске");
+  });
+
+  it("drops map and catalog sites and keeps the company's own domain", () => {
+    const sources = [
+      "https://2gis.ru/norilsk/firm/1",
+      "https://zoon.ru/norilsk",
+      "https://yandex.ru/maps/org/1",
+      "https://seversnab.ru/catalog",
+    ];
+    const filtered = filterSupplierCandidates(JSON.stringify({ candidates: [
+      { name: "2ГИС", website: "https://2gis.ru", materials: ["Труба"], regionEvidence: "Норильск", evidence: "Продажа труб", sourceUrl: sources[0] },
+      { name: "Zoon", website: "https://zoon.ru", materials: ["Труба"], regionEvidence: "Норильск", evidence: "Продажа труб", sourceUrl: sources[1] },
+      { name: "Яндекс Карты", website: "https://yandex.ru/maps/org/1", materials: ["Труба"], regionEvidence: "Норильск", evidence: "Продажа труб", sourceUrl: sources[2] },
+      { name: "СеверСнаб", website: "https://seversnab.ru", materials: ["Труба"], regionEvidence: "Норильск", evidence: "Продажа труб", sourceUrl: sources[3] },
+    ] }), sources);
+    expect(filtered.map((item) => item.name)).toEqual(["СеверСнаб"]);
   });
 
   it("requires both a material and a delivery region", async () => {

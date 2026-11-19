@@ -12,6 +12,7 @@ import {
   hasBlockingConflict,
   packDocumentCitations,
   splitMergedRegions,
+  costConflictBetween,
   economicMissingInputs,
   companyAnalysisMissingInputs,
   buildProjectAnalysisFallback,
@@ -184,6 +185,29 @@ describe("grounded project analysis", () => {
     expect(merged.conflict).toMatch(/Красноярский край/);
     expect(merged.conflict).toMatch(/ЯНАО/);
     expect(splitMergedRegions("Норильск, Красноярский край").conflict).toBeNull();
+    const conflict = costConflictBetween([
+      {
+        fileName: "договор.docx",
+        category: "contract",
+        analysis: { costThousand: 1250 },
+        citations: [{ id: "c-price", text: "Цена договора составляет 1 250 000,50 руб." }],
+      },
+      {
+        fileName: "смета.xlsx",
+        category: "estimate",
+        analysis: { costThousand: 469269.22, positionCount: 40 },
+        citations: [{ id: "c-cost", text: "Сметная стоимость: 469 269,22 тыс. руб." }],
+      },
+    ]);
+    expect(conflict?.topic).toBe("Противоречие в стоимости");
+    expect(conflict?.text).toContain("1 250 000,50");
+    expect(conflict?.text).toContain("469 269,22 тыс");
+    expect(conflict?.quote).toContain("1 250 000,50");
+    expect(conflict?.citationIds).toEqual(["c-price", "c-cost"]);
+    expect(costConflictBetween([
+      { fileName: "договор.docx", category: "contract", analysis: { costThousand: 1250 }, citations: [{ id: "c-price", text: "Цена договора составляет 1 250 000,50 руб." }] },
+      { fileName: "смета.xlsx", category: "estimate", analysis: { costThousand: 1250 }, citations: [{ id: "c-cost", text: "Сметная стоимость: 1 250,00 тыс. руб." }] },
+    ])).toBeNull();
   });
 
   it("points a finding at the paragraph that contains the fact", () => {
