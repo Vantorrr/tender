@@ -72,7 +72,9 @@ export function buildModelNoteUserContent(
 /** Drop an invented cell label or an Excel page the source did not provide. Codes such as L2 stay. */
 export function omitUnsourcedPlaces(note: string, citations: Citation[]): string {
   const cells = new Set(citations.map((citation) => citation.cell).filter((cell): cell is string => Boolean(cell)).map((cell) => cell.toUpperCase()));
-  let text = note.replace(/ячейк[аеиу]\s+([A-Z]{1,3}\d{1,5})\b/gi, (full, token: string) => cells.has(token.toUpperCase()) ? full : "");
+  const knownCell = (token: string) => cells.has(token.toUpperCase());
+  let text = note.replace(/ячейк[аеиу]\s+([A-Z]{1,3}\d{1,5})\b/gi, (full, token: string) => knownCell(token) ? full : "");
+  text = text.replace(/(лист[а-яё]*\s+[«"]?[^,»".\n]{1,80}[»"]?\s*,\s*)([A-Z]{1,3}\d{1,5})\b/gi, (full, prefix: string, token: string) => knownCell(token) ? full : prefix.replace(/,\s*$/, ""));
   if (citations.length > 0 && citations.every((citation) => citation.sheet)) {
     text = text.replace(/,?\s*стр\.\s*\d+/gi, "");
   }

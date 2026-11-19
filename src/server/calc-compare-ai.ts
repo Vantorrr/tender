@@ -132,6 +132,24 @@ export function selectMaterialGroups<T extends { impact: number }>(groups: T[], 
   };
 }
 
+function amountStandsAlone(compact: string, text: string): boolean {
+  const flat = text.replace(/[\s\u00a0\u202f\u2009]/g, "").replace(/,/g, ".");
+  let from = 0;
+  while (from <= flat.length) {
+    const at = flat.indexOf(compact, from);
+    if (at < 0) return false;
+    const before = at === 0 ? "" : flat[at - 1] ?? "";
+    const afterAt = at + compact.length;
+    const after = flat[afterAt] ?? "";
+    const next = flat[afterAt + 1] ?? "";
+    const beforeOk = before === "" || !/[\d.]/.test(before);
+    const afterOk = after === "" || (after !== "." ? !/\d/.test(after) : !/\d/.test(next));
+    if (beforeOk && afterOk) return true;
+    from = at + 1;
+  }
+  return false;
+}
+
 export function ensureCompareSummary(summary: string, deltaTotal: number | null, exclusiveDraft: string[] = []): string {
   let text = summary.trim();
   if (deltaTotal != null && Number.isFinite(deltaTotal)) {
@@ -142,8 +160,7 @@ export function ensureCompareSummary(summary: string, deltaTotal: number | null,
       : deltaTotal > 0
         ? `Черновик дороже сметы заказчика на ${formatted} руб., потому что расхождения разобраны ниже.`
         : "Черновик совпадает со сметой заказчика по итогу.";
-    const flat = text.replace(/[\s\u00a0\u202f\u2009]/g, "").replace(/,/g, ".");
-    const mentions = flat.includes(compact) || numbersAreGrounded(compact, text) || text.includes(formatted);
+    const mentions = amountStandsAlone(compact, text);
     const startsWithPhrase = /^[A-Za-zА-Яа-яЁё«"]/u.test(text);
     if (!startsWithPhrase) {
       const rest = text.replace(/^[\s\-−–\d\s.,]+/u, "").trim();

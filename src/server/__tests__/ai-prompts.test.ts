@@ -72,6 +72,12 @@ describe("estimator prompts", () => {
     expect(omitUnsourcedPlaces("Коэффициент стеснённости, стр. 1, ячейка A1. Чертёж L2, ISO9001.", [
       { id: "c-k", text: "Приказ о коэффициенте стеснённости", page: 1, sourceFile: "смета.xlsx", sheet: "ЛС" },
     ])).toBe("Коэффициент стеснённости. Чертёж L2, ISO9001.");
+    expect(omitUnsourcedPlaces("Коэффициент на листе ЛС, A1. Чертёж L2, ISO9001.", [
+      { id: "c-k", text: "Приказ о коэффициенте стеснённости", page: 1, sourceFile: "смета.xlsx", sheet: "ЛС" },
+    ])).toBe("Коэффициент на листе ЛС. Чертёж L2, ISO9001.");
+    expect(omitUnsourcedPlaces("Стоимость на листе ЛС, N20.", [
+      { id: "c-est", text: "Сметная стоимость", page: 1, sourceFile: "смета.xlsx", sheet: "ЛС", cell: "N20" },
+    ])).toContain("N20");
     const sheetPayload = buildModelNoteUserContent(
       { kind: "local-estimate" },
       [],
