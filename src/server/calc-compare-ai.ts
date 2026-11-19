@@ -142,16 +142,37 @@ export function formatCompareMoney(amount: number): string {
   return `${formatted} руб.`;
 }
 
+function moneyParts(amount: number): { whole: string; frac: string } {
+  const [whole, frac] = Math.abs(amount).toFixed(2).split(".");
+  return { whole: whole ?? "0", frac: frac ?? "00" };
+}
+
 function rewriteTotal(text: string, amount: number, label: string): string {
-  const [whole, frac = ""] = String(Math.abs(amount)).split(".");
+  const { whole, frac } = moneyParts(amount);
   const grouped = whole.replace(/(\d)(?=(\d{3})+$)/g, "$1[\\s\\u00a0\\u202f\\u2009]?");
-  const decimal = frac ? `(?:[.,]${frac})?` : "";
-  const pattern = new RegExp(`(?:[-−–]\\s*)?${grouped}${decimal}(?!\\d)(?:\\s*руб\\.?)?`, "gu");
+  const pattern = new RegExp(`(?<!\\d)(?:[-−–]\\s*)?${grouped}(?:[.,]\\d{1,2})?(?!\\d)(?:\\s*руб\\.?)?`, "gu");
+  const expected = Number(`${whole}.${frac}`);
   return text.replace(pattern, (match) => {
-    const digits = match.replace(/\D/g, "");
-    if (digits !== `${whole}${frac}` && digits !== whole) return match;
+    const bare = match.replace(/\s*руб\.?$/i, "").replace(/^[-−–]\s*/, "").replace(/[\s\u00a0\u202f\u2009]/g, "").replace(",", ".");
+    const value = Number(bare);
+    if (!Number.isFinite(value) || Math.abs(value - expected) > 0.001) return match;
     return label;
   }).replace(/руб\.\./g, "руб.");
+}
+
+function labelStandsAlone(text: string, label: string): boolean {
+  const flat = text.replace(/[\s\u00a0\u202f\u2009]/g, "");
+  const needle = label.replace(/[\s\u00a0\u202f\u2009]/g, "");
+  let from = 0;
+  while (from <= flat.length) {
+    const at = flat.indexOf(needle, from);
+    if (at < 0) return false;
+    const before = flat[at - 1] ?? "";
+    const after = flat[at + needle.length] ?? "";
+    if (!/\d/.test(before) && !/\d/.test(after)) return true;
+    from = at + 1;
+  }
+  return false;
 }
 
 export function ensureCompareSummary(summary: string, deltaTotal: number | null, exclusiveDraft: string[] = [], exclusiveDraftMore = 0): string {
@@ -164,7 +185,7 @@ export function ensureCompareSummary(summary: string, deltaTotal: number | null,
         ? `Черновик дороже сметы заказчика на ${label}, потому что расхождения разобраны ниже.`
         : "Черновик совпадает со сметой заказчика по итогу.";
     text = rewriteTotal(text, deltaTotal, label);
-    const hasLabel = text.replace(/[\s\u00a0\u202f\u2009]/g, "").includes(label.replace(/[\s\u00a0\u202f\u2009]/g, ""));
+    const hasLabel = labelStandsAlone(text, label);
     const startsWithPhrase = /^[A-Za-zА-Яа-яЁё«"]/u.test(text);
     if (!hasLabel) text = startsWithPhrase ? `${lead} ${text}` : lead;
     else if (!startsWithPhrase) {
