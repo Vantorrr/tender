@@ -255,6 +255,42 @@ describe("grounded project analysis", () => {
       },
       estimate,
     ])?.text).toContain("2,5 млн руб.");
+    const unitPrices = [
+      "Цена за единицу 8555,41 руб.",
+      "Цена за м 8555,41 руб.",
+      "Цена за т 8555,41 руб.",
+      "Цена за м3 8555,41 руб.",
+      "Цена за шт 8555,41 руб.",
+      "Цена за п.м. 8555,41 руб.",
+      "Единичная расценка 8555,41 руб.",
+      "Цена договора за единицу 8555,41 руб.",
+    ];
+    for (const text of unitPrices) {
+      expect(costConflictBetween([
+        { fileName: "договор.docx", category: "contract", analysis: { costThousand: null }, citations: [{ id: "c-unit", text }] },
+        estimate,
+      ]), text).toBeNull();
+    }
+    const withTotal = costConflictBetween([
+      {
+        fileName: "договор.docx",
+        category: "contract",
+        analysis: { costThousand: null },
+        citations: [{ id: "c-price", text: "Цена за единицу 8555,41 руб. Цена договора составляет 1 250 000,50 руб." }],
+      },
+      estimate,
+    ]);
+    expect(withTotal?.text).toContain("1 250 000,50 руб.");
+    expect(withTotal?.text).not.toContain("8555,41");
+    expect(costConflictBetween([
+      {
+        fileName: "договор.docx",
+        category: "contract",
+        analysis: { costThousand: null },
+        citations: [{ id: "c-total", text: "Общая стоимость работ составляет 1 250 000,50 руб." }],
+      },
+      estimate,
+    ])?.text).toContain("1 250 000,50 руб.");
   });
 
   it("points a finding at the paragraph that contains the fact", () => {

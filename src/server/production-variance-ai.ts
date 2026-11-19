@@ -22,7 +22,9 @@ const SYSTEM = PRODUCTION_VARIANCE_SYSTEM;
 
 function omitUnstatedFilePlace(text: string): string {
   return text
-    .replace(/местоположение данных в файле не указано в документах\.?/giu, "")
+    .replace(/место в источнике[^.]{0,300}?:\s*не указано в документах\.?/giu, "")
+    .replace(/место в источнике\s*не указано в документах\.?/giu, "")
+    .replace(/местоположение данных[^.]*(?:\.|$)/giu, "")
     .replace(/\s{2,}/g, " ")
     .replace(/\s+([,.;])/g, "$1")
     .trim();

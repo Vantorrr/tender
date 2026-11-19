@@ -219,11 +219,11 @@ describe("grounded numbers", () => {
     expect(result.observations).toHaveLength(1);
     expect(result.summary).toContain("ветра");
     const located = validateProductionVarianceResult(JSON.stringify({
-      summary: "В комментарии указан простой из-за ветра. Местоположение данных в файле не указано в документах.",
+      summary: "В комментарии указан простой из-за ветра. Место в источнике «дневной отчёт», строка 4: не указано в документах. Местоположение данных в файле не указано в документах.",
       observations: [{
         sourceId: "fact-1",
         kind: "documented_reason",
-        text: "Простой длился 4 часа из-за ветра. Местоположение данных в файле не указано в документах",
+        text: "Простой длился 4 часа из-за ветра. Место в источнике комментария: не указано в документах. Местоположение данных в ячейке B2.",
         sourceQuote: "простой 4 часа, сильный ветер",
       }],
     }), [{
@@ -231,8 +231,13 @@ describe("grounded numbers", () => {
       kind: "daily_comment",
       text: "Дата: 2026-11-09; комментарий: простой 4 часа, сильный ветер",
     }]);
-    expect(located.summary).not.toMatch(/местоположение данных в файле/iu);
-    expect(located.observations[0]?.text).not.toMatch(/местоположение данных в файле/iu);
+    expect(located.summary).toContain("ветра");
+    expect(located.summary).not.toMatch(/место в источнике/iu);
+    expect(located.summary).not.toMatch(/местоположение данных/iu);
+    expect(located.summary).not.toMatch(/не указано в документах/iu);
+    expect(located.observations[0]?.text).toContain("ветра");
+    expect(located.observations[0]?.text).not.toMatch(/место в источнике/iu);
+    expect(located.observations[0]?.text).not.toMatch(/местоположение данных/iu);
   });
 });
 

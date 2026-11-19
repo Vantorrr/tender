@@ -313,13 +313,29 @@ export function recommendationAfterConflict(
   return recommendation;
 }
 
-const PRICE_WORD = /(?<![\p{L}\p{N}_])(?:цен(?:а|ы|у|е|ой|ою)|стоимост(?:ь|и|ью)|нмцк)(?![\p{L}\p{N}_])/giu;
+const TOTAL_PRICE = /(?<![\p{L}\p{N}_])(?:(?:цен(?:а|ы|у|е|ой|ою)|стоимост(?:ь|и|ью))\s+(?:[\p{L}-]+\s+){0,3}?(?:договор(?:а|у|ом|е)?|контракт(?:а|у|ом|е)?|работ(?:ы|а|у|е|ой|ою)?)(?![\p{L}\p{N}_])|общ(?:ая|ей|ую)\s+стоимост(?:ь|и|ью)(?![\p{L}\p{N}_])|нмцк(?![\p{L}\p{N}_]))/giu;
+const UNIT_PRICE = /(?<![\p{L}\p{N}_])(?:за\s+единиц[\p{L}-]*|за\s+м\s*(?:3|³|\^3)?(?![\p{L}])|за\s+т(?![\p{L}])|за\s+шт\.?(?![\p{L}])|за\s+п\s*\.?\s*м\.?|единичн(?:ая|ой|ую|ые|ых)\s+расценк[\p{L}-]*)/giu;
 const CURRENCY_AMOUNT = /(\d{1,3}(?:[ \u00a0\u202f]\d{3})+(?:[,.]\d+)?|\d+(?:[,.]\d+)?)(?:\s*(тыс\.?|млн\.?))?\s*(?:руб(?:\.|лей|ля|ль)?|₽)/giu;
 
 type MoneyScale = "ruble" | "thousand" | "million";
 
+function matchSpans(text: string, pattern: RegExp): Array<{ start: number; end: number }> {
+  pattern.lastIndex = 0;
+  return [...text.matchAll(pattern)].map((match) => {
+    const start = match.index ?? 0;
+    return { start, end: start + match[0].length };
+  });
+}
+
+function spanGap(left: { start: number; end: number }, right: { start: number; end: number }): number {
+  if (right.start >= left.end) return right.start - left.end;
+  if (left.start >= right.end) return left.start - right.end;
+  return 0;
+}
+
 function moneyAmounts(text: string): Array<{ number: string; rubles: number; scale: MoneyScale; index: number; end: number }> {
   const found: Array<{ number: string; rubles: number; scale: MoneyScale; index: number; end: number }> = [];
+  CURRENCY_AMOUNT.lastIndex = 0;
   for (const match of text.matchAll(CURRENCY_AMOUNT)) {
     const numeric = Number(match[1]!.replace(/[ \u00a0\u202f]/g, "").replace(",", "."));
     if (!Number.isFinite(numeric)) continue;
@@ -368,18 +384,27 @@ export type CostConflictFinding = {
 function citedPrice(texts: Array<{ id: string; text: string }>): { rubles: number; quote: string; citationId: string; scale: MoneyScale } | null {
   let best: { rubles: number; quote: string; citationId: string; scale: MoneyScale; distance: number } | null = null;
   for (const citation of texts) {
-    const keywords = [...citation.text.matchAll(PRICE_WORD)];
-    if (keywords.length === 0) continue;
+    const totals = matchSpans(citation.text, TOTAL_PRICE);
+    const units = matchSpans(citation.text, UNIT_PRICE);
+    if (totals.length === 0) continue;
     for (const amount of moneyAmounts(citation.text)) {
-      const distance = Math.min(...keywords.map((keyword) => {
-        const start = keyword.index ?? 0;
-        const end = start + keyword[0].length;
-        if (amount.index >= end) return amount.index - end;
-        if (amount.end <= start) return start - amount.end;
-        return 0;
-      }));
-      if (!best || distance < best.distance) {
-        best = { rubles: amount.rubles, quote: citation.text, citationId: citation.id, scale: amount.scale, distance };
+      const amountSpan = { start: amount.index, end: amount.end };
+      let nearestTotal = totals[0]!;
+      let totalDistance = spanGap(nearestTotal, amountSpan);
+      for (const total of totals.slice(1)) {
+        const distance = spanGap(total, amountSpan);
+        if (distance < totalDistance) {
+          nearestTotal = total;
+          totalDistance = distance;
+        }
+      }
+      const unitDistance = units.reduce((nearest, unit) => Math.min(nearest, spanGap(unit, amountSpan)), Number.POSITIVE_INFINITY);
+      const from = Math.min(nearestTotal.start, amount.index);
+      const to = Math.max(nearestTotal.end, amount.index);
+      const unitInside = units.some((unit) => unit.start < to && unit.end > from);
+      if (unitDistance <= totalDistance || unitInside) continue;
+      if (!best || totalDistance < best.distance) {
+        best = { rubles: amount.rubles, quote: citation.text, citationId: citation.id, scale: amount.scale, distance: totalDistance };
       }
     }
   }
