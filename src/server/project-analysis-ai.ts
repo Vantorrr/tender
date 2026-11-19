@@ -173,6 +173,53 @@ function cleanImpact(value: string | undefined, quote: string): string {
   return text.slice(0, 300);
 }
 
+/** Same excerpt, even when two parsers reused an id such as `c-est` or `c-xlsx-1`. */
+export function citationIdentity(citation: Pick<Citation, "sourceFile" | "page" | "text" | "paragraph" | "sheet" | "cell">): string {
+  return [citation.sourceFile, citation.page, citation.paragraph ?? "", citation.sheet ?? "", citation.cell ?? "", citation.text].join("\u0001");
+}
+
+/**
+ * Citations for one file come from that file's own objects.
+ * Matching by id copies a second estimate into the first file, because parsers
+ * restart ids on every document. The prompt id stays unique so the model and
+ * the quote check can tell the two files apart.
+ */
+export function packDocumentCitations<T extends { id: string; citations: Citation[] }>(
+  documents: T[],
+  selected: Citation[],
+  perDocument: number
+): {
+  byDocument: Map<string, Array<Citation & { promptId: string }>>;
+  byPromptId: Map<string, Citation>;
+} {
+  const selectedObjects = new Set(selected);
+  const selectedOrder = new Map<string, number>();
+  selected.forEach((citation, index) => {
+    const key = citationIdentity(citation);
+    if (!selectedOrder.has(key)) selectedOrder.set(key, index);
+  });
+  const byDocument = new Map<string, Array<Citation & { promptId: string }>>();
+  const byPromptId = new Map<string, Citation>();
+  for (const document of documents) {
+    const packed = document.citations
+      .map((citation, index) => ({ citation, index }))
+      .filter(({ citation }) => selectedObjects.has(citation) || selectedOrder.has(citationIdentity(citation)))
+      .sort((left, right) => {
+        const leftAt = selectedObjects.has(left.citation) ? selected.indexOf(left.citation) : selectedOrder.get(citationIdentity(left.citation)) ?? Number.MAX_SAFE_INTEGER;
+        const rightAt = selectedObjects.has(right.citation) ? selected.indexOf(right.citation) : selectedOrder.get(citationIdentity(right.citation)) ?? Number.MAX_SAFE_INTEGER;
+        return leftAt - rightAt;
+      })
+      .slice(0, perDocument)
+      .map(({ citation, index }) => {
+        const promptId = `${document.id}:${index}:${citation.id}`;
+        byPromptId.set(promptId, citation);
+        return { ...citation, promptId };
+      });
+    byDocument.set(document.id, packed);
+  }
+  return { byDocument, byPromptId };
+}
+
 export function citationForModel(citation: Pick<Citation, "id" | "text" | "page" | "sourceFile" | "paragraph" | "sheet" | "cell" | "confidence">) {
   return {
     id: citation.id,
@@ -263,16 +310,13 @@ export async function analyzeProjectPackageWithModel(
   const packageDocuments = documents.filter((document) => document.procurementId === procurement.id);
   const packageRegion = procurement.region.trim() || packageDocuments.map((document) => document.analysis?.region.trim()).find(Boolean) || regionFromCitations(deterministic.citations) || "не указан";
   const packageDeadline = formatDeadlineForBrief(procurement.deadline.trim() || submissionDeadlineFromCitations(deterministic.citations) || "не найден в загруженных документах");
-  const citationsById = new Map(deterministic.citations.map((citation) => [citation.id, citation]));
   const selectedPackageCitations = selectAnalysisCitations(deterministic.citations, PROJECT_ANALYSIS_CITATION_LIMIT);
-  const documentCitations = new Map(packageDocuments.map((document) => {
-    const ownIds = new Set(document.citations.map((citation) => citation.id));
-    return [
-      document.id,
-      selectedPackageCitations.filter((citation) => ownIds.has(citation.id)).slice(0, PROJECT_ANALYSIS_CITATIONS_PER_DOCUMENT),
-    ] as const;
-  }));
-  const visibleCitationIds = new Set([...documentCitations.values()].flatMap((citations) => citations.map(({ id }) => id)));
+  const { byDocument: documentCitations, byPromptId } = packDocumentCitations(
+    packageDocuments,
+    selectedPackageCitations,
+    PROJECT_ANALYSIS_CITATIONS_PER_DOCUMENT
+  );
+  const visibleCitationIds = new Set(byPromptId.keys());
   const inputs = {
     procurement: {
       number: procurement.number,
@@ -323,16 +367,17 @@ export async function analyzeProjectPackageWithModel(
       extractionErrors: document.extractionErrors ?? [],
       highlights: document.highlights.slice(0, PROJECT_ANALYSIS_HIGHLIGHTS).map(({ text, reason, severity, page }) => ({ text, reason, severity, page, location: formatSourceLocation({ sourceFile: document.fileName, page }) })),
       estimatePositions: (document.estimatePositions ?? []).slice(0, PROJECT_ANALYSIS_POSITIONS),
-      citations: (documentCitations.get(document.id) ?? []).map((citation) => citationForModel(citation)),
+      citations: (documentCitations.get(document.id) ?? []).map((citation) => citationForModel({ ...citation, id: citation.promptId })),
     })),
     citationBudget: { available: deterministic.citations.length, sentToModel: selectedPackageCitations.length },
   };
 
   const result = parseProjectAnalysisResult(await completeJson(SYSTEM, JSON.stringify(inputs)));
-  const { accepted, rejected } = validateProjectEvidence(result, deterministic.citations, visibleCitationIds);
+  const promptCitations = [...byPromptId.entries()].map(([promptId, citation]) => ({ ...citation, id: promptId }));
+  const { accepted, rejected } = validateProjectEvidence(result, promptCitations, visibleCitationIds);
   const evidence = accepted.map((item) => {
     const sources = item.citationIds.flatMap((id) => {
-      const citation = citationsById.get(id);
+      const citation = byPromptId.get(id);
       if (!citation) return [];
       const location = citation.sheet
         ? `лист ${citation.sheet}${citation.cell ? `, ${citation.cell}` : ""}`
@@ -363,7 +408,7 @@ export async function analyzeProjectPackageWithModel(
   ];
   const fallbackEvidence = requiredTopicFallbacks.flatMap(({ topic, pattern, text }) => {
     if (accepted.some((item) => TOPIC_LABELS[item.topic] === topic)) return [];
-    const citation = deterministic.citations.find(({ id, text: citationText }) =>
+    const citation = promptCitations.find(({ id, text: citationText }) =>
       visibleCitationIds.has(id) && pattern.test(citationText)
     );
     if (!citation) return [];
@@ -380,7 +425,7 @@ export async function analyzeProjectPackageWithModel(
   const companyGaps = companyAnalysisMissingInputs(company);
   const missingInputs = [...new Set([...deterministic.missingInputs, ...economicMissingInputs(economics), ...companyGaps])].slice(0, 40);
   const hasCriticalEvidence = accepted.some((item) => item.importance === "critical" || item.citationIds.some((id) => {
-    const citation = citationsById.get(id);
+    const citation = byPromptId.get(id);
     return packageDocuments.some((document) => document.highlights.some((highlight) =>
       highlight.severity === "critical" && citation && normalizeSourceText(highlight.text) === normalizeSourceText(citation.text)
     ));
@@ -453,14 +498,14 @@ export async function analyzeProjectPackageWithModel(
       importance: importance as NonNullable<ProjectAnalytics["findings"]>[number]["importance"],
       text,
       quote,
-      citationIds,
+      citationIds: citationIds.map((id) => byPromptId.get(id)?.id ?? id),
       sourceFiles,
       costImpact,
       scheduleImpact,
     })),
     customerQuestions: sanitizeCustomerQuestions(
       result.customerQuestions,
-      [...visibleCitationIds].map((id) => citationsById.get(id)?.text ?? "").join("\n")
+      [...visibleCitationIds].map((id) => byPromptId.get(id)?.text ?? "").join("\n")
     ),
     generatedAt: new Date().toISOString(),
       method: "разбор пакета по цитатам документов",

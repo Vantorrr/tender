@@ -4,6 +4,7 @@ import {
   parseProjectAnalysisResult,
   validateProjectEvidence,
   selectAnalysisCitations,
+  packDocumentCitations,
   economicMissingInputs,
   companyAnalysisMissingInputs,
   buildProjectAnalysisFallback,
@@ -30,6 +31,22 @@ describe("grounded project analysis", () => {
     expect(selected.map((item) => item.id)).toContain("payment");
     expect(selected.map((item) => item.id)).toContain("penalty");
     expect(new Set(selected.map((item) => item.id)).size).toBe(selected.length);
+  });
+
+  it("keeps each file's own excerpt when parsers reuse the same citation id", () => {
+    const first = { id: "c-est", text: "Смета бурения, зона 5.", page: 1, sourceFile: "бурение.xlsx" };
+    const second = { id: "c-est", text: "Смета демонтажа, зона 5.", page: 1, sourceFile: "демонтаж.xlsx" };
+    const packed = packDocumentCitations([
+      { id: "doc-a", citations: [first, { id: "c-xlsx-1", text: "Бурение скважин 16 шт.", page: 1, sourceFile: "бурение.xlsx", sheet: "ЛС", cell: "A12" }] },
+      { id: "doc-b", citations: [second, { id: "c-xlsx-1", text: "Демонтаж опоры 2 шт.", page: 1, sourceFile: "демонтаж.xlsx", sheet: "ЛС", cell: "A4" }] },
+    ], [first, second], 40);
+    const left = packed.byDocument.get("doc-a") ?? [];
+    const right = packed.byDocument.get("doc-b") ?? [];
+    expect(left.map((item) => item.text)).toEqual(["Смета бурения, зона 5."]);
+    expect(right.map((item) => item.text)).toEqual(["Смета демонтажа, зона 5."]);
+    expect(new Set([...left, ...right].map((item) => item.promptId)).size).toBe(2);
+    expect(packed.byPromptId.get(left[0]!.promptId)?.sourceFile).toBe("бурение.xlsx");
+    expect(packed.byPromptId.get(right[0]!.promptId)?.sourceFile).toBe("демонтаж.xlsx");
   });
 
   it("explains actual missing calculation inputs using resource names", () => {

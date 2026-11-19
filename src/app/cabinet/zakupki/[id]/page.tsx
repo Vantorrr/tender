@@ -1246,7 +1246,13 @@ export default function ZakupkaDetailPage() {
                     </div>
                     <ul className="space-y-2">
                       {analytics.findings.map((finding, index) => {
-                        const source = analytics.citations.find((citation) => finding.citationIds.includes(citation.id));
+                        const quote = finding.quote?.replace(/\s+/g, " ").trim();
+                        const sameFile = (citation: { id: string; sourceFile: string; text: string }) =>
+                          finding.citationIds.includes(citation.id) &&
+                          (!finding.sourceFiles?.length || finding.sourceFiles.includes(citation.sourceFile));
+                        const source = analytics.citations.find((citation) =>
+                          sameFile(citation) && quote && citation.text.replace(/\s+/g, " ").includes(quote)
+                        ) ?? analytics.citations.find((citation) => sameFile(citation));
                         const importanceLabel = ANALYSIS_IMPORTANCE_LABELS[finding.importance] ?? "К сведению";
                         return (
                           <li key={`${finding.topic}-${index}`} className="rounded-lg border border-[var(--tk-line)] px-3 py-3">

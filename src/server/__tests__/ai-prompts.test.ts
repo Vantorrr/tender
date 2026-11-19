@@ -76,6 +76,9 @@ describe("grounded numbers", () => {
     expect(numbersAreGrounded("ставка 100", "Ставка заказчика: 100; Ставка черновика: 120")).toBe(true);
     expect(numbersAreGrounded("разница 20", "Ставка заказчика: 100; Ставка черновика: 120")).toBe(false);
     expect(numbersAreGrounded("без чисел", "120")).toBe(true);
+    expect(numbersAreGrounded("итого 120", "Итого 120. Проверьте остаток.")).toBe(true);
+    expect(numbersAreGrounded("итого 120", "Значение 120.5.")).toBe(false);
+    expect(numbersAreGrounded("штраф 0,5", "Штраф 0.5.")).toBe(true);
   });
 
   it("keeps a comparison finding whose numbers are in the row and drops an invented one", () => {
