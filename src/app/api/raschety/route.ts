@@ -4,9 +4,10 @@ import {
   recalcCalculation,
   recomputeCalculationCost,
   updateCalculation,
+  updateLinkedResourcesFromCalculation,
 } from "@/server/repo";
 import { withSection, json } from "@/server/http";
-import type { Calculation } from "@/lib/types";
+import type { Calculation, GprStage } from "@/lib/types";
 import { analyzeCalculationComparisonWithAI } from "@/server/calc-compare-ai";
 
 export async function GET(req: Request) {
@@ -29,6 +30,7 @@ export async function PATCH(req: Request) {
         quantity?: number;
         rateKey?: string;
       };
+      linkedResources?: { stages: GprStage[] };
     };
     if (!body.id) return json({ error: "Не указан id" }, 400);
     try {
@@ -38,16 +40,17 @@ export async function PATCH(req: Request) {
         recomputeCalculationCost(user.id, body.id, body.costPatch);
       } else if (body.addFromDirectory) {
         addCalcPositionFromDirectory(user.id, body.id, body.addFromDirectory);
+      } else if (body.linkedResources) {
+        updateLinkedResourcesFromCalculation(user.id, body.id, body.linkedResources.stages);
       } else if (body.patch) {
         updateCalculation(user.id, body.id, body.patch);
       } else {
         return json({ error: "Нет изменений" }, 400);
       }
     } catch (e) {
-      return json(
-        { error: e instanceof Error ? e.message : "Ошибка расчёта" },
-        400
-      );
+      const message = e instanceof Error ? e.message : "Ошибка расчёта";
+      if (message.includes("Недостаточно прав") || message.startsWith("Нет доступа") || message.includes("Удалять закупку")) throw e;
+      return json({ error: message }, 400);
     }
     return json(getBootstrap(user));
   });

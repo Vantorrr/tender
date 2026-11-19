@@ -16,6 +16,7 @@ import type {
   Calculation,
   DocumentItem,
   GprSchedule,
+  GprStage,
   GprStageResource,
   MoneyPlan,
   NotificationItem,
@@ -97,6 +98,7 @@ interface StoreContextValue {
     category?: string;
   }) => Promise<string | undefined>;
   updateSchedule: (id: string, patch: Partial<GprSchedule>) => Promise<void>;
+  saveCalculationResources: (calculationId: string, stages: GprStage[]) => Promise<void>;
   patchScheduleResource: (
     scheduleId: string,
     input: {
@@ -506,6 +508,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [applyBoot]
   );
 
+  const saveCalculationResources = useCallback(
+    async (calculationId: string, stages: GprStage[]) => {
+      const boot = await api<BootstrapResponse>("/api/raschety", {
+        method: "PATCH",
+        body: JSON.stringify({ id: calculationId, linkedResources: { stages } }),
+      });
+      applyBoot(boot);
+    },
+    [applyBoot]
+  );
+
   const patchScheduleResource = useCallback(
     async (
       scheduleId: string,
@@ -759,6 +772,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     reanalyzeDocument,
     createDocumentUpload,
     updateSchedule,
+    saveCalculationResources,
     patchScheduleResource,
     updateMoney,
     updateRisk,

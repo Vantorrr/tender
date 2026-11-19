@@ -340,7 +340,7 @@ export default function RaschetDetailPage() {
     data,
     user,
     updateCalculation,
-    updateSchedule,
+    saveCalculationResources,
     recalcCalculation,
     addCalcFromDirectory,
     refresh,
@@ -527,13 +527,11 @@ export default function RaschetDetailPage() {
         if (members.length === 0) return;
         const updated = patch.remove ? [] : patchMergedResources(members, leaf, patch);
         const targetStageId = patch.moveToStageId ?? leaf.stageId;
-        await updateSchedule(linkedSchedule.id, {
-          stages: linkedSchedule.stages.map((stage) => {
-            const without = (stage.resources ?? []).filter((item) => !memberIds.has(item.id));
-            if (updated.length > 0 && stage.id === targetStageId) return { ...stage, resources: [...without, ...updated] };
-            return { ...stage, resources: without };
-          }),
-        });
+        await saveCalculationResources(calc!.id, linkedSchedule.stages.map((stage) => {
+          const without = (stage.resources ?? []).filter((item) => !memberIds.has(item.id));
+          if (updated.length > 0 && stage.id === targetStageId) return { ...stage, resources: [...without, ...updated] };
+          return { ...stage, resources: without };
+        }));
         return;
       }
       if (leaf.source === "calc_position" && leaf.positionId) {
@@ -1044,22 +1042,20 @@ export default function RaschetDetailPage() {
           }}
           onAddManualResources={async (stageId, resources) => {
             if (!linkedSchedule || locked) return;
-            await updateSchedule(linkedSchedule.id, {
-              stages: linkedSchedule.stages.map((stage) =>
-                stage.id === stageId
-                  ? {
-                      ...stage,
-                      resources: [
-                        ...(stage.resources ?? []),
-                        ...resources.map((resource) => ({
-                          ...resource,
-                          id: `gprr-${crypto.randomUUID()}`,
-                        })),
-                      ],
-                    }
-                  : stage
-              ),
-            });
+            await saveCalculationResources(calc.id, linkedSchedule.stages.map((stage) =>
+              stage.id === stageId
+                ? {
+                    ...stage,
+                    resources: [
+                      ...(stage.resources ?? []),
+                      ...resources.map((resource) => ({
+                        ...resource,
+                        id: `gprr-${crypto.randomUUID()}`,
+                      })),
+                    ],
+                  }
+                : stage
+            ));
           }}
           onOpenSchedule={linkedSchedule ? () => router.push(`/cabinet/gpr/${linkedSchedule.id}`) : undefined}
           onExport={exportExcelLike}

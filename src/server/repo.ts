@@ -1300,6 +1300,77 @@ export function updateSchedule(
   });
 }
 
+function stagePlanKey(stage: GprStage) {
+  return JSON.stringify({
+    id: stage.id,
+    name: stage.name,
+    workName: stage.workName ?? null,
+    workNames: stage.workNames ?? [],
+    start: stage.start,
+    end: stage.end,
+    sequence: stage.sequence,
+    dependsOn: stage.dependsOn ?? null,
+    dependencyType: stage.dependencyType ?? null,
+    lagDays: stage.lagDays ?? null,
+    planVolume: stage.planVolume ?? null,
+    planUnit: stage.planUnit ?? null,
+  });
+}
+
+/** Resource edits from a calculation. Stage structure still requires the GPR section. */
+export function updateLinkedResourcesFromCalculation(
+  actorId: string,
+  calculationId: string,
+  stages: GprStage[],
+) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    assertSection(actor, "raschety");
+    const calc = data.calculations.find((item) => item.id === calculationId);
+    if (!calc) throw new Error("Расчёт не найден");
+    assertOrgAccess(actor, calc.orgId, "расчёта");
+    assertEditableCalculation(calc);
+    const procurement = data.procurements.find((item) => item.id === calc.procurementId);
+    const schedule = data.schedules.find((item) => item.calculationId === calc.id)
+      ?? data.schedules.find((item) => item.id === procurement?.gprId);
+    if (!schedule) throw new Error("ГПР не найден");
+    assertOrgAccess(actor, schedule.orgId, "ГПР");
+    const incomingById = new Map(stages.map((stage) => [stage.id, stage]));
+    if (
+      stages.length !== schedule.stages.length
+      || schedule.stages.some((stage) => {
+        const incoming = incomingById.get(stage.id);
+        return !incoming || stagePlanKey(stage) !== stagePlanKey(incoming);
+      })
+    ) {
+      throw new Error("Для изменения этапов нужен раздел «ГПР»");
+    }
+    const physicalPlanSignature = (items: GprStage[]) => JSON.stringify(items.map((stage) => ({
+      name: stage.name,
+      workName: stage.workName,
+      workNames: stage.workNames,
+      planVolume: stage.planVolume,
+      planUnit: stage.planUnit,
+    })));
+    const previousPhysicalPlan = physicalPlanSignature(schedule.stages);
+    const nextStages = schedule.stages.map((stage) => ({
+      ...stage,
+      resources: incomingById.get(stage.id)?.resources ?? stage.resources,
+    }));
+    schedule.stages = linkEstimateWorksToStages(nextStages, calc.positions ?? []);
+    schedule.updatedAt = new Date().toISOString();
+    if (isResourceLinkedDraft(calc) && scheduleHasPopulatedResources(schedule.stages)) {
+      const synced = syncDraftFromStages(calc, schedule.stages, { replacePositions: true });
+      Object.assign(calc, synced.calc);
+    }
+    if (previousPhysicalPlan !== physicalPlanSignature(schedule.stages)) {
+      syncProductionPlanFromSchedule(data, schedule);
+    }
+    audit(data, actorId, "update", "calculation", calculationId, "Ресурсы расчёта синхронизированы с графиком");
+    return data;
+  });
+}
+
 /**
  * Edit one stage resource (qty/rate) and recompute the linked resource draft
  * from the unified tree → positions + V/W/X/Y/Z costSummary.
@@ -1405,7 +1476,10 @@ export function updateMoney(
     void _o;
     void _i;
     if (safe.payments) {
+      const previous = new Map(item.payments.map((payment) => [payment.id, payment]));
       for (const payment of safe.payments) {
+        const prior = payment.id ? previous.get(payment.id) : undefined;
+        if (prior && prior.amount === payment.amount) continue;
         const amountError = paymentAmountError(payment.amount);
         if (amountError) throw new Error(amountError);
       }

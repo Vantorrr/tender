@@ -107,7 +107,8 @@ export function handleRouteError(e: unknown, fallback = "Ошибка серве
     else if (
       message.startsWith("Нет доступа") ||
       message.includes("другой организации") ||
-      message.includes("Недостаточно прав")
+      message.includes("Недостаточно прав") ||
+      message.includes("Удалять закупку")
     )
       status = 403;
     else if (message.includes("не найден") || message.includes("не найдена"))

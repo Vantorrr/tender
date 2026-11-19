@@ -16,6 +16,7 @@ import {
   deleteGprStage,
   deleteProcurement,
   updateDocument,
+  updateMoney,
 } from "@/server/repo";
 import { deleteUpload, resolveUploadPath, saveUpload } from "@/server/uploads";
 import { config } from "@/server/config";
@@ -232,6 +233,95 @@ describe("client wave 1 server", () => {
     const after = readAppData().schedules.find((item) => item.id === "g-1")!;
     expect(after.stages.some((item) => item.id === "gs-2")).toBe(true);
     expect(after.title).toBe(before.title);
+  });
+
+  it("lets a calculation editor change resources and still blocks GPR stage edits", async () => {
+    const { PATCH: patchCalc } = await import("@/app/api/raschety/route");
+    const { PATCH: patchGpr } = await import("@/app/api/gpr/route");
+    const headersFor = (userId: string) => ({
+      authorization: `Bearer ${createSession(userId)}`,
+      "content-type": "application/json",
+    });
+    const schedule = readAppData().schedules.find((item) => item.id === "g-1")!;
+    const withBrick = schedule.stages.map((stage) => stage.id === "gs-2"
+      ? { ...stage, resources: [{ id: "res-tender", kind: "material" as const, name: "Кирпич", unit: "шт", quantity: 4, rate: 10 }] }
+      : stage);
+    const saved = await patchCalc(new Request("http://local/api/raschety", {
+      method: "PATCH",
+      headers: headersFor("u-tender"),
+      body: JSON.stringify({ id: "c-1", linkedResources: { stages: withBrick } }),
+    }));
+    expect(saved.status).toBe(200);
+    const added = readAppData().schedules.find((item) => item.id === "g-1")!;
+    expect(added.stages.find((stage) => stage.id === "gs-2")?.resources?.[0]?.rate).toBe(10);
+    const rated = added.stages.map((stage) => stage.id === "gs-2"
+      ? { ...stage, resources: (stage.resources ?? []).map((resource) => ({ ...resource, rate: 15 })) }
+      : stage);
+    const rerate = await patchCalc(new Request("http://local/api/raschety", {
+      method: "PATCH",
+      headers: headersFor("u-tender"),
+      body: JSON.stringify({ id: "c-1", linkedResources: { stages: rated } }),
+    }));
+    expect(rerate.status).toBe(200);
+    const afterRate = readAppData().schedules.find((item) => item.id === "g-1")!;
+    const removed = afterRate.stages.map((stage) => stage.id === "gs-2" ? { ...stage, resources: [] } : stage);
+    const drop = await patchCalc(new Request("http://local/api/raschety", {
+      method: "PATCH",
+      headers: headersFor("u-tender"),
+      body: JSON.stringify({ id: "c-1", linkedResources: { stages: removed } }),
+    }));
+    expect(drop.status).toBe(200);
+    const afterResources = readAppData().schedules.find((item) => item.id === "g-1")!;
+    expect(afterResources.stages.find((stage) => stage.id === "gs-2")?.resources ?? []).toEqual([]);
+    expect(afterResources.stages.some((stage) => stage.id === "gs-2")).toBe(true);
+    const denied = await patchGpr(new Request("http://local/api/gpr", {
+      method: "PATCH",
+      headers: headersFor("u-tender"),
+      body: JSON.stringify({ id: "g-1", action: "deleteStage", stageId: "gs-2" }),
+    }));
+    expect(denied.status).toBe(403);
+    expect(readAppData().schedules.find((item) => item.id === "g-1")!.stages.some((stage) => stage.id === "gs-2")).toBe(true);
+    const otherOrg = await patchCalc(new Request("http://local/api/raschety", {
+      method: "PATCH",
+      headers: headersFor("u-beta-tender"),
+      body: JSON.stringify({ id: "c-1", linkedResources: { stages: withBrick } }),
+    }));
+    expect(otherOrg.status).toBe(403);
+  });
+
+  it("returns 403 when a tender specialist tries to delete a procurement", async () => {
+    const created = createManualProcurement("u-ruk", { title: "Не его удаление", region: "Ямал" });
+    const { POST } = await import("@/app/api/zakupki/route");
+    const response = await POST(new Request("http://local/api/zakupki", {
+      method: "POST",
+      headers: { authorization: `Bearer ${createSession("u-tender")}`, "content-type": "application/json" },
+      body: JSON.stringify({ action: "deleteProcurement", id: created.id }),
+    }));
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "Удалять закупку могут руководитель и администратор",
+    });
+    expect(readAppData().procurements.some((item) => item.id === created.id)).toBe(true);
+  });
+
+  it("keeps a legacy zero payment while another payment is deleted", () => {
+    const plan = readAppData().moneyPlans[0];
+    mutateAppData((data) => {
+      const item = data.moneyPlans.find((row) => row.id === plan.id)!;
+      item.payments.push(
+        { id: "pay-legacy-0", type: "avans", title: "Старый ноль", amount: 0, date: "2026-01-01", week: 1, month: 1 },
+        { id: "pay-drop", type: "postuplenie", title: "Убрать", amount: 80, date: "2026-02-01", week: 5, month: 2 },
+      );
+      return data;
+    });
+    const current = readAppData().moneyPlans.find((item) => item.id === plan.id)!;
+    updateMoney("u-smet", plan.id, { payments: current.payments.filter((payment) => payment.id !== "pay-drop") });
+    const saved = readAppData().moneyPlans.find((item) => item.id === plan.id)!;
+    expect(saved.payments.some((payment) => payment.id === "pay-legacy-0" && payment.amount === 0)).toBe(true);
+    expect(saved.payments.some((payment) => payment.id === "pay-drop")).toBe(false);
+    expect(() => updateMoney("u-smet", plan.id, {
+      payments: saved.payments.map((payment) => payment.id === "pay-legacy-0" ? payment : { ...payment, amount: 0 }),
+    })).toThrow(/больше нуля/);
   });
 
   it("rejects a payment amount of zero or an invalid number", () => {
