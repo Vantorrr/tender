@@ -106,6 +106,13 @@ export type WorkType = (typeof WORK_TYPES)[number];
 
 export const REGION_PRESETS = ["Норильск", "Ямал"] as const;
 
+/** Manual procurements keep an internal number. People see a plain label. */
+export function visibleProcurementNumber(input: { number?: string | null; source?: string | null }): string {
+  const number = input.number?.trim() ?? "";
+  if (input.source === "manual" || /^РУЧНАЯ-/iu.test(number)) return "Ручная закупка";
+  return number;
+}
+
 export function procurementBoardLabel(input: {
   reviewStatus: ReviewStatus;
   lifecycle?: string;

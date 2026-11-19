@@ -31,6 +31,8 @@ import { parseDecimalRu } from "@/lib/decimal-ru";
 import { PAYMENT_AMOUNT_ERROR, PAYMENT_BUCKET_LABELS, paymentBucket, paymentTotals, type PaymentBucket } from "@/lib/money-payments";
 import { userHasSection } from "@/lib/acl";
 import { plainExchangeTitle } from "@/lib/exchange-label";
+import { gprStageLabel } from "@/lib/gpr-stage-label";
+import { visibleProcurementNumber } from "@/lib/pipeline";
 import { STATUS_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
 import type { Citation, DocumentCategory, ReviewStatus, SupplyRequest, SupplyStatus, SupplierDirectoryEntry, OrganizationCompanyCard } from "@/lib/types";
 import type { SupplierSearchCandidate } from "@/server/supplier-discovery";
@@ -673,7 +675,7 @@ export default function ZakupkaDetailPage() {
     <div>
       <PageHeader
         title={procurement.title}
-        description={`${procurement.number} · ${procurement.customer}`}
+        description={`${visibleProcurementNumber(procurement)} · ${procurement.customer}`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" onClick={() => router.push("/cabinet/zakupki")}>Назад</Button>
@@ -1019,7 +1021,7 @@ export default function ZakupkaDetailPage() {
                 </h2>
                 <ol className="mt-3 space-y-2" aria-label="Этапы проекта">
                   {[
-                    { label: "Заявка", detail: `${procurement.number} · ${docs.length} док.`, ready: true, href: `/cabinet/zakupki/${procurement.id}` },
+                    { label: "Заявка", detail: `${visibleProcurementNumber(procurement)} · ${docs.length} док.`, ready: true, href: `/cabinet/zakupki/${procurement.id}` },
                     { label: "Расчёт", detail: calc?.title ?? "Черновик ещё не создан", ready: Boolean(calc), href: calc ? `/cabinet/raschety/${calc.id}` : undefined },
                     { label: "ГПР", detail: gpr ? `${gpr.stages.length} этапов · версия ${gpr.version}` : "График ещё не создан", ready: Boolean(gpr), href: gpr && canGpr ? `/cabinet/gpr/${gpr.id}` : undefined },
                     { label: "Производство", detail: procurement.lifecycle === "production" ? "Контракт передан в производство" : "Ожидает отметки о победе", ready: procurement.lifecycle === "production", href: procurement.planFactId && canProduction ? `/cabinet/proizvodstvo?planFactId=${encodeURIComponent(procurement.planFactId)}` : undefined },
@@ -1514,7 +1516,7 @@ export default function ZakupkaDetailPage() {
                 <ul className="mt-3 space-y-2">
                   {gpr.stages.map((s) => (
                     <li key={s.id} className="rounded-lg border px-3 py-2">
-                      <div className="font-medium">{s.name}</div>
+                      <div className="font-medium" title={gprStageLabel(s).title}>{gprStageLabel(s).text}</div>
                       <div className="text-xs text-[var(--tk-muted)]">
                         {s.start} → {s.end}
                         {s.dependsOn ? ` · зависит от ${s.dependsOn}` : ""}

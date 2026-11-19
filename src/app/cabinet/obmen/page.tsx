@@ -148,7 +148,7 @@ export default function ObmenPage() {
             Последний результат обмена
           </h2>
           <p className="mt-2 text-sm">
-            {plainExchangeTitle(data.smetaExchanges[0].name)} · позиций{" "}
+            {plainExchangeTitle(data.smetaExchanges[0].name)} · распознано строк в файле{" "}
             {data.smetaExchanges[0].positionsMapped} · расхождений{" "}
             {data.smetaExchanges[0].discrepancies.length} ·{" "}
             {data.smetaExchanges[0].confirmed ? "подтверждено" : "черновик"} ·{" "}
@@ -186,7 +186,7 @@ export default function ObmenPage() {
           <TableHeader>
             <TableRow>
               <TableHead>Название</TableHead>
-              <TableHead>Позиций</TableHead>
+              <TableHead>Строк в файле</TableHead>
               <TableHead>Расхождения</TableHead>
               <TableHead>Статус</TableHead>
               <TableHead>Когда</TableHead>

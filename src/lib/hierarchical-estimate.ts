@@ -256,13 +256,16 @@ export function buildHierarchicalEstimate(opts: {
     }
     for (const p of opts.positions ?? []) {
       const parentWorkCode = /^(?:ЕНИР|ФЕР|ТЕР|ГЭСН)(?:М)?/iu.test(p.code.trim());
+      const positionSection = normalizeStageLabel(p.sourceSectionName);
+      const stageSection = normalizeStageLabel(st.sectionName);
       const positionLabels = [p.sourceStageName, p.sourceWorkName, p.sourceSectionName]
         .map(normalizeStageLabel)
         .filter(Boolean);
       const stageLabels = [st.name, st.workName, st.sectionName]
         .map(normalizeStageLabel)
         .filter(Boolean);
-      const belongsToStage = positionLabels.some((positionLabel) =>
+      const sameSection = !positionSection || !stageSection || labelsMatch(positionSection, stageSection);
+      const belongsToStage = sameSection && positionLabels.some((positionLabel) =>
         stageLabels.some((stageLabel) => labelsMatch(positionLabel, stageLabel))
       );
       if (

@@ -9,10 +9,10 @@ import { quantityPresentation } from "@/lib/format";
 import { rowDeleteConfirmed } from "@/lib/row-delete";
 import { paymentAmountError, paymentBucket, paymentTotals } from "@/lib/money-payments";
 import { gprStageLabel } from "@/lib/gpr-stage-label";
-import { displayedKanbanColumn, procurementBoardLabel } from "@/lib/pipeline";
+import { displayedKanbanColumn, procurementBoardLabel, visibleProcurementNumber } from "@/lib/pipeline";
 import { REVIEW_LABELS } from "@/lib/roles";
 import { patchMergedResources } from "@/lib/resource-merge";
-import type { GprStage } from "@/lib/types";
+import type { CalcPosition, GprStage } from "@/lib/types";
 
 describe("client wave 1 wording and money", () => {
   it("turns issue codes into Russian and hides raw ids", () => {
@@ -145,6 +145,42 @@ describe("client wave 1 wording and money", () => {
     expect(plainExchangeTitle("Смета заказчика · смета.xlsx · РУЧНАЯ-20261119-abc · p-manual-1")).toBe(
       "Смета заказчика · смета.xlsx",
     );
+  });
+
+  it("nests each estimate section under its own stage", () => {
+    const work = "Бурение скважин диаметром 450 мм вращательным способом";
+    const stages: GprStage[] = [1, 3, 4].map((n, index) => ({
+      id: `s${n}`,
+      name: work,
+      workName: work,
+      sectionName: n === 1 ? "Раздел 1. Опоры П-12" : n === 3 ? "Раздел 3. Опоры П-2к" : "Раздел 4. Защитные конструкции",
+      sequence: index + 1,
+      start: "2026-01-01",
+      end: "2026-01-02",
+      resources: [],
+    }));
+    const positions: CalcPosition[] = [
+      { id: "p3", code: "ФССЦ-1", name: "Долото", unit: "шт", quantity: 16.632, rate: 1, sourceSectionName: "Раздел 3. Опоры П-2к", sourceWorkName: work },
+      { id: "p4", code: "ФССЦ-1", name: "Долото", unit: "шт", quantity: 0.7392, rate: 1, sourceSectionName: "Раздел 4. Защитные конструкции", sourceWorkName: work },
+    ];
+    const nodes = buildHierarchicalEstimate({ stages, positions });
+    const ids = (id: string) => {
+      const node = nodes.find((item) => item.id === id)!;
+      return [
+        ...node.groups.flatMap((group) => group.leaves.map((leaf) => leaf.id)),
+        ...node.works.flatMap((item) => item.groups.flatMap((group) => group.leaves.map((leaf) => leaf.id))),
+        ...node.unassignedGroups.flatMap((group) => group.leaves.map((leaf) => leaf.id)),
+        ...node.works.map((item) => item.name),
+      ];
+    };
+    expect(ids("s1").join(" ")).not.toMatch(/p3|p4|Раздел 3|Раздел 4/);
+    expect(ids("s3")).toContain("p3");
+    expect(ids("s4")).toContain("p4");
+  });
+
+  it("hides a generated manual procurement number", () => {
+    expect(visibleProcurementNumber({ number: "РУЧНАЯ-20261119-38b63b", source: "manual" })).toBe("Ручная закупка");
+    expect(visibleProcurementNumber({ number: "0373100012" })).toBe("0373100012");
   });
 
   it("gives identical works distinct stage names by section number", () => {

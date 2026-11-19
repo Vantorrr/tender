@@ -396,7 +396,7 @@ export default function ZakupkiPage() {
                       {formatMoney(p.nmck)}
                     </div>
                     <div className="mt-1 text-[11px] text-[var(--tk-muted)]">
-                      до {formatDate(p.deadline)}
+                      {p.deadline?.trim() ? `до ${formatDate(p.deadline)}` : "срок не указан"}
                       {p.calculationId ? " · есть расчёт" : ""}
                     </div>
                   </div>

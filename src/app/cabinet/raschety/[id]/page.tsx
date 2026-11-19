@@ -32,6 +32,7 @@ import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engin
 import { parseDecimalRu } from "@/lib/decimal-ru";
 import { patchMergedResources } from "@/lib/resource-merge";
 import { formatMoney, formatNumber, quantityPresentation } from "@/lib/format";
+import { visibleProcurementNumber } from "@/lib/pipeline";
 import { rowDeleteConfirmed } from "@/lib/row-delete";
 import { humanizeIssues } from "@/lib/issue-text";
 import type { Calculation, GprStageResource, ResourceQuantityBasis } from "@/lib/types";
@@ -600,7 +601,7 @@ export default function RaschetDetailPage() {
     ? `Справочник: ${dir.name} · версия ${dir.version}`
     : "версия справочника не указана";
   const procurementSubtitle = procurement
-    ? [procurement.number, procurement.title].filter(Boolean).join(" — ")
+    ? [visibleProcurementNumber(procurement), procurement.title].filter(Boolean).join(" — ")
     : "закупка не указана";
   const calcKindSubtitle = locked
     ? "оригинал сметы заказчика"
