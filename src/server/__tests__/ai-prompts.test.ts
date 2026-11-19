@@ -68,6 +68,14 @@ describe("estimator prompts", () => {
       sourceFile: "договор.pdf",
     }).location).toBe("договор.pdf, стр. 2");
     expect(formatSourceLocation({ sourceFile: "смета.xlsx", sheet: "ЛС", cell: "A12" })).toBe("смета.xlsx, лист ЛС, A12");
+    const sheetPayload = buildModelNoteUserContent(
+      { kind: "local-estimate" },
+      [],
+      [{ id: "c-est", text: "Сметная стоимость", page: 1, sourceFile: "смета.xlsx", sheet: "ЛС", cell: "N20" }]
+    );
+    expect(sheetPayload).toContain("лист ЛС");
+    expect(sheetPayload).toContain("N20");
+    expect(sheetPayload).not.toContain("стр. 1");
   });
 });
 
@@ -179,6 +187,15 @@ describe("package answer parsing", () => {
       JSON.stringify({ facts: { kind: "local-estimate", zone: 5, positionCount: 12 } })
     );
     expect(reason).toBeNull();
+    expect(noteRejectionReason(
+      `${"• Раздел 1: 716 м. ".repeat(12)}Только одна позиция.`,
+      [],
+      { kind: "local-estimate", sectionRollup: { sections: [
+        { section: "Раздел 1", unit: "м", quantity: 716, rows: 1 },
+        { section: "Раздел 2", unit: "м", quantity: 17076, rows: 1 },
+      ], totalsByUnit: [], titledCounts: [] } },
+      "716"
+    )).toContain("одной позиции");
     expect(noteRejectionReason(
       `${"Записка по локальной смете. ".repeat(10)}Зона 5. Позиций 12. Лишняя сумма 777.`,
       ["зона 5", "12"],

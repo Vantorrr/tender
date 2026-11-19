@@ -1,7 +1,7 @@
 /**
  * Прогон промптов на тестовых документах репозитория.
  *
- * Реальный вызов:
+ * Реальный вызов (на проде модель google/gemini-3-flash-preview):
  *   OPENROUTER_API_KEY=... npx tsx scripts/eval-ai-prompts.ts
  *
  * Без ключа, с подставленным ответом:
@@ -14,6 +14,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { scoreModelResponse, renderScoreSummary, type PromptScore } from "../src/server/ai-prompt-score";
+import { rollupWorkSections } from "../src/server/estimate-rollup";
+import { filterSupplierCandidates } from "../src/server/supplier-discovery";
 import {
   MODEL_NOTE_SYSTEM,
   PRODUCTION_VARIANCE_SYSTEM,
@@ -34,6 +36,7 @@ import type { Calculation, Citation } from "../src/lib/types";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = path.join(root, "eval-output");
 const mock = process.argv.includes("--mock") || process.env.EVAL_AI_MOCK === "1";
+const evalModel = process.env.OPENROUTER_MODEL || "google/gemini-3-flash-preview";
 
 type EvalCase = {
   id: string;
@@ -44,6 +47,9 @@ type EvalCase = {
   allowEmptyArrays?: string[];
   citationHint?: string;
   fixtureNote: string;
+  webSearch?: boolean;
+  maxTokens?: number;
+  completeness?: { label: string; quantities: number[] };
 };
 
 function readPdfPages(filePath: string): { pages: string[]; note: string } {
@@ -88,6 +94,8 @@ async function loadCases(): Promise<EvalCase[]> {
   const estimateBuffer = fs.readFileSync(estimatePath);
   const parsedEstimate = await parseGrandBuffer(estimateBuffer);
   const estimateAnalysis = parsedEstimate ? analysisFromGrand(parsedEstimate, "ЛС-02-02-01-бурение.xlsx") : null;
+  const installPath = path.join(root, "fixtures/grand-smeta/ls-02-02-02-ustanovka.xlsx");
+  const installParsed = await parseGrandBuffer(fs.readFileSync(installPath));
   const otherPath = path.join(root, "fixtures/grand-smeta/ls-01-02-01-demontazh.xlsx");
   const otherParsed = await parseGrandBuffer(fs.readFileSync(otherPath));
   const pdfPath = path.join(root, "fixtures/grand-smeta/III-D-101-3103-KM.L2_TP-KP-M-D_etap-2.pdf");
@@ -109,6 +117,7 @@ async function loadCases(): Promise<EvalCase[]> {
     ...(estimateAnalysis?.citations ?? []),
     ...pdfAnalysis.citations,
   ];
+  const drillingRollup = rollupWorkSections(parsedEstimate?.positions ?? []);
   const noteFacts = {
     kind: "local-estimate" as const,
     fileName: "ЛС-02-02-01-бурение.xlsx",
@@ -119,6 +128,7 @@ async function loadCases(): Promise<EvalCase[]> {
     costThousand: parsedEstimate?.costCurrentThousand ?? null,
     positionCount: parsedEstimate?.positions.length ?? 0,
     coefficientNotes: parsedEstimate?.coefficientNotes ?? [],
+    sectionRollup: drillingRollup,
     largest: (parsedEstimate?.positions ?? []).slice(0, 5).map((position) => ({
       name: position.name,
       unit: position.unit,
@@ -144,7 +154,6 @@ async function loadCases(): Promise<EvalCase[]> {
   const compare = buildCalcCompareBatch(
     calculationFromPositions("original", originalPositions),
     calculationFromPositions("draft", draftPositions, schedule.params),
-    0
   );
   const contractQuote = docxAnalysis?.citations.find((citation) => citation.text.length >= 8)?.text
     ?? sampleNote;
@@ -163,6 +172,14 @@ async function loadCases(): Promise<EvalCase[]> {
       requiredFields: ["note"],
       citationHint: "ЛС-02-02-01-бурение.xlsx",
       fixtureNote: `Гранд-смета ${estimatePath}`,
+      completeness: {
+        label: "бурение, сумма разделов",
+        quantities: [
+          ...drillingRollup.sections.map((section) => section.quantity),
+          ...drillingRollup.totalsByUnit.map((item) => item.quantity),
+          ...drillingRollup.titledCounts.map((item) => item.quantity),
+        ],
+      },
     },
     {
       id: "project-package",
@@ -185,6 +202,12 @@ async function loadCases(): Promise<EvalCase[]> {
             fileName: "ЛС-02-02-01-бурение.xlsx",
             citations: (estimateAnalysis?.citations ?? []).slice(0, 40).map((citation) => citationForModel(citation)),
             estimatePositions: (parsedEstimate?.positions ?? []).slice(0, 20),
+            sectionRollup: drillingRollup,
+          },
+          {
+            fileName: "ЛС-02-02-02-установка.xlsx",
+            sectionRollup: rollupWorkSections(installParsed?.positions ?? []),
+            estimatePositions: (installParsed?.positions ?? []).filter((position) => position.isWorkItem).slice(0, 40),
           },
           {
             fileName: "III-D-101-3103-KM.L2.pdf",
@@ -196,7 +219,7 @@ async function loadCases(): Promise<EvalCase[]> {
       }),
       requiredFields: ["recommendation", "evidence"],
       allowEmptyArrays: ["missingInputs", "customerQuestions", "evidence"],
-      fixtureNote: `Договор, смета и PDF (${pdf.note})`,
+      fixtureNote: `Договор, смета бурения, смета установки (${installParsed?.positions.length ?? 0} поз.) и PDF (${pdf.note})`,
     },
     {
       id: "project-chat",
@@ -221,6 +244,7 @@ async function loadCases(): Promise<EvalCase[]> {
       requiredFields: ["summary", "findings"],
       allowEmptyArrays: ["findings"],
       fixtureNote: "Две локальные сметы и правила накладных из ресурсного графика",
+      maxTokens: 4000,
     },
     {
       id: "production-variance",
@@ -243,13 +267,13 @@ async function loadCases(): Promise<EvalCase[]> {
       title: "Поиск поставщика",
       system: SUPPLIER_DISCOVERY_SYSTEM,
       user: buildSupplierQuery({
-        material: parsedEstimate?.positions.find((position) => position.name)?.name || "труба стальная",
+        material: "долото трёхшарошечное, трубы стальные",
         region: "Норильск",
-        work: parsedEstimate?.workName,
       }),
       requiredFields: ["candidates"],
       allowEmptyArrays: ["candidates"],
-      fixtureNote: "Материал из сметы, регион Норильск",
+      webSearch: true,
+      fixtureNote: "Материалы: долото трёхшарошечное и трубы стальные, регион Норильск, с веб-поиском как на проде",
     },
   ];
 }
@@ -258,7 +282,7 @@ function mockReply(evalCase: EvalCase): string {
   const file = evalCase.citationHint ?? "contract-terms.docx";
   if (evalCase.id === "model-note") {
     return JSON.stringify({
-      note: `Файл ${file}. ${"В переданных фактах нет новых чисел сверх файла. ".repeat(8)}Зона и объёмы взяты только из источника, остальное не указано в документах.`,
+      note: `• Файл ${file}. Свод: 716 м, 17076 м, 720 м, 32 м, итого 18544 м, 3044 шт. ${"В переданных фактах нет новых чисел сверх файла. ".repeat(6)}Зона и объёмы взяты только из источника.`,
     });
   }
   if (evalCase.id === "project-package") {
@@ -288,10 +312,11 @@ function mockReply(evalCase: EvalCase): string {
     });
   }
   if (evalCase.id === "calc-compare") {
-    const parsed = JSON.parse(evalCase.user) as { rows: Array<{ rowId: string; factsText: string }>; pricingText: string };
-    const row = parsed.rows.find((item) => item.factsText.includes("Ставка"));
+    const parsed = JSON.parse(evalCase.user) as { materialGroups?: Array<{ rowId: string; factsText: string }>; pricingText: string; totals?: { deltaTotal?: number | null } };
+    const row = parsed.materialGroups?.find((item) => item.factsText.includes("Ставка"));
+    const delta = parsed.totals?.deltaTotal;
     return JSON.stringify({
-      summary: parsed.pricingText.slice(0, 240) || "Правила расчёта перенесены из входных данных.",
+      summary: `${parsed.pricingText.slice(0, 180)} Итоговая разница ${delta ?? "не указано в документах"}.`,
       findings: row ? [{
         rowId: row.rowId,
         text: "Строка сверена по переданным количеству и ставке.",
@@ -316,13 +341,25 @@ function mockReply(evalCase: EvalCase): string {
   return JSON.stringify({ candidates: [] });
 }
 
-async function runCase(evalCase: EvalCase): Promise<{ score: PromptScore; raw: string }> {
+function presentQuantities(raw: string, quantities: number[]): { present: number[]; missing: number[] } {
+  const present: number[] = [];
+  const missing: number[] = [];
+  for (const quantity of quantities) {
+    const digits = String(Math.trunc(quantity));
+    const pattern = new RegExp(`(?:^|\\D)${digits.split("").join("[\\s\\u00a0]?")}(?:\\D|$)`);
+    (pattern.test(raw) ? present : missing).push(quantity);
+  }
+  return { present, missing };
+}
+
+async function runCase(evalCase: EvalCase): Promise<{ score: PromptScore; raw: string; sourceUrls: string[] }> {
   const started = Date.now();
   try {
     if (mock) {
       const raw = mockReply(evalCase);
       return {
         raw,
+        sourceUrls: [],
         score: scoreModelResponse({
           ...evalCase,
           raw,
@@ -333,9 +370,17 @@ async function runCase(evalCase: EvalCase): Promise<{ score: PromptScore; raw: s
     if (!process.env.OPENROUTER_API_KEY) {
       throw new Error("Не задан OPENROUTER_API_KEY. Для проверки без сети запустите с --mock.");
     }
-    const completion = await completeJsonWithUsage(evalCase.system, evalCase.user);
+    const completion = await completeJsonWithUsage(evalCase.system, evalCase.user, 0, {
+      webSearch: evalCase.webSearch,
+      maxTokens: evalCase.maxTokens,
+      model: evalModel,
+    });
+    const raw = evalCase.webSearch
+      ? JSON.stringify({ model: JSON.parse(completion.content), kept: filterSupplierCandidates(completion.content, completion.sourceUrls), sourceUrls: completion.sourceUrls })
+      : completion.content;
     return {
-      raw: completion.content,
+      raw,
+      sourceUrls: completion.sourceUrls,
       score: scoreModelResponse({
         ...evalCase,
         raw: completion.content,
@@ -349,6 +394,7 @@ async function runCase(evalCase: EvalCase): Promise<{ score: PromptScore; raw: s
     const message = error instanceof Error ? error.message : "ошибка прогона";
     return {
       raw: "",
+      sourceUrls: [],
       score: scoreModelResponse({
         ...evalCase,
         raw: "",
@@ -363,9 +409,14 @@ async function main() {
   const cases = await loadCases();
   fs.mkdirSync(outDir, { recursive: true });
   const scores: PromptScore[] = [];
+  const completenessNotes: string[] = [`Модель прогона: ${evalModel}.`, ""];
   for (const evalCase of cases) {
     const result = await runCase(evalCase);
     scores.push(result.score);
+    const completeness = evalCase.completeness ? presentQuantities(result.raw, evalCase.completeness.quantities) : null;
+    if (completeness && evalCase.completeness) {
+      completenessNotes.push(`- ${evalCase.completeness.label}: есть ${completeness.present.join(", ") || "—"}; нет ${completeness.missing.join(", ") || "—"}.`);
+    }
     const locationInPrompt = /(?:стр\.|абзац|лист )/.test(evalCase.user) && /(?:\.docx|\.xlsx|\.pdf|contract-terms|бурение)/i.test(evalCase.user);
     fs.writeFileSync(path.join(outDir, `${evalCase.id}.json`), JSON.stringify({
       title: evalCase.title,
@@ -375,11 +426,15 @@ async function main() {
       userPreview: evalCase.user.slice(0, 500),
       locationInPrompt,
       score: result.score,
+      model: evalModel,
+      webSearch: Boolean(evalCase.webSearch),
+      sourceUrls: result.sourceUrls,
+      completeness: evalCase.completeness ? presentQuantities(result.raw, evalCase.completeness.quantities) : null,
       response: result.raw,
     }, null, 2));
     console.log(`${evalCase.title}: json=${result.score.jsonValid} поля=${result.score.fieldsFilled} цитата=${result.score.hasCitation} ${result.score.elapsedMs} мс`);
   }
-  const summary = renderScoreSummary(scores);
+  const summary = `${renderScoreSummary(scores)}\n\n## Полнота\n\n${completenessNotes.join("\n")}\n`;
   fs.writeFileSync(path.join(outDir, "summary.md"), summary);
   console.log(`\nСводка: ${path.join(outDir, "summary.md")}`);
   if (scores.some((score) => score.error)) process.exitCode = 1;

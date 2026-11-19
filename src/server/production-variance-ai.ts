@@ -38,6 +38,19 @@ function enoughLexicalSupport(text: string, quote: string): boolean {
   return overlap / claimWords.length >= 0.3;
 }
 
+export function deviationPercent(plan: number, fact: number): number | null {
+  if (!Number.isFinite(plan) || plan === 0) return null;
+  return Math.round((Math.abs(fact - plan) / Math.abs(plan)) * 1000) / 10;
+}
+
+/** A documented reason has to sit in the daily comment itself, not in the date or work header. */
+export function commentStatesReason(sourceText: string, quote: string): boolean {
+  const marker = sourceText.toLocaleLowerCase("ru-RU").indexOf("комментарий:");
+  const comment = (marker >= 0 ? sourceText.slice(marker + "комментарий:".length) : sourceText).trim();
+  if (comment.length < 12 || !comment.includes(quote)) return false;
+  return enoughLexicalSupport(quote, comment);
+}
+
 export function filterDailyFactsByPeriod(
   daily: DailyFact[],
   asOfDate: string,
@@ -69,14 +82,23 @@ export function validateProductionVarianceResult(raw: string, sources: Source[],
           typeof item.text !== "string" || typeof item.sourceQuote !== "string") continue;
       const source = byId.get(item.sourceId);
       if (!source) continue;
-      const expectedKind = source.kind === "daily_comment" ? "documented_reason" : "possible_factor";
+      if (item.kind !== "documented_reason" && item.kind !== "possible_factor") continue;
+      if (item.kind === "documented_reason" && source.kind !== "daily_comment") continue;
       const text = item.text.trim();
       const sourceQuote = item.sourceQuote.trim();
       const corpus = `${source.text}\n${numericContext}`;
-      if (item.kind !== expectedKind || text.length > 500 || !numbersAreGrounded(text, corpus) ||
+      if (text.length > 500 || !numbersAreGrounded(text, corpus) ||
           sourceQuote.length < 8 || !source.text.includes(sourceQuote) ||
           !enoughLexicalSupport(text, sourceQuote)) continue;
-      observations.push({ sourceId: source.id, kind: expectedKind, text, sourceQuote });
+      const documented = item.kind === "documented_reason" && commentStatesReason(source.text, sourceQuote);
+      observations.push({
+        sourceId: source.id,
+        kind: documented ? "documented_reason" : "possible_factor",
+        text: documented || item.kind === "possible_factor" || /причина не указана в отчётах/u.test(text)
+          ? text
+          : `${text} Причина не указана в отчётах.`,
+        sourceQuote,
+      });
     }
   }
   const summaryCorpus = `${sources.map((source) => source.text).join("\n")}\n${numericContext}`;
@@ -126,15 +148,52 @@ export function buildProductionVarianceUserContent(input: {
   factQuantity: number;
   sources: Source[];
 }): string {
+  const gap = input.factQuantity - input.planQuantity;
   return JSON.stringify({
     project: input.title,
     period: input.period,
     workName: input.workName,
     plannedQuantity: input.planQuantity,
     factQuantity: input.factQuantity,
-    gap: input.factQuantity - input.planQuantity,
+    gap,
+    gapPercent: deviationPercent(input.planQuantity, input.factQuantity),
     sources: input.sources,
   });
+}
+
+export function withRequiredDeviation(input: {
+  summary: string;
+  observations: ProductionVarianceReport["observations"];
+  plan: number;
+  fact: number;
+  sources: Source[];
+}): Pick<ProductionVarianceReport, "summary" | "observations"> {
+  const percent = deviationPercent(input.plan, input.fact);
+  const gap = input.fact - input.plan;
+  if (percent == null || gap === 0) return { summary: input.summary, observations: input.observations };
+  const direction = gap < 0 ? "Отставание" : "Опережение";
+  const summary = numbersAreGrounded(String(percent), input.summary)
+    ? input.summary
+    : `${direction} ${percent}% от плана. ${input.summary}`.trim();
+  if (input.observations.length) {
+    const named = input.observations.some((item) => numbersAreGrounded(String(percent), item.text));
+    return {
+      summary,
+      observations: named ? input.observations : input.observations.map((item, index) => index === 0
+        ? { ...item, text: `${direction} ${percent}% от плана. ${item.text}` }
+        : item),
+    };
+  }
+  const source = input.sources[0];
+  return {
+    summary,
+    observations: [{
+      sourceId: source?.id ?? "gap",
+      kind: "possible_factor",
+      text: `${direction} ${percent}% от плана. Причина не указана в отчётах.`,
+      sourceQuote: source?.text.slice(0, 180) ?? "причина не указана в отчётах",
+    }],
+  };
 }
 
 export async function analyzeProductionVarianceWithAI(input: {
@@ -169,16 +228,23 @@ export async function analyzeProductionVarianceWithAI(input: {
     };
   }
   if (!sources.length) {
-    return {
-      status: gap === 0 ? "on_track" : "reason_unknown",
+    const filled = withRequiredDeviation({
       summary: gap === 0
         ? "Отклонения по объёму нет. Дополнительных записей о причинах не требуется."
-        : "В дневных отчётах нет записанной причины отклонения и нет просроченных поставок. Добавьте комментарий к факту работ, чтобы разбор опирался на данные объекта.",
+        : "В дневных отчётах нет записанной причины отклонения и нет просроченных поставок.",
       observations: [],
+      plan: input.planQuantity,
+      fact: input.factQuantity,
+      sources: [],
+    });
+    return {
+      status: gap === 0 ? "on_track" : "reason_unknown",
+      ...filled,
       disclaimer: "Причина не установлена: в исходных данных нет подтверждающих записей.",
     };
   }
-  const numericContext = `${input.planQuantity} ${input.factQuantity} ${input.factQuantity - input.planQuantity}`;
+  const percent = deviationPercent(input.planQuantity, input.factQuantity);
+  const numericContext = `${input.planQuantity} ${input.factQuantity} ${gap} ${percent ?? ""}`;
   const response = await completeJson(SYSTEM, buildProductionVarianceUserContent({
     title: input.plan.title,
     period: input.periodLabel,
@@ -188,9 +254,15 @@ export async function analyzeProductionVarianceWithAI(input: {
     sources,
   }));
   const validated = validateProductionVarianceResult(response, sources, numericContext);
+  const filled = withRequiredDeviation({
+    ...validated,
+    plan: input.planQuantity,
+    fact: input.factQuantity,
+    sources,
+  });
   return {
     status,
-    ...validated,
+    ...filled,
     disclaimer: "Причины показаны только по комментариям; просроченные материалы — возможные факторы. Если фактов недостаточно, причина остаётся неустановленной.",
   };
 }

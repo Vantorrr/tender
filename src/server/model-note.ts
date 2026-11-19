@@ -1,6 +1,7 @@
 import type { Citation, DocumentAnalysis, Highlight } from "@/lib/types";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { MODEL_NOTE_SYSTEM, formatSourceLocation } from "@/server/ai-prompts";
+import type { WorkSectionRollup } from "@/server/estimate-rollup";
 import { config } from "@/server/config";
 import { completeJson, modelConfigured } from "@/server/openrouter";
 
@@ -37,7 +38,7 @@ export function buildModelNoteUserContent(
 ): string {
   const sources = citations.slice(0, 40).map((citation) => ({
     file: citation.sourceFile,
-    page: citation.page,
+    page: citation.sheet ? null : citation.page,
     paragraph: citation.paragraph ?? null,
     sheet: citation.sheet ?? null,
     cell: citation.cell ?? null,
@@ -49,6 +50,13 @@ export function buildModelNoteUserContent(
 
 function digits(value: string) {
   return value.replace(/\D/g, "");
+}
+
+function noteHasQuantity(note: string, quantity: number): boolean {
+  const whole = Math.trunc(quantity);
+  if (!Number.isFinite(whole)) return true;
+  const digits = String(Math.abs(whole));
+  return new RegExp(`(?:^|\\D)${digits.split("").join("[\\s\\u00a0]?")}(?:\\D|$)`).test(note);
 }
 
 function standalone(note: string, value: string) {
@@ -152,6 +160,13 @@ function rejection(
     return "смета упомянула чертёж";
   }
   if (facts.kind === "drawing" && !/текстов/i.test(note)) return "чертёж без оговорки про текст";
+  const rollup = facts.sectionRollup as WorkSectionRollup | undefined;
+  if (rollup && Array.isArray(rollup.sections) && rollup.sections.length > 1) {
+    if (/только\s+(?:по\s+)?одн(?:у|ой|а|о)\s+позиц/iu.test(note)) return "записка сузила объём до одной позиции";
+    for (const section of rollup.sections) {
+      if (!noteHasQuantity(note, section.quantity)) return `нет объёма раздела «${section.section.slice(0, 80)}»`;
+    }
+  }
   const allowed = digits(allowedText ?? JSON.stringify(facts));
   for (const chunk of note.match(/\d{3,}/g) ?? []) {
     if (!allowed.includes(chunk)) return `число ${chunk} не из файла`;

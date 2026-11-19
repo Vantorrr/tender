@@ -182,6 +182,8 @@ export function compareCalculations(
         : status === "only_original"
             ? "customer_original"
             : "both",
+      sectionName: o?.sourceSectionName || d?.sourceSectionName || "",
+      workName: o?.sourceWorkName || d?.sourceWorkName || "",
     });
   }
 

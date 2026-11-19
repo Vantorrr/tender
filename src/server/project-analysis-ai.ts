@@ -3,6 +3,7 @@ import { regionFromCitations, submissionDeadlineFromCitations } from "@/lib/cita
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_LABELS } from "@/lib/ai-topics";
 import { NOT_IN_DOCUMENTS, numbersAreGrounded } from "@/server/ai-grounding";
+import { rollupWorkSections } from "@/server/estimate-rollup";
 import {
   PROJECT_ANALYSIS_CITATION_CHARS,
   PROJECT_ANALYSIS_CITATION_LIMIT,
@@ -220,11 +221,42 @@ export function packDocumentCitations<T extends { id: string; citations: Citatio
   return { byDocument, byPromptId };
 }
 
+const INJECTION_PATTERN = /ignore\s+(?:all\s+)?previous\s+instructions|disregard\s+(?:all\s+)?(?:previous|above)|you\s+are\s+now|игнорир(?:уй|овать)\s+(?:все\s+)?предыдущ|забудь\s+(?:все\s+)?инструкц|новые\s+инструкции/iu;
+
+export function promptInjectionExcerpts(items: Array<{ file: string; text: string }>): Array<{ file: string; excerpt: string }> {
+  const found: Array<{ file: string; excerpt: string }> = [];
+  for (const item of items) {
+    const match = item.text.match(INJECTION_PATTERN);
+    if (!match || match.index == null) continue;
+    const start = Math.max(0, match.index - 40);
+    found.push({
+      file: item.file,
+      excerpt: item.text.slice(start, match.index + match[0].length + 60).replace(/\s+/g, " ").trim(),
+    });
+    if (found.length >= 5) break;
+  }
+  return found;
+}
+
+export function rewritesSourceMeasure(text: string, quote: string): boolean {
+  const read = (source: string, unit: RegExp) => [...source.matchAll(new RegExp(unit.source, unit.flags))]
+    .map((match) => Number(match[1]?.replace(",", ".")))
+    .filter((value) => Number.isFinite(value));
+  const yearUnit = /(\d+(?:[.,]\d+)?)\s*(?:лет|года|год)(?![а-яё])/giu;
+  const monthUnit = /(\d+(?:[.,]\d+)?)\s*месяц/giu;
+  const yearsInText = read(text, yearUnit);
+  const monthsInQuote = read(quote, monthUnit);
+  if (yearsInText.some((year) => monthsInQuote.some((month) => Math.abs(year * 12 - month) < 0.05))) return true;
+  const monthsInText = read(text, monthUnit);
+  const yearsInQuote = read(quote, yearUnit);
+  return monthsInText.some((month) => yearsInQuote.some((year) => Math.abs(year * 12 - month) < 0.05));
+}
+
 export function citationForModel(citation: Pick<Citation, "id" | "text" | "page" | "sourceFile" | "paragraph" | "sheet" | "cell" | "confidence">) {
   return {
     id: citation.id,
     sourceFile: citation.sourceFile,
-    page: citation.page,
+    page: citation.sheet ? undefined : citation.page,
     paragraph: citation.paragraph ?? null,
     sheet: citation.sheet ?? null,
     cell: citation.cell ?? null,
@@ -274,7 +306,7 @@ export function validateProjectEvidence(
     const overlap = claimWords.filter((word) => quoteWords.has(lexicalStem(word))).length;
     const wordingGrounded = claimWords.length > 0 && overlap / claimWords.length >= 0.35;
 
-    if (!item.text.trim() || quote.length < 8 || !quoteExists || !numbersGrounded || !wordingGrounded) {
+    if (!item.text.trim() || quote.length < 8 || !quoteExists || !numbersGrounded || !wordingGrounded || rewritesSourceMeasure(item.text, item.quote)) {
       rejected += 1;
       continue;
     }
@@ -292,10 +324,11 @@ export function validateProjectEvidence(
 export function gateModelRecommendation(
   local: ProjectAnalytics["recommendation"],
   model: ProjectAnalytics["recommendation"],
-  hasCriticalEvidence: boolean
+  hasCriticalEvidence: boolean,
+  modelNamedGaps = true
 ): ProjectAnalytics["recommendation"] {
   if (local !== "participate") return local;
-  if (model === "insufficient_data") return "insufficient_data";
+  if (model === "insufficient_data" && modelNamedGaps) return "insufficient_data";
   if (model === "do_not_participate" && hasCriticalEvidence) return "do_not_participate";
   return "participate";
 }
@@ -367,6 +400,7 @@ export async function analyzeProjectPackageWithModel(
       extractionErrors: document.extractionErrors ?? [],
       highlights: document.highlights.slice(0, PROJECT_ANALYSIS_HIGHLIGHTS).map(({ text, reason, severity, page }) => ({ text, reason, severity, page, location: formatSourceLocation({ sourceFile: document.fileName, page }) })),
       estimatePositions: (document.estimatePositions ?? []).slice(0, PROJECT_ANALYSIS_POSITIONS),
+      sectionRollup: rollupWorkSections(document.estimatePositions ?? []),
       citations: (documentCitations.get(document.id) ?? []).map((citation) => citationForModel({ ...citation, id: citation.promptId })),
     })),
     citationBudget: { available: deterministic.citations.length, sentToModel: selectedPackageCitations.length },
@@ -423,7 +457,16 @@ export async function analyzeProjectPackageWithModel(
   // Missing inputs come from deterministic package coverage. Model-authored items
   // are not source-grounded and must not be presented as verified gaps.
   const companyGaps = companyAnalysisMissingInputs(company);
-  const missingInputs = [...new Set([...deterministic.missingInputs, ...economicMissingInputs(economics), ...companyGaps])].slice(0, 40);
+  const visibleCorpus = [...visibleCitationIds].map((id) => byPromptId.get(id)?.text ?? "").join("\n");
+  const modelGaps = sanitizeCustomerQuestions(result.missingInputs, visibleCorpus);
+  const modelNamedGaps = result.recommendation !== "insufficient_data" || modelGaps.length > 0;
+  const packageSectionCount = packageDocuments.reduce((count, document) => count + rollupWorkSections(document.estimatePositions ?? []).sections.length, 0);
+  const missingInputs = [...new Set([
+    ...deterministic.missingInputs,
+    ...economicMissingInputs(economics),
+    ...companyGaps,
+    ...(result.recommendation === "insufficient_data" && modelGaps.length > 0 ? modelGaps : []),
+  ])].slice(0, 40);
   const hasCriticalEvidence = accepted.some((item) => item.importance === "critical" || item.citationIds.some((id) => {
     const citation = byPromptId.get(id);
     return packageDocuments.some((document) => document.highlights.some((highlight) =>
@@ -450,7 +493,12 @@ export async function analyzeProjectPackageWithModel(
   const localDecision: ProjectAnalytics["recommendation"] = deterministic.recommendation === "do_not_participate"
     ? "do_not_participate"
     : decisionReady ? "participate" : "insufficient_data";
-  let recommendation = gateModelRecommendation(localDecision, result.recommendation, hasCriticalEvidence);
+  let recommendation = gateModelRecommendation(
+    localDecision,
+    modelNamedGaps ? result.recommendation : "participate",
+    hasCriticalEvidence,
+    modelNamedGaps
+  );
   if (economics?.priceWithVat != null && procurement.nmck != null && economics.priceWithVat > procurement.nmck) {
     recommendation = "do_not_participate";
   } else if (economics?.profit != null && economics.profit <= 0 && economicsComplete) {
@@ -493,16 +541,33 @@ export async function analyzeProjectPackageWithModel(
         : "Модель не вернула тезис, прошедший проверку цитаты; оставлена локальная сводка.",
     ].join("\n\n"),
     missingInputs,
-    findings: accepted.map(({ topic, importance, text, quote, citationIds, sourceFiles, costImpact, scheduleImpact }) => ({
-      topic: TOPIC_LABELS[topic] ?? TOPIC_LABELS.other,
-      importance: importance as NonNullable<ProjectAnalytics["findings"]>[number]["importance"],
-      text,
-      quote,
-      citationIds: citationIds.map((id) => byPromptId.get(id)?.id ?? id),
-      sourceFiles,
-      costImpact,
-      scheduleImpact,
-    })),
+    findings: [
+      ...accepted
+        .filter((item) => packageSectionCount <= 1 || !/только\s+(?:по\s+)?одн(?:у|ой|а|о)\s+позиц/iu.test(item.text))
+        .map(({ topic, importance, text, quote, citationIds, sourceFiles, costImpact, scheduleImpact }) => ({
+          topic: TOPIC_LABELS[topic] ?? TOPIC_LABELS.other,
+          importance: importance as NonNullable<ProjectAnalytics["findings"]>[number]["importance"],
+          text,
+          quote,
+          citationIds: citationIds.map((id) => byPromptId.get(id)?.id ?? id),
+          sourceFiles,
+          costImpact,
+          scheduleImpact,
+        })),
+      ...promptInjectionExcerpts(packageDocuments.flatMap((document) => [
+        { file: document.fileName, text: document.analyticalNote ?? "" },
+        ...document.citations.map((citation) => ({ file: document.fileName, text: citation.text })),
+      ])).map((item) => ({
+        topic: "Аномалия документа",
+        importance: "critical" as const,
+        text: "В файле есть указание для модели. Оно не выполнено и на решение не влияет.",
+        quote: item.excerpt,
+        citationIds: [] as string[],
+        sourceFiles: [item.file],
+        costImpact: NOT_IN_DOCUMENTS,
+        scheduleImpact: NOT_IN_DOCUMENTS,
+      })),
+    ],
     customerQuestions: sanitizeCustomerQuestions(
       result.customerQuestions,
       [...visibleCitationIds].map((id) => byPromptId.get(id)?.text ?? "").join("\n")

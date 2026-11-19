@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import { GRAND_PROFILE } from "@/lib/grand-profile";
 import { OCR_CHUNK_CHARS, OCR_CHUNKS_PER_PAGE } from "@/server/ai-prompts";
+import { rollupWorkSections } from "@/server/estimate-rollup";
 import { refineNote } from "@/server/model-note";
 import { extractDocumentText, ocrConfigured } from "@/server/ocr";
 import type {
@@ -203,6 +204,18 @@ function firstOther(cells: { col: number; text: string }[], label: string) {
     cells.find((cell) => cell.col > 1 && cell.text !== label && !cell.text.startsWith("("))
       ?.text ?? ""
   );
+}
+
+function formatSectionRollup(rollup: ReturnType<typeof rollupWorkSections>): string {
+  if (!rollup.sections.length) return "";
+  const lines = rollup.sections.map((section) => `${section.section}: ${section.quantity} ${section.unit} (${section.rows} строк)`);
+  const totals = rollup.totalsByUnit.map((item) => `${item.quantity} ${item.unit}`).join(", ");
+  const titled = rollup.titledCounts.map((item) => `${item.quantity} ${item.unit}`).join(", ");
+  return [
+    `Свод разделов: ${lines.join("; ")}.`,
+    totals ? `Итого по единицам: ${totals}.` : "",
+    titled ? `Количество по названиям разделов: ${titled}.` : "",
+  ].filter(Boolean).join(" ");
 }
 
 function rub(n: number) {
@@ -562,6 +575,7 @@ export function analysisFromGrand(parsed: GrandParse, fileName: string): UploadA
     parsed.basis ? `Основание: ${parsed.basis}.` : "Основание: нет данных.",
     `Сметная стоимость: ${costLine}.`,
     `Расценок в таблице: ${parsed.positions.length}. Разделов: ${parsed.sections.length}.`,
+    formatSectionRollup(rollupWorkSections(parsed.positions)),
     parsed.sections.length
       ? `Разделы: ${parsed.sections.slice(0, 6).join("; ")}${parsed.sections.length > 6 ? "…" : ""}.`
       : "",
@@ -845,7 +859,8 @@ export async function analyzeUpload(
             costBaseThousand: parsed.costBaseThousand,
             totalCurrentRub: parsed.totalCurrent,
             positionCount: parsed.positions.length,
-            sections: parsed.sections.slice(0, 8),
+            sections: parsed.sections.slice(0, 12),
+            sectionRollup: rollupWorkSections(parsed.positions),
             negativePositions: parsed.negativePositions,
             coefficientNotes: parsed.coefficientNotes.slice(0, 3),
             largest,

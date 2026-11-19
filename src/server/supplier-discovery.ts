@@ -1,5 +1,5 @@
 import { SUPPLIER_DISCOVERY_SYSTEM } from "@/server/ai-prompts";
-import { completeJson } from "@/server/openrouter";
+import { completeJsonDetailed } from "@/server/openrouter";
 
 export type SupplierSearchCandidate = {
   name: string;
@@ -27,12 +27,31 @@ function safeUrl(value: unknown) {
   } catch { return ""; }
 }
 
-export async function discoverMaterialSuppliers(input: { material: string; region: string; work?: string }): Promise<SupplierSearchCandidate[]> {
-  const material = input.material.trim().slice(0, 180);
-  const region = input.region.trim().slice(0, 120);
-  if (!material || !region) throw new Error("Укажите материал и регион для поиска");
-  const query = buildSupplierQuery(input);
-  const raw = await completeJson(SYSTEM, query, 0, { webSearch: true });
+function canonicalUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    url.hash = "";
+    url.hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+/** A candidate link is allowed only when that page was among the search results. */
+export function urlFromSearch(candidate: string, sourceUrls: string[]): boolean {
+  const left = canonicalUrl(candidate);
+  if (!left || !sourceUrls.length) return false;
+  return sourceUrls.some((source) => {
+    const right = canonicalUrl(source);
+    if (!right) return false;
+    return left === right || right.startsWith(`${left}/`) || left.startsWith(`${right}/`);
+  });
+}
+
+export function filterSupplierCandidates(raw: string, sourceUrls: string[]): SupplierSearchCandidate[] {
+  if (!sourceUrls.length) return [];
   const parsed = JSON.parse(raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")) as { candidates?: unknown[] };
   const seen = new Set<string>();
   return (Array.isArray(parsed.candidates) ? parsed.candidates : []).flatMap((candidate) => {
@@ -41,6 +60,7 @@ export async function discoverMaterialSuppliers(input: { material: string; regio
     const name = typeof row.name === "string" ? row.name.trim().slice(0, 180) : "";
     const website = safeUrl(row.website);
     const sourceUrl = safeUrl(row.sourceUrl);
+    if (!urlFromSearch(sourceUrl, sourceUrls)) return [];
     const evidence = typeof row.evidence === "string" ? row.evidence.trim().slice(0, 600) : "";
     const regionEvidence = typeof row.regionEvidence === "string" ? row.regionEvidence.trim().slice(0, 240) : "";
     const email = typeof row.email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.email.trim())
@@ -53,4 +73,13 @@ export async function discoverMaterialSuppliers(input: { material: string; regio
     seen.add(key);
     return [{ name, website: website || new URL(sourceUrl).origin, email, materials, regionEvidence, evidence, sourceUrl }];
   }).slice(0, 5);
+}
+
+export async function discoverMaterialSuppliers(input: { material: string; region: string; work?: string }): Promise<SupplierSearchCandidate[]> {
+  const material = input.material.trim().slice(0, 180);
+  const region = input.region.trim().slice(0, 120);
+  if (!material || !region) throw new Error("Укажите материал и регион для поиска");
+  const query = buildSupplierQuery(input);
+  const completion = await completeJsonDetailed(SYSTEM, query, 0, { webSearch: true });
+  return filterSupplierCandidates(completion.content, completion.sourceUrls);
 }

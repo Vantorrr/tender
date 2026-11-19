@@ -24,7 +24,27 @@ export type JsonCompletion = {
   completionTokens: number | null;
   totalTokens: number | null;
   elapsedMs: number;
+  sourceUrls: string[];
 };
+
+type CompletionOptions = { webSearch?: boolean; maxTokens?: number; model?: string };
+
+/** Pages the web-search tool actually returned. A model link that is not here was not found. */
+export function sourceUrlsFromMessage(message: { annotations?: unknown } | undefined): string[] {
+  const annotations = message?.annotations;
+  if (!Array.isArray(annotations)) return [];
+  const urls: string[] = [];
+  for (const item of annotations) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const citation = record.url_citation;
+    if (citation && typeof citation === "object" && typeof (citation as { url?: unknown }).url === "string") {
+      urls.push((citation as { url: string }).url);
+    }
+    if (typeof record.url === "string") urls.push(record.url);
+  }
+  return [...new Set(urls)];
+}
 
 function usageOf(usage: CompletionUsage | undefined): Pick<JsonCompletion, "promptTokens" | "completionTokens" | "totalTokens"> {
   return {
@@ -38,8 +58,8 @@ async function requestCompletion(
   system: string,
   user: string,
   attempt: number,
-  options: { webSearch?: boolean }
-): Promise<{ content: string; usage: CompletionUsage | undefined }> {
+  options: CompletionOptions
+): Promise<{ content: string; usage: CompletionUsage | undefined; sourceUrls: string[] }> {
   if (!config.openRouterKey) throw new Error("Ключ модели не задан");
   const retrying = attempt > 0;
   const response = await fetch(ENDPOINT, {
@@ -51,9 +71,9 @@ async function requestCompletion(
       "X-Title": "TenderKontur",
     },
     body: JSON.stringify({
-      model: config.openRouterModel,
+      model: options.model || config.openRouterModel,
       temperature: 0.2,
-      max_tokens: retrying ? RETRY_MAX_TOKENS : PRIMARY_MAX_TOKENS,
+      max_tokens: retrying ? (options.maxTokens ?? RETRY_MAX_TOKENS) : (options.maxTokens ?? PRIMARY_MAX_TOKENS),
       reasoning: { effort: "low", exclude: true },
       response_format: { type: "json_object" },
       ...(options.webSearch ? { tools: [{ type: "openrouter:web_search", parameters: { max_results: 5 } }] } : {}),
@@ -71,10 +91,11 @@ async function requestCompletion(
     throw new Error(`Модель ответила ${response.status}: ${detail.slice(0, 240)}`);
   }
   const payload = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> | null; refusal?: string | null }; finish_reason?: string }>;
+    choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> | null; refusal?: string | null; annotations?: unknown }; finish_reason?: string }>;
     usage?: CompletionUsage;
   };
   const choice = payload.choices?.[0];
+  const sourceUrls = sourceUrlsFromMessage(choice?.message);
   const rawContent = choice?.message?.content;
   const content = (typeof rawContent === "string"
     ? rawContent
@@ -104,20 +125,30 @@ async function requestCompletion(
     return requestCompletion(system, user, attempt + 1, options);
   }
   if (!validJson) throw new Error(`Модель вернула неполный JSON после ${attempt + 1} попыток.`);
-  return { content, usage: payload.usage };
+  return { content, usage: payload.usage, sourceUrls };
 }
 
-export async function completeJson(system: string, user: string, attempt = 0, options: { webSearch?: boolean } = {}): Promise<string> {
+export async function completeJson(system: string, user: string, attempt = 0, options: CompletionOptions = {}): Promise<string> {
   return (await requestCompletion(system, user, attempt, options)).content;
+}
+
+export async function completeJsonDetailed(
+  system: string,
+  user: string,
+  attempt = 0,
+  options: CompletionOptions = {}
+): Promise<{ content: string; sourceUrls: string[] }> {
+  const result = await requestCompletion(system, user, attempt, options);
+  return { content: result.content, sourceUrls: result.sourceUrls };
 }
 
 export async function completeJsonWithUsage(
   system: string,
   user: string,
   attempt = 0,
-  options: { webSearch?: boolean } = {}
+  options: CompletionOptions = {}
 ): Promise<JsonCompletion> {
   const startedAt = Date.now();
   const result = await requestCompletion(system, user, attempt, options);
-  return { content: result.content, ...usageOf(result.usage), elapsedMs: Date.now() - startedAt };
+  return { content: result.content, ...usageOf(result.usage), sourceUrls: result.sourceUrls, elapsedMs: Date.now() - startedAt };
 }

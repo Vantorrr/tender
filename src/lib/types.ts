@@ -440,6 +440,8 @@ export interface CalcCompareRow {
   status: "matched" | "diff" | "incomplete" | "only_original" | "only_draft";
   reason: string;
   source: "customer_original" | "resource_draft" | "both";
+  sectionName?: string;
+  workName?: string;
 }
 
 export interface Calculation {
