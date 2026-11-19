@@ -201,7 +201,8 @@ describe("grounded project analysis", () => {
     ]);
     expect(conflict?.topic).toBe("Противоречие в стоимости");
     expect(conflict?.text).toContain("1 250 000,50");
-    expect(conflict?.text).toContain("469 269,22 тыс");
+    expect(conflict?.text).toContain("469 269,22 тыс. руб. Это разные суммы.");
+    expect(conflict?.text).not.toContain("руб..");
     expect(conflict?.quote).toContain("1 250 000,50");
     expect(conflict?.citationIds).toEqual(["c-price", "c-cost"]);
     expect(costConflictBetween([

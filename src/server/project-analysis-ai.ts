@@ -411,7 +411,7 @@ export function costConflictBetween(documents: Array<{
   return {
     topic: "Противоречие в стоимости",
     importance: "high",
-    text: `В договоре указано ${contract.label}, в смете — ${estimate.label}. Это разные суммы.`,
+    text: `В договоре указано ${contract.label}, в смете — ${estimate.label}. Это разные суммы.`.replace(/руб\.\./g, "руб."),
     quote: contract.quote || estimate.quote,
     citationIds: [contract.citationId, estimate.citationId].filter((id): id is string => Boolean(id)),
     sourceFiles: [contract.fileName, estimate.fileName],
