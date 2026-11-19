@@ -10,6 +10,9 @@ import os from "node:os";
 import path from "node:path";
 
 const MAX_PDF_TEXT_CHARS = 200_000;
+const PDF_PAGE_CHARS = 16_000;
+const OCR_TEXT_CHARS = 80_000;
+const OCR_PAGE_LIMIT = 30;
 
 export type OcrStatus = "not_configured" | "unavailable" | "ok" | "empty";
 
@@ -126,7 +129,14 @@ export class TesseractOcrProvider implements OcrProvider {
     mimeHint?: string;
   }): Promise<OcrResult> {
     const tools = detectLocalOcrTools();
-    if (!tools.tesseract) {
+    const lower = input.fileName.toLowerCase();
+    const isPdf =
+      input.mimeHint?.includes("pdf") ||
+      lower.endsWith(".pdf") ||
+      input.buffer.subarray(0, 4).toString("utf8") === "%PDF";
+
+    // A text-layer PDF does not need tesseract. Scans and images still do.
+    if (!isPdf && !tools.tesseract) {
       return {
         status: "unavailable",
         text: null,
@@ -135,15 +145,18 @@ export class TesseractOcrProvider implements OcrProvider {
         reason: "Бинарник tesseract не найден в PATH",
       };
     }
+    if (isPdf && !tools.pdftotext && !tools.tesseract) {
+      return {
+        status: "unavailable",
+        text: null,
+        pageCount: null,
+        provider: this.id,
+        reason: "Для PDF нужны pdftotext или tesseract",
+      };
+    }
 
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tk-ocr-"));
     try {
-      const lower = input.fileName.toLowerCase();
-      const isPdf =
-        input.mimeHint?.includes("pdf") ||
-        lower.endsWith(".pdf") ||
-        input.buffer.subarray(0, 4).toString("utf8") === "%PDF";
-
       if (isPdf) {
         // Prefer embedded text layer first (free, local).
         if (tools.pdftotext) {
@@ -164,12 +177,21 @@ export class TesseractOcrProvider implements OcrProvider {
             return {
               status: "ok",
               text: layered.slice(0, MAX_PDF_TEXT_CHARS),
-              pages: pages.map((page) => page.slice(0, 8000)),
+              pages: pages.map((page) => page.slice(0, PDF_PAGE_CHARS)),
               pageCount: pages.length,
               provider: this.id,
               reason: "pdftotext (текстовый слой PDF)",
             };
           }
+        }
+        if (!tools.tesseract) {
+          return {
+            status: "unavailable",
+            text: null,
+            pageCount: null,
+            provider: this.id,
+            reason: "Текстовый слой пуст, а бинарник tesseract не найден в PATH",
+          };
         }
         if (!tools.pdftoppm) {
           return {
@@ -191,7 +213,7 @@ export class TesseractOcrProvider implements OcrProvider {
           "-f",
           "1",
           "-l",
-          "20",
+          String(OCR_PAGE_LIMIT),
           pdfPath,
           prefix,
         ]);
@@ -241,16 +263,25 @@ export class TesseractOcrProvider implements OcrProvider {
         }
         return {
           status: "ok",
-          text: text.slice(0, 8000),
-          pages: chunks.map((chunk) => chunk.replace(/\s+/g, " ").trim()),
+          text: text.slice(0, OCR_TEXT_CHARS),
+          pages: chunks.map((chunk) => chunk.replace(/\s+/g, " ").trim().slice(0, PDF_PAGE_CHARS)),
           pageCount: pages.length,
           provider: this.id,
-          reason: pages.length === 20
-            ? "tesseract+pdftoppm (локальный OCR; проверено до 20 страниц, проверьте остаток длинного скана вручную)"
+          reason: pages.length === OCR_PAGE_LIMIT
+            ? `tesseract+pdftoppm (локальный OCR; проверено до ${OCR_PAGE_LIMIT} страниц, проверьте остаток длинного скана вручную)`
             : "tesseract+pdftoppm (локальный OCR)",
         };
       }
 
+      if (!tools.tesseract) {
+        return {
+          status: "unavailable",
+          text: null,
+          pageCount: 1,
+          provider: this.id,
+          reason: "Бинарник tesseract не найден в PATH",
+        };
+      }
       const ext = path.extname(lower) || ".png";
       const imgPath = path.join(tmp, `img${ext}`);
       fs.writeFileSync(imgPath, input.buffer);
@@ -283,7 +314,7 @@ export class TesseractOcrProvider implements OcrProvider {
       }
       return {
         status: "ok",
-        text: text.slice(0, 8000),
+        text: text.slice(0, OCR_TEXT_CHARS),
         pageCount: 1,
         provider: this.id,
         reason: "tesseract (локальный OCR)",
@@ -300,7 +331,7 @@ export function resolveDefaultOcrProvider(): OcrProvider {
   if (mode === "mock") return new MockOcrProvider("mock-ocr-text");
   if (mode === "tesseract" || mode === "auto" || mode === "") {
     const tools = detectLocalOcrTools();
-    if (tools.tesseract) return new TesseractOcrProvider();
+    if (tools.tesseract || tools.pdftotext) return new TesseractOcrProvider();
     if (mode === "tesseract") {
       return new NotConfiguredOcrProvider();
     }
@@ -317,7 +348,7 @@ export function getOcrProvider(): OcrProvider {
   const mode = (process.env.OCR_PROVIDER ?? "auto").toLowerCase();
   if (!providerWasExplicitlySet && provider.id === "none" && (mode === "auto" || mode === "tesseract" || mode === "")) {
     const tools = detectLocalOcrTools();
-    if (tools.tesseract) provider = new TesseractOcrProvider();
+    if (tools.tesseract || tools.pdftotext) provider = new TesseractOcrProvider();
   }
   return provider;
 }

@@ -1,4 +1,5 @@
-import { completeJson } from "@/server/openrouter";
+import { SUPPLIER_DISCOVERY_SYSTEM } from "@/server/ai-prompts";
+import { completeJsonDetailed } from "@/server/openrouter";
 
 export type SupplierSearchCandidate = {
   name: string;
@@ -10,9 +11,18 @@ export type SupplierSearchCandidate = {
   sourceUrl: string;
 };
 
-const SYSTEM = `Ты ищешь реальных поставщиков строительных материалов в открытых источниках для российского подрядчика. Используй web search. Не выдумывай организации, сайты, адреса электронной почты, ассортимент или присутствие в регионе.
-В результат включай только организации, для которых поисковый источник подтверждает поставку указанного материала. Email указывай только если он прямо опубликован на доступной странице; иначе email должен быть пустым. sourceUrl — точный URL страницы, подтверждающей сведения; не используй поисковую ссылку вместо первоисточника. Если подтверждений мало, верни пустой список. Не отправляй письма и не считай поисковую выдачу доказательством надёжности.
-Верни только JSON: {"candidates":[{"name":"","website":"","email":"","materials":[""],"regionEvidence":"краткое подтверждение региона или доставки","evidence":"короткая подтверждённая выдержка/пересказ со страницы","sourceUrl":"https://..."}]}. Не более 5 кандидатов.`;
+export type UrlProbe = (url: string) => Promise<"ok" | "missing" | "unknown">;
+type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+
+const SYSTEM = SUPPLIER_DISCOVERY_SYSTEM;
+const unwrapCache = new Map<string, string>();
+const probeCache = new Map<string, "ok" | "missing" | "unknown">();
+
+export function buildSupplierQuery(input: { material: string; region: string; work?: string }): string {
+  const material = input.material.trim().slice(0, 180);
+  const region = input.region.trim().slice(0, 120);
+  return `Найди поставщиков материала «${material}» с подтверждённой поставкой в регион «${region}» или с доставкой туда. Объект: ${input.work?.trim().slice(0, 180) || "строительный проект"}. Для Крайнего Севера ищи подтверждение пути: Дудинка, Енисей, зимник, вахта. У каждого кандидата нужен первоисточник, подтверждение ассортимента и региона. Адрес почты — только если он прямо опубликован.`;
+}
 
 function safeUrl(value: unknown) {
   if (typeof value !== "string") return "";
@@ -22,12 +32,117 @@ function safeUrl(value: unknown) {
   } catch { return ""; }
 }
 
-export async function discoverMaterialSuppliers(input: { material: string; region: string; work?: string }): Promise<SupplierSearchCandidate[]> {
-  const material = input.material.trim().slice(0, 180);
-  const region = input.region.trim().slice(0, 120);
-  if (!material || !region) throw new Error("Укажите материал и регион для поиска");
-  const query = `Найди поставщиков материала «${material}» в регионе «${region}» или с подтверждённой доставкой в этот регион. Объект: ${input.work?.trim().slice(0, 120) || "строительный проект"}. Ищи сайты производителей и официальных дилеров. Для каждого кандидата укажи точный первоисточник, подтверждение ассортимента и региона; email только если он прямо опубликован.`;
-  const raw = await completeJson(SYSTEM, query, 0, { webSearch: true });
+function canonicalUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    url.hash = "";
+    url.hostname = url.hostname.toLowerCase().replace(/^www\./, "");
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return null;
+  }
+}
+
+export function supplierDomain(value: string): string | null {
+  const canon = canonicalUrl(value);
+  if (!canon) return null;
+  try {
+    return new URL(canon).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/** Grounding-api and Google redirect wrappers are not the supplier's site. */
+export function isRedirectUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    return host === "vertexaisearch.cloud.google.com"
+      || host.endsWith(".vertexaisearch.cloud.google.com")
+      || url.pathname.includes("grounding-api-redirect")
+      || (host === "google.com" && url.pathname === "/url");
+  } catch {
+    return false;
+  }
+}
+
+/** A candidate passes only when its domain is one of the unwrapped search pages. */
+export function urlFromSearch(candidate: string, sourceUrls: string[]): boolean {
+  const domain = supplierDomain(candidate);
+  if (!domain || isRedirectUrl(candidate)) return false;
+  return sourceUrls.some((source) => !isRedirectUrl(source) && supplierDomain(source) === domain);
+}
+
+export async function unwrapRedirect(url: string, options?: {
+  fetchImpl?: FetchLike;
+  timeoutMs?: number;
+  cache?: Map<string, string>;
+}): Promise<string> {
+  const cache = options?.cache ?? unwrapCache;
+  const cached = cache.get(url);
+  if (cached) return cached;
+  if (!isRedirectUrl(url)) {
+    cache.set(url, url);
+    return url;
+  }
+  const fetchImpl = options?.fetchImpl ?? fetch;
+  const timeoutMs = options?.timeoutMs ?? 4000;
+  let current = url;
+  for (let hop = 0; hop < 4; hop += 1) {
+    if (hop > 0 && !isRedirectUrl(current)) break;
+    try {
+      let response = await fetchImpl(current, { method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+      if (response.status === 405 || response.status === 501) {
+        response = await fetchImpl(current, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+      }
+      const location = response.headers.get("location");
+      if (location && response.status >= 300 && response.status < 400) {
+        current = new URL(location, current).toString();
+        continue;
+      }
+      break;
+    } catch {
+      break;
+    }
+  }
+  cache.set(url, current);
+  return current;
+}
+
+export async function resolveSearchSources(urls: string[], options?: {
+  fetchImpl?: FetchLike;
+  timeoutMs?: number;
+  cache?: Map<string, string>;
+}): Promise<string[]> {
+  const resolved = await Promise.all(urls.map((url) => unwrapRedirect(url, options)));
+  return [...new Set(resolved
+    .map((url) => canonicalUrl(url) ?? "")
+    .filter((url) => url && !isRedirectUrl(url)))];
+}
+
+export async function probeSupplierUrl(url: string, fetchImpl: FetchLike = fetch, timeoutMs = 2500): Promise<"ok" | "missing" | "unknown"> {
+  const key = canonicalUrl(url) ?? url;
+  const cached = probeCache.get(key);
+  if (cached) return cached;
+  let status: "ok" | "missing" | "unknown" = "unknown";
+  try {
+    let response = await fetchImpl(url, { method: "HEAD", redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+    if (response.status === 405 || response.status === 501) {
+      response = await fetchImpl(url, { method: "GET", redirect: "manual", signal: AbortSignal.timeout(timeoutMs) });
+    }
+    if (response.status === 404 || response.status === 410) status = "missing";
+    else if (response.status >= 200 && response.status < 400) status = "ok";
+  } catch {
+    status = "unknown";
+  }
+  probeCache.set(key, status);
+  return status;
+}
+
+export function filterSupplierCandidates(raw: string, sourceUrls: string[]): SupplierSearchCandidate[] {
+  if (!sourceUrls.length) return [];
   const parsed = JSON.parse(raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")) as { candidates?: unknown[] };
   const seen = new Set<string>();
   return (Array.isArray(parsed.candidates) ? parsed.candidates : []).flatMap((candidate) => {
@@ -36,6 +151,7 @@ export async function discoverMaterialSuppliers(input: { material: string; regio
     const name = typeof row.name === "string" ? row.name.trim().slice(0, 180) : "";
     const website = safeUrl(row.website);
     const sourceUrl = safeUrl(row.sourceUrl);
+    if (!urlFromSearch(sourceUrl, sourceUrls)) return [];
     const evidence = typeof row.evidence === "string" ? row.evidence.trim().slice(0, 600) : "";
     const regionEvidence = typeof row.regionEvidence === "string" ? row.regionEvidence.trim().slice(0, 240) : "";
     const email = typeof row.email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.email.trim())
@@ -48,4 +164,35 @@ export async function discoverMaterialSuppliers(input: { material: string; regio
     seen.add(key);
     return [{ name, website: website || new URL(sourceUrl).origin, email, materials, regionEvidence, evidence, sourceUrl }];
   }).slice(0, 5);
+}
+
+/** A candidate page that answers 404 is replaced by the search page of the same domain. */
+export async function applyLiveSupplierLinks(
+  candidates: SupplierSearchCandidate[],
+  sourceUrls: string[],
+  probe: UrlProbe = probeSupplierUrl
+): Promise<SupplierSearchCandidate[]> {
+  const out: SupplierSearchCandidate[] = [];
+  for (const candidate of candidates) {
+    const domain = supplierDomain(candidate.sourceUrl);
+    const source = sourceUrls.find((url) => supplierDomain(url) === domain && !isRedirectUrl(url));
+    const status = await probe(candidate.sourceUrl);
+    if (status === "missing") {
+      if (!source) continue;
+      out.push({ ...candidate, sourceUrl: source, website: candidate.website || new URL(source).origin });
+      continue;
+    }
+    out.push(candidate);
+  }
+  return out;
+}
+
+export async function discoverMaterialSuppliers(input: { material: string; region: string; work?: string }): Promise<SupplierSearchCandidate[]> {
+  const material = input.material.trim().slice(0, 180);
+  const region = input.region.trim().slice(0, 120);
+  if (!material || !region) throw new Error("Укажите материал и регион для поиска");
+  const query = buildSupplierQuery(input);
+  const completion = await completeJsonDetailed(SYSTEM, query, 0, { webSearch: true });
+  const resolved = await resolveSearchSources(completion.sourceUrls);
+  return applyLiveSupplierLinks(filterSupplierCandidates(completion.content, resolved), resolved);
 }

@@ -1,5 +1,7 @@
 import ExcelJS from "exceljs";
 import { GRAND_PROFILE } from "@/lib/grand-profile";
+import { OCR_CHUNK_CHARS, OCR_CHUNKS_PER_PAGE } from "@/server/ai-prompts";
+import { rollupWorkSections } from "@/server/estimate-rollup";
 import { refineNote } from "@/server/model-note";
 import { extractDocumentText, ocrConfigured } from "@/server/ocr";
 import type {
@@ -204,6 +206,18 @@ function firstOther(cells: { col: number; text: string }[], label: string) {
   );
 }
 
+function formatSectionRollup(rollup: ReturnType<typeof rollupWorkSections>): string {
+  if (!rollup.sections.length) return "";
+  const lines = rollup.sections.map((section) => `${section.section}: ${section.quantity} ${section.unit} (${section.rows} строк)`);
+  const totals = rollup.totalsByUnit.map((item) => `${item.quantity} ${item.unit}`).join(", ");
+  const titled = rollup.titledCounts.map((item) => `${item.quantity} ${item.unit}`).join(", ");
+  return [
+    `Свод разделов: ${lines.join("; ")}.`,
+    totals ? `Итого по единицам: ${totals}.` : "",
+    titled ? `Количество по названиям разделов: ${titled}.` : "",
+  ].filter(Boolean).join(" ");
+}
+
 function rub(n: number) {
   return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(n);
 }
@@ -383,6 +397,7 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
     const code = cells.find((cell) => cell.col === 2)?.text ?? "";
     if (/приказ/i.test(code) && parsed.coefficientNotes.length < 4) {
       parsed.coefficientNotes.push(`${code}. ${name}`.slice(0, 280));
+      if (!parsed.locators.coefficient) mark("coefficient", rowNumber, 2);
     }
     const unit = cells.find((cell) => cell.col === 6)?.text ?? "";
     const namedLaborResource = /^(?:чел\.?\s*[-.]?\s*час|чел\.?\s*[-.]?\s*ч|н\s*[-.]\s*ч)$/iu.test(unit.trim()) &&
@@ -504,7 +519,7 @@ export function analysisFromGrand(parsed: GrandParse, fileName: string): UploadA
     const loc = locatorKey ? parsed.locators[locatorKey] : undefined;
     citations.push({
       id,
-      text: text.slice(0, 400),
+      text: text.slice(0, 900),
       page: 1,
       sourceFile: fileName,
       sheet: loc?.sheet ?? parsed.sheetName,
@@ -539,7 +554,7 @@ export function analysisFromGrand(parsed: GrandParse, fileName: string): UploadA
       "firstPosition"
     );
   }
-  if (parsed.coefficientNotes[0]) quote("c-k", parsed.coefficientNotes[0], undefined, "heuristic");
+  if (parsed.coefficientNotes[0]) quote("c-k", parsed.coefficientNotes[0], "coefficient", "heuristic");
 
   const costLine =
     parsed.costCurrentThousand != null
@@ -561,6 +576,7 @@ export function analysisFromGrand(parsed: GrandParse, fileName: string): UploadA
     parsed.basis ? `Основание: ${parsed.basis}.` : "Основание: нет данных.",
     `Сметная стоимость: ${costLine}.`,
     `Расценок в таблице: ${parsed.positions.length}. Разделов: ${parsed.sections.length}.`,
+    formatSectionRollup(rollupWorkSections(parsed.positions)),
     parsed.sections.length
       ? `Разделы: ${parsed.sections.slice(0, 6).join("; ")}${parsed.sections.length > 6 ? "…" : ""}.`
       : "",
@@ -696,14 +712,14 @@ export function analysisFromScan(
       const words = sentence.trim().split(/\s+/u);
       for (let offset = 0; offset < words.length;) {
         let piece = "";
-        while (offset < words.length && `${piece} ${words[offset]}`.trim().length <= 700) {
+        while (offset < words.length && `${piece} ${words[offset]}`.trim().length <= OCR_CHUNK_CHARS) {
           piece = `${piece} ${words[offset++]}`.trim();
         }
-        if (!piece && words[offset]) piece = words[offset++].slice(0, 700);
+        if (!piece && words[offset]) piece = words[offset++].slice(0, OCR_CHUNK_CHARS);
         if (piece) chunks.push(piece);
       }
     }
-    return chunks.slice(0, 8).map((chunk, chunkIndex) => ({
+    return chunks.slice(0, OCR_CHUNKS_PER_PAGE).map((chunk, chunkIndex) => ({
       id: `c-ocr-p${pageIndex + 1}-${chunkIndex + 1}`,
       text: chunk,
       page: pageIndex + 1,
@@ -844,7 +860,8 @@ export async function analyzeUpload(
             costBaseThousand: parsed.costBaseThousand,
             totalCurrentRub: parsed.totalCurrent,
             positionCount: parsed.positions.length,
-            sections: parsed.sections.slice(0, 8),
+            sections: parsed.sections.slice(0, 12),
+            sectionRollup: rollupWorkSections(parsed.positions),
             negativePositions: parsed.negativePositions,
             coefficientNotes: parsed.coefficientNotes.slice(0, 3),
             largest,
@@ -949,7 +966,7 @@ export async function analyzeUpload(
         mimeHint,
         textLayer: Boolean(ocr.text),
         ocrStatus: ocr.status,
-        ocrSnippet: (ocr.text ?? "").slice(0, 400),
+        ocrSnippet: (ocr.text ?? "").slice(0, 2000),
       },
       ocr.text ? [ocr.text.slice(0, 24)] : [],
       useLlm
@@ -975,7 +992,7 @@ export async function analyzeUpload(
           },
         ];
       } else if (ocr.text) {
-        analysis.analyticalNote = `${analysis.analyticalNote}\nOCR (${ocr.provider}): ${ocr.text.slice(0, 400)}`;
+        analysis.analyticalNote = `${analysis.analyticalNote}\nOCR (${ocr.provider}): ${ocr.text.slice(0, 2000)}`;
         analysis.citations = [...analysis.citations, ...analysisFromScan(fileName, ocr).citations];
       }
       return maybeRefineNote(
@@ -1003,7 +1020,7 @@ export async function analyzeUpload(
         pages: ocr.pageCount ?? 1,
         textLayer: Boolean(ocr.text),
         ocrStatus: ocr.status,
-        ocrSnippet: (ocr.text ?? "").slice(0, 400),
+        ocrSnippet: (ocr.text ?? "").slice(0, 2000),
       },
       ocr.text ? [ocr.text.slice(0, 24)] : [],
       useLlm
@@ -1121,7 +1138,7 @@ async function analyzeGenericWorkbook(fileName: string, buf: Buffer): Promise<Up
   // Keep source citations bounded and prioritize terms users need for a bid decision.
   const selected = rows
     .sort((a, b) => b.priority - a.priority || a.row - b.row)
-    .slice(0, 80);
+    .slice(0, 120);
   const selectedPositions = preferredMaterialPositions.length
     ? preferredMaterialPositions
     : positions;

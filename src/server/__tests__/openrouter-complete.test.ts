@@ -7,7 +7,7 @@ vi.mock("@/server/config", () => ({
   },
 }));
 
-import { completeJson } from "@/server/openrouter";
+import { completeJson, completeJsonDetailed, sourceUrlsFromMessage } from "@/server/openrouter";
 
 function completion(body: unknown, finishReason = "stop", usage: Record<string, number> | null = null) {
   return new Response(JSON.stringify({
@@ -53,6 +53,39 @@ describe("completeJson", () => {
       usage: { total_tokens: 8000, completion_tokens: 8000 },
       attempt: 0,
     }));
+  });
+
+  it("keeps a caller token cap and returns only the pages the search tool cited", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({ candidates: [] }),
+          annotations: [{ type: "url_citation", url_citation: { url: "https://vendor.example/materials" } }],
+        },
+        finish_reason: "stop",
+      }],
+    })));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await completeJsonDetailed("system", "user", 0, { webSearch: true, maxTokens: 4000 });
+    expect(result.sourceUrls).toEqual(["https://vendor.example/materials"]);
+    expect(sourceUrlsFromMessage({
+      annotations: [{ url_citation: { url: "https://vertexaisearch.cloud.google.com/grounding-api-redirect/abc", title: "Каталог на vendor.example и other.example" } }],
+    })).toEqual(["https://vertexaisearch.cloud.google.com/grounding-api-redirect/abc"]);
+    expect(sourceUrlsFromMessage({
+      annotations: [{ url_citation: { url: "https://vertexaisearch.cloud.google.com/grounding-api-redirect/abc", title: "vendor.example" } }],
+    })).toContain("https://vendor.example/");
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1].body)).max_tokens).toBe(4000);
+  });
+
+  it("raises a caller token cap on the length retry", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(completion("", "length"))
+      .mockResolvedValueOnce(completion(JSON.stringify({ ok: true })));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    await completeJson("system", "user", 0, { maxTokens: 4000 });
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1].body)).max_tokens).toBe(4000);
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1].body)).max_tokens).toBe(12000);
   });
 
   it("does not retry a second time when the length retry is still empty", async () => {

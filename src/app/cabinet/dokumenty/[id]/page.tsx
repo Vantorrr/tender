@@ -278,7 +278,7 @@ export default function DocumentDetailPage() {
                     <li key={c.id} className="min-w-0 rounded-lg border border-[var(--tk-line)] bg-white px-3 py-3 text-sm">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-medium text-[var(--tk-muted)]">{c.topicLabel}</span>
-                        <span className="break-all text-xs text-[var(--tk-muted)]">{c.sourceFile}{c.sheet ? ` · лист «${c.sheet}»` : ""}{c.cell ? ` · ${c.cell}` : ""}{c.page ? ` · стр. ${c.page}` : ""}</span>
+                        <span className="break-all text-xs text-[var(--tk-muted)]">{c.sourceFile}{c.sheet ? ` · лист «${c.sheet}»` : ""}{c.cell ? ` · ${c.cell}` : ""}{!c.sheet && c.page ? ` · стр. ${c.page}` : ""}</span>
                       </div>
                       <p className="mt-2 break-words leading-relaxed [overflow-wrap:anywhere]">{c.displayText}</p>
                     </li>

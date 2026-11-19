@@ -8,7 +8,7 @@ vi.mock("@/server/openrouter", () => ({
   }),
 }));
 
-import { analyzeCalculationComparisonWithAI, validateCalcCompareAiResult } from "@/server/calc-compare-ai";
+import { analyzeCalculationComparisonWithAI, groupCompareRows, validateCalcCompareAiResult, ensureCompareSummary } from "@/server/calc-compare-ai";
 import type { Calculation } from "@/lib/types";
 
 describe("validateCalcCompareAiResult", () => {
@@ -67,6 +67,42 @@ describe("validateCalcCompareAiResult", () => {
   });
 });
 
+describe("grouped comparison", () => {
+  it("merges repeated lines of one position and states the estimate total", () => {
+    const groups = groupCompareRows([
+      { rowId: "row-16", name: "Бурение скважин диаметром 450 мм", unit: "м", section: "Раздел 1", status: "diff", factsText: "Позиция: Бурение скважин диаметром 450 мм; Разница: -100", originalSum: 200, draftSum: 100, deltaSum: -100 },
+      { rowId: "row-17", name: "Бурение скважин диаметром 450 мм", unit: "м", section: "Раздел 1", status: "diff", factsText: "Позиция: Бурение скважин диаметром 450 мм; Разница: -40", originalSum: 80, draftSum: 40, deltaSum: -40 },
+      { rowId: "row-27", name: "Долото трёхшарошечное", unit: "шт", section: "Раздел 2", status: "diff", factsText: "Позиция: Долото трёхшарошечное; Разница: -10", originalSum: 30, draftSum: 20, deltaSum: -10 },
+      { rowId: "row-28", name: "Долото трёхшарошечное", unit: "шт", section: "Раздел 2", status: "diff", factsText: "Позиция: Долото трёхшарошечное; Разница: -5", originalSum: 15, draftSum: 10, deltaSum: -5 },
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups.find((group) => group.rowIds.includes("row-16"))).toMatchObject({ impact: -140, rowIds: ["row-16", "row-17"] });
+    expect(groups.find((group) => group.rowIds.includes("row-27"))?.rowIds).toEqual(["row-27", "row-28"]);
+    expect(ensureCompareSummary("Проверьте ставки.", -172204022.31)).toMatch(/^Черновик дешевле сметы заказчика на 172/);
+    expect(ensureCompareSummary("172 204 022,31", -172204022.31)).toMatch(/^Черновик дешевле/);
+    const alreadyNamed = "Черновик дешевле сметы заказчика на 172 204 022,31 руб., потому что ставки ниже.";
+    expect(ensureCompareSummary(alreadyNamed, -172204022.31).match(/Черновик дешевле/gu)).toHaveLength(1);
+    expect(ensureCompareSummary(alreadyNamed, -172204022.31, ["Монтаж металлоконструкций"])).toContain("Только в черновике: Монтаж металлоконструкций");
+    const sized = groupCompareRows([
+      { rowId: "a", name: "Труба стальная 108", unit: "м", section: "Раздел 1", status: "diff", factsText: "Позиция: Труба стальная 108", originalSum: 10, draftSum: 8, deltaSum: -2 },
+      { rowId: "b", name: "Труба стальная 159", unit: "м", section: "Раздел 1", status: "diff", factsText: "Позиция: Труба стальная 159", originalSum: 12, draftSum: 9, deltaSum: -3 },
+    ]);
+    expect(sized).toHaveLength(2);
+  });
+
+  it("does not let one group reuse numbers from another group", () => {
+    const result = validateCalcCompareAiResult(
+      JSON.stringify({
+        summary: "Проверьте ставки.",
+        findings: [{ rowId: "row-1", text: "Разница 999 руб.", sourceExcerpt: "Позиция: Труба" }],
+      }),
+      [{ rowId: "row-1", factsText: "Позиция: Труба; Разница: -2" }],
+      { summaryCorpus: "Проверьте ставки. 999", sharedFacts: "Накладные: 43% от прямых затрат." }
+    );
+    expect(result.findings).toEqual([]);
+  });
+});
+
 describe("full estimate AI coverage", () => {
   it("sends every comparison row in consecutive batches and reports full coverage", async () => {
     modelInputs.users.length = 0;
@@ -101,11 +137,15 @@ describe("full estimate AI coverage", () => {
       makeCalculation("draft")
     );
 
-    const batches = modelInputs.users.map((input) => JSON.parse(input) as { rows: Array<{ rowId: string }> });
-    const coveredRows = batches.flatMap((batch) => batch.rows.map((row) => row.rowId));
-    expect(batches.map((batch) => batch.rows.length)).toEqual([80, 80, 1]);
-    expect(new Set(coveredRows).size).toBe(161);
-    expect(coveredRows).toContain("row-161");
-    expect(report).toMatchObject({ rowsAnalyzed: 161, rowsTotal: 161, batches: 3 });
+    expect(modelInputs.users).toHaveLength(1);
+    const payload = JSON.parse(modelInputs.users[0] ?? "{}") as {
+      coverage: { rowsTotal: number; groupsInDetail: number };
+      sections: Array<{ rowCount: number }>;
+      materialGroups: unknown[];
+    };
+    expect(payload.coverage.rowsTotal).toBe(161);
+    expect(payload.materialGroups.length).toBeLessThanOrEqual(12);
+    expect(payload.sections.reduce((sum, section) => sum + section.rowCount, 0)).toBe(161);
+    expect(report).toMatchObject({ rowsAnalyzed: 161, rowsTotal: 161, batches: 1 });
   });
 });

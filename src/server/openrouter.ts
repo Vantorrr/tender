@@ -18,7 +18,54 @@ type CompletionUsage = {
   completion_tokens_details?: { reasoning_tokens?: number };
 };
 
-export async function completeJson(system: string, user: string, attempt = 0, options: { webSearch?: boolean } = {}): Promise<string> {
+export type JsonCompletion = {
+  content: string;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  totalTokens: number | null;
+  elapsedMs: number;
+  sourceUrls: string[];
+};
+
+type CompletionOptions = { webSearch?: boolean; maxTokens?: number; model?: string };
+
+/** Pages the web-search tool actually returned. A model link that is not here was not found. */
+export function sourceUrlsFromMessage(message: { annotations?: unknown } | undefined): string[] {
+  const annotations = message?.annotations;
+  if (!Array.isArray(annotations)) return [];
+  const urls: string[] = [];
+  for (const item of annotations) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const citation = record.url_citation;
+    if (citation && typeof citation === "object") {
+      const cited = citation as { url?: unknown; title?: unknown };
+      if (typeof cited.url === "string") urls.push(cited.url);
+      if (typeof cited.title === "string") {
+        const title = cited.title.trim();
+        if (/^https?:\/\//i.test(title)) urls.push(title);
+        else if (/^(?:[a-z0-9-]+\.)+[a-z]{2,}$/i.test(title) && !/google|vertex/i.test(title)) urls.push(`https://${title}/`);
+      }
+    }
+    if (typeof record.url === "string") urls.push(record.url);
+  }
+  return [...new Set(urls)];
+}
+
+function usageOf(usage: CompletionUsage | undefined): Pick<JsonCompletion, "promptTokens" | "completionTokens" | "totalTokens"> {
+  return {
+    promptTokens: usage?.prompt_tokens ?? null,
+    completionTokens: usage?.completion_tokens ?? null,
+    totalTokens: usage?.total_tokens ?? null,
+  };
+}
+
+async function requestCompletion(
+  system: string,
+  user: string,
+  attempt: number,
+  options: CompletionOptions
+): Promise<{ content: string; usage: CompletionUsage | undefined; sourceUrls: string[] }> {
   if (!config.openRouterKey) throw new Error("Ключ модели не задан");
   const retrying = attempt > 0;
   const response = await fetch(ENDPOINT, {
@@ -30,9 +77,9 @@ export async function completeJson(system: string, user: string, attempt = 0, op
       "X-Title": "TenderKontur",
     },
     body: JSON.stringify({
-      model: config.openRouterModel,
+      model: options.model || config.openRouterModel,
       temperature: 0.2,
-      max_tokens: retrying ? RETRY_MAX_TOKENS : PRIMARY_MAX_TOKENS,
+      max_tokens: retrying ? Math.max(options.maxTokens ?? 0, RETRY_MAX_TOKENS) : (options.maxTokens ?? PRIMARY_MAX_TOKENS),
       reasoning: { effort: "low", exclude: true },
       response_format: { type: "json_object" },
       ...(options.webSearch ? { tools: [{ type: "openrouter:web_search", parameters: { max_results: 5 } }] } : {}),
@@ -50,10 +97,11 @@ export async function completeJson(system: string, user: string, attempt = 0, op
     throw new Error(`Модель ответила ${response.status}: ${detail.slice(0, 240)}`);
   }
   const payload = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> | null; refusal?: string | null }; finish_reason?: string }>;
+    choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> | null; refusal?: string | null; annotations?: unknown }; finish_reason?: string }>;
     usage?: CompletionUsage;
   };
   const choice = payload.choices?.[0];
+  const sourceUrls = sourceUrlsFromMessage(choice?.message);
   const rawContent = choice?.message?.content;
   const content = (typeof rawContent === "string"
     ? rawContent
@@ -67,7 +115,7 @@ export async function completeJson(system: string, user: string, attempt = 0, op
       usage: payload.usage ?? null,
       attempt,
     });
-    if (attempt < 1) return completeJson(system, user, attempt + 1, options);
+    if (attempt < 1) return requestCompletion(system, user, attempt + 1, options);
     if (choice?.message?.refusal) throw new Error(`Модель отказала в анализе: ${choice.message.refusal.slice(0, 180)}`);
     throw new Error(`Пустой ответ модели (finish_reason: ${finishReason ?? "не указан"}).`);
   }
@@ -80,8 +128,33 @@ export async function completeJson(system: string, user: string, attempt = 0, op
     // completion budget before surfacing a confusing JSON parser error to users.
   }
   if ((!validJson || finishReason === "length") && attempt < 1) {
-    return completeJson(system, user, attempt + 1, options);
+    return requestCompletion(system, user, attempt + 1, options);
   }
   if (!validJson) throw new Error(`Модель вернула неполный JSON после ${attempt + 1} попыток.`);
-  return content;
+  return { content, usage: payload.usage, sourceUrls };
+}
+
+export async function completeJson(system: string, user: string, attempt = 0, options: CompletionOptions = {}): Promise<string> {
+  return (await requestCompletion(system, user, attempt, options)).content;
+}
+
+export async function completeJsonDetailed(
+  system: string,
+  user: string,
+  attempt = 0,
+  options: CompletionOptions = {}
+): Promise<{ content: string; sourceUrls: string[] }> {
+  const result = await requestCompletion(system, user, attempt, options);
+  return { content: result.content, sourceUrls: result.sourceUrls };
+}
+
+export async function completeJsonWithUsage(
+  system: string,
+  user: string,
+  attempt = 0,
+  options: CompletionOptions = {}
+): Promise<JsonCompletion> {
+  const startedAt = Date.now();
+  const result = await requestCompletion(system, user, attempt, options);
+  return { content: result.content, ...usageOf(result.usage), sourceUrls: result.sourceUrls, elapsedMs: Date.now() - startedAt };
 }

@@ -445,7 +445,6 @@ export default function RaschetDetailPage() {
       ? compareCalculations(paired, calc)
       : compareCalculations(calc, paired);
   const compareSignature = JSON.stringify(compare);
-  const compareAiBatches = Math.ceil(compare.rows.length / 80);
 
   const totals = calc.kind === "customer_original"
     ? sourceEstimateTotals(calc.positions)
@@ -1529,7 +1528,7 @@ export default function RaschetDetailPage() {
           <Button
             variant="outline"
             disabled={!paired || compare.rows.length === 0 || aiCompareLoading}
-            title={`Отправляет строки сравнения в платную модель: ${compareAiBatches} запрос(а/ов), до 80 строк в каждом блоке. Расчётные суммы модель не меняет.`}
+            title="Один запрос: свод по разделам и до 12 значимых расхождений. Одинаковые позиции склеиваются, суммы модель не меняет."
             onClick={async () => {
               setAiCompareLoading(true);
               try {
@@ -1551,7 +1550,7 @@ export default function RaschetDetailPage() {
             {aiCompareLoading ? "ИИ проверяет расхождения…" : "Получить комментарий ИИ"}
           </Button>
           <span className="text-xs text-[var(--tk-muted)]">
-            Платный пакетный анализ: {compareAiBatches} запрос(а/ов) по всем {compare.rows.length} строкам сравнения; суммы считает система.
+            Один запрос по всем {compare.rows.length} строкам: свод разделов и до 12 значимых групп. Суммы считает система.
           </span>
         </div>
         {aiCompare?.signature === compareSignature ? (

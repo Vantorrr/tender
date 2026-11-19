@@ -25,6 +25,7 @@ import { cleanLabel } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney, formatNumber } from "@/lib/format";
 import { citationTopicLabel, readableCitations, regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
+import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_CHECKLIST } from "@/lib/ai-topics";
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
 import { WORK_TYPES } from "@/lib/pipeline";
 import { userHasSection } from "@/lib/acl";
@@ -1244,25 +1245,55 @@ export default function ZakupkaDetailPage() {
                       <span className="text-xs text-[var(--tk-muted)]">{analytics.findings.length} подтверждённых вывода</span>
                     </div>
                     <ul className="space-y-2">
-                      {analytics.findings.slice(0, 6).map((finding, index) => {
-                        const source = analytics.citations.find((citation) => finding.citationIds.includes(citation.id));
+                      {analytics.findings.map((finding, index) => {
+                        const quote = finding.quote?.replace(/\s+/g, " ").trim();
+                        const sameFile = (citation: { id: string; sourceFile: string; text: string }) =>
+                          finding.citationIds.includes(citation.id) &&
+                          (!finding.sourceFiles?.length || finding.sourceFiles.includes(citation.sourceFile));
+                        const quoted = analytics.citations.filter((citation) =>
+                          sameFile(citation) && quote && citation.text.replace(/\s+/g, " ").includes(quote)
+                        );
+                        const source = [...quoted].sort((left, right) => left.text.length - right.text.length || (left.paragraph ?? 999) - (right.paragraph ?? 999))[0]
+                          ?? analytics.citations.find((citation) => sameFile(citation));
+                        const importanceLabel = ANALYSIS_IMPORTANCE_LABELS[finding.importance] ?? "К сведению";
                         return (
                           <li key={`${finding.topic}-${index}`} className="rounded-lg border border-[var(--tk-line)] px-3 py-3">
                             <div className="flex flex-wrap items-center gap-2">
                               <span className="text-xs font-semibold text-[var(--tk-muted)]">{finding.topic}</span>
-                              {finding.importance === "critical" || finding.importance === "high" ? (
-                                <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-medium text-amber-900">{finding.importance === "critical" ? "Критично" : "Важно"}</span>
-                              ) : null}
+                              <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${finding.importance === "critical" || finding.importance === "high" ? "bg-amber-100 text-amber-900" : "bg-stone-100 text-stone-700"}`}>{importanceLabel}</span>
                             </div>
                             <p className="mt-1 text-sm leading-relaxed">{finding.text}</p>
+                            <p className="mt-1 text-xs text-[var(--tk-muted)]">Влияние на себестоимость: {finding.costImpact || "не указано в документах"}</p>
+                            <p className="text-xs text-[var(--tk-muted)]">Влияние на срок: {finding.scheduleImpact || "не указано в документах"}</p>
                             <details className="mt-2">
                               <summary className="w-fit cursor-pointer text-xs font-medium text-[var(--tk-muted)]">Показать фрагмент и источник</summary>
                               <blockquote className="mt-2 break-words rounded-md bg-stone-50 px-3 py-2 text-sm leading-relaxed [overflow-wrap:anywhere]">«{finding.quote}»</blockquote>
-                              {source ? <p className="mt-1 text-xs text-[var(--tk-muted)]">{source.sourceFile}{source.page ? ` · стр. ${source.page}` : ""}{source.paragraph ? ` · абз. ${source.paragraph}` : ""}{source.sheet ? ` · лист ${source.sheet}` : ""}{source.cell ? ` · ${source.cell}` : ""}</p> : null}
+                              {source ? <p className="mt-1 text-xs text-[var(--tk-muted)]">{source.sourceFile}{source.sheet ? ` · лист ${source.sheet}` : source.page ? ` · стр. ${source.page}` : ""}{source.paragraph ? ` · абз. ${source.paragraph}` : ""}{source.cell ? ` · ${source.cell}` : ""}</p> : null}
                             </details>
                           </li>
                         );
                       })}
+                    </ul>
+                    <div className="mt-4" data-testid="analytics-topic-coverage">
+                      <h4 className="text-sm font-semibold">Что ещё искали в документах</h4>
+                      <ul className="mt-2 grid gap-1 sm:grid-cols-2">
+                        {ANALYSIS_TOPIC_CHECKLIST.map((topic) => {
+                          const found = analytics.findings?.some((finding) => finding.topic === topic.label);
+                          return (
+                            <li key={topic.key} className="text-sm">
+                              {topic.label}: {found ? "есть вывод с цитатой" : "не указано в документах"}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  </section>
+                ) : null}
+                {analytics.customerQuestions?.length ? (
+                  <section className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white p-4" data-testid="analytics-customer-questions">
+                    <h3 className="text-sm font-semibold">Вопросы заказчику</h3>
+                    <ul className="mt-2 list-disc space-y-1 pl-5 text-sm">
+                      {analytics.customerQuestions.map((question, index) => <li key={`${index}-${question}`}>{question}</li>)}
                     </ul>
                   </section>
                 ) : null}
@@ -1328,7 +1359,7 @@ export default function ZakupkaDetailPage() {
                               <li key={citation.id} className="text-sm leading-relaxed">
                                 <p className="break-words leading-relaxed [overflow-wrap:anywhere]">{citation.text}</p>
                                 <p className="mt-1 break-words text-xs text-[var(--tk-muted)] [overflow-wrap:anywhere]">
-                                  {citation.sourceFile}{citation.page ? `, стр. ${citation.page}` : ""}{citation.paragraph ? `, абз. ${citation.paragraph}` : ""}{citation.sheet ? `, лист ${citation.sheet}` : ""}{citation.cell ? `, ${citation.cell}` : ""}
+                                  {citation.sourceFile}{citation.sheet ? `, лист ${citation.sheet}` : citation.page ? `, стр. ${citation.page}` : ""}{citation.paragraph ? `, абз. ${citation.paragraph}` : ""}{citation.cell ? `, ${citation.cell}` : ""}
                                 </p>
                               </li>
                             ))}
@@ -1397,7 +1428,7 @@ export default function ZakupkaDetailPage() {
                           <span className="inline-flex rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-medium text-[var(--tk-muted)]">{citationTopicLabel(c.text)}</span>
                           <p className="mt-2 line-clamp-4 break-words leading-relaxed [overflow-wrap:anywhere]">{source?.displayText ?? c.text}</p>
                           <p className="mt-2 break-words text-xs text-[var(--tk-muted)] [overflow-wrap:anywhere]">
-                            {c.sourceFile}{c.page ? ` · стр. ${c.page}` : ""}{c.paragraph ? ` · абз. ${c.paragraph}` : ""}{c.sheet ? ` · лист ${c.sheet}` : ""}{c.cell ? ` · ${c.cell}` : ""}
+                            {c.sourceFile}{c.sheet ? ` · лист ${c.sheet}` : c.page ? ` · стр. ${c.page}` : ""}{c.paragraph ? ` · абз. ${c.paragraph}` : ""}{c.cell ? ` · ${c.cell}` : ""}
                           </p>
                         </li>
                       );
@@ -1413,7 +1444,7 @@ export default function ZakupkaDetailPage() {
                             <li key={c.id} className="min-w-0 rounded-lg border border-[var(--tk-line)] bg-white px-3 py-2 text-sm">
                               <p className="flex flex-wrap items-center gap-2 text-xs font-medium text-[var(--tk-muted)]">
                                 <span className="rounded-full bg-stone-100 px-2 py-0.5">{c.topicLabel}</span>
-                                <span className="break-all">{c.sourceFile}{c.page != null ? ` · стр. ${c.page}` : ""}{c.paragraph ? ` · абз. ${c.paragraph}` : ""}{c.sheet ? ` · лист ${c.sheet}` : ""}{c.cell ? ` · ${c.cell}` : ""}</span>
+                                <span className="break-all">{c.sourceFile}{c.sheet ? ` · лист ${c.sheet}` : c.page != null ? ` · стр. ${c.page}` : ""}{c.paragraph ? ` · абз. ${c.paragraph}` : ""}{c.cell ? ` · ${c.cell}` : ""}</span>
                               </p>
                               <p className="mt-1 break-words leading-relaxed [overflow-wrap:anywhere]">{c.displayText}</p>
                             </li>
