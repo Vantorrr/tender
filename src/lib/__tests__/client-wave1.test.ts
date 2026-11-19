@@ -160,7 +160,9 @@ describe("client wave 1 wording and money", () => {
       sectionName: "Раздел 3. Бурение скважин под опоры П-2к и П-4к (325) 72 шт",
     });
     expect(first.text.startsWith("1.")).toBe(true);
+    expect(first.numbered).toBe(true);
     expect(third.text.startsWith("3.")).toBe(true);
+    expect(gprStageLabel({ name: "Подготовка" }).numbered).toBe(false);
     expect(first.text).not.toBe(third.text);
     expect(first.title).toContain("П-12Р");
     expect(third.title).toContain("П-2к");

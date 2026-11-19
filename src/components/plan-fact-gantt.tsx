@@ -492,7 +492,7 @@ export function PlanFactGantt({
                     <div className="grid grid-cols-[1.4fr_0.55fr_0.55fr_0.7fr] gap-1 text-xs">
                       <div className="min-w-0">
                         <div className="break-words text-sm font-semibold leading-snug text-[var(--tk-ink)]" title={gprStageLabel(stage).title}>
-                          <span className="mr-1 text-[10px] text-[var(--tk-muted)]">{stage.sequence}.</span>
+                          {gprStageLabel(stage).numbered ? null : <span className="mr-1 text-[10px] text-[var(--tk-muted)]">{stage.sequence}.</span>}
                           {gprStageLabel(stage).text}
                         </div>
                         <div className={`mt-1 tabular-nums ${preview ? "rounded-md bg-[var(--tk-brand)] px-1.5 py-1 text-xs font-semibold text-white" : "text-[11px] text-[var(--tk-muted)]"}`} aria-live={preview ? "polite" : undefined}>
