@@ -25,7 +25,7 @@ import {
   updateMoney,
   updatePlanFact,
 } from "@/server/repo";
-import { deleteUpload, resolveUploadPath, saveUpload } from "@/server/uploads";
+import { canonicalUploadPath, deleteUpload, resolveUploadPath, saveUpload } from "@/server/uploads";
 import { config } from "@/server/config";
 import "./setup";
 
@@ -339,6 +339,9 @@ describe("client wave 1 server", () => {
     deleteUpload("uploads/../../not-an-upload.txt");
     expect(fs.existsSync(outside)).toBe(true);
     expect(resolveUploadPath("/etc/passwd")).toBeNull();
+    expect(resolveUploadPath("uploads/../../not-an-upload.txt")).toBeNull();
+    expect(canonicalUploadPath("uploads/./photo..jpg")).toBe("uploads/photo..jpg");
+    expect(canonicalUploadPath("uploads/foo/../photo..jpg")).toBe("uploads/photo..jpg");
     fs.unlinkSync(outside);
     mutateAppData((data) => {
       const doc = data.documents.find((item) => item.orgId === "org-alfa");

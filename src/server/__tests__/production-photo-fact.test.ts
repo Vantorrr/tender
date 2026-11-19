@@ -11,6 +11,7 @@ vi.mock("@/server/config", async () => {
 import { createSession } from "@/server/auth";
 import { closeDb, ensureReady, readAppData } from "@/server/db";
 import { addDailyProductionFact } from "@/server/repo";
+import { readUpload } from "@/server/uploads";
 import "./setup";
 
 describe("production fact with photo", () => {
@@ -78,5 +79,27 @@ describe("production fact with photo", () => {
       ?.dailyFacts?.find((item) => item.id === "df-photo-size");
     expect(fact?.quantity).toBe(2);
     expect(fact?.photos).toHaveLength(1);
+  });
+
+  it("keeps a photo whose file name contains two dots", async () => {
+    const form = new FormData();
+    form.append("planFactId", "pf-1");
+    form.append("date", "2026-11-19");
+    form.append("workName", "Демонтаж перегородок");
+    form.append("unit", "ед");
+    form.append("quantity", "1");
+    form.append("factId", "df-photo-dots");
+    form.append("photo", new File([Uint8Array.from([9, 8, 7])], "факт..png", { type: "image/png" }));
+    const { POST } = await import("@/app/api/proizvodstvo/route");
+    const response = await POST(new Request("http://local/api/proizvodstvo", {
+      method: "POST",
+      headers: { authorization: `Bearer ${createSession("u-obj")}` },
+      body: form,
+    }));
+    expect(response.status).toBe(200);
+    const photo = readAppData().planFacts.find((item) => item.id === "pf-1")
+      ?.dailyFacts?.find((item) => item.id === "df-photo-dots")?.photos[0];
+    expect(photo?.storedPath).toMatch(/факт\.\.png$/);
+    expect(readUpload(photo!.storedPath!)).toEqual(Buffer.from([9, 8, 7]));
   });
 });

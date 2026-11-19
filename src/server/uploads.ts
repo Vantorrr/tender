@@ -31,11 +31,13 @@ export async function saveUpload(
   return { storedPath: relative, fileSize: bytes.length };
 }
 
-/** Only a file inside data/uploads. Absolute paths and `..` never resolve. */
+/** Only a file inside data/uploads. Absolute paths and a `..` directory segment never resolve. A name like `факт..jpg` does. */
 export function resolveUploadPath(storedPath: string): string | null {
-  if (!storedPath || storedPath.includes("\0") || storedPath.includes("..")) return null;
+  if (!storedPath || storedPath.includes("\0")) return null;
   if (path.isAbsolute(storedPath)) return null;
   const normalized = path.normalize(storedPath).replace(/\\/g, "/");
+  const segments = normalized.split("/");
+  if (segments.some((segment) => segment === "..")) return null;
   if (!normalized.startsWith("uploads/") || normalized.endsWith("/")) return null;
   const root = path.resolve(uploadsDir());
   const absolute = path.resolve(/*turbopackIgnore: true*/ config.dataDir, normalized);
@@ -49,7 +51,7 @@ export function canonicalUploadPath(storedPath: string): string | null {
   const absolute = resolveUploadPath(storedPath);
   if (!absolute) return null;
   const relative = path.relative(path.resolve(/*turbopackIgnore: true*/ config.dataDir), absolute).split(path.sep).join("/");
-  if (!relative.startsWith("uploads/") || relative.endsWith("/") || relative.includes("..")) return null;
+  if (!relative.startsWith("uploads/") || relative.endsWith("/") || relative.split("/").some((segment) => segment === "..")) return null;
   return relative;
 }
 
