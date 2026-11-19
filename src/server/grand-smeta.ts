@@ -1040,7 +1040,7 @@ export async function analyzeUpload(
           },
         ];
       } else if (ocr.text) {
-        analysis.analyticalNote = `${analysis.analyticalNote}\nOCR (${ocr.provider}): ${ocr.text.slice(0, 2000)}`;
+        analysis.analyticalNote = `${analysis.analyticalNote}\nТекст распознан автоматически, сверьте с оригиналом`;
         analysis.citations = [...analysis.citations, ...analysisFromScan(fileName, ocr).citations];
       }
       return maybeRefineNote(

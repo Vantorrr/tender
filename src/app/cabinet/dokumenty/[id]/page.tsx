@@ -237,7 +237,7 @@ export default function DocumentDetailPage() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
-          {/OCR\s*\(/u.test(doc.analyticalNote) ? (
+          {/OCR\s*\(|Текст распознан автоматически/u.test(doc.analyticalNote) ? (
             <section className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
               <h2 className="font-[family-name:var(--font-display)] text-base">Записка</h2>
               <p className="mt-2 text-sm">Текст распознан автоматически, сверьте с оригиналом</p>

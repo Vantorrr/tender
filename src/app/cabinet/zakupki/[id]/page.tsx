@@ -236,6 +236,7 @@ export default function ZakupkaDetailPage() {
   const [payType, setPayType] = useState<PaymentBucket>("postuplenie");
   const [payAmount, setPayAmount] = useState("");
   const [paySaving, setPaySaving] = useState(false);
+  const paySavingRef = useRef(false);
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
   const [matName, setMatName] = useState("");
   const [matQty, setMatQty] = useState("1");
@@ -1671,12 +1672,13 @@ export default function ZakupkaDetailPage() {
                     data-testid="add-money-payment"
                     disabled={paySaving}
                     onClick={async () => {
-                      if (paySaving) return;
+                      if (paySavingRef.current) return;
                       const amount = parseDecimalRu(payAmount);
                       if (amount == null) {
                         toast.error("Введите сумму, например 300 000 или 300,5");
                         return;
                       }
+                      paySavingRef.current = true;
                       setPaySaving(true);
                       try {
                         await api("/api/zakupki", {
@@ -1702,6 +1704,7 @@ export default function ZakupkaDetailPage() {
                           e instanceof Error ? e.message : "Ошибка сохранения"
                         );
                       } finally {
+                        paySavingRef.current = false;
                         setPaySaving(false);
                       }
                     }}
