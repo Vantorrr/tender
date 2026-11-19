@@ -313,17 +313,26 @@ export function recommendationAfterConflict(
   return recommendation;
 }
 
-function moneyAmounts(text: string): Array<{ raw: string; rubles: number; thousands: boolean }> {
-  const found: Array<{ raw: string; rubles: number; thousands: boolean }> = [];
-  const pattern = /(\d{1,3}(?:[ \u00a0]\d{3})+(?:[,.]\d+)?|\d+(?:[,.]\d+)?)(\s*тыс\.?)?/gu;
-  for (const match of text.matchAll(pattern)) {
-    const numeric = Number(match[1]!.replace(/[ \u00a0]/g, "").replace(",", "."));
+const PRICE_WORD = /(?<![\p{L}\p{N}_])(?:цен(?:а|ы|у|е|ой|ою)|стоимост(?:ь|и|ью)|нмцк)(?![\p{L}\p{N}_])/giu;
+const CURRENCY_AMOUNT = /(\d{1,3}(?:[ \u00a0\u202f]\d{3})+(?:[,.]\d+)?|\d+(?:[,.]\d+)?)(?:\s*(тыс\.?|млн\.?))?\s*(?:руб(?:\.|лей|ля|ль)?|₽)/giu;
+
+type MoneyScale = "ruble" | "thousand" | "million";
+
+function moneyAmounts(text: string): Array<{ number: string; rubles: number; scale: MoneyScale; index: number; end: number }> {
+  const found: Array<{ number: string; rubles: number; scale: MoneyScale; index: number; end: number }> = [];
+  for (const match of text.matchAll(CURRENCY_AMOUNT)) {
+    const numeric = Number(match[1]!.replace(/[ \u00a0\u202f]/g, "").replace(",", "."));
     if (!Number.isFinite(numeric)) continue;
-    const thousands = Boolean(match[2]);
+    const unit = (match[2] ?? "").toLocaleLowerCase("ru-RU");
+    const scale: MoneyScale = unit.startsWith("млн") ? "million" : unit.startsWith("тыс") ? "thousand" : "ruble";
+    const multiplier = scale === "million" ? 1_000_000 : scale === "thousand" ? 1_000 : 1;
+    const index = match.index ?? 0;
     found.push({
-      raw: `${match[1]}${match[2] ?? ""}`.replace(/\s+/g, " ").trim(),
-      rubles: thousands ? numeric * 1000 : numeric,
-      thousands,
+      number: match[1]!.replace(/\s+/g, " ").trim(),
+      rubles: Math.round(numeric * multiplier * 100) / 100,
+      scale,
+      index,
+      end: index + match[0]!.length,
     });
   }
   return found;
@@ -333,8 +342,9 @@ function moneyLabel(rubles: number, thousands: boolean, texts: string[]): string
   for (const text of texts) {
     for (const amount of moneyAmounts(text)) {
       if (Math.abs(amount.rubles - rubles) <= 1) {
-        const number = amount.raw.replace(/\s*тыс\.?/iu, "").trim();
-        return amount.thousands ? `${number} тыс. руб.` : `${number} руб.`;
+        if (amount.scale === "million") return `${amount.number} млн руб.`;
+        if (amount.scale === "thousand") return `${amount.number} тыс. руб.`;
+        return `${amount.number} руб.`;
       }
     }
   }
@@ -355,14 +365,25 @@ export type CostConflictFinding = {
   scheduleImpact: string;
 };
 
-function citedPrice(texts: Array<{ id: string; text: string }>): { rubles: number; quote: string; citationId: string; thousands: boolean } | null {
-  const hits = texts.flatMap((citation) => {
-    if (!/цен|стоим|нмцк/iu.test(citation.text)) return [];
-    return moneyAmounts(citation.text)
-      .filter((amount) => amount.rubles >= 1000)
-      .map((amount) => ({ ...amount, quote: citation.text, citationId: citation.id }));
-  });
-  return hits.sort((left, right) => right.rubles - left.rubles)[0] ?? null;
+function citedPrice(texts: Array<{ id: string; text: string }>): { rubles: number; quote: string; citationId: string; scale: MoneyScale } | null {
+  let best: { rubles: number; quote: string; citationId: string; scale: MoneyScale; distance: number } | null = null;
+  for (const citation of texts) {
+    const keywords = [...citation.text.matchAll(PRICE_WORD)];
+    if (keywords.length === 0) continue;
+    for (const amount of moneyAmounts(citation.text)) {
+      const distance = Math.min(...keywords.map((keyword) => {
+        const start = keyword.index ?? 0;
+        const end = start + keyword[0].length;
+        if (amount.index >= end) return amount.index - end;
+        if (amount.end <= start) return start - amount.end;
+        return 0;
+      }));
+      if (!best || distance < best.distance) {
+        best = { rubles: amount.rubles, quote: citation.text, citationId: citation.id, scale: amount.scale, distance };
+      }
+    }
+  }
+  return best;
 }
 
 /** Contract price and the estimate total are different sums, so the package says so on its own. */
@@ -399,7 +420,7 @@ export function costConflictBetween(documents: Array<{
     return [{
       kind,
       rubles,
-      label: moneyLabel(rubles, kind === "estimate" || Boolean(fromCitation?.thousands), texts.map((item) => item.text)),
+      label: moneyLabel(rubles, kind === "estimate" || fromCitation?.scale === "thousand", texts.map((item) => item.text)),
       quote,
       citationId: citation?.id ?? fromCitation?.citationId,
       fileName: document.fileName,
