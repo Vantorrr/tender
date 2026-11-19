@@ -10,6 +10,8 @@ vi.mock("@/server/config", async () => {
 
 import { createSession } from "@/server/auth";
 import { closeDb, ensureReady, readAppData } from "@/server/db";
+import { addDailyProductionFact } from "@/server/repo";
+import { readUpload } from "@/server/uploads";
 import "./setup";
 
 describe("production fact with photo", () => {
@@ -45,6 +47,28 @@ describe("production fact with photo", () => {
     expect(fact?.photos[0]?.storedPath).toBeTruthy();
   });
 
+  it("keeps the photo after the page is reopened and the fact is edited again", async () => {
+    const response = await postPhoto("3", [137, 80, 78, 71], "df-photo-keep");
+    expect(response.status).toBe(200);
+    closeDb();
+    ensureReady();
+    addDailyProductionFact("u-obj", "pf-1", {
+      factId: "df-photo-keep",
+      date: "2026-11-19",
+      workName: "Демонтаж перегородок",
+      unit: "ед",
+      quantity: 4,
+    });
+    closeDb();
+    ensureReady();
+    const fact = readAppData().planFacts.find((item) => item.id === "pf-1")
+      ?.dailyFacts?.find((item) => item.id === "df-photo-keep");
+    expect(fact?.quantity).toBe(4);
+    expect(fact?.photos).toHaveLength(1);
+    expect(fact?.photos[0]?.fileName).toBe("факт.png");
+    expect(fact?.photos[0]?.storedPath).toBeTruthy();
+  });
+
   it("rejects an oversized photo with a Russian limit error and does not replace the saved row", async () => {
     const first = await postPhoto("2", [1, 2, 3, 4], "df-photo-size");
     expect(first.status).toBe(200);
@@ -55,5 +79,27 @@ describe("production fact with photo", () => {
       ?.dailyFacts?.find((item) => item.id === "df-photo-size");
     expect(fact?.quantity).toBe(2);
     expect(fact?.photos).toHaveLength(1);
+  });
+
+  it("keeps a photo whose file name contains two dots", async () => {
+    const form = new FormData();
+    form.append("planFactId", "pf-1");
+    form.append("date", "2026-11-19");
+    form.append("workName", "Демонтаж перегородок");
+    form.append("unit", "ед");
+    form.append("quantity", "1");
+    form.append("factId", "df-photo-dots");
+    form.append("photo", new File([Uint8Array.from([9, 8, 7])], "факт..png", { type: "image/png" }));
+    const { POST } = await import("@/app/api/proizvodstvo/route");
+    const response = await POST(new Request("http://local/api/proizvodstvo", {
+      method: "POST",
+      headers: { authorization: `Bearer ${createSession("u-obj")}` },
+      body: form,
+    }));
+    expect(response.status).toBe(200);
+    const photo = readAppData().planFacts.find((item) => item.id === "pf-1")
+      ?.dailyFacts?.find((item) => item.id === "df-photo-dots")?.photos[0];
+    expect(photo?.storedPath).toMatch(/факт\.\.png$/);
+    expect(readUpload(photo!.storedPath!)).toEqual(Buffer.from([9, 8, 7]));
   });
 });

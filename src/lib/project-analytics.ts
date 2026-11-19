@@ -3,6 +3,7 @@
  * No invented LLM reasons, no accuracy promises.
  */
 
+import { visibleProcurementNumber } from "@/lib/pipeline";
 import type {
   Citation,
   DocumentItem,
@@ -118,7 +119,7 @@ export function buildProjectAnalytics(
   }
 
   const summaryParts: string[] = [
-    `Проект «${procurement.title}» (${procurement.number}). Регион: ${procurement.region}.`,
+    `Проект «${procurement.title}» (${visibleProcurementNumber(procurement)}). Регион: ${procurement.region}.`,
     `Доступных исходных файлов: ${sourceDocs.length} из ${docs.length}; цитат: ${citations.length}; критичных подсветок: ${stopHits.length}.`,
     rationale,
   ];

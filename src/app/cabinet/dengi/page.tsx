@@ -23,16 +23,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { downloadUrl } from "@/lib/api";
+import { parseDecimalRu } from "@/lib/decimal-ru";
 import { formatMoney } from "@/lib/format";
+import { PAYMENT_AMOUNT_ERROR, PAYMENT_BUCKET_LABELS, paymentBucket, paymentTotals } from "@/lib/money-payments";
 import { PERIOD_LABELS } from "@/lib/roles";
 import { useStore } from "@/lib/store";
 import { DateInputRu } from "@/components/date-input-ru";
-
-const typeLabel = {
-  avans: "Аванс",
-  postuplenie: "Поступление",
-  klyuchevoy: "Ключевой платёж",
-};
 
 export default function DengiPage() {
   const { data, user, updateMoney } = useStore();
@@ -69,14 +65,7 @@ export default function DengiPage() {
     return plan.payments.filter((p) => p.month === 12 || p.month <= 6);
   }, [plan, period]);
 
-  const summary = payments.reduce(
-    (acc, p) => {
-      acc.total += p.amount;
-      acc[p.type] += p.amount;
-      return acc;
-    },
-    { total: 0, avans: 0, postuplenie: 0, klyuchevoy: 0 }
-  );
+  const summary = paymentTotals(payments);
 
   function patchPayment(paymentId: string, patch: Partial<(typeof payments)[number]>) {
     if (!plan) return;
@@ -103,7 +92,7 @@ export default function DengiPage() {
     <div>
       <PageHeader
         title="Деньги"
-        description="Убрано из сайдбара — денежный план в карточке проекта. Авансы/поступления; PnL производства — этап 3."
+        description="Авансы, поступления и списания по проекту."
         actions={
           plan ? (
             <Button
@@ -170,8 +159,8 @@ export default function DengiPage() {
             {[
               ["Всего", summary.total],
               ["Авансы", summary.avans],
-              ["Ключевые", summary.klyuchevoy],
               ["Поступления", summary.postuplenie],
+              ["Списания", summary.spisanie],
             ].map(([label, value]) => (
               <div
                 key={label as string}
@@ -200,7 +189,7 @@ export default function DengiPage() {
                 <TableBody>
                   {payments.map((p) => (
                     <TableRow key={p.id}>
-                      <TableCell>{typeLabel[p.type]}</TableCell>
+                      <TableCell>{PAYMENT_BUCKET_LABELS[paymentBucket(p)]}</TableCell>
                       <TableCell className="min-w-48">
                         <Input
                           aria-label={`Название платежа ${p.title}`}
@@ -218,11 +207,18 @@ export default function DengiPage() {
                         <Input
                           aria-label={`Сумма платежа ${p.title}`}
                           className="ml-auto w-36 text-right"
-                          type="number"
-                          min={0}
-                          step="0.01"
-                          value={String(p.amount)}
-                          onChange={(e) => patchPayment(p.id, { amount: Number(e.target.value) || 0 })}
+                          inputMode="decimal"
+                          key={`${p.id}:${p.amount}`}
+                          defaultValue={String(p.amount)}
+                          onBlur={(e) => {
+                            const amount = parseDecimalRu(e.target.value);
+                            if (amount == null || amount <= 0) {
+                              toast.error(PAYMENT_AMOUNT_ERROR);
+                              e.target.value = String(p.amount);
+                              return;
+                            }
+                            if (amount !== p.amount) patchPayment(p.id, { amount });
+                          }}
                         />
                       </TableCell>
                       <TableCell className="min-w-56 text-sm text-[var(--tk-muted)]">

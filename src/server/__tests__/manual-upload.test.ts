@@ -142,6 +142,15 @@ describe("manual procurement file upload", () => {
       body: JSON.stringify({ action: "sendToCalculation", id: procurement.id }),
     }));
     expect(sent.status).toBe(200);
+    const createdSchedule = await zakupkiPost(new Request("http://local/api/zakupki", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${createSession("u-tender")}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ action: "createGpr", id: procurement.id }),
+    }));
+    expect(createdSchedule.status).toBe(200);
 
     const after = readAppData();
     const savedProcurement = after.procurements.find((item) => item.id === procurement.id)!;

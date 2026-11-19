@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -33,6 +34,7 @@ import { parseDecimalRu } from "@/lib/decimal-ru";
 import { DEFAULT_MAX_UPLOAD_BYTES, uploadTooLargeMessage } from "@/lib/upload-limit";
 import { formatDate, formatMoney, formatNumber, todayIsoInTimeZone } from "@/lib/format";
 import { userHasSection } from "@/lib/acl";
+import { visibleProcurementNumber } from "@/lib/pipeline";
 import {
   entryDisplayFact,
   entryDisplayRemain,
@@ -41,9 +43,62 @@ import {
 import { allocatePlanForSlice, linkEstimateWorksToStages, stagesForWork } from "@/lib/plan-from-gpr";
 import { economicsFromVolumes } from "@/lib/economics-from-rates";
 import { forecastWorkCompletion } from "@/lib/production-forecast";
+import { paymentBucket } from "@/lib/money-payments";
 import { useStore } from "@/lib/store";
 import type { ProductionVarianceReport } from "@/server/production-variance-ai";
 import type { DailyFactPhoto, SupplyStatus } from "@/lib/types";
+
+function QuietNumberInput({
+  id,
+  testId,
+  value,
+  emptyAsNull,
+  onCommit,
+}: {
+  id?: string;
+  testId?: string;
+  value: number | null;
+  emptyAsNull?: boolean;
+  onCommit: (value: number | null) => void;
+}) {
+  const [text, setText] = useState(value == null ? "" : String(value));
+  const [focused, setFocused] = useState(false);
+  const latest = useRef(text);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function commit(raw: string) {
+    if (timer.current) clearTimeout(timer.current);
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      onCommit(emptyAsNull ? null : 0);
+      return;
+    }
+    const parsed = parseDecimalRu(trimmed);
+    if (parsed == null) return;
+    onCommit(parsed);
+  }
+  return (
+    <Input
+      id={id}
+      data-testid={testId}
+      value={focused ? text : value == null ? "" : String(value)}
+      onFocus={() => {
+        setFocused(true);
+        setText(value == null ? "" : String(value));
+      }}
+      onChange={(event) => {
+        const next = event.target.value;
+        latest.current = next;
+        setText(next);
+        if (timer.current) clearTimeout(timer.current);
+        timer.current = setTimeout(() => commit(next), 400);
+      }}
+      onBlur={() => {
+        setFocused(false);
+        commit(latest.current);
+      }}
+    />
+  );
+}
 
 type PeriodMode = "day" | "month" | "period" | "cum";
 
@@ -62,6 +117,7 @@ function createDailyFactId() {
 }
 
 export default function ProizvodstvoPage() {
+  const router = useRouter();
   const { data, user, updatePlanFact, refresh, orgProcurements } = useStore();
   const [pfId, setPfId] = useState("");
   const [requestedPlanId] = useState(() =>
@@ -351,20 +407,6 @@ export default function ProizvodstvoPage() {
     const factId = pendingFactIdRef.current ?? createDailyFactId();
     pendingFactIdRef.current = factId;
     try {
-      await api("/api/proizvodstvo", {
-        method: "POST",
-        body: JSON.stringify({
-          action: "dailyFact",
-          planFactId: plan.id,
-          fact: {
-            factId,
-            date,
-            workName: selectedWork,
-            unit: selectedUnit,
-            quantity,
-          },
-        }),
-      });
       if (withPhoto && photo && !photoTooLarge) {
         const form = new FormData();
         form.append("factId", factId);
@@ -375,6 +417,21 @@ export default function ProizvodstvoPage() {
         form.append("quantity", String(quantity));
         form.append("photo", photo);
         await api("/api/proizvodstvo", { method: "POST", body: form });
+      } else {
+        await api("/api/proizvodstvo", {
+          method: "POST",
+          body: JSON.stringify({
+            action: "dailyFact",
+            planFactId: plan.id,
+            fact: {
+              factId,
+              date,
+              workName: selectedWork,
+              unit: selectedUnit,
+              quantity,
+            },
+          }),
+        });
       }
       await refresh();
       pendingFactIdRef.current = null;
@@ -410,6 +467,7 @@ export default function ProizvodstvoPage() {
         actions={
           plan ? (
             <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" onClick={() => router.push("/cabinet")}>Назад</Button>
               {procurement && user && userHasSection(user, "proizvodstvo") ? (
                 <ProjectAiChat procurementId={procurement.id} projectTitle={procurement.title} screen="production" />
               ) : null}
@@ -452,7 +510,10 @@ export default function ProizvodstvoPage() {
             </div>
             {procurement ? (
               <p className="pb-2 text-sm text-muted-foreground">
-                Закупка № {procurement.number}{procurement.lifecycle === "production" ? " · В производстве" : ""}
+                {visibleProcurementNumber(procurement) === "Ручная закупка"
+                  ? "Ручная закупка"
+                  : `Закупка № ${visibleProcurementNumber(procurement)}`}
+                {procurement.lifecycle === "production" ? " · В производстве" : ""}
               </p>
             ) : null}
             {plan ? (
@@ -655,12 +716,11 @@ export default function ProizvodstvoPage() {
                     Подтверждённые затраты (₽)
                     {plan.pnl?.incurredManual ? " · вручную" : ""}
                   </label>
-                  <Input
+                  <QuietNumberInput
                     id="pnl-incurred"
-                    data-testid="pnl-incurred"
-                    value={String(plan.pnl?.incurredCosts ?? 0)}
-                    onChange={(e) => {
-                      const v = Number(e.target.value) || 0;
+                    testId="pnl-incurred"
+                    value={plan.pnl?.incurredCosts ?? 0}
+                    onCommit={(v) => {
                       updatePlanFact(plan.id, {
                         pnl: {
                           earnedValue: plan.pnl?.earnedValue ?? 0,
@@ -668,12 +728,11 @@ export default function ProizvodstvoPage() {
                           valueOfFactByCustomerEstimate: plan.pnl?.valueOfFactByCustomerEstimate ?? null,
                           remainingValueByCustomerEstimate: plan.pnl?.remainingValueByCustomerEstimate ?? null,
                           customerEstimateIncomplete: plan.pnl?.customerEstimateIncomplete,
-                          incurredCosts: v,
+                          incurredCosts: v ?? 0,
                           incurredManual: true,
                           cashIn: plan.pnl?.cashIn ?? 0,
                           cashOut: plan.pnl?.cashOut ?? 0,
-                          recognizedRevenue:
-                            plan.pnl?.recognizedRevenue ?? null,
+                          recognizedRevenue: plan.pnl?.recognizedRevenue ?? null,
                           incomplete: plan.pnl?.incomplete,
                           notes: plan.pnl?.notes ?? [],
                         },
@@ -685,21 +744,19 @@ export default function ProizvodstvoPage() {
                   <label className="mb-2 block text-sm font-medium" htmlFor="pnl-cash-in">
                     Поступления, ₽
                   </label>
-                  <Input
+                  <QuietNumberInput
                     id="pnl-cash-in"
-                    data-testid="pnl-cash-in"
-                    value={String(plan.pnl?.cashIn ?? 0)}
-                    onChange={(e) => {
-                      const v = Number(e.target.value) || 0;
+                    testId="pnl-cash-in"
+                    value={plan.pnl?.cashIn ?? 0}
+                    onCommit={(v) => {
                       updatePlanFact(plan.id, {
                         pnl: {
                           ...plan.pnl!,
                           earnedValue: plan.pnl?.earnedValue ?? 0,
                           incurredCosts: plan.pnl?.incurredCosts ?? 0,
-                          cashIn: v,
+                          cashIn: v ?? 0,
                           cashOut: plan.pnl?.cashOut ?? 0,
-                          recognizedRevenue:
-                            plan.pnl?.recognizedRevenue ?? null,
+                          recognizedRevenue: plan.pnl?.recognizedRevenue ?? null,
                           notes: plan.pnl?.notes ?? [],
                         },
                       });
@@ -710,21 +767,19 @@ export default function ProizvodstvoPage() {
                   <label className="mb-2 block text-sm font-medium" htmlFor="pnl-cash-out">
                     Списания, ₽
                   </label>
-                  <Input
+                  <QuietNumberInput
                     id="pnl-cash-out"
-                    data-testid="pnl-cash-out"
-                    value={String(plan.pnl?.cashOut ?? 0)}
-                    onChange={(e) => {
-                      const v = Number(e.target.value) || 0;
+                    testId="pnl-cash-out"
+                    value={plan.pnl?.cashOut ?? 0}
+                    onCommit={(v) => {
                       updatePlanFact(plan.id, {
                         pnl: {
                           ...plan.pnl!,
                           earnedValue: plan.pnl?.earnedValue ?? 0,
                           incurredCosts: plan.pnl?.incurredCosts ?? 0,
                           cashIn: plan.pnl?.cashIn ?? 0,
-                          cashOut: v,
-                          recognizedRevenue:
-                            plan.pnl?.recognizedRevenue ?? null,
+                          cashOut: v ?? 0,
+                          recognizedRevenue: plan.pnl?.recognizedRevenue ?? null,
                           notes: plan.pnl?.notes ?? [],
                         },
                       });
@@ -735,17 +790,12 @@ export default function ProizvodstvoPage() {
                   <label className="mb-2 block text-sm font-medium" htmlFor="pnl-revenue">
                     Выручка, ₽
                   </label>
-                  <Input
+                  <QuietNumberInput
                     id="pnl-revenue"
-                    data-testid="pnl-revenue"
-                    placeholder="Не указана"
-                    value={
-                      plan.pnl?.recognizedRevenue == null
-                        ? ""
-                        : String(plan.pnl.recognizedRevenue)
-                    }
-                    onChange={(e) => {
-                      const raw = e.target.value.trim();
+                    testId="pnl-revenue"
+                    emptyAsNull
+                    value={plan.pnl?.recognizedRevenue ?? null}
+                    onCommit={(v) => {
                       updatePlanFact(plan.id, {
                         pnl: {
                           ...plan.pnl!,
@@ -753,8 +803,7 @@ export default function ProizvodstvoPage() {
                           incurredCosts: plan.pnl?.incurredCosts ?? 0,
                           cashIn: plan.pnl?.cashIn ?? 0,
                           cashOut: plan.pnl?.cashOut ?? 0,
-                          recognizedRevenue:
-                            raw === "" ? null : Number(raw) || 0,
+                          recognizedRevenue: v,
                           notes: plan.pnl?.notes ?? [],
                         },
                       });
@@ -904,13 +953,14 @@ export default function ProizvodstvoPage() {
                     {([
                       ["Авансы", "avans"],
                       ["Поступления", "postuplenie"],
-                      ["Ключевые платежи", "klyuchevoy"],
+                      ["Списания", "spisanie"],
+                      ["Ключевые", "klyuchevoy"],
                     ] as const).map(([label, type]) => (
                       <div key={type} className="rounded-lg bg-stone-50 px-3 py-2 text-sm">
                         <span className="text-[var(--tk-muted)]">{label}</span>
                         <span className="ml-2 font-semibold">
                           {formatMoney(moneyPlan.payments
-                            .filter((payment) => payment.type === type)
+                            .filter((payment) => paymentBucket(payment) === type)
                             .reduce((sum, payment) => sum + payment.amount, 0))}
                         </span>
                       </div>

@@ -3,11 +3,13 @@ import {
   analyzeProcurementPackageWithAI,
   attachCustomerEstimate,
   createManualProcurement,
+  deleteProcurement,
   ensureMoneyPlan,
   ensureProcurementChain,
   getBootstrap,
   recomputeCalculationCost,
   refreshProcurementAnalytics,
+  createProcurementSchedule,
   sendProcurementToCalculation,
   setProcurementReview,
   transferProcurementToProduction,
@@ -64,11 +66,13 @@ export async function POST(req: Request) {
         | "ensureChain"
         | "createManual"
         | "sendToCalculation"
+        | "createGpr"
         | "attachCustomerEstimate"
         | "refreshAnalytics"
         | "analyzeProject"
         | "transferToProduction"
         | "ensureMoney"
+        | "deleteProcurement"
         | "saveMoney"
         | "addMoneyPayment"
         | "refreshKonturDetails";
@@ -125,9 +129,18 @@ export async function POST(req: Request) {
     if (!body.id && body.action !== "saveMoney" && body.action !== "addMoneyPayment") {
       return json({ error: "Не указан id" }, 400);
     }
+    if (body.action === "deleteProcurement") {
+      const result = deleteProcurement(user.id, body.id!);
+      if (!result.deleted) return json({ error: "Закупка не найдена" }, 404);
+      return json(getBootstrap(user));
+    }
     if (body.action === "ensureChain") {
       ensureProcurementChain(user.id, body.id!);
       return json(getBootstrap(user));
+    }
+    if (body.action === "createGpr") {
+      const schedule = createProcurementSchedule(user.id, body.id!);
+      return json({ ...getBootstrap(user), scheduleOutcome: schedule.outcome });
     }
     if (body.action === "sendToCalculation") {
       sendProcurementToCalculation(user.id, body.id!);

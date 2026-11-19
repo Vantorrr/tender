@@ -106,6 +106,36 @@ export type WorkType = (typeof WORK_TYPES)[number];
 
 export const REGION_PRESETS = ["Норильск", "Ямал"] as const;
 
+/** Manual procurements keep an internal number. People see a plain label. */
+export function visibleProcurementNumber(input: { number?: string | null; source?: string | null }): string {
+  const number = input.number?.trim() ?? "";
+  if (input.source === "manual" || /^РУЧНАЯ-/iu.test(number)) return "Ручная закупка";
+  return number;
+}
+
+export function procurementBoardLabel(input: {
+  reviewStatus: ReviewStatus;
+  lifecycle?: string;
+  lifecycleOutcome?: string;
+}): string {
+  const column = displayedKanbanColumn(input);
+  return KANBAN_COLUMNS.find((item) => item.id === column)?.label ?? "Новое";
+}
+
+export function displayedKanbanColumn(input: {
+  reviewStatus: ReviewStatus;
+  lifecycle?: string;
+  lifecycleOutcome?: string;
+}): KanbanColumnId {
+  if (input.lifecycle === "production") return "in_production";
+  if (input.lifecycle === "closed") {
+    return input.lifecycleOutcome === "successful" ? "realized" : "closed_not_realized";
+  }
+  const review = reviewToKanban(input.reviewStatus);
+  if (review === "ne_uchastvuem" || review === "dublikat") return "closed_not_realized";
+  return review;
+}
+
 export function reviewToKanban(status: ReviewStatus): KanbanColumnId {
   const hit = KANBAN_COLUMNS.find((c) => c.reviewStatuses.includes(status));
   return hit?.id ?? "novaya";

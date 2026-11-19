@@ -8,6 +8,7 @@ import {
   registerNewOrganization,
   recomputeCalculationCost,
   reanalyzeDocument,
+  createProcurementSchedule,
   sendProcurementToCalculation,
   updateCalculation,
   recalcCalculation,
@@ -144,7 +145,10 @@ describe("client corrections stage 1", () => {
     const after = readAppData();
     const proc = after.procurements.find((x) => x.id === p.id)!;
     expect(proc.calculationId).toBeTruthy();
-    expect(proc.gprId).toBeTruthy();
+    expect(proc.gprId).toBeUndefined();
+    createProcurementSchedule("u-smet", p.id);
+    const scheduled = readAppData().procurements.find((x) => x.id === p.id)!;
+    expect(scheduled.gprId).toBeTruthy();
     const draft = after.calculations.find((c) => c.id === proc.calculationId)!;
     expect(draft.kind).toBe("resource_draft");
     expect(draft.immutable).toBe(false);
@@ -153,7 +157,7 @@ describe("client corrections stage 1", () => {
     expect(draft.assumptions).toContain(
       "Ресурсный черновик создан пустым: в документах нет распознанных строк сметы"
     );
-    const schedule = after.schedules.find((item) => item.id === proc.gprId)!;
+    const schedule = readAppData().schedules.find((item) => item.id === scheduled.gprId)!;
     expect(schedule.assumptions?.length).toBeGreaterThan(0);
     expect(schedule.stages.every((stage) => stage.crewSize === 0)).toBe(true);
     expect(schedule.stages.flatMap((stage) => stage.resources ?? []).every((resource) =>
@@ -215,6 +219,7 @@ describe("client corrections stage 1", () => {
       body: JSON.stringify({ action: "sendToCalculation", id: procurement.id }),
     }));
     expect(response.status).toBe(200);
+    createProcurementSchedule("u-smet", procurement.id);
     const payload = await response.json() as {
       calculationSummary?: { sourceFile: string | null; sourceRows: number; matchedRates: number; missingRates: number };
     };
@@ -335,6 +340,7 @@ describe("client corrections stage 1", () => {
     });
     reanalyzeDocument("u-smet", metalDocument.documentId, metalPrepared);
     sendProcurementToCalculation("u-smet", procurement.id);
+    createProcurementSchedule("u-smet", procurement.id);
     const after = readAppData();
     const updated = after.procurements.find((item) => item.id === procurement.id)!;
     const draft = after.calculations.find((item) => item.id === updated.calculationId)!;

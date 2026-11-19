@@ -428,26 +428,36 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
       if (!parsed.locators.coefficient) mark("coefficient", rowNumber, 2);
     }
     const unit = cells.find((cell) => cell.col === 6)?.text ?? "";
-    const namedLaborResource = /^(?:чел\.?\s*[-.]?\s*час|чел\.?\s*[-.]?\s*ч|н\s*[-.]\s*ч)$/iu.test(unit.trim()) &&
-      Boolean(code) && !/^(?:затраты труда|трудозатраты|всего по позиции|итого)/iu.test(name);
+    const normHourTitle = /^(?:зт|зтм)$/iu.test(name.trim());
+    const namedLaborResource = normHourTitle || (
+      /^(?:чел\.?\s*[-.]?\s*час|чел\.?\s*[-.]?\s*ч|н\s*[-.]\s*ч)$/iu.test(unit.trim()) &&
+      Boolean(code) && !/^(?:затраты труда|трудозатраты|всего по позиции|итого)/iu.test(name)
+    );
     if ((!/^\d+$/.test(label) && !namedLaborResource) || (!isRateCode(code) && !namedLaborResource)) return;
     const quantity = asNumber(row.getCell(9).value) ?? asNumber(row.getCell(7).value);
     if (!name || quantity == null || quantity === 0) return;
     if (isWorkRateCode(code)) currentWorkName = name;
     const resourceKind: GrandPosition["resourceKind"] = isWorkRateCode(code)
       ? undefined
-      : namedLaborResource || /^(?:от|зп)(?:[-.\s]|$)/iu.test(code)
-        ? "labor"
-        : /^тсэм|^фсэм|маш\.?\s*[-.]?\s*ч/iu.test(`${code} ${unit}`)
-          ? "equipment"
+      : /^зтм$/iu.test(name.trim())
+        ? "equipment"
+        : namedLaborResource || /^(?:от|зп)(?:[-.\s]|$)/iu.test(code)
+          ? "labor"
+          : /^тсэм|^фсэм|маш\.?\s*[-.]?\s*ч/iu.test(`${code} ${unit}`)
+            ? "equipment"
           : /^фссцпг/iu.test(code)
             ? "other"
             : /^(?:фссц|тссц|фсбц)(?:[-.\s]|$)/iu.test(code)
               ? "material"
               : undefined;
+    const readableName = /^зтм$/iu.test(name.trim())
+      ? "Затраты труда машинистов"
+      : /^зт$/iu.test(name.trim())
+        ? "Затраты труда рабочих"
+        : name;
     lastPosition = {
-      code,
-      name: name.slice(0, 240),
+      code: code || (normHourTitle ? name.trim() : code),
+      name: readableName.slice(0, 240),
       unit,
       quantity,
       rate: asNumber(row.getCell(10).value) ?? 0,
@@ -796,9 +806,9 @@ export function analysisFromScan(
         looksLikeEstimate
           ? "Позиции перенесены в черновик по коду, наименованию и количеству. Тарифы из сметы заказчика не копируются; ставка черновика берётся только из точного совпадения справочника."
           : null,
-        `OCR (${ocr.provider ?? "local"}): ${text.slice(0, 800)}`,
+        "Текст распознан автоматически, сверьте с оригиналом",
         ocr.reason?.includes("проверьте остаток") ? ocr.reason : null,
-        "Цифры и марки из OCR требуют ручной проверки. Сметный разбор ГРАНД-Сметы к произвольному скану не применяется.",
+        "Цифры и марки требуют ручной проверки. Сметный разбор к произвольному скану не применяется.",
       ].join("\n")
     : [
         `PDF принят (${pages} стр.), но текстовый слой / OCR не дали содержимого.`,
@@ -1040,7 +1050,7 @@ export async function analyzeUpload(
           },
         ];
       } else if (ocr.text) {
-        analysis.analyticalNote = `${analysis.analyticalNote}\nOCR (${ocr.provider}): ${ocr.text.slice(0, 2000)}`;
+        analysis.analyticalNote = `${analysis.analyticalNote}\nТекст распознан автоматически, сверьте с оригиналом`;
         analysis.citations = [...analysis.citations, ...analysisFromScan(fileName, ocr).citations];
       }
       return maybeRefineNote(

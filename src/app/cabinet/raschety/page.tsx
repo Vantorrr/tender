@@ -5,6 +5,7 @@ import { EntityCard } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
 import { calculationTotals, sourceEstimateTotals } from "@/lib/calc-math";
 import { formatMoney } from "@/lib/format";
+import { visibleProcurementNumber } from "@/lib/pipeline";
 import { SCENARIO_LABELS } from "@/lib/roles";
 import { useStore } from "@/lib/store";
 
@@ -48,7 +49,7 @@ export default function RaschetyPage() {
                     href={`/cabinet/raschety/${c.id}`}
                     title={c.title}
                     subtitle={`v${c.version} · ${SCENARIO_LABELS[c.scenario]}${
-                      proc ? ` · ${proc.number}` : ""
+                      proc ? ` · ${visibleProcurementNumber(proc)}` : ""
                     }`}
                     status={c.status}
                     meta={

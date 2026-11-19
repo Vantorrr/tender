@@ -108,7 +108,7 @@ function IntegrationPanel() {
           status: integrations.procurement.status === "demo" ? "Демо" : integrations.procurement.status === "ok" ? "Работает" : "Не подключён",
           detail: integrations.procurement.detail,
           next: integrations.procurement.status === "ok"
-            ? "Открытая лента «Норникеля» подключена. Закрытые площадки настраиваются отдельно по их API."
+            ? "Открытая лента «Норникеля» подключена. Закрытые площадки настраиваются отдельно."
             : "Для реальной синхронизации укажите поддерживаемый источник и доступы площадки.",
         },
         {
@@ -126,8 +126,8 @@ function IntegrationPanel() {
           status: integrations.llm.configured ? "Ключ настроен" : "Нужен ключ модели",
           detail: `Модель: ${integrations.llm.model}. Автоанализ при загрузке ${integrations.llm.onUpload ? "включён" : "выключен"}.`,
           next: integrations.llm.configured
-            ? "Ручной анализ пакета доступен в карточке закупки. Автоанализ управляется OPENROUTER_ON_UPLOAD."
-            : "Добавьте OPENROUTER_API_KEY в окружение сервера; после этого ручной анализ станет доступен в карточке закупки.",
+            ? "Ключ ИИ настроен. Анализ пакета доступен в карточке закупки."
+            : "Ключ ИИ не настроен. Анализ в карточке закупки заработает после настройки на сервере.",
         },
         {
           title: "Отправка писем",

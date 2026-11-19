@@ -18,6 +18,11 @@ export function assertSection(user: User, section: SectionKey): void {
   }
 }
 
+/** Changing a schedule needs the GPR section itself, not a neighbouring one. */
+export function assertGprWrite(user: User): void {
+  assertSection(user, "gpr");
+}
+
 export function assertOrgAccess(
   user: User,
   orgId: string,

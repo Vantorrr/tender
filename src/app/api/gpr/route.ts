@@ -1,10 +1,12 @@
 import {
   getBootstrap,
+  deleteGprStage,
   patchScheduleResourceAndSync,
   shiftGprStage,
   updateSchedule,
 } from "@/server/repo";
-import { withAnySection, json } from "@/server/http";
+import { assertGprWrite } from "@/server/acl";
+import { withAnySection, withUser, json } from "@/server/http";
 import type { GprSchedule } from "@/lib/types";
 import type { GprStageResource, ResourceQuantityBasis } from "@/lib/types";
 
@@ -17,11 +19,12 @@ export async function GET(req: Request) {
 }
 
 export async function PATCH(req: Request) {
-  return withAnySection(req, [...SECTIONS], async (user) => {
+  return withUser(req, async (user) => {
+    assertGprWrite(user);
     const body = (await req.json()) as {
       id?: string;
       patch?: Partial<GprSchedule>;
-      action?: "shiftStage" | "patchResource";
+      action?: "shiftStage" | "patchResource" | "deleteStage";
       stageId?: string;
       deltaDays?: number;
       cascade?: boolean;
@@ -39,6 +42,11 @@ export async function PATCH(req: Request) {
     };
     if (!body.id) return json({ error: "Нужен id" }, 400);
     try {
+      if (body.action === "deleteStage") {
+        if (!body.stageId) return json({ error: "Нужен stageId" }, 400);
+        deleteGprStage(user.id, body.id, body.stageId);
+        return json(getBootstrap(user));
+      }
       if (body.action === "shiftStage") {
         if (!body.stageId || body.deltaDays == null) {
           return json({ error: "Нужны stageId и deltaDays" }, 400);
@@ -72,10 +80,9 @@ export async function PATCH(req: Request) {
       updateSchedule(user.id, body.id, body.patch);
       return json(getBootstrap(user));
     } catch (e) {
-      return json(
-        { error: e instanceof Error ? e.message : "Ошибка ГПР" },
-        400
-      );
+      const message = e instanceof Error ? e.message : "Ошибка ГПР";
+      if (message.includes("Недостаточно прав") || message.startsWith("Нет доступа")) throw e;
+      return json({ error: message }, 400);
     }
   });
 }

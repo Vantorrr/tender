@@ -25,6 +25,9 @@ import type {
   User,
 } from "@/lib/types";
 import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
+import { canonicalUploadPath, deleteUpload } from "@/server/uploads";
+import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
+import { mergeStageResources } from "@/lib/resource-merge";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
 import {
@@ -42,7 +45,7 @@ import {
   type BusRouteInput,
   type NorthernInputs,
 } from "@/lib/cost-engine";
-import { assertOrgAccess } from "@/server/acl";
+import { assertGprWrite, assertOrgAccess, assertSection } from "@/server/acl";
 import {
   overheadsFromWorks,
   scenarioFactor,
@@ -441,6 +444,137 @@ export function updateProcurement(
   });
 }
 
+function rememberUploadPath(paths: Set<string>, storedPath?: string) {
+  const canonical = storedPath ? canonicalUploadPath(storedPath) : null;
+  if (canonical) paths.add(canonical);
+}
+
+function uploadPathsInUse(data: AppData): Set<string> {
+  const paths = new Set<string>();
+  for (const document of data.documents) rememberUploadPath(paths, document.storedPath);
+  for (const card of data.companyCards ?? []) rememberUploadPath(paths, card.storedPath);
+  for (const plan of data.planFacts) {
+    for (const fact of plan.dailyFacts ?? []) {
+      for (const photo of fact.photos ?? []) rememberUploadPath(paths, photo.storedPath);
+    }
+  }
+  return paths;
+}
+
+function dailyFactsWithoutPlantedPaths(existing: PlanFact, incoming: DailyFact[]): DailyFact[] {
+  const known = new Map<string, string>();
+  for (const fact of existing.dailyFacts ?? []) {
+    for (const photo of fact.photos ?? []) {
+      if (photo.storedPath) known.set(photo.id, photo.storedPath);
+    }
+  }
+  return incoming.map((fact) => ({
+    ...fact,
+    photos: (fact.photos ?? []).map((photo) => {
+      const storedPath = known.get(photo.id);
+      if (!storedPath) {
+        const { storedPath: _planted, ...rest } = photo;
+        void _planted;
+        return rest;
+      }
+      return { ...photo, storedPath };
+    }),
+  }));
+}
+
+export function deleteProcurement(actorId: string, id: string) {
+  const removedFiles: string[] = [];
+  let deleted = false;
+  mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    if (actor.role !== "superadmin" && actor.role !== "admin" && actor.role !== "rukovoditel") {
+      throw new Error("Удалять закупку могут руководитель и администратор");
+    }
+    assertSection(actor, "zakupki");
+    const item = data.procurements.find((p) => p.id === id);
+    if (!item) return data;
+    assertOrgAccess(actor, item.orgId, "закупки");
+    for (const document of data.documents) {
+      if (document.procurementId === id && document.storedPath) removedFiles.push(document.storedPath);
+    }
+    for (const plan of data.planFacts) {
+      if (plan.procurementId !== id) continue;
+      for (const fact of plan.dailyFacts ?? []) {
+        for (const photo of fact.photos ?? []) {
+          if (photo.storedPath) removedFiles.push(photo.storedPath);
+        }
+      }
+    }
+    data.procurements = data.procurements.filter((p) => p.id !== id);
+    data.documents = data.documents.filter((d) => d.procurementId !== id);
+    data.calculations = data.calculations.filter((c) => c.procurementId !== id);
+    data.schedules = data.schedules.filter((s) => s.procurementId !== id);
+    data.moneyPlans = data.moneyPlans.filter((m) => m.procurementId !== id);
+    data.risks = data.risks.filter((r) => r.procurementId !== id);
+    data.planFacts = data.planFacts.filter((p) => p.procurementId !== id);
+    data.supplyRequests = (data.supplyRequests ?? []).filter((s) => s.procurementId !== id);
+    data.projectChatMessages = (data.projectChatMessages ?? []).filter((m) => m.procurementId !== id);
+    data.smetaExchanges = data.smetaExchanges.filter((s) => !(s.orgId === item.orgId && s.procurementId === id));
+    audit(data, actorId, "delete", "procurement", id, "Закупка удалена");
+    deleted = true;
+    return data;
+  });
+  if (deleted) {
+    const stillUsed = uploadPathsInUse(readAppData());
+    for (const storedPath of removedFiles) {
+      const canonical = canonicalUploadPath(storedPath);
+      if (!canonical || stillUsed.has(canonical)) continue;
+      try {
+        deleteUpload(canonical);
+      } catch (error) {
+        const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+        if (code !== "ENOENT") throw error;
+      }
+    }
+  }
+  return { deleted };
+}
+
+export function deleteGprStage(actorId: string, scheduleId: string, stageId: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    assertGprWrite(actor);
+    const schedule = data.schedules.find((item) => item.id === scheduleId);
+    if (!schedule) throw new Error("ГПР не найден");
+    assertOrgAccess(actor, schedule.orgId, "ГПР");
+    const stage = schedule.stages.find((item) => item.id === stageId);
+    if (!stage) throw new Error("Этап не найден");
+    const removedResourceIds = new Set((stage.resources ?? []).map((resource) => resource.id));
+    const removedWorks = new Set(
+      [stage.name, stage.workName, ...(stage.workNames ?? [])].map((name) => name?.trim()).filter(Boolean) as string[]
+    );
+    schedule.stages = schedule.stages
+      .filter((item) => item.id !== stageId)
+      .map((item) => item.dependsOn === stageId
+        ? { ...item, dependsOn: undefined, dependencyType: undefined, lagDays: undefined }
+        : item);
+    const remainingWorks = new Set(
+      schedule.stages.flatMap((item) => [item.name, item.workName, ...(item.workNames ?? [])].filter(Boolean) as string[])
+    );
+    for (const plan of data.planFacts) {
+      if (plan.procurementId !== schedule.procurementId && plan.id !== data.procurements.find((item) => item.id === schedule.procurementId)?.planFactId) continue;
+      plan.entries = plan.entries.filter((entry) => !removedWorks.has(entry.workName) || remainingWorks.has(entry.workName));
+      plan.dailyFacts = (plan.dailyFacts ?? []).map((fact) => ({
+        ...fact,
+        resourceLines: fact.resourceLines?.filter((line) => !line.sourceResourceId || !removedResourceIds.has(line.sourceResourceId)),
+      }));
+      plan.updatedAt = new Date().toISOString();
+    }
+    const calc = data.calculations.find((item) => item.id === schedule.calculationId);
+    if (calc && !calc.immutable) {
+      calc.positions = calc.positions.filter((position) => !position.sourceResourceId || !removedResourceIds.has(position.sourceResourceId));
+    }
+    schedule.updatedAt = new Date().toISOString();
+    audit(data, actorId, "delete", "gpr_stage", stageId, `Удалён этап ${stage.name}`);
+    return data;
+  });
+}
+
 export function createManualProcurement(
   actorId: string,
   input: { title: string; customer?: string; region: string; nmck?: number | null; deadline?: string }
@@ -623,8 +757,9 @@ export function addCalcPositionFromDirectory(
       (r) => String(r.code ?? r.sku ?? "") === input.code
     );
     if (!row) throw new Error("Позиция не найдена в справочнике");
-    const rate = rateFromRow(row, input.rateKey);
-    if (rate == null) throw new Error("В строке нет ставки");
+    const lookedUp = rateFromRow(row, input.rateKey);
+    const rateMissing = lookedUp == null || !Number.isFinite(lookedUp) || lookedUp <= 0;
+    const rate = rateMissing ? 0 : lookedUp;
     const pos = {
       id: `cp-${Date.now()}`,
       code: String(row.code ?? row.sku ?? input.code),
@@ -635,6 +770,7 @@ export function addCalcPositionFromDirectory(
           : "ед.",
       quantity: input.quantity ?? 1,
       rate,
+      ...(rateMissing ? { rateMissing: true } : {}),
     };
     data.calculations = data.calculations.map((c) =>
       c.id === calcId
@@ -678,9 +814,10 @@ export function updateDocument(
     const item = data.documents.find((d) => d.id === id);
     if (!item) throw new Error("Документ не найден");
     assertOrgAccess(actor, item.orgId, "документа");
-    const { orgId: _o, id: _i, ...safe } = patch;
+    const { orgId: _o, id: _i, storedPath: _path, ...safe } = patch;
     void _o;
     void _i;
+    void _path;
     const noteEdited =
       typeof safe.analyticalNote === "string" &&
       safe.analyticalNote !== item.analyticalNote;
@@ -1158,6 +1295,7 @@ export function updateSchedule(
 ) {
   return mutateAppData((data) => {
     const actor = actorUser(data, actorId);
+    assertGprWrite(actor);
     const item = data.schedules.find((s) => s.id === id);
     if (!item) throw new Error("ГПР не найден");
     assertOrgAccess(actor, item.orgId, "ГПР");
@@ -1203,6 +1341,69 @@ export function updateSchedule(
   });
 }
 
+function stagePlanKey(stage: GprStage) {
+  return JSON.stringify({
+    id: stage.id,
+    name: stage.name,
+    workName: stage.workName ?? null,
+    workNames: stage.workNames ?? [],
+    start: stage.start,
+    end: stage.end,
+    sequence: stage.sequence,
+    dependsOn: stage.dependsOn ?? null,
+    dependencyType: stage.dependencyType ?? null,
+    lagDays: stage.lagDays ?? null,
+    planVolume: stage.planVolume ?? null,
+    planUnit: stage.planUnit ?? null,
+  });
+}
+
+/** Resource edits from a calculation. Stage structure still requires the GPR section. */
+export function updateLinkedResourcesFromCalculation(
+  actorId: string,
+  calculationId: string,
+  stages: GprStage[],
+) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    assertSection(actor, "raschety");
+    const calc = data.calculations.find((item) => item.id === calculationId);
+    if (!calc) throw new Error("Расчёт не найден");
+    assertOrgAccess(actor, calc.orgId, "расчёта");
+    assertEditableCalculation(calc);
+    const procurement = data.procurements.find((item) => item.id === calc.procurementId);
+    const schedule = data.schedules.find((item) => item.calculationId === calc.id)
+      ?? data.schedules.find((item) => item.id === procurement?.gprId);
+    if (!schedule) throw new Error("ГПР не найден");
+    assertOrgAccess(actor, schedule.orgId, "ГПР");
+    const incomingById = new Map(stages.map((stage) => [stage.id, stage]));
+    if (
+      stages.length !== schedule.stages.length
+      || schedule.stages.some((stage) => {
+        const incoming = incomingById.get(stage.id);
+        return !incoming || stagePlanKey(stage) !== stagePlanKey(incoming);
+      })
+    ) {
+      throw new Error("Для изменения этапов нужен раздел «ГПР»");
+    }
+    const stagePlanBefore = schedule.stages.map(stagePlanKey);
+    schedule.stages = schedule.stages.map((stage) => ({
+      ...stage,
+      resources: incomingById.get(stage.id)?.resources ?? stage.resources,
+    }));
+    schedule.updatedAt = new Date().toISOString();
+    if (schedule.stages.some((stage, index) => stagePlanKey(stage) !== stagePlanBefore[index])) {
+      throw new Error("Для изменения этапов нужен раздел «ГПР»");
+    }
+    if (isResourceLinkedDraft(calc)) {
+      const synced = syncDraftFromStages(calc, schedule.stages, { replacePositions: true });
+      Object.assign(calc, synced.calc);
+    }
+    audit(data, actorId, "update", "calculation", calculationId, "Ресурсы расчёта синхронизированы с графиком");
+    return data;
+  });
+}
+
 /**
  * Edit one stage resource (qty/rate) and recompute the linked resource draft
  * from the unified tree → positions + V/W/X/Y/Z costSummary.
@@ -1226,6 +1427,7 @@ export function patchScheduleResourceAndSync(
 ) {
   return mutateAppData((data) => {
     const actor = actorUser(data, actorId);
+    assertGprWrite(actor);
     const schedule = data.schedules.find((s) => s.id === scheduleId);
     if (!schedule) throw new Error("ГПР не найден");
     assertOrgAccess(actor, schedule.orgId, "ГПР");
@@ -1306,6 +1508,15 @@ export function updateMoney(
     const { orgId: _o, id: _i, ...safe } = patch;
     void _o;
     void _i;
+    if (safe.payments) {
+      const previous = new Map(item.payments.map((payment) => [payment.id, payment]));
+      for (const payment of safe.payments) {
+        const prior = payment.id ? previous.get(payment.id) : undefined;
+        if (prior && prior.amount === payment.amount) continue;
+        const amountError = paymentAmountError(payment.amount);
+        if (amountError) throw new Error(amountError);
+      }
+    }
     data.moneyPlans = data.moneyPlans.map((m) =>
       m.id === id
         ? { ...m, ...safe, updatedAt: new Date().toISOString() }
@@ -1349,9 +1560,12 @@ export function updatePlanFact(
     const item = data.planFacts.find((p) => p.id === id);
     if (!item) throw new Error("План/факт не найден");
     assertOrgAccess(actor, item.orgId, "план/факт");
-    const { orgId: _o, id: _i, ...safe } = patch;
+    const { orgId: _o, id: _i, ...rest } = patch;
     void _o;
     void _i;
+    const safe = rest.dailyFacts
+      ? { ...rest, dailyFacts: dailyFactsWithoutPlantedPaths(item, rest.dailyFacts) }
+      : rest;
     data.planFacts = data.planFacts.map((p) =>
       p.id === id
         ? { ...p, ...safe, updatedAt: new Date().toISOString() }
@@ -1599,9 +1813,9 @@ export async function analyzeProcurementPackageWithAI(
   actorId: string,
   procurementId: string
 ): Promise<{ warning?: string; usedAi: boolean }> {
-  // Every entry point (including automatic upload analysis) needs the same
-  // current resource draft. Previously only the explicit UI action prepared it.
-  sendProcurementToCalculation(actorId, procurementId);
+  // Opening, downloading and package analysis must not create a calculation
+  // or GPR and must not move the procurement. That happens only on the
+  // explicit «Сформировать расчёт» action.
   const prepared = readAppData();
   const preparedProcurement = prepared.procurements.find((item) => item.id === procurementId);
   const preparedDraft = prepared.calculations.find((item) => item.id === preparedProcurement?.calculationId);
@@ -1883,7 +2097,8 @@ export function attachCustomerEstimate(
     data.smetaExchanges.unshift({
       id: `sx-${Date.now()}`,
       orgId: p.orgId,
-      name: `Смета заказчика · ${opts?.fileName ?? sourceNames.join(", ")} · ${p.number} · ${p.id}`,
+      procurementId: p.id,
+      name: opts?.fileName ?? (sourceNames.join(", ") || "Смета заказчика"),
       at: now,
       authorId: actorId,
       positionsMapped: mappedCount,
@@ -1904,6 +2119,14 @@ export function attachCustomerEstimate(
 }
 
 /** Build work stages from parsed estimate sections and work-item parent rows. */
+function isNavigationStub(schedule: { stages: GprStage[] }): boolean {
+  const names = new Set(["Подготовка", "Подготовка / мобилизация", "Основные работы"]);
+  return schedule.stages.length > 0 && schedule.stages.every((stage) =>
+    names.has(stage.name) &&
+    (stage.resources ?? []).every((resource) => resource.quantity === 0 && (resource.rate == null || resource.rate === 0))
+  );
+}
+
 function buildDraftStagesFromEstimate(
   positions: Calculation["positions"],
   now: string
@@ -1960,14 +2183,13 @@ function buildDraftStagesFromEstimate(
     return {
       id: stageId,
       name: workName,
-      ...(workName !== sectionName ? { sectionName } : {}),
+      ...(workName !== sectionName ? { sectionName, workName } : {}),
       start: now.slice(0, 10),
       end: now.slice(0, 10),
       sequence: index + 1,
       crewSize: 0,
-      ...(workName !== sectionName ? { workName } : {}),
       ...(workVolume != null ? { planVolume: workVolume, planUnit: workPositions[0].unit } : {}),
-      resources,
+      resources: mergeStageResources(resources),
     };
   });
 }
@@ -2002,9 +2224,92 @@ function mergeEstimateRowsIntoDraft(
 }
 
 /**
- * «Отправить в расчёт»: resource draft + GPR, preserve docs,
- * freeze customer estimate as immutable original when present.
+ * «Отправить в расчёт»: resource draft only. The schedule is a separate action.
  */
+export function createProcurementSchedule(actorId: string, procurementId: string) {
+  let outcome: "estimate" | "placeholder" | "unchanged" = "unchanged";
+  mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const procurement = data.procurements.find((item) => item.id === procurementId);
+    if (!procurement) throw new Error("Закупка не найдена");
+    assertOrgAccess(actor, procurement.orgId, "закупки");
+    if (!procurement.calculationId) throw new Error("Сначала сформируйте расчёт");
+    const now = new Date().toISOString();
+    const draft = data.calculations.find((item) => item.id === procurement.calculationId && item.kind !== "customer_original");
+    const derived = buildDraftStagesFromEstimate(draft?.positions ?? [], now);
+    const existing = procurement.gprId ? data.schedules.find((item) => item.id === procurement.gprId) : undefined;
+    if (existing && isNavigationStub(existing) && derived.length > 0) {
+      existing.stages = derived;
+      existing.calculationId = procurement.calculationId;
+      existing.updatedAt = now;
+      existing.assumptions = [
+        "Виды работ и вложенные ресурсы сгруппированы по разделам распознанной сметы. Проверьте состав строк и сопоставьте их с видами работ объекта.",
+        "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.",
+        "Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.",
+      ];
+      outcome = "estimate";
+      audit(data, actorId, "update", "gpr", existing.id, "Заготовка графика заменена разделами сметы");
+      return data;
+    }
+    if (existing && isNavigationStub(existing)) {
+      existing.calculationId = procurement.calculationId;
+      existing.updatedAt = now;
+      outcome = "placeholder";
+      return data;
+    }
+    if (existing) return data;
+    const gid = `g-${Date.now()}`;
+    const stage1 = `gs-${Date.now()}`;
+    const placeholderStages: GprStage[] = [
+      ensureStageResources({
+        id: stage1,
+        name: "Подготовка / мобилизация",
+        start: now.slice(0, 10),
+        end: now.slice(0, 10),
+        sequence: 1,
+        crewSize: 0,
+      }),
+      ensureStageResources({
+        id: `gs-${Date.now() + 1}`,
+        name: "Основные работы",
+        start: now.slice(0, 10),
+        end: now.slice(0, 10),
+        sequence: 2,
+        dependsOn: stage1,
+        dependencyType: "FS",
+        crewSize: 0,
+      }),
+    ];
+    data.schedules.unshift({
+      id: gid,
+      orgId: procurement.orgId,
+      procurementId: procurement.id,
+      calculationId: procurement.calculationId,
+      title: `ГПР (черновик) — ${procurement.title.slice(0, 48)}`,
+      status: "v_rabote",
+      version: 1,
+      authorId: actorId,
+      assumptions: derived.length
+        ? [
+            "Виды работ и вложенные ресурсы сгруппированы по разделам распознанной сметы. Проверьте состав строк и сопоставьте их с видами работ объекта.",
+            "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.",
+            "Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.",
+          ]
+        : [
+            "Начальные даты и этапы — только навигационная заготовка; замените их по ТЗ, производительности и календарю объекта",
+            "Состав и количество ресурсов не подтверждены: заполните строки перед использованием итогов",
+          ],
+      stages: derived.length ? derived : placeholderStages,
+      updatedAt: now,
+    });
+    procurement.gprId = gid;
+    outcome = derived.length ? "estimate" : "placeholder";
+    audit(data, actorId, "create", "gpr", gid, "График создан отдельной кнопкой");
+    return data;
+  });
+  return { outcome };
+}
+
 export function sendProcurementToCalculation(
   actorId: string,
   procurementId: string
@@ -2255,58 +2560,7 @@ export function sendProcurementToCalculation(
       }
     }
 
-    const derivedGprStages = buildDraftStagesFromEstimate(positionsFromEstimate, now);
-
-    // GPR scaffold from explicitly parsed estimate sections; unknown dates and rates stay unconfirmed.
-    if (!p.gprId) {
-      const gid = `g-${Date.now()}`;
-      const stage1 = `gs-${Date.now()}`;
-      const placeholderStages: GprStage[] = [
-        ensureStageResources({
-          id: stage1,
-          name: "Подготовка / мобилизация",
-          start: now.slice(0, 10),
-          end: now.slice(0, 10),
-          sequence: 1,
-          crewSize: 0,
-        }),
-        ensureStageResources({
-          id: `gs-${Date.now() + 1}`,
-          name: "Основные работы",
-          start: now.slice(0, 10),
-          end: now.slice(0, 10),
-          sequence: 2,
-          dependsOn: stage1,
-          dependencyType: "FS",
-          crewSize: 0,
-        }),
-      ];
-      data.schedules.unshift({
-        id: gid,
-        orgId: p.orgId,
-        procurementId: p.id,
-        calculationId: draftId!,
-        title: `ГПР (черновик) — ${p.title.slice(0, 48)}`,
-        status: "v_rabote",
-        version: 1,
-        authorId: actorId,
-        assumptions: [
-          ...(derivedGprStages.length
-            ? [
-                "Виды работ и вложенные ресурсы сгруппированы по разделам распознанной сметы. Проверьте состав строк и сопоставьте их с видами работ объекта.",
-                "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.",
-                "Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.",
-              ]
-            : [
-                "Начальные даты и этапы — только навигационная заготовка; замените их по ТЗ, производительности и календарю объекта",
-                "Состав и количество ресурсов не подтверждены: заполните строки перед использованием итогов",
-              ]),
-        ],
-        stages: derivedGprStages.length ? derivedGprStages : placeholderStages,
-        updatedAt: now,
-      });
-      p.gprId = gid;
-    } else {
+    if (p.gprId) {
       const workPositionIds = new Set(
         positionsFromEstimate.filter((position) => position.isWorkItem).map((position) => position.id)
       );
@@ -2318,24 +2572,7 @@ export function sendProcurementToCalculation(
       }
       data.schedules = data.schedules.map((s) => {
         if (s.id !== p.gprId) return s;
-        const isPlaceholder = s.stages.every((stage) =>
-          ["Подготовка / мобилизация", "Основные работы"].includes(stage.name) &&
-          (stage.resources ?? []).every((resource) => resource.quantity === 0)
-        );
-        if (derivedGprStages.length > 0 && isPlaceholder) {
-          return {
-            ...s,
-            calculationId: draftId!,
-            updatedAt: now,
-            stages: derivedGprStages,
-            assumptions: [
-              ...(s.assumptions ?? []).filter((item) => !item.startsWith("Начальные даты и этапы")),
-              "Виды работ и вложенные ресурсы сгруппированы по разделам распознанной сметы. Проверьте состав строк и сопоставьте их с видами работ объекта.",
-              "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.",
-              "Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.",
-            ],
-          };
-        }
+        if (isNavigationStub(s)) return { ...s, calculationId: draftId!, updatedAt: now };
 
         // Migrate the old PDF mapping where ФирЕР work rows appeared as people.
         // Preserve user-entered dates, volumes, unrelated resources and facts.
@@ -2540,6 +2777,7 @@ export function shiftGprStage(
 ) {
   return mutateAppData((data) => {
     const actor = actorUser(data, actorId);
+    assertGprWrite(actor);
     const item = data.schedules.find((s) => s.id === scheduleId);
     if (!item) throw new Error("ГПР не найден");
     assertOrgAccess(actor, item.orgId, "ГПР");
@@ -3014,8 +3252,18 @@ export function addDailyProductionFact(
       : undefined;
     const incomingPhotos = fact.photos ?? [];
     const photos = [...(existing?.photos ?? [])];
+    const usedPaths = uploadPathsInUse(data);
     for (const photo of incomingPhotos) {
-      if (!photos.some((existing) => existing.id === photo.id)) photos.push(photo);
+      if (photos.some((item) => item.id === photo.id)) continue;
+      const canonical = photo.storedPath ? canonicalUploadPath(photo.storedPath) : null;
+      if (!canonical || usedPaths.has(canonical)) {
+        const { storedPath: _planted, ...rest } = photo;
+        void _planted;
+        photos.push(rest);
+        continue;
+      }
+      photos.push({ ...photo, storedPath: canonical });
+      usedPaths.add(canonical);
     }
     const entry: DailyFact = {
       id: existing?.id ?? fact.factId ?? `df-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -3502,7 +3750,13 @@ export function addMoneyPayment(
     const plan = data.moneyPlans.find((m) => m.id === moneyId);
     if (!plan) throw new Error("Денежный план не найден");
     assertOrgAccess(actor, plan.orgId, "денежного плана");
-    const row: MoneyPayment = { ...payment, id: `pay-${Date.now()}` };
+    const amountError = paymentAmountError(payment.amount);
+    if (amountError) throw new Error(amountError);
+    const row: MoneyPayment = {
+      ...payment,
+      type: paymentTypeForSave(payment),
+      id: `pay-${Date.now()}`,
+    };
     plan.payments = [...plan.payments, row];
     plan.updatedAt = new Date().toISOString();
     audit(data, actorId, "create", "money_payment", row.id, row.title);

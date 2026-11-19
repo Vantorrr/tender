@@ -3,6 +3,7 @@
 import { Fragment, useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { formatMoney, formatNumber } from "@/lib/format";
+import { gprStageLabel } from "@/lib/gpr-stage-label";
 import {
   buildHierarchicalEstimate,
   type EstimateLeaf,
@@ -122,10 +123,9 @@ function FragmentRows({
     <>
       <tr className="border-t border-[var(--tk-line)] bg-stone-50 font-medium" data-testid={`gpr-work-${node.id}`}>
         <td className="px-3 py-2">
-          <button type="button" className="rounded-sm text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--tk-copper)]" aria-expanded={!collapsed} onClick={onToggle}>
-            {hasNestedRows ? (collapsed ? "▸" : "▾") : "·"} {index + 1}. {node.name}
+          <button type="button" className="rounded-sm text-left hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--tk-copper)]" aria-expanded={!collapsed} title={stage ? gprStageLabel(stage).title : node.name} onClick={onToggle}>
+            {hasNestedRows ? (collapsed ? "▸" : "▾") : "·"} {stage && gprStageLabel(stage).numbered ? gprStageLabel(stage).text : `${index + 1}. ${stage ? gprStageLabel(stage).text : node.name}`}
           </button>
-          {stage?.sectionName ? <div className="ml-6 mt-0.5 text-[11px] font-normal text-[var(--tk-muted)]">{stage.sectionName}</div> : null}
           {node.incomplete ? <span className="ml-2 text-xs font-normal text-amber-800">частично</span> : null}
         </td>
         <td className="px-3 py-2 text-[var(--tk-muted)]">{stage?.planUnit || "—"}</td>

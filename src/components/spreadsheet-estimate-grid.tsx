@@ -1,10 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { formatMoney, formatNumber } from "@/lib/format";
+import { rowDeleteConfirmed } from "@/lib/row-delete";
 import { diffDays } from "@/lib/cost-engine";
 import type { EstimateLeaf, EstimateStageNode } from "@/lib/hierarchical-estimate";
 import { resolveResourceDimensions } from "@/lib/resource-dimensions";
@@ -30,6 +32,9 @@ type Props = {
     days?: number | null;
     kind?: GprStageResource["kind"];
     quantityBasis?: ResourceQuantityBasis | null;
+    remove?: boolean;
+    moveToStageId?: string;
+    resource?: GprStageResource;
   }) => Promise<void> | void;
   onAddResources?: (stageId: string, resources: ManualResource[]) => Promise<void>;
   onAddFromDirectory?: () => void;
@@ -290,6 +295,8 @@ export function SpreadsheetEstimateGrid({
   const [pasteText, setPasteText] = useState("");
   const [pasteErrors, setPasteErrors] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<EstimateLeaf | null>(null);
+  const savingRef = useRef(false);
   const [stageId, setStageId] = useState(stages[0]?.id ?? "");
   const [manual, setManual] = useState({
     name: "",
@@ -315,7 +322,8 @@ export function SpreadsheetEstimateGrid({
   }, [nodes, search]);
 
   async function addRows(rows: ManualResource[]) {
-    if (!selectedStageId || !onAddResources || rows.length === 0) return;
+    if (savingRef.current || !selectedStageId || !onAddResources || rows.length === 0) return;
+    savingRef.current = true;
     setSaving(true);
     try {
       await onAddResources(selectedStageId, rows);
@@ -327,6 +335,7 @@ export function SpreadsheetEstimateGrid({
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось добавить строки");
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   }
@@ -408,7 +417,7 @@ export function SpreadsheetEstimateGrid({
 
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <Input className="h-9 max-w-sm" placeholder="Поиск по работам и ресурсам" value={search} onChange={(e) => setSearch(e.target.value)} />
-        <span className="text-xs text-[var(--tk-muted)]">L–P — ввод · Q–Z — расчёт. Enter сохраняет ячейку.</span>
+        <span className="text-xs text-[var(--tk-muted)]">Enter сохраняет ячейку.</span>
       </div>
 
       <div className="overflow-auto rounded-xl border border-[var(--tk-line)] bg-white" data-testid="resource-grid-scroll">
@@ -432,7 +441,7 @@ export function SpreadsheetEstimateGrid({
                 const row = <tr key={leaf.id} className="group bg-white hover:bg-amber-50/40" data-testid={`resource-grid-row-${leaf.id}`}>
                   <td style={{ left: 0 }} className="sticky z-10 w-[72px] min-w-[72px] border-b border-r border-[var(--tk-line)]/70 bg-white px-2 py-1 text-[var(--tk-muted)]">↳</td>
                   <td style={{ left: 72 }} className="sticky z-10 w-48 min-w-48 border-b border-r border-[var(--tk-line)]/70 bg-white px-2 py-1">{node.name}</td>
-                  <td style={{ left: 264 }} className="sticky z-10 w-64 min-w-64 border-b border-r border-[var(--tk-line)]/70 bg-white px-1 py-1">{tableInput(leaf, "name")}</td>
+                  <td style={{ left: 264 }} className="sticky z-10 w-64 min-w-64 border-b border-r border-[var(--tk-line)]/70 bg-white px-1 py-1">{tableInput(leaf, "name")}{!locked && stage && leaf.source === "stage_resource" ? <div className="mt-1 flex flex-wrap items-center gap-1"><select aria-label={`Перенести ${leaf.name}`} className="h-7 max-w-[9rem] rounded border px-1 text-[11px]" value={stage.id} onChange={(event) => { const targetId = event.target.value; if (!targetId || targetId === stage.id) return; const resource = stage.resources?.find((item) => item.id === leaf.id); if (!resource) return; void onPatchLeaf(leaf, { moveToStageId: targetId, resource }); }}>{stages.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><button type="button" className="text-[11px] text-rose-800 underline" onClick={() => setPendingDelete(leaf)}>Удалить</button></div> : null}</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-1 py-1">{tableInput(leaf, "unit")}</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-1 py-1 text-right">{formatNumber(leaf.quantity)}</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-2 py-1 text-right">{plannedDays ?? "—"}</td>
@@ -446,7 +455,7 @@ export function SpreadsheetEstimateGrid({
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-1 py-1">{stage && leaf.source === "stage_resource" ? tableInput(leaf, "hoursPerShift") : "—"}</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-1 py-1">{stage && leaf.source === "stage_resource" ? tableInput(leaf, "shiftsPerDay") : "—"}</td>
                   <td className="border-b border-r border-[var(--tk-line)]/70 px-1 py-1">{stage && leaf.source === "stage_resource" ? tableInput(leaf, "days") : "—"}</td>
-                  <td className="border-b border-r border-[var(--tk-line)]/70 px-2 py-1 text-right">{leaf.hoursQ == null ? "—" : formatNumber(leaf.hoursQ)}</td>
+                  <td className="border-b border-r border-[var(--tk-line)]/70 px-2 py-1 text-right" data-testid={`grid-hours-${leaf.id}`}>{leaf.kind === "material" ? "" : leaf.hoursQ == null ? "—" : `${formatNumber(leaf.hoursQ)} ч`}</td>
                   <td className={`border-b border-r border-[var(--tk-line)]/70 px-2 py-1 text-right font-medium ${leaf.amount == null ? "text-amber-800" : ""}`} title={leaf.amount == null ? "нет данных" : undefined}>{leaf.amount == null ? "—" : formatMoney(leaf.amount)}</td>
                   <ResourceCostCells leaf={leaf} params={params} />
                 </tr>;
@@ -474,7 +483,23 @@ export function SpreadsheetEstimateGrid({
           </tbody>
         </table>
       </div>
-      <p className="mt-2 text-xs text-[var(--tk-muted)]">Ставки, количество, часы, смены и дни редактируются в строке. Даты этапа двигайте в календаре ГПР: зависимости сдвинутся вместе с этапом, а ресурсная стоимость обновится автоматически.</p>
+      <p className="mt-2 text-xs text-[var(--tk-muted)]">Ставку и количество можно править в строке. Даты этапа меняются в графике.</p>
+      <Dialog open={pendingDelete != null} onOpenChange={(open) => { if (!open) setPendingDelete(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Удалить строку?</DialogTitle>
+            <DialogDescription>Строка «{pendingDelete?.name}» будет удалена из расчёта.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingDelete(null)}>Отмена</Button>
+            <Button onClick={() => {
+              const leaf = pendingDelete;
+              setPendingDelete(null);
+              if (leaf && rowDeleteConfirmed("confirm")) void onPatchLeaf(leaf, { remove: true });
+            }}>Удалить</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

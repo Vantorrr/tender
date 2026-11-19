@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { AiFailureBanner } from "@/components/ai-failure-banner";
 import { ErrorState } from "@/components/empty-state";
@@ -10,8 +10,10 @@ import { DocumentWebPreview } from "@/components/document-web-preview";
 import { StatusBadge } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { downloadUrl } from "@/lib/api";
 import { downloadTextFile, formatDateTime } from "@/lib/format";
+import { presentAnalyticalNote } from "@/lib/analytical-note";
 import { readableCitations } from "@/lib/citation-display";
 import { useStore } from "@/lib/store";
 
@@ -71,9 +73,11 @@ function NoteEditor({
 
 export default function DocumentDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const { orgDocuments, data, reanalyzeDocument } = useStore();
   const [retryingAi, setRetryingAi] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [askModel, setAskModel] = useState(false);
   const doc = orgDocuments.find((d) => d.id === params.id);
 
   if (!doc) {
@@ -87,7 +91,8 @@ export default function DocumentDetailPage() {
 
   const author = (id: string) =>
     data.users.find((u) => u.id === id)?.name ?? id;
-  const displayCitations = readableCitations(doc.citations);
+  const displayCitations = readableCitations(doc.citations.filter((citation) => citation.confidence !== "ocr" && citation.sourceVersion !== "ocr-extract"));
+  const note = presentAnalyticalNote(doc.analyticalNote);
 
   return (
     <div>
@@ -99,6 +104,7 @@ export default function DocumentDetailPage() {
         }`}
         actions={
           <>
+            <Button variant="outline" onClick={() => router.push("/cabinet/dokumenty")}>Назад</Button>
             <StatusBadge status={doc.status} />
             <Button
               variant="outline"
@@ -130,23 +136,7 @@ export default function DocumentDetailPage() {
             >
               Переразобрать
             </Button>
-            <Button
-              variant="outline"
-              onClick={async () => {
-                const ok = window.confirm(
-                  "Сформировать записку через внешний сервис анализа? Это платный вызов."
-                );
-                if (!ok) return;
-                try {
-                  await reanalyzeDocument(doc.id, { useLlm: true });
-                  toast.success("Записка обновлена с участием модели");
-                } catch (e) {
-                  toast.error(
-                    e instanceof Error ? e.message : "Ошибка анализа моделью"
-                  );
-                }
-              }}
-            >
+            <Button variant="outline" onClick={() => setAskModel(true)}>
               Записка моделью
             </Button>
             <Button
@@ -235,11 +225,27 @@ export default function DocumentDetailPage() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
-          <NoteEditor
-            key={`${doc.id}:${doc.versions.length}:${doc.analyticalNote.slice(0, 24)}`}
-            docId={doc.id}
-            initialNote={doc.analyticalNote}
-          />
+          {note.text ? (
+            <NoteEditor
+              key={`${doc.id}:${doc.versions.length}:${note.text.slice(0, 24)}`}
+              docId={doc.id}
+              initialNote={note.text}
+            />
+          ) : null}
+          {note.recognized ? (
+            <section className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
+              {note.text ? null : <h2 className="font-[family-name:var(--font-display)] text-base">Записка</h2>}
+              <p className="mt-2 text-sm">Текст распознан автоматически, сверьте с оригиналом</p>
+              <Button className="mt-3" variant="outline" onClick={() => setPreviewOpen(true)}>Открыть документ</Button>
+            </section>
+          ) : null}
+          {!note.text && !note.recognized ? (
+            <NoteEditor
+              key={`${doc.id}:${doc.versions.length}:empty`}
+              docId={doc.id}
+              initialNote=""
+            />
+          ) : null}
 
           <section className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
             <h2 className="font-[family-name:var(--font-display)] text-base">
@@ -335,6 +341,23 @@ export default function DocumentDetailPage() {
           </ol>
         </section>
       </div>
+      <Dialog open={askModel} onOpenChange={setAskModel}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Сформировать записку моделью?</DialogTitle>
+            <DialogDescription>Это платный вызов внешнего сервиса анализа.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAskModel(false)}>Отмена</Button>
+            <Button onClick={() => {
+              setAskModel(false);
+              void reanalyzeDocument(doc.id, { useLlm: true })
+                .then(() => toast.success("Записка обновлена с участием модели"))
+                .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Ошибка анализа моделью"));
+            }}>Сформировать</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

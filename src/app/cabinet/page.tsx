@@ -13,6 +13,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { cleanLabel } from "@/lib/display";
 import { formatMoney } from "@/lib/format";
+import { visibleProcurementNumber } from "@/lib/pipeline";
 import { ROLE_LABELS } from "@/lib/roles";
 import { useStore } from "@/lib/store";
 
@@ -86,7 +87,7 @@ export default function CabinetHomePage() {
             key={p.id}
             href={`/cabinet/zakupki/${p.id}`}
             title={p.title}
-            subtitle={`${p.number} · ${p.customer}`}
+            subtitle={`${visibleProcurementNumber(p)} · ${p.customer}`}
             status={p.status}
             meta={
               <div className="flex flex-wrap gap-x-4 gap-y-1">

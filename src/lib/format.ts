@@ -13,6 +13,17 @@ export function formatNumber(value: number, digits = 2): string {
   }).format(value);
 }
 
+/** Piece counts from a norm are fractional. Show two decimals and explain the source. */
+export function quantityPresentation(quantity: number, unit: string): { text: string; title?: string } {
+  const piece = /^шт\.?$/iu.test(unit.trim());
+  const text = formatNumber(quantity, 2);
+  if (!piece || Math.abs(quantity - Math.round(quantity)) < 1e-6) return { text };
+  return {
+    text,
+    title: `По норме сметы ${formatNumber(quantity, 4)} ${unit}. Дробь получается из нормы на единицу объёма, на экране — до 2 знаков.`,
+  };
+}
+
 /** Today's calendar date in the project's operating timezone, not UTC. */
 export function todayIsoInTimeZone(timeZone = "Europe/Moscow", now = new Date()): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -26,18 +37,19 @@ export function todayIsoInTimeZone(timeZone = "Europe/Moscow", now = new Date())
 }
 
 /** Calendar day as DD.MM.YYYY (client requirement). Uses UTC noon to avoid TZ shift. */
-export function formatDate(iso: string): string {
+export function formatDate(iso: string | null | undefined): string {
+  if (!iso || !String(iso).trim()) return "не указан";
   const raw = iso.includes("T") ? iso.slice(0, 10) : iso;
   if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
     const d = new Date(`${raw}T12:00:00Z`);
-    if (Number.isNaN(d.getTime())) return iso;
+    if (Number.isNaN(d.getTime())) return "не указан";
     const dd = String(d.getUTCDate()).padStart(2, "0");
     const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
     const yyyy = d.getUTCFullYear();
     return `${dd}.${mm}.${yyyy}`;
   }
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
+  if (Number.isNaN(d.getTime())) return "не указан";
   const dd = String(d.getUTCDate()).padStart(2, "0");
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
   const yyyy = d.getUTCFullYear();
@@ -54,14 +66,17 @@ export function formatDateRangeShort(startIso: string, endIso: string): string {
   return `${a}–${b}`;
 }
 
-export function formatDateTime(iso: string): string {
+export function formatDateTime(iso: string | null | undefined): string {
+  if (!iso || !String(iso).trim()) return "не указан";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "не указан";
   return new Intl.DateTimeFormat("ru-RU", {
     day: "2-digit",
     month: "short",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(iso));
+  }).format(d);
 }
 
 /** Parse user DD.MM.YYYY (also accepts YYYY-MM-DD) → ISO date YYYY-MM-DD or null. */

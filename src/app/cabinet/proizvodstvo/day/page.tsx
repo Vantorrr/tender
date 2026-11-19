@@ -141,7 +141,7 @@ function DayDetailsInner() {
   const entry = plan?.entries.find((e) => e.workName === selectedWork);
 
   const dayFacts = (plan?.dailyFacts ?? []).filter(
-    (d) => d.date === date && d.workName === selectedWork
+    (d) => d.date.slice(0, 10) === date.slice(0, 10) && d.workName.trim() === selectedWork.trim()
   );
   const dayQty = sumDailyQty(dayFacts);
   const contractFact = entry
@@ -237,22 +237,6 @@ function DayDetailsInner() {
       factQty: l.factQty,
     }));
     try {
-      await api("/api/proizvodstvo", {
-        method: "POST",
-        body: JSON.stringify({
-          action: "dailyFact",
-          planFactId: plan!.id,
-          fact: {
-            factId,
-            date,
-            workName: selectedWork,
-            unit: entry?.unit ?? "%",
-            quantity,
-            resourceLines,
-            comment: caption.trim() || undefined,
-          },
-        }),
-      });
       if (withPhoto && photo && !photoTooLarge) {
         const form = new FormData();
         form.append("factId", factId);
@@ -265,6 +249,23 @@ function DayDetailsInner() {
         if (caption.trim()) form.append("caption", caption.trim());
         form.append("photo", photo);
         await api("/api/proizvodstvo", { method: "POST", body: form });
+      } else {
+        await api("/api/proizvodstvo", {
+          method: "POST",
+          body: JSON.stringify({
+            action: "dailyFact",
+            planFactId: plan!.id,
+            fact: {
+              factId,
+              date,
+              workName: selectedWork,
+              unit: entry?.unit ?? "%",
+              quantity,
+              resourceLines,
+              comment: caption.trim() || undefined,
+            },
+          }),
+        });
       }
       await refresh();
       pendingFactIdRef.current = null;

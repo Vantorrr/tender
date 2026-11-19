@@ -609,7 +609,7 @@ export interface GprSchedule {
 
 export interface MoneyPayment {
   id: string;
-  type: "avans" | "postuplenie" | "klyuchevoy";
+  type: "avans" | "postuplenie" | "klyuchevoy" | "spisanie";
   title: string;
   amount: number;
   date: string;
@@ -814,6 +814,8 @@ export interface AuditEntry {
 export interface SmetaExchangeVersion {
   id: string;
   orgId: string;
+  /** Set when the exchange belongs to one procurement. Deletes match this id, not the name. */
+  procurementId?: string;
   name: string;
   at: string;
   authorId: string;

@@ -6,9 +6,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
-import { ReviewBadge, StatusBadge } from "@/components/status-badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -19,7 +19,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DateInputRu } from "@/components/date-input-ru";
 import { AiFailureBanner } from "@/components/ai-failure-banner";
-import { api, getClientToken } from "@/lib/api";
+import { api, downloadUrl, getClientToken } from "@/lib/api";
 import { DocumentWebPreview } from "@/components/document-web-preview";
 import { cleanLabel } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney, formatNumber } from "@/lib/format";
@@ -27,9 +27,13 @@ import { citationTopicLabel, readableCitations, regionFromCitations, submissionD
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_CHECKLIST } from "@/lib/ai-topics";
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
-import { WORK_TYPES } from "@/lib/pipeline";
+import { parseDecimalRu } from "@/lib/decimal-ru";
+import { PAYMENT_AMOUNT_ERROR, PAYMENT_BUCKET_LABELS, paymentBucket, paymentTotals, type PaymentBucket } from "@/lib/money-payments";
 import { userHasSection } from "@/lib/acl";
-import { REVIEW_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
+import { plainExchangeTitle } from "@/lib/exchange-label";
+import { gprStageLabel } from "@/lib/gpr-stage-label";
+import { visibleProcurementNumber } from "@/lib/pipeline";
+import { STATUS_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
 import type { Citation, DocumentCategory, ReviewStatus, SupplyRequest, SupplyStatus, SupplierDirectoryEntry, OrganizationCompanyCard } from "@/lib/types";
 import type { SupplierSearchCandidate } from "@/server/supplier-discovery";
 import { useStore } from "@/lib/store";
@@ -207,7 +211,6 @@ export default function ZakupkaDetailPage() {
     setProcurementReview,
     ensureChain,
     sendToCalculation,
-    refreshAnalytics,
     analyzeProjectWithAI,
     reanalyzeDocument,
     createDocumentUpload,
@@ -227,15 +230,22 @@ export default function ZakupkaDetailPage() {
     useState<DocumentCategory>("general");
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [customerEstimateBusy, setCustomerEstimateBusy] = useState(false);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
-  const [analyticsBusy, setAnalyticsBusy] = useState(false);
   const [selectedTab, setSelectedTab] = useState<string | null>(null);
   const requestedTab = searchParams.get("tab");
   const activeTab = selectedTab ?? (requestedTab && ["overview", "docs", "analytics", "calc", "gpr", "money", "supply", "risks"].includes(requestedTab) ? requestedTab : "overview");
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [payTitle, setPayTitle] = useState("Аванс");
-  const [payAmount, setPayAmount] = useState("0");
+  const [payTitle, setPayTitle] = useState("");
+  const [payType, setPayType] = useState<PaymentBucket>("postuplenie");
+  const [payAmount, setPayAmount] = useState("");
+  const [paySaving, setPaySaving] = useState(false);
+  const [ask, setAsk] = useState<
+    | null
+    | { kind: "payment"; id: string; title: string }
+    | { kind: "rfq"; supply: SupplyRequest; supplier: SupplierDirectoryEntry }
+    | { kind: "supplier"; id: string; name: string }
+  >(null);
+  const paySavingRef = useRef(false);
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
   const [matName, setMatName] = useState("");
   const [matQty, setMatQty] = useState("1");
@@ -356,7 +366,6 @@ export default function ZakupkaDetailPage() {
   }, [gpr?.stages, supplies]);
 
   async function onAttachCustomerEstimate(file: File) {
-    setCustomerEstimateBusy(true);
     setUploadError(null);
     try {
       await createDocumentUpload({
@@ -380,8 +389,6 @@ export default function ZakupkaDetailPage() {
         error instanceof Error ? error.message : "Не удалось добавить смету";
       setUploadError(message);
       toast.error(message);
-    } finally {
-      setCustomerEstimateBusy(false);
     }
   }
 
@@ -536,7 +543,6 @@ export default function ZakupkaDetailPage() {
   }
 
   async function sendSupplierRfq(supply: SupplyRequest, supplier: SupplierDirectoryEntry) {
-    if (!window.confirm(`Отправить запрос КП на ${supply.materialName} поставщику «${supplier.name}» (${supplier.email})? К письму будет приложена карточка предприятия.`)) return;
     try {
       await api("/api/supply", { method: "POST", body: JSON.stringify({ action: "sendRfq", id: supply.id, supplierId: supplier.id, confirmed: true }) });
       await refresh();
@@ -587,8 +593,14 @@ export default function ZakupkaDetailPage() {
         file,
         category: uploadCategory,
       });
+      if (uploadCategory === "estimate") {
+        await api("/api/zakupki", {
+          method: "POST",
+          body: JSON.stringify({ action: "attachCustomerEstimate", id: procurement!.id, fileName: file.name }),
+        });
+      }
       if (warning) toast.warning(warning);
-      else toast.success(`Файл «${file.name}» добавлен в закупку`);
+      else toast.success(uploadCategory === "estimate" ? "Смета заказчика добавлена" : `Файл «${file.name}» добавлен в закупку`);
       await refresh();
     } catch (e) {
       const msg =
@@ -599,18 +611,6 @@ export default function ZakupkaDetailPage() {
       toast.error(msg);
     } finally {
       setBusy(false);
-    }
-  }
-
-  async function refreshProjectAnalytics() {
-    setAnalyticsBusy(true);
-    try {
-      await refreshAnalytics(procurement!.id);
-      toast.success("Сводка проекта обновлена");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Не удалось обновить сводку");
-    } finally {
-      setAnalyticsBusy(false);
     }
   }
 
@@ -675,14 +675,13 @@ export default function ZakupkaDetailPage() {
     <div>
       <PageHeader
         title={procurement.title}
-        description={`${procurement.number} · ${procurement.customer}`}
+        description={`${visibleProcurementNumber(procurement)} · ${procurement.customer}`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" onClick={() => router.push("/cabinet/zakupki")}>Назад</Button>
             {user && userHasSection(user, "zakupki") ? (
               <ProjectAiChat procurementId={procurement.id} projectTitle={procurement.title} screen="procurement" />
             ) : null}
-            <StatusBadge status={procurement.status} />
-            <ReviewBadge status={procurement.reviewStatus} />
             {procurement.lifecycle !== "production" && user?.sections.includes("zakupki") ? (
               <Button
                 variant="outline"
@@ -729,7 +728,7 @@ export default function ZakupkaDetailPage() {
                       );
                     } else {
                       toast.warning(
-                        "Созданы расчёт и ГПР, но сметные строки не распознаны. Загрузите смету XLSX или добавьте позиции вручную."
+                        "Расчёт создан, но сметные строки не распознаны. Загрузите смету XLSX или добавьте позиции вручную."
                       );
                     }
                 } catch (e) {
@@ -742,6 +741,34 @@ export default function ZakupkaDetailPage() {
               }}
             >
               Сформировать расчёт (расчёт по формулам, без ИИ)
+            </Button>
+            <Button
+              variant="outline"
+              data-testid="create-gpr"
+              disabled={busy || !procurement.calculationId}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const result = await api<{ scheduleOutcome?: "estimate" | "placeholder" | "unchanged" }>("/api/zakupki", {
+                    method: "POST",
+                    body: JSON.stringify({ action: "createGpr", id: procurement.id }),
+                  });
+                  await refresh();
+                  toast.success(
+                    result.scheduleOutcome === "estimate"
+                      ? "График создан по смете"
+                      : result.scheduleOutcome === "placeholder"
+                        ? "График создан. В смете нет разделов, этапы нужно заполнить."
+                        : "График уже заполнен",
+                  );
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : "Не удалось создать график");
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Создать ГПР
             </Button>
           </div>
         }
@@ -848,21 +875,11 @@ export default function ZakupkaDetailPage() {
                   <option value="tz">ТЗ / извещение</option>
                   <option value="archive">Архив</option>
                 </select>
-                <Button variant="outline" disabled={busy} onClick={() => fileRef.current?.click()}>
+                <Button disabled={busy} onClick={() => fileRef.current?.click()}>
                   {busy ? "Загрузка…" : "Добавить файлы"}
                 </Button>
                 <Button
                   variant="outline"
-                  disabled={customerEstimateBusy}
-                  data-testid="add-customer-estimate"
-                  onClick={() => customerEstimateRef.current?.click()}
-                >
-                  {customerEstimateBusy ? "Прикрепляю…" : "Добавить смету заказчика"}
-                </Button>
-                <Button variant="outline" disabled={analyticsBusy} onClick={() => void refreshProjectAnalytics()}>
-                  {analyticsBusy ? "Обновляю…" : "Обновить сводку"}
-                </Button>
-                <Button
                   disabled={aiAnalyzing || docs.length === 0}
                   title={docs.length === 0 ? "Сначала загрузите документы" : undefined}
                   onClick={() => void analyzeProjectPackage()}
@@ -872,7 +889,6 @@ export default function ZakupkaDetailPage() {
                 {docs.length === 0 ? (
                   <span className="text-xs text-[var(--tk-muted)]">Сначала загрузите документы</span>
                 ) : null}
-                <Button variant="ghost" onClick={() => setSelectedTab("analytics")}>Подробная аналитика</Button>
               </div>
             </div>
             {original ? (
@@ -887,12 +903,12 @@ export default function ZakupkaDetailPage() {
               >
                 <p className="font-medium">Результат обмена со сметным ПО</p>
                 <p className="mt-1 text-xs text-[var(--tk-muted)]">
-                  {lastExchange.name} · {formatDateTime(lastExchange.at)} · позиций{" "}
-                  {lastExchange.positionsMapped}
-                  {lastExchange.confirmed ? " · подтверждён" : " · ожидает подтверждения"}
+                  Файл: {plainExchangeTitle(lastExchange.name)}. Позиций {lastExchange.positionsMapped}.{" "}
+                  {lastExchange.confirmed ? "Подтверждено." : "Ожидает подтверждения."}
                   {lastExchange.discrepancies.length
-                    ? ` · расхождений ${lastExchange.discrepancies.length}`
-                    : " · без расхождений"}
+                    ? ` Расхождений: ${lastExchange.discrepancies.length}.`
+                    : " Без расхождений."}
+                  {" "}{formatDateTime(lastExchange.at)}
                 </p>
                 <Link href="/cabinet/obmen" className="mt-1 inline-block text-xs text-sky-800 underline">
                   Открыть раздел «Обмен»
@@ -935,8 +951,8 @@ export default function ZakupkaDetailPage() {
                 <div>
                   <dt className="text-[var(--tk-muted)]">Источник</dt>
                   <dd className="font-semibold">
-                    {cleanLabel(procurement.source)}{" "}
-                    {procurement.sourceUrl ? <a href={procurement.sourceUrl} target="_blank" rel="noreferrer" className="ml-1 text-xs font-normal underline">Открыть карточку источника</a> : null}
+                    {procurement.source === "manual" ? "Создано вручную" : /контур|api/iu.test(procurement.source) ? "Площадка" : cleanLabel(procurement.source)}{" "}
+                    {procurement.sourceUrl ? <a href={procurement.sourceUrl} target="_blank" rel="noreferrer" className="ml-1 text-xs font-normal underline">Открыть на площадке</a> : null}
                   </dd>
                 </div>
                 <div>
@@ -954,15 +970,15 @@ export default function ZakupkaDetailPage() {
                     className="underline"
                     href={`/cabinet/zakupki/${procurement.duplicateOf}`}
                   >
-                    {data.procurements.find(
-                      (p) => p.id === procurement.duplicateOf
-                    )?.number ?? "карточка"}
+                    {(() => {
+                      const original = data.procurements.find((p) => p.id === procurement.duplicateOf);
+                      return original ? visibleProcurementNumber(original) : "карточка";
+                    })()}
                   </Link>
                 </p>
               ) : null}
               <p className="mt-4 text-xs text-[var(--tk-muted)]">
-                Создано {formatDate(procurement.createdAt)}. Виды работ
-                справочно: {WORK_TYPES.join(", ")}.
+                Создано {formatDate(procurement.createdAt)}
               </p>
             </div>
             <div className="space-y-4">
@@ -981,12 +997,18 @@ export default function ZakupkaDetailPage() {
                   <SelectTrigger className="mt-3 w-full">
                     <SelectValue>
                       {(value) =>
-                        REVIEW_LABELS[value as ReviewStatus] ?? "Рассмотрение"
+                        ({
+                          novaya: "Новое",
+                          na_rassmotrenii: "В работе",
+                          odobrena: "Участвуем",
+                          otklonena: "Не участвуем",
+                          dublirovana: "Дубликат",
+                        } as Record<string, string>)[String(value)] ?? "Рассмотрение"
                       }
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="novaya">Новая</SelectItem>
+                    <SelectItem value="novaya">Новое</SelectItem>
                     <SelectItem value="na_rassmotrenii">В работе</SelectItem>
                     <SelectItem value="odobrena">Участвуем</SelectItem>
                     <SelectItem value="otklonena">Не участвуем</SelectItem>
@@ -1000,7 +1022,7 @@ export default function ZakupkaDetailPage() {
                 </h2>
                 <ol className="mt-3 space-y-2" aria-label="Этапы проекта">
                   {[
-                    { label: "Заявка", detail: `${procurement.number} · ${docs.length} док.`, ready: true, href: `/cabinet/zakupki/${procurement.id}` },
+                    { label: "Заявка", detail: `${visibleProcurementNumber(procurement)} · ${docs.length} док.`, ready: true, href: `/cabinet/zakupki/${procurement.id}` },
                     { label: "Расчёт", detail: calc?.title ?? "Черновик ещё не создан", ready: Boolean(calc), href: calc ? `/cabinet/raschety/${calc.id}` : undefined },
                     { label: "ГПР", detail: gpr ? `${gpr.stages.length} этапов · версия ${gpr.version}` : "График ещё не создан", ready: Boolean(gpr), href: gpr && canGpr ? `/cabinet/gpr/${gpr.id}` : undefined },
                     { label: "Производство", detail: procurement.lifecycle === "production" ? "Контракт передан в производство" : "Ожидает отметки о победе", ready: procurement.lifecycle === "production", href: procurement.planFactId && canProduction ? `/cabinet/proizvodstvo?planFactId=${encodeURIComponent(procurement.planFactId)}` : undefined },
@@ -1044,23 +1066,6 @@ export default function ZakupkaDetailPage() {
         </TabsContent>
 
         <TabsContent value="docs">
-          {procurement.source === "Контур.Закупки API" && procurement.externalId ? (
-            <section className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4">
-              <div><h2 className="font-medium">Данные и документы Контура</h2><p className="mt-1 text-xs text-[var(--tk-muted)]">Запросит полную карточку и список файлов по ID закупки. Метод может расходовать лимит группы purchase.</p></div>
-              <Button variant="outline" disabled={busy} onClick={async () => {
-                setBusy(true);
-                try {
-                  await api("/api/zakupki", { method: "POST", body: JSON.stringify({ action: "refreshKonturDetails", id: procurement.id }) });
-                  await refresh();
-                  toast.success("Данные и ссылки на документы обновлены");
-                } catch (error) {
-                  toast.error(error instanceof Error ? error.message : "Не удалось получить карточку Контура");
-                } finally {
-                  setBusy(false);
-                }
-              }}>Получить из API</Button>
-            </section>
-          ) : null}
           {uploadError ? (
             <Alert
               className="mb-4 border-rose-200 bg-rose-50 text-rose-950"
@@ -1131,7 +1136,7 @@ export default function ZakupkaDetailPage() {
                     <div>
                       <div className="font-medium">{d.title}</div>
                       <div className="text-xs text-[var(--tk-muted)]">
-                        {d.fileName} · {d.category ?? "general"} · {d.status}
+                        {d.fileName} · {d.category === "estimate" ? "Смета" : d.category === "contract" ? "Договор" : d.category === "tz" ? "ТЗ" : d.category === "archive" ? "Архив" : "Файл"} · {STATUS_LABELS[d.status] ?? "Файл"}
                       </div>
                       {!d.storedPath ? (
                         <div className="mt-1 text-xs font-medium text-amber-800">
@@ -1148,6 +1153,18 @@ export default function ZakupkaDetailPage() {
                         onClick={() => setPreviewId(d.id)}
                       >
                         Открыть в веб
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!d.storedPath}
+                        onClick={() => {
+                          void downloadUrl(`/api/dokumenty/file?id=${d.id}`).catch((error: unknown) => {
+                            toast.error(error instanceof Error ? error.message : "Не удалось скачать файл");
+                          });
+                        }}
+                      >
+                        Скачать
                       </Button>
                       <Link
                         className="inline-flex h-8 items-center rounded-lg px-3 text-sm hover:bg-stone-100"
@@ -1201,16 +1218,13 @@ export default function ZakupkaDetailPage() {
                 Главное / краткие выводы
               </h2>
               <div className="flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" disabled={analyticsBusy} onClick={() => void refreshProjectAnalytics()}>
-                  {analyticsBusy ? "Обновляю…" : "Обновить сводку"}
-                </Button>
                 <Button
                   size="sm"
                   disabled={aiAnalyzing || docs.length === 0}
-                  title={docs.length === 0 ? "Сначала загрузите документы" : "Модель может вернуть только тезисы с дословной цитатой из загруженных документов"}
+                  title={docs.length === 0 ? "Сначала загрузите документы" : "Разбор пакета по загруженным документам"}
                   onClick={() => void analyzeProjectPackage()}
                 >
-                  {aiAnalyzing ? "ИИ анализирует пакет…" : "ИИ-анализ всего пакета"}
+                  {aiAnalyzing ? "ИИ анализирует пакет…" : "ИИ-анализ пакета"}
                 </Button>
                 {docs.length === 0 ? (
                   <span className="self-center text-xs text-[var(--tk-muted)]">Сначала загрузите документы</span>
@@ -1457,7 +1471,7 @@ export default function ZakupkaDetailPage() {
               </>
             ) : (
               <p className="text-sm text-[var(--tk-muted)]">
-                Сводка ещё не собрана. Нажмите «Обновить сводку» после загрузки
+                Сводка ещё не собрана. Загрузите документы и нажмите «ИИ-анализ пакета»
                 пакета.
               </p>
             )}
@@ -1503,7 +1517,7 @@ export default function ZakupkaDetailPage() {
                 <ul className="mt-3 space-y-2">
                   {gpr.stages.map((s) => (
                     <li key={s.id} className="rounded-lg border px-3 py-2">
-                      <div className="font-medium">{s.name}</div>
+                      <div className="font-medium" title={gprStageLabel(s).title}>{gprStageLabel(s).text}</div>
                       <div className="text-xs text-[var(--tk-muted)]">
                         {s.start} → {s.end}
                         {s.dependsOn ? ` · зависит от ${s.dependsOn}` : ""}
@@ -1529,7 +1543,7 @@ export default function ZakupkaDetailPage() {
               </>
             ) : (
               <p className="text-[var(--tk-muted)]">
-                ГПР появится после «Сформировать расчёт (расчёт по формулам, без ИИ)».
+                График создаётся кнопкой «Создать ГПР».
               </p>
             )}
           </div>
@@ -1574,12 +1588,21 @@ export default function ZakupkaDetailPage() {
             ) : (
               <>
                 <p className="font-medium">{money.title}</p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-3" data-testid="money-totals">
+                  {(["avans", "postuplenie", "spisanie", "klyuchevoy"] as const).map((bucket) => (
+                    <div key={bucket} className="rounded-lg bg-stone-50 px-3 py-2 text-sm">
+                      <span className="text-[var(--tk-muted)]">{bucket === "avans" ? "Авансы" : bucket === "postuplenie" ? "Поступления" : bucket === "spisanie" ? "Списания" : "Ключевые"}</span>
+                      <span className="ml-2 font-semibold">{formatMoney(paymentTotals(money.payments)[bucket])}</span>
+                    </div>
+                  ))}
+                </div>
                 <ul className="mt-3 space-y-2">
                   {money.payments.map((pay) => (
                     <li
                       key={pay.id}
                       className="flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2"
                     >
+                      <span className="text-xs font-medium">{PAYMENT_BUCKET_LABELS[paymentBucket(pay)]}</span>
                       <Input
                         className="w-40"
                         value={pay.title}
@@ -1601,10 +1624,18 @@ export default function ZakupkaDetailPage() {
                         }}
                       />
                       <Input
+                        key={`${pay.id}:${pay.amount}`}
                         className="w-32"
-                        value={String(pay.amount)}
-                        onChange={async (e) => {
-                          const amount = Number(e.target.value) || 0;
+                        aria-label={`Сумма платежа ${pay.title}`}
+                        defaultValue={String(pay.amount)}
+                        onBlur={async (e) => {
+                          const amount = parseDecimalRu(e.target.value);
+                          if (amount == null || amount <= 0) {
+                            toast.error(PAYMENT_AMOUNT_ERROR);
+                            e.target.value = String(pay.amount);
+                            return;
+                          }
+                          if (amount === pay.amount) return;
                           await api("/api/zakupki", {
                             method: "POST",
                             body: JSON.stringify({
@@ -1623,15 +1654,34 @@ export default function ZakupkaDetailPage() {
                       <span className="text-xs text-[var(--tk-muted)]">
                         {formatDate(pay.date)} · {formatMoney(pay.amount)}
                       </span>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => setAsk({ kind: "payment", id: pay.id, title: pay.title })}
+                      >
+                        Удалить
+                      </Button>
                     </li>
                   ))}
                 </ul>
                 <div className="mt-4 flex flex-wrap items-end gap-2 border-t pt-4">
                   <Input
-                    placeholder="Название"
+                    placeholder="Название, например 2 этап"
+                    aria-label="Название платежа"
                     value={payTitle}
-                    onChange={(e) => setPayTitle(e.target.value)}
+                        onChange={(e) => setPayTitle(e.target.value)}
                   />
+                  <select
+                    aria-label="Тип платежа"
+                    className="h-9 rounded-lg border border-[var(--tk-line)] bg-white px-2 text-sm"
+                    data-testid="money-payment-type"
+                    value={payType}
+                    onChange={(event) => setPayType(event.target.value as PaymentBucket)}
+                  >
+                    <option value="avans">Аванс</option>
+                    <option value="postuplenie">Поступление</option>
+                    <option value="spisanie">Списание</option>
+                  </select>
                   <Input
                     className="w-28"
                     value={payAmount}
@@ -1644,7 +1694,16 @@ export default function ZakupkaDetailPage() {
                   />
                   <Button
                     data-testid="add-money-payment"
+                    disabled={paySaving}
                     onClick={async () => {
+                      if (paySavingRef.current) return;
+                      const amount = parseDecimalRu(payAmount);
+                      if (amount == null || amount <= 0) {
+                        toast.error(PAYMENT_AMOUNT_ERROR);
+                        return;
+                      }
+                      paySavingRef.current = true;
+                      setPaySaving(true);
                       try {
                         await api("/api/zakupki", {
                           method: "POST",
@@ -1652,9 +1711,9 @@ export default function ZakupkaDetailPage() {
                             action: "addMoneyPayment",
                             moneyId: money.id,
                             payment: {
-                              type: "avans",
+                              type: payType,
                               title: payTitle || "Платёж",
-                              amount: Number(payAmount) || 0,
+                              amount,
                               date: payDate,
                               week: 1,
                               month: Number(payDate.slice(5, 7)) || 1,
@@ -1662,20 +1721,24 @@ export default function ZakupkaDetailPage() {
                           }),
                         });
                         await refresh();
+                        setPayTitle("");
+                        setPayAmount("");
                         toast.success("Платёж сохранён");
                       } catch (e) {
                         toast.error(
                           e instanceof Error ? e.message : "Ошибка сохранения"
                         );
+                      } finally {
+                        paySavingRef.current = false;
+                        setPaySaving(false);
                       }
                     }}
                   >
-                    Добавить и сохранить
+                    {paySaving ? "Сохраняю…" : "Добавить и сохранить"}
                   </Button>
                 </div>
                 <p className="mt-3 text-xs text-[var(--tk-muted)]">
-                  Деньги ведутся в карточке проекта (не в сайдбаре). Это касса /
-                  график платежей — не путать с физ. фактом производства.
+                  График платежей. Не путать с фактом выполненных работ.
                 </p>
               </>
             )}
@@ -1713,7 +1776,7 @@ export default function ZakupkaDetailPage() {
                 <Input placeholder="Сайт (необязательно)" value={supplierWebsiteNew} onChange={(event) => setSupplierWebsiteNew(event.target.value)} />
                 <Button disabled={supplierSaving} onClick={() => void saveSupplierDirectoryEntry()}>{supplierSaving ? "Сохраняю…" : "Добавить поставщика"}</Button>
               </div>
-              {suppliers.length ? <ul className="mt-3 grid gap-2 md:grid-cols-2">{suppliers.map((supplier) => <li key={supplier.id} className="flex items-start justify-between gap-2 rounded-md bg-stone-50 px-3 py-2 text-xs" data-testid={`supplier-directory-${supplier.id}`}><div><span className="font-medium">{supplier.name}</span> · {supplier.email}<div className="mt-1 text-[var(--tk-muted)]">Ассортимент: {supplier.materialKeywords.join(", ")}{supplier.regions.length ? ` · Регион: ${supplier.regions.join(", ")}` : ""}</div></div><Button size="sm" variant="ghost" onClick={async () => { if (!window.confirm(`Удалить поставщика «${supplier.name}» из справочника?`)) return; try { await api("/api/supply", { method: "POST", body: JSON.stringify({ action: "deleteSupplier", supplierId: supplier.id }) }); await refresh(); toast.success("Поставщик удалён"); } catch (error) { toast.error(error instanceof Error ? error.message : "Не удалось удалить поставщика"); } }}>Удалить</Button></li>)}</ul> : <p className="mt-3 text-xs text-[var(--tk-muted)]">Справочник пока пуст. Добавьте поставщиков и укажите их ассортимент.</p>}
+              {suppliers.length ? <ul className="mt-3 grid gap-2 md:grid-cols-2">{suppliers.map((supplier) => <li key={supplier.id} className="flex items-start justify-between gap-2 rounded-md bg-stone-50 px-3 py-2 text-xs" data-testid={`supplier-directory-${supplier.id}`}><div><span className="font-medium">{supplier.name}</span> · {supplier.email}<div className="mt-1 text-[var(--tk-muted)]">Ассортимент: {supplier.materialKeywords.join(", ")}{supplier.regions.length ? ` · Регион: ${supplier.regions.join(", ")}` : ""}</div></div><Button size="sm" variant="ghost" onClick={() => setAsk({ kind: "supplier", id: supplier.id, name: supplier.name })}>Удалить</Button></li>)}</ul> : <p className="mt-3 text-xs text-[var(--tk-muted)]">Справочник пока пуст. Добавьте поставщиков и укажите их ассортимент.</p>}
             </section>
 
             <Button data-testid="generate-material-manifest" disabled={manifestBusy} onClick={() => void generateMaterialManifest()}>{manifestBusy ? "Собираю ведомость…" : "Сформировать ведомость материалов"}</Button>
@@ -1924,7 +1987,7 @@ export default function ZakupkaDetailPage() {
                         const supplier = suppliers.find((item) => item.id === supplierId);
                         if (!supplier) return null;
                         const alreadySent = (s.sentToSupplierIds ?? []).includes(supplierId);
-                        return <div key={supplierId} className="flex flex-wrap items-center gap-2 rounded border bg-white px-2 py-1 text-xs"><span>{supplier.name} · {supplier.email}</span>{alreadySent ? <span className="text-emerald-800">Запрос отправлен</span> : <Button size="sm" variant="outline" disabled={!supplyMailReady || !companyCard} title={!companyCard ? "Загрузите карточку предприятия" : !supplyMailReady ? supplyMailDetail : undefined} onClick={() => void sendSupplierRfq(s, supplier)}>Отправить запрос КП</Button>}</div>;
+                        return <div key={supplierId} className="flex flex-wrap items-center gap-2 rounded border bg-white px-2 py-1 text-xs"><span>{supplier.name} · {supplier.email}</span>{alreadySent ? <span className="text-emerald-800">Запрос отправлен</span> : <Button size="sm" variant="outline" disabled={!supplyMailReady || !companyCard} title={!companyCard ? "Загрузите карточку предприятия" : !supplyMailReady ? supplyMailDetail : undefined} onClick={() => setAsk({ kind: "rfq", supply: s, supplier })}>Отправить запрос КП</Button>}</div>;
                       })}</div> : <p className="mt-1 text-xs text-[var(--tk-muted)]">В справочнике нет поставщика с подходящим ассортиментом.</p>}
                       {supplierSearchErrors[s.id] ? <p className="mt-2 text-xs text-amber-800" role="alert">{supplierSearchErrors[s.id]}</p> : null}
                       {(supplierSearchResults[s.id]?.length ?? 0) > 0 ? <ul className="mt-2 space-y-2">{supplierSearchResults[s.id].map((candidate) => <li key={candidate.sourceUrl} className="rounded border bg-white p-2 text-xs" data-testid={`supplier-search-result-${s.id}`}>
@@ -2172,6 +2235,53 @@ export default function ZakupkaDetailPage() {
           </div>
         </TabsContent>
       </Tabs>
+      <Dialog open={ask != null} onOpenChange={(open) => { if (!open) setAsk(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {ask?.kind === "payment" ? "Удалить платёж?" : ask?.kind === "supplier" ? "Удалить поставщика?" : "Отправить запрос КП?"}
+            </DialogTitle>
+            <DialogDescription>
+              {ask?.kind === "payment"
+                ? `Платёж «${ask.title}» будет удалён.`
+                : ask?.kind === "supplier"
+                  ? `Поставщик «${ask.name}» будет удалён из справочника.`
+                  : ask?.kind === "rfq"
+                    ? `Отправить запрос КП на ${ask.supply.materialName} поставщику «${ask.supplier.name}» (${ask.supplier.email})? К письму будет приложена карточка предприятия.`
+                    : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAsk(null)}>Отмена</Button>
+            <Button onClick={() => {
+              const action = ask;
+              setAsk(null);
+              if (!action) return;
+              if (action.kind === "payment" && money) {
+                void api("/api/zakupki", {
+                  method: "POST",
+                  body: JSON.stringify({
+                    action: "saveMoney",
+                    moneyId: money.id,
+                    patch: { payments: money.payments.filter((item) => item.id !== action.id) },
+                  }),
+                }).then(() => refresh()).then(() => toast.success("Платёж удалён")).catch((error: unknown) => {
+                  toast.error(error instanceof Error ? error.message : "Не удалось удалить платёж");
+                });
+                return;
+              }
+              if (action.kind === "supplier") {
+                void api("/api/supply", { method: "POST", body: JSON.stringify({ action: "deleteSupplier", supplierId: action.id }) })
+                  .then(() => refresh())
+                  .then(() => toast.success("Поставщик удалён"))
+                  .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось удалить поставщика"));
+                return;
+              }
+              if (action.kind === "rfq") void sendSupplierRfq(action.supply, action.supplier);
+            }}>{ask?.kind === "rfq" ? "Отправить" : "Удалить"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

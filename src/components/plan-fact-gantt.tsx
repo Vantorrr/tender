@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { diffDays } from "@/lib/cost-engine";
 import { formatDate, formatDateRangeShort, formatMoney, formatNumber } from "@/lib/format";
 import { stageResourceSummary } from "@/lib/gpr-stage-cost";
+import { gprStageLabel } from "@/lib/gpr-stage-label";
 import { entryDisplayFact } from "@/lib/plan-fact-agg";
 import { gprCoveredDays } from "@/lib/plan-from-gpr";
 import type { DailyFact, GprStage, PlanFactEntry } from "@/lib/types";
@@ -106,13 +107,11 @@ function entryForStage(stage: GprStage, entries: PlanFactEntry[]) {
 
 function tickLabel(day: string, scale: Scale) {
   const date = new Date(`${day}T12:00:00Z`);
-  if (scale === "month") {
-    return date.toLocaleDateString("ru-RU", { month: "short", year: "2-digit", timeZone: "UTC" });
-  }
-  if (scale === "week") {
-    return date.toLocaleDateString("ru-RU", { day: "numeric", month: "short", timeZone: "UTC" });
-  }
-  return date.toLocaleDateString("ru-RU", { day: "numeric", month: "short", timeZone: "UTC" });
+  if (Number.isNaN(date.getTime())) return "";
+  const dd = String(date.getUTCDate()).padStart(2, "0");
+  const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
+  if (scale === "month") return `${mm}.${String(date.getUTCFullYear()).slice(2)}`;
+  return `${dd}.${mm}`;
 }
 
 type Props = {
@@ -445,11 +444,15 @@ export function PlanFactGantt({
                 </div>
               </div>
               <div className="relative h-11 overflow-hidden">
-                {ticks.map((tick) => (
-                  <div key={tick.date} className="absolute bottom-0 top-0 border-l border-[var(--tk-line)]/80 pl-1.5 pt-3 text-[11px] font-medium text-[var(--tk-muted)]" style={{ left: tick.offset * dayWidth }} title={formatDate(tick.date)}>
-                    {tick.label}
-                  </div>
-                ))}
+                {ticks.map((tick, index) => {
+                  const next = ticks[index + 1]?.offset ?? totalDays;
+                  const width = Math.max(28, (next - tick.offset) * dayWidth - 4);
+                  return (
+                    <div key={tick.date} className="absolute bottom-0 top-0 overflow-hidden whitespace-nowrap border-l border-[var(--tk-line)]/80 pl-1 pt-3 text-[11px] font-medium tabular-nums text-[var(--tk-muted)]" style={{ left: tick.offset * dayWidth, width }} title={formatDate(tick.date)}>
+                      {tick.label}
+                    </div>
+                  );
+                })}
                 {showToday ? <div className="absolute bottom-0 top-0 z-10 w-px bg-rose-500" style={{ left: todayOffset * dayWidth }} /> : null}
               </div>
             </div>
@@ -488,11 +491,10 @@ export function PlanFactGantt({
                   <div className="sticky left-0 z-10 border-r border-[var(--tk-line)] bg-inherit px-3 py-3">
                     <div className="grid grid-cols-[1.4fr_0.55fr_0.55fr_0.7fr] gap-1 text-xs">
                       <div className="min-w-0">
-                        <div className="break-words text-sm font-semibold leading-snug text-[var(--tk-ink)]">
-                          <span className="mr-1 text-[10px] text-[var(--tk-muted)]">{stage.sequence}.</span>
-                          {stage.name}
+                        <div className="break-words text-sm font-semibold leading-snug text-[var(--tk-ink)]" title={gprStageLabel(stage).title}>
+                          {gprStageLabel(stage).numbered ? null : <span className="mr-1 text-[10px] text-[var(--tk-muted)]">{stage.sequence}.</span>}
+                          {gprStageLabel(stage).text}
                         </div>
-                        {stage.sectionName ? <div className="mt-0.5 truncate text-[10px] text-[var(--tk-muted)]" title={stage.sectionName}>{stage.sectionName}</div> : null}
                         <div className={`mt-1 tabular-nums ${preview ? "rounded-md bg-[var(--tk-brand)] px-1.5 py-1 text-xs font-semibold text-white" : "text-[11px] text-[var(--tk-muted)]"}`} aria-live={preview ? "polite" : undefined}>
                           {formatDate(previewStart)} – {formatDate(previewEnd)}{preview ? ` · ${widthDays} дн.` : ""}
                         </div>

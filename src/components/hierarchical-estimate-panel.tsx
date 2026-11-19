@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatMoney, formatNumber } from "@/lib/format";
+import { parseDecimalRu } from "@/lib/decimal-ru";
+import { formatMoney, formatNumber, quantityPresentation } from "@/lib/format";
 import {
   buildHierarchicalEstimate,
   estimateBudgetCards,
@@ -45,6 +46,9 @@ type Props = {
     days?: number | null;
     kind?: GprStageResource["kind"];
     quantityBasis?: ResourceQuantityBasis | null;
+    remove?: boolean;
+    moveToStageId?: string;
+    resource?: GprStageResource;
   }) => Promise<void> | void;
   onAddManualResources?: (stageId: string, resources: Array<Omit<GprStageResource, "id">>) => Promise<void>;
   onOpenSchedule?: () => void;
@@ -145,42 +149,51 @@ export function HierarchicalEstimatePanel({
         title={leaf.sourceCode ? `Код сметы: ${leaf.sourceCode}` : undefined}
       >
         <div className="min-w-0 truncate">{leaf.name}</div>
-        <div className="text-right">
-          {locked ? formatNumber(leaf.quantity) : (
+        <div className="text-right" title={quantityPresentation(leaf.quantity, leaf.unit).title}>
+          {locked ? quantityPresentation(leaf.quantity, leaf.unit).text : (
             <Input
+              key={`${leaf.id}:${leaf.quantity}`}
               className="h-8 text-right"
-              type="number"
-              min={0}
-              step="any"
-              value={leaf.quantity}
+              inputMode="decimal"
+              defaultValue={quantityPresentation(leaf.quantity, leaf.unit).text}
+              title={quantityPresentation(leaf.quantity, leaf.unit).title}
               data-testid={`estimate-qty-${leaf.id}`}
-              onChange={(e) => {
-                const quantity = Number(e.target.value) || 0;
-                onPatchLeaf(leaf, { quantity });
-                toast.success("Количество обновлено");
+              onBlur={(e) => {
+                const shown = quantityPresentation(leaf.quantity, leaf.unit).text;
+                if (e.target.value.trim() === shown) return;
+                const quantity = parseDecimalRu(e.target.value);
+                if (quantity == null) {
+                  e.target.value = shown;
+                  toast.error("Введите количество, например 16,54");
+                  return;
+                }
+                void onPatchLeaf(leaf, { quantity });
               }}
             />
           )}
         </div>
         <div className="text-right text-xs" data-testid={`estimate-q-${leaf.id}`}>
-          {leaf.basis === "material_qty" ? "—" : leaf.hoursQ == null ? "нет данных" : formatNumber(leaf.hoursQ)}
+          {leaf.kind === "material" ? "" : leaf.hoursQ == null ? "—" : `${formatNumber(leaf.hoursQ)} ч`}
         </div>
         <div className="text-right">
-          {locked ? (leaf.rate == null ? <span className="text-amber-800" title="нет данных">—</span> : formatNumber(leaf.rate)) : (
+          {locked ? (leaf.rate == null ? <span className="text-amber-800" title="ставка не указана">ставка не указана</span> : formatMoney(leaf.rate)) : (
             <Input
+              key={`${leaf.id}:${leaf.rate ?? "missing"}`}
               className="h-8 text-right"
-              type="number"
-              min={0}
-              step="any"
-              placeholder="—"
-              title={leaf.rate == null ? "нет данных" : "Ставка"}
-              aria-label={leaf.rate == null ? `Ставка · ${leaf.name} (нет данных)` : `Ставка · ${leaf.name}`}
-              value={leaf.rate == null ? "" : String(leaf.rate)}
+              placeholder="ставка не указана"
+              title={leaf.rate == null ? "ставка не указана" : "Ставка"}
+              aria-label={leaf.rate == null ? `Ставка · ${leaf.name} (ставка не указана)` : `Ставка · ${leaf.name}`}
+              defaultValue={leaf.rate == null ? "" : String(leaf.rate)}
               data-testid={`estimate-rate-${leaf.id}`}
-              onChange={(e) => {
+              onBlur={(e) => {
                 const raw = e.target.value.trim();
-                const rate = raw === "" ? null : Number(raw);
-                onPatchLeaf(leaf, { rate: rate == null || Number.isNaN(rate) ? null : rate });
+                const rate = raw === "" ? null : parseDecimalRu(raw);
+                if (raw !== "" && rate == null) {
+                  toast.error("Введите ставку, например 756,41");
+                  e.target.value = leaf.rate == null ? "" : String(leaf.rate);
+                  return;
+                }
+                void onPatchLeaf(leaf, { rate });
               }}
             />
           )}
@@ -540,6 +553,9 @@ export function HierarchicalEstimatePanel({
                   <span className="mr-2 text-[var(--tk-muted)]">
                     {isOpen(node.id) ? "▾" : "▸"}
                   </span>
+                  {node.sectionName && node.sectionName !== node.name ? (
+                    <span className="mr-2 text-xs font-normal text-[var(--tk-muted)]">{node.sectionName}</span>
+                  ) : null}
                   {node.name}
                   {node.incomplete ? (
                     <span className="ml-2 text-xs font-normal text-amber-800">

@@ -31,13 +31,39 @@ export async function saveUpload(
   return { storedPath: relative, fileSize: bytes.length };
 }
 
+/** Only a file inside data/uploads. Absolute paths and a `..` directory segment never resolve. A name like `факт..jpg` does. */
+export function resolveUploadPath(storedPath: string): string | null {
+  if (!storedPath || storedPath.includes("\0")) return null;
+  if (path.isAbsolute(storedPath)) return null;
+  const normalized = path.normalize(storedPath).replace(/\\/g, "/");
+  const segments = normalized.split("/");
+  if (segments.some((segment) => segment === "..")) return null;
+  if (!normalized.startsWith("uploads/") || normalized.endsWith("/")) return null;
+  const root = path.resolve(uploadsDir());
+  const absolute = path.resolve(/*turbopackIgnore: true*/ config.dataDir, normalized);
+  const rootPrefix = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
+  if (!absolute.startsWith(rootPrefix)) return null;
+  return absolute;
+}
+
+/** Relative `uploads/...` path after the same checks as `resolveUploadPath`. Aliases collapse to one key. */
+export function canonicalUploadPath(storedPath: string): string | null {
+  const absolute = resolveUploadPath(storedPath);
+  if (!absolute) return null;
+  const relative = path.relative(path.resolve(/*turbopackIgnore: true*/ config.dataDir), absolute).split(path.sep).join("/");
+  if (!relative.startsWith("uploads/") || relative.endsWith("/") || relative.split("/").some((segment) => segment === "..")) return null;
+  return relative;
+}
+
+export function deleteUpload(storedPath: string) {
+  const absolute = resolveUploadPath(storedPath);
+  if (!absolute || !fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) return;
+  fs.unlinkSync(absolute);
+}
+
 export function readUpload(storedPath: string): Buffer | null {
-  if (!storedPath || storedPath.includes("..")) return null;
-  const absolute = path.join(
-    /*turbopackIgnore: true*/ config.dataDir,
-    storedPath
-  );
-  if (!fs.existsSync(absolute)) return null;
+  const absolute = resolveUploadPath(storedPath);
+  if (!absolute || !fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) return null;
   return fs.readFileSync(absolute);
 }
 

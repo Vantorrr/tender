@@ -21,6 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { downloadUrl } from "@/lib/api";
+import { plainExchangeTitle } from "@/lib/exchange-label";
 import { formatDateTime, formatNumber } from "@/lib/format";
 import { useStore } from "@/lib/store";
 
@@ -147,7 +148,7 @@ export default function ObmenPage() {
             Последний результат обмена
           </h2>
           <p className="mt-2 text-sm">
-            {data.smetaExchanges[0].name} · позиций{" "}
+            {plainExchangeTitle(data.smetaExchanges[0].name)} · распознано строк в файле{" "}
             {data.smetaExchanges[0].positionsMapped} · расхождений{" "}
             {data.smetaExchanges[0].discrepancies.length} ·{" "}
             {data.smetaExchanges[0].confirmed ? "подтверждено" : "черновик"} ·{" "}
@@ -185,7 +186,7 @@ export default function ObmenPage() {
           <TableHeader>
             <TableRow>
               <TableHead>Название</TableHead>
-              <TableHead>Позиций</TableHead>
+              <TableHead>Строк в файле</TableHead>
               <TableHead>Расхождения</TableHead>
               <TableHead>Статус</TableHead>
               <TableHead>Когда</TableHead>
@@ -205,7 +206,7 @@ export default function ObmenPage() {
             ) : (
               data.smetaExchanges.map((sx) => (
                 <TableRow key={sx.id} id={`obmen-row-${sx.id}`}>
-                  <TableCell className="font-medium">{sx.name}</TableCell>
+                  <TableCell className="font-medium" title={sx.name}>{plainExchangeTitle(sx.name)}</TableCell>
                   <TableCell>{sx.positionsMapped}</TableCell>
                   <TableCell>
                     {sx.discrepancies.length === 0 ? (

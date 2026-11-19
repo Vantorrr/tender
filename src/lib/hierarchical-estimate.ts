@@ -3,6 +3,7 @@
  * Amounts use shared resolveResourceDimensions (same Q/R as cost-engine / export).
  */
 import { roundMoney } from "@/lib/calc-math";
+import { mergeEstimateLeaves } from "@/lib/resource-merge";
 import { classifyDirectCostBucket } from "@/lib/cost-engine";
 import {
   resolveResourceDimensions,
@@ -39,6 +40,8 @@ export type EstimateLeaf = {
   workName?: string;
   workKey?: string;
   incomplete: string[];
+  /** Stored resource ids collapsed into this visible row. */
+  memberIds?: string[];
   basis?: ResourceQuantityBasis;
   /** Q hours when applicable (count_per_shift / total_hours). */
   hoursQ?: number | null;
@@ -68,6 +71,7 @@ export type EstimateWorkNode = {
 export type EstimateStageNode = {
   id: string;
   name: string;
+  sectionName?: string;
   groups: EstimateGroup[];
   works: EstimateWorkNode[];
   unassignedGroups: EstimateGroup[];
@@ -121,6 +125,10 @@ function leafFromResolved(
     shiftsPerDay: resolved.shiftsPerDay,
     days: resolved.days,
   };
+}
+
+function hourUnit(unit: string): boolean {
+  return /(?:маш|чел|н)\s*[.\u00b7\u2212\u2013\-]*\s*ч|машч|челч|нч|час/iu.test(unit);
 }
 
 function resourceKind(r: GprStageResource): EstimateKind {
@@ -248,13 +256,16 @@ export function buildHierarchicalEstimate(opts: {
     }
     for (const p of opts.positions ?? []) {
       const parentWorkCode = /^(?:ЕНИР|ФЕР|ТЕР|ГЭСН)(?:М)?/iu.test(p.code.trim());
+      const positionSection = normalizeStageLabel(p.sourceSectionName);
+      const stageSection = normalizeStageLabel(st.sectionName);
       const positionLabels = [p.sourceStageName, p.sourceWorkName, p.sourceSectionName]
         .map(normalizeStageLabel)
         .filter(Boolean);
       const stageLabels = [st.name, st.workName, st.sectionName]
         .map(normalizeStageLabel)
         .filter(Boolean);
-      const belongsToStage = positionLabels.some((positionLabel) =>
+      const sameSection = !positionSection || !stageSection || labelsMatch(positionSection, stageSection);
+      const belongsToStage = sameSection && positionLabels.some((positionLabel) =>
         stageLabels.some((stageLabel) => labelsMatch(positionLabel, stageLabel))
       );
       if (
@@ -293,24 +304,25 @@ export function buildHierarchicalEstimate(opts: {
         sourceCode: p.code,
         ...(work ? { workName: work.name, workKey: work.key } : {}),
         incomplete: rate == null ? ["rate"] : [],
-        basis: kind === "material" ? "material_qty" : "uncertain",
-        hoursQ: null,
+        basis: kind === "material" ? "material_qty" : hourUnit(p.unit) ? "total_hours" : "uncertain",
+        hoursQ: hourUnit(p.unit) ? p.quantity : null,
       };
       if (match(st.name) || match(leaf.name) || match(KIND_LABEL[kind])) leaves.push(leaf);
       linkedSourceKeys.add(p.id);
     }
     if (leaves.length === 0 && q && !match(st.name)) continue;
-    const groups = groupLeaves(leaves);
+    const stageLeaves = mergeEstimateLeaves(leaves);
+    const groups = groupLeaves(stageLeaves);
     const { subtotal, incomplete } = stageSubtotal(groups);
     const leavesByWork = new Map<string, EstimateLeaf[]>();
-    for (const leaf of leaves) {
+    for (const leaf of stageLeaves) {
       if (!leaf.workKey) continue;
       leavesByWork.set(leaf.workKey, [...(leavesByWork.get(leaf.workKey) ?? []), leaf]);
     }
     const workKeys = [...new Set([...leavesByWork.keys(), ...workVolumes.keys()])];
-    const unassignedGroups = groupLeaves(leaves.filter((leaf) => !leaf.workName));
+    const unassignedGroups = groupLeaves(stageLeaves.filter((leaf) => !leaf.workName));
     const works = workKeys.map((key) => {
-      const workGroups = groupLeaves(leavesByWork.get(key) ?? []);
+      const workGroups = groupLeaves(mergeEstimateLeaves(leavesByWork.get(key) ?? []));
       const summary = stageSubtotal(workGroups);
       const volume = workVolumes.get(key);
       return {
@@ -325,6 +337,7 @@ export function buildHierarchicalEstimate(opts: {
     nodes.push({
       id: st.id,
       name: st.name,
+      sectionName: st.sectionName,
       groups,
       works,
       unassignedGroups,
@@ -376,8 +389,8 @@ export function buildHierarchicalEstimate(opts: {
       sourceCode: p.code,
       workName: p.sourceWorkName?.trim() || p.sourceSectionName?.trim() || undefined,
       incomplete: rate == null ? ["rate"] : [],
-      basis: kind === "material" ? "material_qty" : "total_hours",
-      hoursQ: kind === "material" || kind === "other" ? null : p.quantity,
+      basis: kind === "material" ? "material_qty" : hourUnit(p.unit) ? "total_hours" : "uncertain",
+      hoursQ: hourUnit(p.unit) ? p.quantity : null,
     };
     if (match(leaf.name) || match(KIND_LABEL[kind])) unbound.push(leaf);
   }
