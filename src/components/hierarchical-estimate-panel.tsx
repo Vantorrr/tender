@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { parseDecimalRu } from "@/lib/decimal-ru";
-import { formatMoney, formatNumber, quantityPresentation } from "@/lib/format";
+import { formatMoney, formatNumber, quantityPresentation, visiblePositionCode } from "@/lib/format";
 import {
   buildHierarchicalEstimate,
   estimateBudgetCards,
@@ -144,9 +144,9 @@ export function HierarchicalEstimatePanel({
     return (
       <div
         key={leaf.id}
-        className={`grid grid-cols-[minmax(12rem,1fr)_5.5rem_5.5rem_5.5rem_7rem] items-center gap-2 px-3 py-1.5 ${nested ? "pl-14" : "pl-10"} text-sm`}
+        className={`grid grid-cols-[minmax(12rem,1fr)_5.5rem_5.5rem_5.5rem_5.5rem_7rem] items-center gap-2 px-3 py-1.5 ${nested ? "pl-14" : "pl-10"} text-sm`}
         data-testid={`estimate-leaf-${leaf.id}`}
-        title={leaf.sourceCode ? `Код сметы: ${leaf.sourceCode}` : undefined}
+        title={(() => { const code = leaf.sourceCode ? visiblePositionCode(leaf.sourceCode) : ""; return code ? `Код сметы: ${code}` : undefined; })()}
       >
         <div className="min-w-0 truncate">{leaf.name}</div>
         <div className="text-right" title={quantityPresentation(leaf.quantity, leaf.unit).title}>
@@ -162,9 +162,9 @@ export function HierarchicalEstimatePanel({
                 const shown = quantityPresentation(leaf.quantity, leaf.unit).text;
                 if (e.target.value.trim() === shown) return;
                 const quantity = parseDecimalRu(e.target.value);
-                if (quantity == null) {
+                if (quantity == null || quantity < 0) {
                   e.target.value = shown;
-                  toast.error("Введите количество, например 16,54");
+                  toast.error(quantity != null && quantity < 0 ? "Количество не может быть отрицательным. Возврат показывается в колонке «Разница»." : "Введите количество, например 16,54");
                   return;
                 }
                 void onPatchLeaf(leaf, { quantity });
@@ -172,18 +172,21 @@ export function HierarchicalEstimatePanel({
             />
           )}
         </div>
+        <div className="text-right" data-testid={`estimate-difference-${leaf.id}`}>
+          {leaf.difference == null ? "—" : formatNumber(leaf.difference)}
+        </div>
         <div className="text-right text-xs" data-testid={`estimate-q-${leaf.id}`}>
           {leaf.kind === "material" ? "" : leaf.hoursQ == null ? "—" : `${formatNumber(leaf.hoursQ)} ч`}
         </div>
         <div className="text-right">
-          {locked ? (leaf.rate == null ? <span className="text-amber-800" title="ставка не указана">ставка не указана</span> : formatMoney(leaf.rate)) : (
+          {locked ? (leaf.rate == null || leaf.rate === 0 ? <span className="text-amber-800" title="нет ставки">нет ставки</span> : formatMoney(leaf.rate)) : (
             <Input
               key={`${leaf.id}:${leaf.rate ?? "missing"}`}
               className="h-8 text-right"
-              placeholder="ставка не указана"
-              title={leaf.rate == null ? "ставка не указана" : "Ставка"}
-              aria-label={leaf.rate == null ? `Ставка · ${leaf.name} (ставка не указана)` : `Ставка · ${leaf.name}`}
-              defaultValue={leaf.rate == null ? "" : String(leaf.rate)}
+              placeholder="нет ставки"
+              title={leaf.rate == null || leaf.rate === 0 ? "нет ставки" : "Ставка"}
+              aria-label={leaf.rate == null || leaf.rate === 0 ? `Ставка · ${leaf.name} (нет ставки)` : `Ставка · ${leaf.name}`}
+              defaultValue={leaf.rate == null || leaf.rate === 0 ? "" : String(leaf.rate)}
               data-testid={`estimate-rate-${leaf.id}`}
               onBlur={(e) => {
                 const raw = e.target.value.trim();
@@ -203,7 +206,7 @@ export function HierarchicalEstimatePanel({
           data-testid={`estimate-amount-${leaf.id}`}
           title={leaf.amount == null ? "нет данных" : undefined}
         >
-          {leaf.amount == null ? "—" : formatMoney(leaf.amount)}
+          {leaf.amount == null || leaf.rate == null || leaf.rate === 0 ? "—" : formatMoney(leaf.amount)}
         </div>
       </div>
     );
@@ -421,7 +424,7 @@ export function HierarchicalEstimatePanel({
                 ["Часов в смене", "hoursPerShift", 0.5],
                 ["Смен техники в день", "equipmentShiftsPerDay", 1],
                 ["Накладные, % от прямых", "overheadRate", 0.01],
-                ["Наценка, % на с/с с НР", "profitMarkupOnCostWithOh", 0.01],
+                ["Наценка, % на себестоимость с накладными", "profitMarkupOnCostWithOh", 0.01],
               ] as const).map(([label, key, step]) => (
                 <label key={key} className="text-xs text-[var(--tk-muted)]">
                   {label}
@@ -525,9 +528,10 @@ export function HierarchicalEstimatePanel({
 
       <div className="overflow-x-auto rounded-2xl border border-[var(--tk-line)] bg-white/90">
         <div className="min-w-[720px]">
-        <div className="grid grid-cols-[minmax(12rem,1fr)_5.5rem_5.5rem_5.5rem_7rem] gap-2 border-b border-[var(--tk-line)] bg-stone-50 px-3 py-2 text-xs font-medium text-[var(--tk-muted)]">
+        <div className="grid grid-cols-[minmax(12rem,1fr)_5.5rem_5.5rem_5.5rem_5.5rem_7rem] gap-2 border-b border-[var(--tk-line)] bg-stone-50 px-3 py-2 text-xs font-medium text-[var(--tk-muted)]">
           <div>Статья / ресурс</div>
           <div className="text-right">Кол-во</div>
+          <div className="text-right">Разница</div>
           <div className="text-right">Часы</div>
           <div className="text-right">Ставка</div>
           <div className="sticky right-0 bg-stone-50 text-right shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.12)]">
@@ -543,7 +547,7 @@ export function HierarchicalEstimatePanel({
             <div key={node.id} className="border-b border-[var(--tk-line)]/70">
               <button
                 type="button"
-                className="grid w-full grid-cols-[minmax(12rem,1fr)_5.5rem_5.5rem_5.5rem_7rem] gap-2 px-3 py-2.5 text-left text-sm hover:bg-stone-50"
+                className="grid w-full grid-cols-[minmax(12rem,1fr)_5.5rem_5.5rem_5.5rem_5.5rem_7rem] gap-2 px-3 py-2.5 text-left text-sm hover:bg-stone-50"
                 data-testid={`estimate-stage-${node.id}`}
                 onClick={() =>
                   setOpen((o) => ({ ...o, [node.id]: !isOpen(node.id) }))
@@ -566,6 +570,7 @@ export function HierarchicalEstimatePanel({
                 <div />
                 <div />
                 <div />
+                <div />
                 <div className="sticky right-0 bg-inherit text-right font-medium shadow-[-6px_0_8px_-6px_rgba(0,0,0,0.08)]">
                   {node.subtotal == null ? "—" : formatMoney(node.subtotal)}
                 </div>
@@ -575,6 +580,7 @@ export function HierarchicalEstimatePanel({
                     <div key={`${node.id}-${g.kind}`} className="bg-stone-50/40">
                       <div className="px-3 py-1.5 pl-8 text-xs font-semibold uppercase tracking-wide text-[var(--tk-muted)]">
                         {g.label}
+                        {g.leaves.some((leaf) => leaf.difference != null) ? <span className="ml-2 normal-case">· возврат указан в колонке «Разница»</span> : null}
                       </div>
                       {resourceBuckets(g.leaves).map(([key, leaves]) => {
                         if (leaves.length === 1) return renderLeafRow(leaves[0]);
@@ -590,7 +596,7 @@ export function HierarchicalEstimatePanel({
                           <div key={key} className="border-t border-[var(--tk-line)]/60">
                             <button
                               type="button"
-                              className="grid w-full grid-cols-[minmax(12rem,1fr)_5.5rem_5.5rem_5.5rem_7rem] items-center gap-2 px-3 py-2 pl-10 text-left text-sm font-medium hover:bg-stone-50"
+                              className="grid w-full grid-cols-[minmax(12rem,1fr)_5.5rem_5.5rem_5.5rem_5.5rem_7rem] items-center gap-2 px-3 py-2 pl-10 text-left text-sm font-medium hover:bg-stone-50"
                               aria-expanded={expanded}
                               onClick={() => setOpenResources((current) => ({ ...current, [key]: !expanded }))}
                             >
@@ -600,6 +606,7 @@ export function HierarchicalEstimatePanel({
                                 <span className="ml-2 text-xs font-normal text-muted-foreground">{leaves.length} строк сметы</span>
                               </span>
                               <span className="text-right">{formatNumber(leaves.reduce((total, leaf) => total + leaf.quantity, 0))}</span>
+                              <span className="text-right">{(() => { const difference = leaves.reduce((total, leaf) => total + (leaf.difference ?? 0), 0); return difference < 0 ? formatNumber(difference) : "—"; })()}</span>
                               <span className="text-right text-xs">{hours == null ? "нет данных" : formatNumber(hours)}</span>
                               <span className="text-right">{first.rate == null ? "—" : formatNumber(first.rate)}</span>
                               <span className="sticky right-0 bg-inherit text-right">{amount == null ? "—" : formatMoney(amount)}</span>

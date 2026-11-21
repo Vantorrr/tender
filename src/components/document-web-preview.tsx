@@ -22,7 +22,13 @@ type PreviewData =
   | { kind: "archive"; files: NonNullable<DocumentItem["extractedFiles"]>; errors: string[] }
   | { kind: "unsupported"; fileName: string };
 
-export function DocumentWebPreview({ document }: { document: DocumentItem }) {
+export function DocumentWebPreview({
+  document,
+  highlight,
+}: {
+  document: DocumentItem;
+  highlight?: { page?: string; sheet?: string; cell?: string; paragraph?: string };
+}) {
   const [preview, setPreview] = useState<PreviewData | null>(null);
   const [error, setError] = useState("");
   const [sheet, setSheet] = useState(0);
@@ -170,7 +176,8 @@ export function DocumentWebPreview({ document }: { document: DocumentItem }) {
               const displayValue = cell.trim();
               const merge = mergeByCell.get(`${row.number - 1}:${colIndex}`);
               const textAlign = /^-?\d[\d\s.,]*%?$/.test(displayValue) ? "text-right" : "text-left";
-              return <td key={colIndex} colSpan={merge?.colSpan} rowSpan={merge?.rowSpan} title={displayValue || undefined} className={`border-r border-b border-stone-200 px-2 py-1.5 align-top ${textAlign} ${merge ? "bg-slate-50/70" : ""}`}><span className="whitespace-pre-wrap break-words">{displayValue || <span aria-hidden="true" className="text-stone-300">&nbsp;</span>}</span></td>;
+              const marked = highlight?.cell && highlight.cell === columnName(colIndex) + String(row.number);
+              return <td key={colIndex} colSpan={merge?.colSpan} rowSpan={merge?.rowSpan} title={displayValue || undefined} data-cell={columnName(colIndex) + String(row.number)} className={`border-r border-b border-stone-200 px-2 py-1.5 align-top ${textAlign} ${marked ? "bg-amber-200" : merge ? "bg-slate-50/70" : ""}`}><span className="whitespace-pre-wrap break-words">{displayValue || <span aria-hidden="true" className="text-stone-300">&nbsp;</span>}</span></td>;
             })}
           </tr>)}</tbody>
         </table>
@@ -182,7 +189,17 @@ export function DocumentWebPreview({ document }: { document: DocumentItem }) {
   if (preview.kind === "archive") return <div className="space-y-3">
     <section className="rounded-lg border bg-white p-4">
       <h3 className="font-medium">Файлы в архиве</h3>
-      {preview.files.length ? <ul className="mt-2 space-y-1 text-sm">{preview.files.map((file) => <li key={file.relativePath}>{file.relativePath} <span className="text-xs text-[var(--tk-muted)]">· {Math.ceil(file.size / 1024)} КБ</span></li>)}</ul> : <p className="mt-2 text-sm text-[var(--tk-muted)]">Поддерживаемые документы не найдены.</p>}
+      {preview.files.length ? <ul className="mt-2 space-y-2 text-sm">{preview.files.map((file) => {
+        const member = encodeURIComponent(file.relativePath);
+        const href = `/api/dokumenty/file?id=${encodeURIComponent(document.id)}&member=${member}`;
+        return <li key={file.relativePath} className="flex flex-wrap items-center justify-between gap-2">
+          <span>{file.relativePath} <span className="text-xs text-[var(--tk-muted)]">· {Math.ceil(file.size / 1024)} КБ</span></span>
+          <span className="flex gap-3 text-xs">
+            <a className="underline" href={`${href}&disposition=inline`}>Открыть</a>
+            <a className="underline" href={href}>Скачать</a>
+          </span>
+        </li>;
+      })}</ul> : <p className="mt-2 text-sm text-[var(--tk-muted)]">Поддерживаемые документы не найдены.</p>}
     </section>
     {preview.errors.length ? <Alert variant="destructive"><AlertDescription>{preview.errors.join("; ")}</AlertDescription></Alert> : null}
   </div>;

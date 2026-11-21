@@ -6,6 +6,7 @@ import {
   Scale,
   Settings2,
   Users,
+  Video,
   Warehouse,
 } from "lucide-react";
 import type { SectionKey } from "@/lib/types";
@@ -49,6 +50,12 @@ export const NAV_ITEMS: NavItem[] = [
     href: "/cabinet/instrukciya",
     label: "Инструкция",
     icon: Scale,
+  },
+  {
+    section: "instrukciya",
+    href: "/cabinet/videoinstrukcii",
+    label: "Видеоинструкции",
+    icon: Video,
   },
 ];
 

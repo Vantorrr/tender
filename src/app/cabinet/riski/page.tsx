@@ -46,7 +46,7 @@ export default function RiskiPage() {
     <div>
       <PageHeader
         title="Риски"
-        description="Убрано из сайдбара — договор и замечания в карточке закупки. Эвристический помощник, не юрэкспертиза."
+        description="Договор и замечания в карточке закупки. Разбор идёт по чек-листу с цитатами."
         actions={
           risk ? (
             <>
@@ -54,10 +54,8 @@ export default function RiskiPage() {
                 variant="outline"
                 onClick={async () => {
                   try {
-                    await parseRiskContract(risk.id);
-                    toast.success(
-                      "Разбор выполнен (помощник, не юрэкспертиза)"
-                    );
+                    const label = await parseRiskContract(risk.id);
+                    toast.success(label);
                   } catch (e) {
                     toast.error(
                       e instanceof Error ? e.message : "Ошибка разбора"
@@ -127,8 +125,7 @@ export default function RiskiPage() {
           {risk ? (
             <div className="space-y-3">
               <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
-                Авторазбор — эвристический помощник, не юридическая экспертиза.
-                Проверяйте цитаты вручную перед решением.
+                {risk.reviewLabel ?? "Разбор договора идёт по чек-листу: штрафы, сроки, оплата, приёмка, гарантия, расторжение, обеспечение, субподряд и изменение цены. У каждого риска есть цитата. Это не замена юридической проверке."}
               </p>
               {risk.remarks.length === 0 ? (
                 <EmptyState

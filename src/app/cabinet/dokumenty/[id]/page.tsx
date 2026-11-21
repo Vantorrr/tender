@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { AiFailureBanner } from "@/components/ai-failure-banner";
 import { ErrorState } from "@/components/empty-state";
@@ -74,9 +74,22 @@ function NoteEditor({
 export default function DocumentDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const anchor = {
+    page: searchParams.get("page") ?? undefined,
+    sheet: searchParams.get("sheet") ?? undefined,
+    cell: searchParams.get("cell") ?? undefined,
+    paragraph: searchParams.get("paragraph") ?? undefined,
+  };
+  const anchorLabel = [
+    anchor.page ? `страница ${anchor.page}` : "",
+    anchor.sheet ? `лист ${anchor.sheet}` : "",
+    anchor.cell ? `ячейка ${anchor.cell}` : "",
+    anchor.paragraph ? `абзац ${anchor.paragraph}` : "",
+  ].filter(Boolean).join(", ");
   const { orgDocuments, data, reanalyzeDocument } = useStore();
   const [retryingAi, setRetryingAi] = useState(false);
-  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(Boolean(anchorLabel));
   const [askModel, setAskModel] = useState(false);
   const doc = orgDocuments.find((d) => d.id === params.id);
 
@@ -193,7 +206,8 @@ export default function DocumentDetailPage() {
 
       {previewOpen ? (
         <section className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white p-3">
-          <DocumentWebPreview key={doc.id} document={doc} />
+          {anchorLabel ? <p className="mb-3 rounded-lg bg-amber-100 px-3 py-2 text-sm" data-testid="citation-anchor">Открыт фрагмент: {anchorLabel}</p> : null}
+          <DocumentWebPreview key={doc.id} document={doc} highlight={anchor} />
         </section>
       ) : null}
 

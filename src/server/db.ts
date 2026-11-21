@@ -23,6 +23,7 @@ import {
 import { modelConfigured } from "@/server/openrouter";
 import { hashPassword } from "@/server/passwords";
 import { procurementSourceStatus } from "@/server/procurement-source";
+import { sanitizeSyncDetail } from "@/lib/wave23";
 
 /**
  * 17: TPKP demo estimate uses only latest revisions and explicit GPR stage links;
@@ -113,6 +114,7 @@ type PersistedProcurementSync = {
   status: "ok" | "not_configured" | "error" | "demo";
   detail: string;
   at: string;
+  lastSuccessAt?: string;
 };
 
 export function saveProcurementSyncStatus(
@@ -120,10 +122,13 @@ export function saveProcurementSyncStatus(
   status: PersistedProcurementSync["status"],
   detail: string
 ) {
+  const previous = readProcurementSyncStatus();
+  const at = new Date().toISOString();
+  const lastSuccessAt = status === "ok" || status === "demo" ? at : previous?.lastSuccessAt;
   metaSet(
     getDb(),
     "procurement_sync_status",
-    JSON.stringify({ sourceId, status, detail, at: new Date().toISOString() } satisfies PersistedProcurementSync)
+    JSON.stringify({ sourceId, status, detail, at, ...(lastSuccessAt ? { lastSuccessAt } : {}) } satisfies PersistedProcurementSync)
   );
 }
 
@@ -631,6 +636,8 @@ export function healthSnapshot() {
     procurement: {
       status: procurement.status,
       stub: procurement.stub,
+      detail: sanitizeSyncDetail(procurement.detail),
+      lastSuccessAt: readProcurementSyncStatus()?.lastSuccessAt ?? null,
     },
     mail: {
       live: mail.live,

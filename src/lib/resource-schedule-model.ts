@@ -24,6 +24,10 @@ export type ResourceScheduleParams = {
    * Excel H5: «Себестоимость с НР × 40%».
    */
   profitMarkupOnCostWithOh: number;
+  /** Optional northern district coefficient. Applied only when set. */
+  districtCoefficient?: number;
+  /** Share of payroll added as a northern allowance, e.g. 0.8. */
+  northernPayrollShare?: number;
 };
 
 export const EXCEL_RESOURCE_SCHEDULE_DEFAULTS: ResourceScheduleParams = {

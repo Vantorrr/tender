@@ -10,6 +10,7 @@ RUN apt-get update \
     tesseract-ocr-rus \
     tesseract-ocr-eng \
     poppler-utils \
+    p7zip-full \
     fonts-noto-core \
     ca-certificates \
   && rm -rf /var/lib/apt/lists/* \

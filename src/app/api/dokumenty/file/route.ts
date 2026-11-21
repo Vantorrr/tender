@@ -2,6 +2,7 @@ import { readAppData } from "@/server/db";
 import { readUpload } from "@/server/uploads";
 import { withAnySection, json } from "@/server/http";
 import { contentDisposition } from "@/server/content-disposition";
+import { readArchiveMember } from "@/server/safe-archive";
 import { NextResponse } from "next/server";
 
 export async function GET(req: Request) {
@@ -33,6 +34,20 @@ export async function GET(req: Request) {
     }
     const buf = readUpload(doc.storedPath);
     if (!buf) return json({ error: "Файл не найден на диске" }, 404);
+    const member = url.searchParams.get("member");
+    if (member) {
+      const extracted = readArchiveMember(doc.fileName, buf, member);
+      if (!extracted.ok) return json({ error: extracted.error }, 400);
+      return new NextResponse(new Uint8Array(extracted.data), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "Content-Disposition": contentDisposition(disposition, extracted.name),
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    }
     const type =
       doc.fileType === "pdf"
         ? "application/pdf"

@@ -13,6 +13,31 @@ export function formatNumber(value: number, digits = 2): string {
   }).format(value);
 }
 
+/** A return or exclusion keeps its sign only as a difference. The quantity itself stays positive. */
+export function splitSignedQuantity(quantity: number): { quantity: number; difference: number | null } {
+  if (!Number.isFinite(quantity)) return { quantity: 0, difference: null };
+  if (quantity < 0) return { quantity: Math.abs(quantity), difference: quantity };
+  return { quantity, difference: null };
+}
+
+const PLAIN_POSITION_CODES: Record<string, string> = {
+  ВОР: "Ведомость объёмов",
+  ЗТ: "Затраты труда",
+  ЗТМ: "Затраты труда машинистов",
+  НР: "Накладные расходы",
+  СП: "Сметная прибыль",
+  РК: "Районный коэффициент",
+  СН: "Северная надбавка",
+};
+
+/** Codes that are internal labels, not a line from the customer's estimate. */
+export function visiblePositionCode(code: string): string {
+  const key = code.trim().toLocaleUpperCase("ru-RU");
+  if (PLAIN_POSITION_CODES[key]) return PLAIN_POSITION_CODES[key];
+  if (/^(?:res|cp|urp|draft|source|gs|pay)-/iu.test(code) || (code.length > 24 && !/[а-яё]/iu.test(code))) return "";
+  return code;
+}
+
 /** Piece counts from a norm are fractional. Show two decimals and explain the source. */
 export function quantityPresentation(quantity: number, unit: string): { text: string; title?: string } {
   const piece = /^шт\.?$/iu.test(unit.trim());

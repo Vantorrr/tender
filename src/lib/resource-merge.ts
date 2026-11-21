@@ -10,6 +10,8 @@ type MergeableLeaf = {
   hoursQ?: number | null;
   amount?: number | null;
   rate?: number | null;
+  /** Signed return from the estimate. The quantity column stays non-negative. */
+  difference?: number | null;
   incomplete: string[];
   memberIds?: string[];
 };
@@ -71,6 +73,7 @@ export function mergeEstimateLeaves<T extends MergeableLeaf>(leaves: T[]): T[] {
       ...list[0],
       name: isReturn ? `Возврат: ${baseName}` : baseName,
       quantity: Math.abs(quantity),
+      difference: quantity < 0 ? quantity : null,
       hoursQ: hours == null ? null : Math.abs(hours),
       amount,
       rate: rates.length === 1 ? rates[0] : list[0].rate,
@@ -79,6 +82,31 @@ export function mergeEstimateLeaves<T extends MergeableLeaf>(leaves: T[]): T[] {
     });
   }
   return merged;
+}
+
+/**
+ * The screen shows a return as a positive quantity. The stored rows keep the minus
+ * so the credit is not turned into an extra charge.
+ */
+export function patchMergedPositions<T extends { id: string; quantity: number }>(
+  positions: T[],
+  leaf: { positionId?: string; memberIds?: string[]; name: string; difference?: number | null },
+  shownQuantity: number,
+): T[] {
+  const ids = new Set(leaf.memberIds?.length ? leaf.memberIds : leaf.positionId ? [leaf.positionId] : []);
+  const members = positions.filter((position) => ids.has(position.id));
+  if (!members.length) return positions;
+  const signedNet = members.reduce((sum, position) => sum + (Number(position.quantity) || 0), 0);
+  const isReturn = (leaf.difference != null && leaf.difference < 0) || /^возврат:/iu.test(leaf.name) || signedNet < 0;
+  const target = isReturn ? -Math.abs(shownQuantity) : shownQuantity;
+  return positions.map((position) => {
+    if (!ids.has(position.id)) return position;
+    const index = members.findIndex((member) => member.id === position.id);
+    const quantity = Math.abs(signedNet) < 1e-9
+      ? (index === 0 ? target : 0)
+      : position.quantity * (target / signedNet);
+    return { ...position, quantity };
+  });
 }
 
 /**

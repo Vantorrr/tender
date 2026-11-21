@@ -13,6 +13,7 @@ import { withSection, json } from "@/server/http";
 import type { SupplyStatus } from "@/lib/types";
 import { saveUpload, readUpload } from "@/server/uploads";
 import { config } from "@/server/config";
+import { quoteRequestOutcome } from "@/lib/wave23";
 import { mailStatus, sendMail } from "@/server/mail";
 import { discoverMaterialSuppliers } from "@/server/supplier-discovery";
 
@@ -104,8 +105,6 @@ export async function POST(req: Request) {
     }
     if (body.action === "sendRfq") {
       if (!body.confirmed) return json({ error: "Подтвердите отправку запроса поставщику" }, 400);
-      const readiness = mailStatus();
-      if (!readiness.live) return json({ error: `Отправка недоступна: ${readiness.detail}. Требуется настроить SMTP.` }, 503);
       if (!body.id || !body.supplierId) return json({ error: "Не указаны позиция материала и поставщик" }, 400);
       const data = getBootstrap(user).data;
       const supply = (data.supplyRequests ?? []).find((item) => item.id === body.id);
@@ -115,10 +114,15 @@ export async function POST(req: Request) {
       if (!supply || !supplier || !procurement) return json({ error: "Позиция, поставщик или закупка не найдены" }, 404);
       if (!(supply.supplierIds ?? []).includes(supplier.id)) return json({ error: "Этот поставщик не сопоставлен с материалом" }, 409);
       if ((supply.sentToSupplierIds ?? []).includes(supplier.id)) return json({ error: "Запрос этому поставщику уже отправлен" }, 409);
+      const text = [`Здравствуйте, ${supplier.name}!`, "Просим направить коммерческое предложение по материалу:", `Объект: ${procurement.title}`, `Позиция: ${supply.materialName}`, `Количество: ${supply.qtyNeed} ${supply.unit}`, supply.workName ? `Вид работ: ${supply.workName}` : null, `Желаемый срок поставки: ${supply.needBy}`, "Просим указать цену, срок действия предложения, срок и условия доставки.", "Карточка предприятия приложена к письму."].filter(Boolean).join("\n");
+      const readiness = mailStatus();
+      if (!readiness.live) {
+        const outcome = quoteRequestOutcome(false);
+        return json({ ...outcome, fileName: "zapros-kp.txt", text: supply.quoteDraftText?.trim() || text });
+      }
       if (!card) return json({ error: "Сначала загрузите карточку предприятия — она будет приложена к письму" }, 409);
       const bytes = readUpload(card.storedPath);
       if (!bytes) return json({ error: "Файл карточки предприятия недоступен. Загрузите его повторно." }, 409);
-      const text = [`Здравствуйте, ${supplier.name}!`, "Просим направить коммерческое предложение по материалу:", `Объект: ${procurement.title}`, `Позиция: ${supply.materialName}`, `Количество: ${supply.qtyNeed} ${supply.unit}`, supply.workName ? `Вид работ: ${supply.workName}` : null, `Желаемый срок поставки: ${supply.needBy}`, "Просим указать цену, срок действия предложения, срок и условия доставки.", "Карточка предприятия приложена к письму."].filter(Boolean).join("\n");
       const sent = await sendMail({ to: supplier.email, subject: `Запрос КП: ${supply.materialName} · ${procurement.title}`, text: supply.quoteDraftText?.trim() || text, attachments: [{ filename: card.fileName, contentBase64: bytes.toString("base64") }] });
       if (!sent.ok) return json({ error: "Почтовый сервер не принял письмо" }, 502);
       markSupplyRequestSent(user.id, supply.id, supplier.id);

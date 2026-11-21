@@ -145,14 +145,10 @@ export default function ObmenPage() {
           data-testid="obmen-last-result"
         >
           <h2 className="font-[family-name:var(--font-display)] text-base">
-            Последний результат обмена
+            Последний обмен
           </h2>
           <p className="mt-2 text-sm">
-            {plainExchangeTitle(data.smetaExchanges[0].name)} · распознано строк в файле{" "}
-            {data.smetaExchanges[0].positionsMapped} · расхождений{" "}
-            {data.smetaExchanges[0].discrepancies.length} ·{" "}
-            {data.smetaExchanges[0].confirmed ? "подтверждено" : "черновик"} ·{" "}
-            {formatDateTime(data.smetaExchanges[0].at)}
+            {plainExchangeTitle(data.smetaExchanges[0].name)} · {formatDateTime(data.smetaExchanges[0].at)}
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Button
@@ -206,7 +202,7 @@ export default function ObmenPage() {
             ) : (
               data.smetaExchanges.map((sx) => (
                 <TableRow key={sx.id} id={`obmen-row-${sx.id}`}>
-                  <TableCell className="font-medium" title={sx.name}>{plainExchangeTitle(sx.name)}</TableCell>
+                  <TableCell className="font-medium" title={plainExchangeTitle(sx.name)}>{plainExchangeTitle(sx.name)}</TableCell>
                   <TableCell>{sx.positionsMapped}</TableCell>
                   <TableCell>
                     {sx.discrepancies.length === 0 ? (

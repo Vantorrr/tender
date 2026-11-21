@@ -503,7 +503,7 @@ export function analysisFromGrand(parsed: GrandParse, fileName: string): UploadA
     highlights.push({
       id: "h-index",
       text: "Индексы изменения сметной стоимости не заполнены",
-      reason: "В шапке пусты реквизиты письма Минстроя об индексах. Сверьте текущий уровень цен.",
+      reason: "Индексы изменения сметной стоимости не заполнены. Сверьте текущий уровень цен.",
       severity: "warning",
       page: 1,
     });

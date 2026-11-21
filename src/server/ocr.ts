@@ -5,6 +5,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { ocrFailureMessage, ocrPageLimitMessage } from "@/lib/wave23";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -81,6 +82,11 @@ export class MockOcrProvider implements OcrProvider {
       reason: "Mock OCR",
     };
   }
+}
+
+function countPdfPages(buffer: Buffer): number | null {
+  const matches = buffer.toString("latin1").match(/\/Type\s*\/Page(?!s)/g);
+  return matches?.length || null;
 }
 
 function which(bin: string): string | null {
@@ -223,7 +229,7 @@ export class TesseractOcrProvider implements OcrProvider {
             text: null,
             pageCount: null,
             provider: this.id,
-            reason: `pdftoppm failed: ${raster.stderr.slice(0, 160)}`,
+            reason: ocrFailureMessage(raster.stderr.slice(0, 160) || "не удалось подготовить страницы скана"),
           };
         }
         const pages = fs
@@ -258,18 +264,20 @@ export class TesseractOcrProvider implements OcrProvider {
             text: null,
             pageCount: pages.length,
             provider: this.id,
-            reason: "Tesseract не распознал текст на скане",
+            reason: ocrFailureMessage("на страницах скана не найден текст"),
           };
         }
+        const totalPages = countPdfPages(input.buffer);
+        const truncated = totalPages != null && totalPages > pages.length;
         return {
           status: "ok",
           text: text.slice(0, OCR_TEXT_CHARS),
           pages: chunks.map((chunk) => chunk.replace(/\s+/g, " ").trim().slice(0, PDF_PAGE_CHARS)),
           pageCount: pages.length,
           provider: this.id,
-          reason: pages.length === OCR_PAGE_LIMIT
-            ? `tesseract+pdftoppm (локальный OCR; проверено до ${OCR_PAGE_LIMIT} страниц, проверьте остаток длинного скана вручную)`
-            : "tesseract+pdftoppm (локальный OCR)",
+          reason: truncated
+            ? ocrPageLimitMessage(pages.length, totalPages)
+            : "Скан распознан",
         };
       }
 
@@ -299,7 +307,7 @@ export class TesseractOcrProvider implements OcrProvider {
           text: null,
           pageCount: 1,
           provider: this.id,
-          reason: `tesseract failed: ${ocr.stderr.slice(0, 160)}`,
+          reason: ocrFailureMessage(ocr.stderr.slice(0, 160) || "программа распознавания завершилась с ошибкой"),
         };
       }
       const text = ocr.stdout.replace(/\s+/g, " ").trim();

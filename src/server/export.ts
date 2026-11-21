@@ -9,6 +9,7 @@ import {
   roundMoney,
   sourceEstimateTotals,
 } from "@/lib/calc-math";
+import { visiblePositionCode } from "@/lib/format";
 import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
 import {
   resolveResourceDimensions,
@@ -123,6 +124,7 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
     { header: "Кол-во", key: "qty", width: 12 },
     { header: "Расценка", key: "rate", width: 14 },
     { header: "Сумма", key: "sum", width: 16 },
+    { header: "Разница", key: "difference", width: 12 },
   ];
   ws.getRow(1).font = { bold: true };
 
@@ -130,10 +132,11 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
   for (const p of calc.positions) {
     if (p.isWorkItem && calc.kind !== "customer_original") {
       ws.addRow({
-        code: p.code,
+        code: visiblePositionCode(p.code),
         name: `${p.name} (объём работы; ставка ресурса не применяется)`,
         unit: p.unit,
-        qty: p.quantity,
+        qty: Math.abs(p.quantity),
+        difference: p.quantity < 0 ? p.quantity : null,
         rate: null,
         sum: null,
       });
@@ -141,16 +144,24 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
     }
     const sum = p.rateMissing ? null : positionLineSum(p, factor);
     ws.addRow({
-      code: p.code,
+      code: visiblePositionCode(p.code),
       name: p.name,
       unit: p.unit,
-      qty: p.quantity,
+      qty: Math.abs(p.quantity),
+      difference: p.quantity < 0 ? p.quantity : null,
       rate: p.rateMissing ? null : p.rate,
       sum,
     });
   }
   const dir = data.directories.find((d) => d.id === calc.directoryVersionId);
   ws.addRow({});
+  if (calc.costSummary?.northernAdjustments) {
+    const north = calc.costSummary.northernAdjustments;
+    ws.addRow({ code: "Районный коэффициент", name: "Районный коэффициент", sum: north.district });
+    ws.addRow({ code: "Северная надбавка", name: "Северная надбавка", sum: north.allowance });
+    ws.addRow({ code: "Накладные расходы", name: "Накладные расходы", sum: north.overhead });
+    ws.addRow({ code: "ИТОГО", name: "Итого с северными условиями", sum: north.total });
+  }
 
   const slices = calc.costSummary?.resourceSlices;
   const partial =
@@ -164,12 +175,12 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
     });
     ws.addRow({
       code: "W_oh43",
-      name: partial ? "W НР 43% (PARTIAL)" : "W НР 43%",
+      name: partial ? "Накладные расходы 43% (неполно)" : "Накладные расходы 43%",
       sum: slices.overhead,
     });
     ws.addRow({
       code: "X_cost_oh",
-      name: partial ? "X с/с с НР (PARTIAL)" : "X с/с с НР",
+      name: partial ? "Себестоимость с накладными (неполно)" : "Себестоимость с накладными",
       sum: slices.costWithOh,
     });
     ws.addRow({
@@ -398,6 +409,13 @@ export async function buildCalculationPdf(calcId: string): Promise<Buffer> {
     drawWrapped(`Себестоимость с накладными X: ${money(slices.costWithOh)}${tag}`, 10);
     drawWrapped(`Прибыль Y: ${money(slices.profit)}${tag}`, 10);
     drawWrapped(`Итого ресурсного черновика Z: ${money(slices.total)}${tag}`, 12, true);
+    if (calc.costSummary?.northernAdjustments) {
+      const north = calc.costSummary.northernAdjustments;
+      drawWrapped(`Районный коэффициент: ${money(north.district)}`, 10);
+      drawWrapped(`Северная надбавка: ${money(north.allowance)}`, 10);
+      drawWrapped(`Накладные: ${money(north.overhead)}`, 10);
+      drawWrapped(`Итого с северными условиями: ${money(north.total)}`, 11, true);
+    }
     drawWrapped(`Материалы S: ${money(slices.materials)} · Люди T: ${money(slices.labor)} · Техника U: ${money(slices.equipment)}`, 9, false, muted);
     if (calc.officeOverhead != null) drawWrapped(`Офисные расходы отдельно: ${money(calc.officeOverhead)}`, 9, false, muted);
     if (calc.costSummary?.reserve != null) drawWrapped(`Непредвиденные расходы: ${money(calc.costSummary.reserve)}`, 9, false, muted);
@@ -410,6 +428,13 @@ export async function buildCalculationPdf(calcId: string): Promise<Buffer> {
         ? "Итого исходной сметы заказчика"
         : "Итого расчёта";
     drawWrapped(`${label}: ${money(totals.total)}${partial ? " · неполный расчёт" : ""}`, 12, true);
+    if (calc.costSummary?.northernAdjustments) {
+      const north = calc.costSummary.northernAdjustments;
+      drawWrapped(`Районный коэффициент: ${money(north.district)}`, 10);
+      drawWrapped(`Северная надбавка: ${money(north.allowance)}`, 10);
+      drawWrapped(`Накладные: ${money(north.overhead)}`, 10);
+      drawWrapped(`Итого с северными условиями: ${money(north.total)}`, 11, true);
+    }
   }
   if (partial || calc.positions.some((position) => position.rateMissing && !position.isWorkItem)) {
     y -= 8;
@@ -577,14 +602,14 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
   // Spreadsheet closer to the client's familiar A:Z resource calculation grid.
   const clientSheet = wb.addWorksheet("Клиентский ресурсный график");
   const clientHeaders = [
-    "№", "Раздел", "Наименование работ / ресурс", "Ед.", "Объём", "Длит., раб.дн.", "Начало", "Окончание", "Тип строки", "Категория", "Тарифная позиция / модель", "Кол-во", "Тариф БЕЗ НР 40%, руб.", "Часов/смена", "Смен/сутки", "Дни участия", "Часы Q", "Сумма R, руб.", "Материалы S", "Люди T", "Техника U", "Прямые V", "НР W", "С/с X", "Прибыль Y", "Итого Z",
+    "№", "Раздел", "Наименование работ / ресурс", "Ед.", "Объём", "Длит., раб.дн.", "Начало", "Окончание", "Тип строки", "Категория", "Тарифная позиция / модель", "Кол-во", "Тариф без накладных и прибыли, руб.", "Часов/смена", "Смен/сутки", "Дни участия", "Часы", "Сумма, руб.", "Материалы", "Люди", "Техника", "Прямые", "Накладные расходы", "Себестоимость", "Прибыль", "Итого",
   ];
   clientSheet.addRow(["Ресурсный график и калькуляция стоимости работ"]);
   clientSheet.addRow([]);
   clientSheet.addRow(["ПАРАМЕТР", "ЗНАЧЕНИЕ", "", "РАСЧЁТ", "ЗНАЧЕНИЕ", "", "ИТОГОВАЯ ФОРМУЛА", "ЗНАЧЕНИЕ"]);
-  clientSheet.addRow(["Стоимость 1 чел.-часа, руб.", rsParams.personHourRate, "", "Прямые затраты", calc?.costSummary?.resourceSlices?.direct ?? "неполные данные", "", "НР", rsParams.overheadRate]);
+  clientSheet.addRow(["Стоимость 1 чел.-часа, руб.", rsParams.personHourRate, "", "Прямые затраты", calc?.costSummary?.resourceSlices?.direct ?? "неполные данные", "", "Накладные расходы", rsParams.overheadRate]);
   clientSheet.addRow(["Смен персонала в сутки", rsParams.personnelShiftsPerDay, "", "Стоимость МТР", calc?.costSummary?.resourceSlices?.materials ?? "неполные данные", "", "Прибыль", rsParams.profitMarkupOnCostWithOh]);
-  clientSheet.addRow(["Продолжительность смены, ч", rsParams.hoursPerShift, "", "Затраты на людей", calc?.costSummary?.resourceSlices?.labor ?? "неполные данные", "", "ИТОГО", "X + Y"]);
+  clientSheet.addRow(["Продолжительность смены, ч", rsParams.hoursPerShift, "", "Затраты на людей", calc?.costSummary?.resourceSlices?.labor ?? "неполные данные", "", "Итого", "себестоимость + прибыль"]);
   clientSheet.addRow(["Смен техники в сутки", rsParams.equipmentShiftsPerDay, "", "Затраты на технику", calc?.costSummary?.resourceSlices?.equipment ?? "неполные данные"]);
   clientSheet.addRow(["Накладные расходы", rsParams.overheadRate]);
   clientSheet.addRow(["Прибыль", rsParams.profitMarkupOnCostWithOh]);
@@ -832,14 +857,20 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
       `Прибыль${ptag}`,
       cs.profit,
       totalsPartial
-        ? "PARTIAL · наценка на с/с с НР"
-        : "наценка на с/с с НР (не маржа выручки)",
+        ? "неполно · наценка на себестоимость с накладными"
+        : "наценка на себестоимость с накладными (не доля от выручки)",
     ]);
     sumSheet.addRow([
       `Цена без НДС${ptag}`,
       cs.priceExVat,
       totalsPartial ? "PARTIAL" : "",
     ]);
+    if (cs.northernAdjustments) {
+      sumSheet.addRow(["Районный коэффициент", cs.northernAdjustments.district, "включено в итог"]);
+      sumSheet.addRow(["Северная надбавка", cs.northernAdjustments.allowance, "включено в итог"]);
+      sumSheet.addRow(["Накладные", cs.northernAdjustments.overhead, "включено в итог"]);
+      sumSheet.addRow(["Итого с северными условиями", cs.northernAdjustments.total, "включено в итог"]);
+    }
     sumSheet.addRow([
       `НДС${ptag}`,
       cs.vatAmount == null ? "нет данных" : cs.vatAmount,
@@ -861,9 +892,9 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
   rsSheet.addRow(["Смен персонала/сутки", p.personnelShiftsPerDay, "B5"]);
   rsSheet.addRow(["Часов в смене", p.hoursPerShift, "B6"]);
   rsSheet.addRow(["Смен техники/сутки", p.equipmentShiftsPerDay, "B7"]);
-  rsSheet.addRow(["НР (доля от прямых)", p.overheadRate, "B8"]);
+  rsSheet.addRow(["Накладные расходы (доля от прямых)", p.overheadRate, "B8"]);
   rsSheet.addRow([
-    "Прибыль (наценка на с/с с НР)",
+    "Прибыль (наценка на себестоимость с накладными)",
     p.profitMarkupOnCostWithOh,
     "B9",
   ]);
@@ -881,12 +912,12 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
     totalsPartial ? "PARTIAL" : "материалы+люди+техника",
   ]);
   rsSheet.addRow([
-    `НР W${ptag}`,
+    `Накладные расходы в итоге${ptag}`,
     slices ? slices.overhead : "W=V*B8",
     totalsPartial ? "PARTIAL" : "",
   ]);
   rsSheet.addRow([
-    `С/с с НР X${ptag}`,
+    `Себестоимость с накладными${ptag}`,
     slices ? slices.costWithOh : "X=V+W",
     totalsPartial ? "PARTIAL" : "",
   ]);

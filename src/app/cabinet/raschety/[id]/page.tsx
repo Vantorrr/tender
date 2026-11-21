@@ -27,11 +27,13 @@ import {
 } from "@/components/ui/table";
 import { api, downloadUrl } from "@/lib/api";
 import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-panel";
+import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
+import { NORTH_DEFAULTS, northernAdditionLines } from "@/lib/wave23";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engine";
 import { parseDecimalRu } from "@/lib/decimal-ru";
-import { patchMergedResources } from "@/lib/resource-merge";
-import { formatMoney, formatNumber, quantityPresentation } from "@/lib/format";
+import { patchMergedPositions, patchMergedResources } from "@/lib/resource-merge";
+import { formatMoney, formatNumber, quantityPresentation, splitSignedQuantity, visiblePositionCode } from "@/lib/format";
 import { visibleProcurementNumber } from "@/lib/pipeline";
 import { rowDeleteConfirmed } from "@/lib/row-delete";
 import { humanizeIssues } from "@/lib/issue-text";
@@ -104,16 +106,33 @@ function VatRateEditor({
 function NorthernCostEditor({
   calculationId,
   value,
+  labor,
+  scheduleParams,
   onSaved,
 }: {
   calculationId: string;
   value?: NorthernInputs;
+  labor: number;
+  scheduleParams?: {
+    personHourRate: number;
+    personnelShiftsPerDay: number;
+    hoursPerShift: number;
+    equipmentShiftsPerDay: number;
+    overheadRate: number;
+    profitMarkupOnCostWithOh: number;
+    districtCoefficient?: number;
+    northernPayrollShare?: number;
+  };
   onSaved: () => Promise<void>;
 }) {
   const [applicable, setApplicable] = useState(value?.applicable ?? true);
   const [items, setItems] = useState<NorthernInputs["confirmedItems"]>(
     value?.confirmedItems ?? []
   );
+  const [district, setDistrict] = useState(String(scheduleParams?.districtCoefficient ?? NORTH_DEFAULTS.districtCoefficient));
+  const [allowance, setAllowance] = useState(String(Math.round((scheduleParams?.northernPayrollShare ?? NORTH_DEFAULTS.northernPayrollShare) * 100)));
+  const [overhead, setOverhead] = useState(String(Math.round((scheduleParams?.overheadRate ?? NORTH_DEFAULTS.overheadRate) * 100)));
+  const [savedLine, setSavedLine] = useState("");
   const [saving, setSaving] = useState(false);
 
   function patchItem(
@@ -132,13 +151,27 @@ function NorthernCostEditor({
           id: calculationId,
           recomputeCost: true,
           costPatch: {
-            northern: { applicable, confirmedItems: items, notes: [] },
+            northern: { applicable, confirmedItems: items.map((item) => ({ ...item, status: "known" as const })), notes: [] },
             useResourceScheduleEconomics: true,
+            resourceScheduleParams: {
+              ...(scheduleParams ?? EXCEL_RESOURCE_SCHEDULE_DEFAULTS),
+              districtCoefficient: Number(district) || NORTH_DEFAULTS.districtCoefficient,
+              northernPayrollShare: (Number(allowance) || 80) / 100,
+              overheadRate: (Number(overhead) || 43) / 100,
+            },
           },
         }),
       });
       await onSaved();
-      toast.success("Северные затраты сохранены, расчёт обновлён");
+      const lines = northernAdditionLines(labor, {
+        districtCoefficient: Number(district) || NORTH_DEFAULTS.districtCoefficient,
+        northernPayrollShare: (Number(allowance) || 80) / 100,
+        overheadRate: (Number(overhead) || 43) / 100,
+      });
+      const added = lines.reduce((sum, item) => sum + item.amount, 0);
+      const line = `${lines.map((item) => `${item.what} — ${item.amount.toLocaleString("ru-RU")} ₽ (${item.why})`).join("; ")}. Итого добавлено ${added.toLocaleString("ru-RU")} ₽`;
+      setSavedLine(line);
+      toast.success(`Сохранено. ${line}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось сохранить затраты");
     } finally {
@@ -157,22 +190,13 @@ function NorthernCostEditor({
           {items.map((item) => (
             <div key={item.id} className="grid gap-2 rounded-lg border border-[var(--tk-line)] p-3 sm:grid-cols-2 xl:grid-cols-[1.2fr_0.7fr_0.9fr_1.2fr_auto]">
               <Input aria-label="Статья северных затрат" placeholder="Например, проживание вахты" value={item.name} onChange={(event) => patchItem(item.id, { name: event.target.value })} />
-              <Select value={item.status} onValueChange={(status) => status && patchItem(item.id, { status: status as NorthernInputs["confirmedItems"][number]["status"] })}>
-                <SelectTrigger aria-label={`Статус · ${item.name}`}>
-                  <SelectValue>{(status) => status === "known" ? "Подтверждено" : status === "clarify" ? "Уточнить" : "Сценарий"}</SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="known">Подтверждено</SelectItem>
-                  <SelectItem value="clarify">Уточнить</SelectItem>
-                  <SelectItem value="scenario">Сценарий</SelectItem>
-                </SelectContent>
-              </Select>
+              <Input aria-label={`Почему · ${item.name || "статья"}`} placeholder="Почему добавлено" value={item.basis} onChange={(event) => patchItem(item.id, { basis: event.target.value, status: "known" })} />
               <Input aria-label={`Сумма · ${item.name}`} type="number" min={0} step="0.01" placeholder="Сумма, ₽" value={item.amount ?? ""} onChange={(event) => {
                 const raw = event.target.value.trim();
                 const amount = raw ? Number(raw.replace(",", ".")) : null;
                 patchItem(item.id, { amount: amount != null && Number.isFinite(amount) && amount >= 0 ? amount : null });
               }} />
-              <Input aria-label={`Основание · ${item.name}`} placeholder="Основание: КП, ШР, документ" value={item.basis} onChange={(event) => patchItem(item.id, { basis: event.target.value })} />
+              <span className="self-center text-xs text-[var(--tk-muted)]">{item.amount != null ? `Добавлено ${item.amount} ₽` : "Сумма не задана"}</span>
               <Button variant="ghost" size="sm" aria-label={`Удалить · ${item.name}`} onClick={() => setItems((current) => current.filter((row) => row.id !== item.id))}>Удалить</Button>
             </div>
           ))}
@@ -181,10 +205,16 @@ function NorthernCostEditor({
         <p className="text-sm text-[var(--tk-muted)]">Подтверждённые северные затраты не добавлены. Автоматический коэффициент не применяется.</p>
       )}
       <div className="flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" onClick={() => setItems((current) => [...current, { id: `north-${Date.now()}`, name: "", status: "clarify", amount: null, basis: "" }])}>Добавить статью</Button>
+        <Button variant="outline" size="sm" onClick={() => setItems((current) => [...current, { id: `north-${Date.now()}`, name: "", status: "known", amount: null, basis: "" }])}>Добавить статью</Button>
         <Button size="sm" disabled={saving} onClick={() => void save()}>{saving ? "Пересчёт…" : "Сохранить и пересчитать"}</Button>
       </div>
-      <p className="text-xs text-[var(--tk-muted)]">В итог включаются только строки «Подтверждено» с заполненной суммой. Строки «Уточнить» помечают расчёт как неполный; сценарные суммы хранятся отдельно и не включаются.</p>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <label className="text-xs">Районный коэффициент<Input className="mt-1" value={district} onChange={(event) => setDistrict(event.target.value)} /></label>
+        <label className="text-xs">Северная надбавка, % ФОТ<Input className="mt-1" value={allowance} onChange={(event) => setAllowance(event.target.value)} /></label>
+        <label className="text-xs">Накладные, %<Input className="mt-1" value={overhead} onChange={(event) => setOverhead(event.target.value)} /></label>
+      </div>
+      <p className="text-xs text-[var(--tk-muted)]">По умолчанию северные условия Норильска и Ямала: коэффициент 1,8 и надбавка 80% фонда оплаты. Поля можно изменить.</p>
+      {savedLine ? <p className="text-sm font-medium" data-testid="north-total-line">Что добавлено: {savedLine}</p> : null}
     </div>
   );
 }
@@ -363,6 +393,9 @@ export default function RaschetDetailPage() {
   const [aiCompareLoading, setAiCompareLoading] = useState(false);
   const [attachEstimateLoading, setAttachEstimateLoading] = useState(false);
   const [pendingPositionId, setPendingPositionId] = useState<string | null>(null);
+  const [volumeRows, setVolumeRows] = useState<Array<{ work: string; unit: string; volume: number; quote: string; rate: number | null }>>([]);
+  const [volumeMessage, setVolumeMessage] = useState("");
+  const [volumeBusy, setVolumeBusy] = useState(false);
 
   const calc = user
     ? data.calculations.find(
@@ -540,13 +573,15 @@ export default function RaschetDetailPage() {
       }
       if (leaf.source === "calc_position" && leaf.positionId) {
         const rateMissing = patch.rate == null;
+        const positions = patch.quantity == null
+          ? calc!.positions
+          : patchMergedPositions(calc!.positions, leaf, patch.quantity);
         await updateCalculation(calc!.id, {
-          positions: calc!.positions.map((p) =>
+          positions: positions.map((p) =>
             p.id !== leaf.positionId
               ? p
               : {
                   ...p,
-                  quantity: patch.quantity ?? p.quantity,
                   rate:
                     patch.rate === undefined
                       ? p.rate
@@ -1074,6 +1109,52 @@ export default function RaschetDetailPage() {
         />
       </div>
 
+      <section className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4" data-testid="volume-sheet">
+        <h2 className="text-sm font-semibold">Ведомость объёмов</h2>
+        <p className="mt-1 text-sm text-[var(--tk-muted)]">Черновик из технического задания: вид работ, единица, объём и цитата. Цена берётся из справочника компании, смета заказчика остаётся колонкой сравнения. Строка без ставки помечается «нет ставки».</p>
+        <Button className="mt-3" variant="outline" disabled={volumeBusy || locked} onClick={() => {
+          setVolumeBusy(true);
+          setVolumeMessage("");
+          void api<{ configured: boolean; message?: string; rows: Array<{ work: string; unit: string; volume: number; quote: string; rate: number | null }> }>("/api/raschety", {
+            method: "POST",
+            body: JSON.stringify({ action: "draftVolumes", calculationId: calc.id }),
+          }).then((result) => {
+            if (!result.configured) {
+              setVolumeRows([]);
+              setVolumeMessage(result.message ?? "Разбор не выполнен: модель не подключена. После подключения здесь появится черновик ведомости, его можно править вручную.");
+              return;
+            }
+            setVolumeRows(result.rows);
+            setVolumeMessage(result.rows.length ? "" : "В техническом задании не нашлось объёмов с цитатой.");
+          }).catch((error: unknown) => {
+            setVolumeMessage(error instanceof Error ? error.message : "Не удалось выделить ведомость");
+          }).finally(() => setVolumeBusy(false));
+        }}>{volumeBusy ? "Выделяю…" : "Выделить ведомость объёмов из ТЗ"}</Button>
+        {volumeMessage ? <p className="mt-3 text-sm" data-testid="volume-sheet-message">{volumeMessage}</p> : null}
+        {volumeRows.length ? (
+          <div className="mt-3 space-y-2">
+            {volumeRows.map((row, index) => (
+              <div key={`${row.quote}-${index}`} className="grid gap-2 rounded-lg border border-[var(--tk-line)] p-3 md:grid-cols-4">
+                <Input aria-label={`Вид работ ${index + 1}`} value={row.work} onChange={(event) => setVolumeRows((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, work: event.target.value } : item))} />
+                <Input aria-label={`Единица ${index + 1}`} value={row.unit} onChange={(event) => setVolumeRows((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, unit: event.target.value } : item))} />
+                <Input aria-label={`Объём ${index + 1}`} value={String(row.volume)} onChange={(event) => setVolumeRows((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, volume: Number(event.target.value.replace(",", ".")) } : item))} />
+                <span className="self-center text-sm">{row.rate != null && row.rate > 0 ? formatMoney(row.rate) : "нет ставки"}</span>
+                <p className="md:col-span-4 text-xs text-[var(--tk-muted)]">Цитата: {row.quote}</p>
+              </div>
+            ))}
+            <Button disabled={locked} onClick={() => {
+              void api("/api/raschety", {
+                method: "POST",
+                body: JSON.stringify({ action: "acceptVolumes", calculationId: calc.id, rows: volumeRows }),
+              }).then(() => refresh()).then(() => {
+                setVolumeRows([]);
+                toast.success("Ведомость объёмов сохранена в расчёте");
+              }).catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось сохранить ведомость"));
+            }}>Принять черновик</Button>
+          </div>
+        ) : null}
+      </section>
+
       <details className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4">
         <summary
           className="cursor-pointer text-sm font-medium"
@@ -1106,6 +1187,7 @@ export default function RaschetDetailPage() {
                 <TableHead>Наименование</TableHead>
                 <TableHead>Ед.</TableHead>
                 <TableHead className="text-right">Кол-во / потребность</TableHead>
+                <TableHead className="text-right">Разница</TableHead>
                 <TableHead className="text-right">Расценка</TableHead>
                 <TableHead className="text-right">Стоимость</TableHead>
               </TableRow>
@@ -1113,51 +1195,57 @@ export default function RaschetDetailPage() {
             <TableBody>
               {calc.positions.map((p) => (
                 <TableRow key={p.id}>
-                  <TableCell className="font-mono text-xs">{/^(?:res|cp|urp|draft|source|gs|pay)-/iu.test(p.code) || (p.code.length > 24 && !/[а-яё]/iu.test(p.code)) ? "" : p.code}</TableCell>
+                  <TableCell className="text-xs">{visiblePositionCode(p.code)}</TableCell>
                   <TableCell className="min-w-[12rem]">
                     {p.name}
                     {p.sourceSectionName ? <div className="text-xs text-[var(--tk-muted)]">{p.sourceSectionName}</div> : null}
                   </TableCell>
                   <TableCell>{p.unit}</TableCell>
-                  <TableCell className="text-right" title={quantityPresentation(p.quantity, p.unit).title}>
+                  <TableCell className="text-right" title={quantityPresentation(splitSignedQuantity(p.quantity).quantity, p.unit).title}>
                     {locked ? (
-                      quantityPresentation(p.quantity, p.unit).text
+                      quantityPresentation(splitSignedQuantity(p.quantity).quantity, p.unit).text
                     ) : (
                       <Input
                         key={`qty-${p.id}:${p.quantity}`}
                         className="ml-auto w-28 text-right"
                         data-testid={`pos-qty-${p.id}`}
-                        defaultValue={quantityPresentation(p.quantity, p.unit).text}
-                        title={quantityPresentation(p.quantity, p.unit).title}
+                        defaultValue={quantityPresentation(splitSignedQuantity(p.quantity).quantity, p.unit).text}
+                        title={quantityPresentation(splitSignedQuantity(p.quantity).quantity, p.unit).title}
                         onBlur={(e) => {
+                          const shown = quantityPresentation(splitSignedQuantity(p.quantity).quantity, p.unit).text;
                           const parsed = parseDecimalRu(e.target.value);
-                          if (parsed == null) {
-                            e.target.value = quantityPresentation(p.quantity, p.unit).text;
+                          if (parsed == null || parsed < 0) {
+                            e.target.value = shown;
+                            if (parsed != null && parsed < 0) toast.error("Количество не может быть отрицательным. Возврат показывается в колонке «Разница».");
                             return;
                           }
-                          if (e.target.value.trim() === quantityPresentation(p.quantity, p.unit).text) return;
+                          if (e.target.value.trim() === shown) return;
+                          const quantity = p.quantity < 0 ? -Math.abs(parsed) : parsed;
                           updateCalculation(calc.id, {
                             positions: calc.positions.map((x) =>
-                              x.id === p.id ? { ...x, quantity: parsed } : x
+                              x.id === p.id ? { ...x, quantity } : x
                             ),
                           });
                         }}
                       />
                     )}
                   </TableCell>
+                  <TableCell className="text-right" data-testid={`pos-difference-${p.id}`}>
+                    {(() => { const difference = splitSignedQuantity(p.quantity).difference; return difference == null ? "—" : formatNumber(difference); })()}
+                  </TableCell>
                   <TableCell className="text-right">
                     {p.isWorkItem && calc.kind !== "customer_original" ? (
                       <span className="text-xs text-[var(--tk-muted)]">не применяется к объёму работы</span>
                     ) : locked ? (
-                      p.rateMissing ? "ставка не указана" : formatMoney(p.rate)
+                      p.rateMissing || !(p.rate > 0) ? "нет ставки" : formatMoney(p.rate)
                     ) : (
                       <Input
                         key={`rate-${p.id}:${p.rateMissing ? "missing" : p.rate}`}
                         className="ml-auto w-32 text-right"
                         data-testid={`pos-rate-${p.id}`}
-                        placeholder="ставка не указана"
+                        placeholder="нет ставки"
                         aria-label={`Ставка · ${p.name}`}
-                        defaultValue={p.rateMissing ? "" : String(p.rate)}
+                        defaultValue={p.rateMissing || !(p.rate > 0) ? "" : String(p.rate)}
                         onBlur={(e) => {
                           const raw = e.target.value.trim();
                           const parsed = raw === "" ? null : parseDecimalRu(raw);
@@ -1180,8 +1268,8 @@ export default function RaschetDetailPage() {
                   <TableCell className="text-right font-medium">
                     {p.isWorkItem && calc.kind !== "customer_original"
                       ? "—"
-                      : p.rateMissing
-                        ? "ставка не указана"
+                      : p.rateMissing || !(p.rate > 0)
+                        ? "нет ставки"
                         : formatMoney(positionLineSum(p, calc.scenarioFactor || 1))}
                   </TableCell>
                   {!locked ? (
@@ -1226,17 +1314,21 @@ export default function RaschetDetailPage() {
                 <TableHead>Материал</TableHead>
                 <TableHead>Ед.</TableHead>
                 <TableHead className="text-right">Потребность</TableHead>
+                <TableHead className="text-right">Разница</TableHead>
                 <TableHead className="text-right">Стоимость</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {materials.map((p) => (
                 <TableRow key={`mat-${p.id}`}>
-                  <TableCell className="font-mono text-xs">{p.code}</TableCell>
+                  <TableCell className="text-xs">{visiblePositionCode(p.code)}</TableCell>
                   <TableCell>{p.name}</TableCell>
                   <TableCell>{p.unit}</TableCell>
                   <TableCell className="text-right">
-                    {formatNumber(p.quantity)}
+                    {formatNumber(splitSignedQuantity(p.quantity).quantity)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {(() => { const difference = splitSignedQuantity(p.quantity).difference; return difference == null ? "—" : formatNumber(difference); })()}
                   </TableCell>
                   <TableCell className="text-right">
                     {formatMoney(
@@ -1259,20 +1351,20 @@ export default function RaschetDetailPage() {
             Север / экономика — подтверждаемые входы
           </h2>
           <p className="mt-1 text-sm text-[var(--tk-muted)]">
-            Вносите только подтверждённые расходы и указывайте источник суммы. Универсальный «северный коэффициент» не применяется. Прибыль — наценка XOR маржа.
+            Вносите только подтверждённые расходы и указывайте источник суммы. Универсальный северный коэффициент не применяется. Прибыль считается либо наценкой, либо маржой.
           </p>
           <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-[var(--tk-muted)]">
             <li>
-              Вахта / РК+СН / северные множители — из подтверждённых баз (ШР/ТС),
-              не универсальный коэффициент
+              Вахта, районный коэффициент и северная надбавка берутся из подтверждённых документов,
+              не как универсальный коэффициент
             </li>
             <li>
               Автобус: полная маш.-ч ставка уже с амортизацией/ГСМ/ФОТ/ТО — не
               добавлять водителя/ГСМ сверху; расход топлива в эталоне — л/час
             </li>
             <li>
-              НР как % от прямых (эталон 43%); прибыль = наценка на с/с с НР
-              (эталон 40%), не маржа выручки
+              Накладные расходы как процент от прямых затрат (эталон 43%); прибыль — наценка на себестоимость с накладными расходами
+              (эталон 40%), не доля от выручки
             </li>
             <li>
               Резерв отпуска ≠ общий резерв непредвиденных (последний — только
@@ -1284,6 +1376,8 @@ export default function RaschetDetailPage() {
             key={`${calc.id}:${calc.updatedAt}:${JSON.stringify(calc.northern ?? null)}`}
             calculationId={calc.id}
             value={calc.northern}
+            labor={calc.costSummary?.resourceSlices?.labor ?? 0}
+            scheduleParams={calc.resourceScheduleParams}
             onSaved={refresh}
           />
         </section>
@@ -1558,7 +1652,7 @@ export default function RaschetDetailPage() {
               : "нет данных"}
           </div>
           <div>
-            Δ итого:{" "}
+            Разница итого:{" "}
             {compare.totals.deltaTotal != null
               ? formatMoney(compare.totals.deltaTotal)
               : "нет данных"}
@@ -1616,7 +1710,7 @@ export default function RaschetDetailPage() {
                   const row = compare.rows[rowIndex];
                   return (
                     <li key={finding.rowId}>
-                      <span className="font-medium">{row?.code} · {row?.name}: </span>
+                      <span className="font-medium">{row ? visiblePositionCode(row.code) : finding.rowId} · {row?.name}: </span>
                       {finding.text}
                       <span className="mt-1 block text-xs text-[var(--tk-muted)]">
                         Основание: «{finding.sourceExcerpt}»
@@ -1642,13 +1736,13 @@ export default function RaschetDetailPage() {
                 <TableHead>Код</TableHead>
                 <TableHead>Статус</TableHead>
                 <TableHead>Причина</TableHead>
-                <TableHead className="text-right">Δ</TableHead>
+                <TableHead className="text-right">Разница</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {compare.rows.map((r, index) => (
                 <TableRow key={`compare-row-${index}`}>
-                  <TableCell className="font-mono text-xs">{r.code}</TableCell>
+                  <TableCell className="text-xs">{visiblePositionCode(r.code)}</TableCell>
                   <TableCell>{
                     r.status === "matched" ? "Совпадает" :
                       r.status === "diff" ? "Отклонение" :
@@ -1670,11 +1764,11 @@ export default function RaschetDetailPage() {
         <h2 className="font-[family-name:var(--font-display)] text-lg font-semibold">
           Из чего сложился расчёт
         </h2>
-        <p className="mt-1 max-w-4xl text-sm text-[var(--tk-ink-soft)]">
-          Здесь указаны исходные данные и правила расчёта. Объёмы, ставки, коэффициенты,
-          региональные условия и накладные отражаются в суммах выше. Пояснения к источникам
-          описывают происхождение данных, а технические отметки системы здесь не показываются.
-        </p>
+        <ul className="mt-3 space-y-1 text-sm">
+          <li>Что вошло: {calc.positions.length} строк</li>
+          <li>Сумма: {calc.costSummary?.priceExVat != null ? formatMoney(calc.costSummary.priceExVat) : "нет данных"}</li>
+          <li>Откуда: {calc.assumptions.find((item) => item.startsWith("Источники:")) ?? "смета заказчика и справочники компании"}</li>
+        </ul>
 
         {calc.assumptions.length > 0 && (
           <div className="mt-5">

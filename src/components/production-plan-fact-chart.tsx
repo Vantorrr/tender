@@ -67,6 +67,7 @@ export function ProductionPlanFactChart({
                 <g key={fraction}>
                   <line x1={left} x2={width - right} y1={y} y2={y} stroke="currentColor" className="text-stone-200" strokeWidth="1" />
                   <text x={left - 7} y={y + 4} textAnchor="end" className="fill-[var(--tk-muted)]" fontSize="10">{formatNumber(maxValue * fraction)}</text>
+                  {fraction === 1 ? <text x={8} y={top + 10} className="fill-[var(--tk-muted)]" fontSize="10">Объём, {unit || "ед."}</text> : null}
                 </g>
               );
             })}
@@ -83,6 +84,7 @@ export function ProductionPlanFactChart({
                   {(index % 5 === 0 || index === points.length - 1) ? (
                     <text x={x} y={height - 10} textAnchor="middle" className="fill-[var(--tk-muted)]" fontSize="10">{day}</text>
                   ) : null}
+                  {index === 0 ? <text x={left} y={height - 1} className="fill-[var(--tk-muted)]" fontSize="10">День</text> : null}
                 </g>
               );
             })}

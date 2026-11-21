@@ -284,7 +284,7 @@ describe("t25u shared dimensions (P1 #1)", () => {
     const wb = await loadXlsx(buf);
     const sheet = wb.getWorksheet("Клиентский ресурсный график")!;
     expect(sheet.getRow(12).getCell(1).value).toBe("№");
-    expect(sheet.getRow(12).getCell(26).value).toBe("Итого Z");
+    expect(sheet.getRow(12).getCell(26).value).toBe("Итого");
     expect(sheet.getRow(12).getCell(28).value).toBe(1);
     const rows: ExcelJS.Row[] = [];
     sheet.eachRow((row) => rows.push(row));
@@ -633,7 +633,7 @@ describe("t25u export PARTIAL + numerics (P1 #3 + evidence)", () => {
     const rsLabels: string[] = [];
     rs.eachRow((row) => rsLabels.push(String(row.getCell(1).value ?? "")));
     expect(rsLabels.some((l) => /Итого Z.*PARTIAL/i.test(l))).toBe(true);
-    expect(rsLabels.some((l) => /НР W.*PARTIAL/i.test(l))).toBe(true);
+    expect(rsLabels.some((l) => /Накладные расходы в итоге.*PARTIAL/i.test(l))).toBe(true);
     let totalStatus = "";
     res.eachRow((row) => {
       const a = String(row.getCell(1).value ?? "");
@@ -770,8 +770,8 @@ describe("t25u export PARTIAL + numerics (P1 #3 + evidence)", () => {
       return null;
     };
     expect(findVal(/Прямые V/)).toBe(V);
-    expect(findVal(/НР W/)).toBe(W);
-    expect(findVal(/С\/с с НР X|с НР X/)).toBe(X);
+    expect(findVal(/Накладные расходы в итоге/)).toBe(W);
+    expect(findVal(/^Себестоимость с накладными/)).toBe(X);
     expect(findVal(/Прибыль Y/)).toBe(Y);
     expect(findVal(/Итого Z/)).toBe(Z);
   });

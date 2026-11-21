@@ -26,6 +26,7 @@ import { useStore } from "@/lib/store";
 import type { CalcPosition, GprStageResource } from "@/lib/types";
 import { ProjectAiChat } from "@/components/project-ai-chat";
 import { userHasSection } from "@/lib/acl";
+import { inclusiveDays } from "@/lib/wave23";
 
 type MaterialsPreview = {
   file: File;
@@ -330,16 +331,81 @@ export default function GprDetailPage() {
         </div>
       ) : null}
 
-      <div className="mb-6" data-testid="gantt-track">
-        <PlanFactGantt
-          stages={schedule.stages}
-          entries={planFact?.entries}
-          dailyFacts={planFact?.dailyFacts}
-          planFactId={planFact?.id}
-          filterScope={schedule.id}
-          weekendDays={schedule.calendar?.weekendDays}
-          onShift={(id, d, resize) => shiftStage(id, d, resize)}
-        />
+      <div className="mb-6 grid items-start gap-4 xl:grid-cols-[minmax(18rem,26rem)_minmax(0,1fr)]" data-testid="gpr-project-screen">
+        <section className="rounded-xl border border-[var(--tk-line)] bg-white/90 p-3" data-testid="gpr-work-table">
+          <h2 className="mb-2 text-sm font-semibold">Виды работ</h2>
+          <div className="max-h-[70vh] overflow-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="text-[var(--tk-muted)]">
+                  <th className="py-1 pr-2">Название</th>
+                  <th className="py-1 pr-2">Начало</th>
+                  <th className="py-1 pr-2">Конец</th>
+                  <th className="py-1 pr-2">Дней</th>
+                  <th className="py-1">После</th>
+                </tr>
+              </thead>
+              <tbody>
+                {schedule.stages.map((stage) => (
+                  <tr key={stage.id} className="border-t border-[var(--tk-line)]">
+                    <td className="py-1 pr-2">{gprStageLabel(stage).text}</td>
+                    <td className="py-1 pr-2">{stage.start}</td>
+                    <td className="py-1 pr-2">{stage.end}</td>
+                    <td className="py-1 pr-2">{inclusiveDays(stage.start, stage.end)}</td>
+                    <td className="py-1">
+                      <select
+                        aria-label={`После какой работы: ${stage.name}`}
+                        className="max-w-28 rounded border bg-white px-1 py-0.5"
+                        value={stage.dependsOn ?? ""}
+                        onChange={(event) => {
+                          void api("/api/gpr", {
+                            method: "PATCH",
+                            body: JSON.stringify({ id: schedule.id, action: "setPredecessor", stageId: stage.id, dependsOn: event.target.value || null }),
+                          }).then(() => refresh()).catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось задать зависимость"));
+                        }}
+                      >
+                        <option value="">не задано</option>
+                        {schedule.stages.filter((item) => item.id !== stage.id).map((item) => (
+                          <option key={item.id} value={item.id}>{gprStageLabel(item).text}</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="py-1 text-right">
+                      <button type="button" className="underline" onClick={() => {
+                        void api("/api/gpr", { method: "PATCH", body: JSON.stringify({ id: schedule.id, action: "deleteStage", stageId: stage.id }) })
+                          .then(() => refresh())
+                          .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось удалить вид работ"));
+                      }}>Удалить</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <form className="mt-3 flex flex-wrap gap-2" onSubmit={(event) => {
+            event.preventDefault();
+            const form = event.currentTarget;
+            const name = new FormData(form).get("work");
+            if (typeof name !== "string" || !name.trim()) return;
+            const today = new Date().toISOString().slice(0, 10);
+            const stage = { id: `gs-${crypto.randomUUID()}`, name: name.trim(), start: today, end: today, sequence: schedule.stages.length + 1, crewSize: 0 };
+            void updateSchedule(schedule.id, { stages: [...schedule.stages, stage] }).then(() => { form.reset(); toast.success("Вид работ добавлен"); });
+          }}>
+            <Input name="work" aria-label="Новый вид работ" placeholder="Новый вид работ" className="h-8" />
+            <Button type="submit" size="sm">Добавить</Button>
+          </form>
+        </section>
+        <div data-testid="gantt-track">
+          <PlanFactGantt
+            stages={schedule.stages}
+            entries={planFact?.entries}
+            dailyFacts={planFact?.dailyFacts}
+            planFactId={planFact?.id}
+            filterScope={schedule.id}
+            weekendDays={schedule.calendar?.weekendDays}
+            onShift={(id, d, resize) => shiftStage(id, d, resize)}
+          />
+        </div>
       </div>
 
       <div
@@ -458,7 +524,7 @@ export default function GprDetailPage() {
         )}
         <p className="mt-2 text-xs text-[var(--tk-muted)]">
           Материалы/труд/техника — из позиций расчёта. Строка ресурсов этапа без
-          подтверждённой ставки не становится 0 ₽ в цене. НР/СП не дублируются в
+          подтверждённой ставки не становится 0 ₽ в цене. Накладные расходы и сметная прибыль не дублируются в
           прямых. После сдвига дат автобусные дни и сводка пересчитываются.
         </p>
       </div>
