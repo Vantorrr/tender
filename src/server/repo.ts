@@ -29,7 +29,7 @@ import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
 import { canonicalUploadPath, deleteUpload } from "@/server/uploads";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
 import { buildStagesFromEstimatePositions } from "@/lib/estimate-stages";
-import { dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, scheduleAfterPredecessor } from "@/lib/wave23";
+import { dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, scheduleAfterPredecessor, scheduleParamsWithNorthernDefaults } from "@/lib/wave23";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
 import {
@@ -663,6 +663,16 @@ export function createManualProcurement(
       tags: ["Создано вручную"],
       lifecycle: "procurement",
       createdAt: now,
+    });
+    data.risks.unshift({
+      id: `r-${crypto.randomUUID()}`,
+      orgId: actor.orgId,
+      procurementId: createdId,
+      title: `Риски — ${title.slice(0, 48)}`,
+      status: "v_rabote",
+      contractParsed: false,
+      remarks: [],
+      updatedAt: now,
     });
     audit(data, actorId, "create_manual", "procurement", createdId, "Создана вручную");
     return data;
@@ -2523,7 +2533,7 @@ export function sendProcurementToCalculation(
           ...(seedPositions.length ? ["seeded_from_customer_estimate"] : ["awaiting_estimate_rows"]),
         ],
         ...(seedPositions.length
-          ? { resourceScheduleParams: EXCEL_RESOURCE_SCHEDULE_DEFAULTS }
+          ? { resourceScheduleParams: scheduleParamsWithNorthernDefaults() }
           : {}),
       });
       p.calculationId = draftId;
@@ -2557,7 +2567,7 @@ export function sendProcurementToCalculation(
           "seeded_from_customer_estimate",
           "requires_manual_check",
         ];
-        linked.resourceScheduleParams ??= EXCEL_RESOURCE_SCHEDULE_DEFAULTS;
+        linked.resourceScheduleParams = scheduleParamsWithNorthernDefaults(linked.resourceScheduleParams);
       }
       linked.updatedAt = now;
       linked.changeLog = [

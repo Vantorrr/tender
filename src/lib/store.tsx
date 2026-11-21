@@ -131,7 +131,7 @@ interface StoreContextValue {
   confirmSmetaExchange: (id: string) => Promise<void>;
   importSmetaFile: (file: File, calcId?: string) => Promise<void>;
   runSyncJob: () => Promise<void>;
-  ensureChain: (procurementId: string) => Promise<void>;
+  ensureChain: (procurementId: string) => Promise<BootstrapResponse>;
   sendToCalculation: (procurementId: string) => Promise<CalculationSummary>;
   refreshAnalytics: (procurementId: string) => Promise<void>;
   analyzeProjectWithAI: (procurementId: string) => Promise<string | undefined>;
@@ -686,6 +686,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({ action: "ensureChain", id: procurementId }),
       });
       applyBoot(boot);
+      return boot;
     },
     [applyBoot]
   );

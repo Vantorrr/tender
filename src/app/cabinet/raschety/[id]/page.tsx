@@ -129,9 +129,9 @@ function NorthernCostEditor({
   const [items, setItems] = useState<NorthernInputs["confirmedItems"]>(
     value?.confirmedItems ?? []
   );
-  const [district, setDistrict] = useState(String(NORTH_DEFAULTS.districtCoefficient));
-  const [allowance, setAllowance] = useState(String(Math.round(NORTH_DEFAULTS.northernPayrollShare * 100)));
-  const [overhead, setOverhead] = useState(String(Math.round(NORTH_DEFAULTS.overheadRate * 100)));
+  const [district, setDistrict] = useState(String(scheduleParams?.districtCoefficient ?? NORTH_DEFAULTS.districtCoefficient));
+  const [allowance, setAllowance] = useState(String(Math.round((scheduleParams?.northernPayrollShare ?? NORTH_DEFAULTS.northernPayrollShare) * 100)));
+  const [overhead, setOverhead] = useState(String(Math.round((scheduleParams?.overheadRate ?? NORTH_DEFAULTS.overheadRate) * 100)));
   const [savedLine, setSavedLine] = useState("");
   const [saving, setSaving] = useState(false);
 

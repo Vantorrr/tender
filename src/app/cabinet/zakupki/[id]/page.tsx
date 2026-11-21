@@ -24,7 +24,7 @@ import { DocumentWebPreview } from "@/components/document-web-preview";
 import { cleanLabel } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney, formatNumber } from "@/lib/format";
 import { citationTopicLabel, readableCitations, regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
-import { citationHref } from "@/lib/wave23";
+import { citationHref, matchDirectorySuppliers } from "@/lib/wave23";
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_CHECKLIST } from "@/lib/ai-topics";
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
@@ -88,6 +88,23 @@ function keyAnalyticsCitations(citations: Citation[]) {
     .sort((a, b) => b.score - a.score || a.index - b.index)
     .slice(0, 6)
     .map(({ citation }) => citation);
+}
+
+function DirectoryNeedHints({
+  material,
+  suppliers,
+}: {
+  material: string;
+  suppliers: SupplierDirectoryEntry[];
+}) {
+  const matched = matchDirectorySuppliers(material, suppliers);
+  const search = `https://duckduckgo.com/?q=${encodeURIComponent(`${material} поставщик`)}`;
+  return (
+    <div className="mt-2 space-y-1 text-xs" data-testid="supply-directory-hints">
+      <p data-testid="directory-suppliers">Справочник: {matched.length ? matched.map((supplier) => supplier.name).join(", ") : "подходящих поставщиков нет"}</p>
+      <a className="underline" href={search} target="_blank" rel="noreferrer">Искать в открытых источниках</a>
+    </div>
+  );
 }
 
 function SupplierQuotesEditor({
@@ -2016,6 +2033,7 @@ export default function ZakupkaDetailPage() {
                       поставлено {s.qtyDelivered}
                     </div>
                     {s.source ? <div className="mt-1 text-xs text-[var(--tk-muted)]">Источник: {s.source === "gpr" ? "ГПР" : s.source === "estimate" ? `смета/ВОР${s.sourceFiles?.length ? ` · ${s.sourceFiles.join(", ")}` : ""}` : "вручную"}{s.quantityNeedsReview ? " · срок поставки требует подтверждения" : ""}</div> : null}
+                    <DirectoryNeedHints material={s.materialName} suppliers={suppliers} />
                     {s.workName || s.supplierName || s.supplierEmail ? (
                       <div className="mt-1 text-xs text-[var(--tk-muted)]">
                         {s.workName ? `Работа: ${s.workName}. ` : ""}
@@ -2273,9 +2291,28 @@ export default function ZakupkaDetailPage() {
                 </ul>
               </>
             ) : (
-              <p className="text-[var(--tk-muted)]">
-                Реестр рисков создайте через «Создать недостающие артефакты».
-              </p>
+              <div className="space-y-3">
+                <p className="text-[var(--tk-muted)]">
+                  Реестр для этой закупки ещё не создан. Разбор создаст его и пройдёт по чек-листу.
+                </p>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={async () => {
+                    try {
+                      const boot = await ensureChain(procurement.id);
+                      const created = boot.data.risks.find((item) => item.procurementId === procurement.id);
+                      if (!created) throw new Error("Реестр рисков не создан");
+                      const label = await parseRiskContract(created.id);
+                      toast.success(label);
+                    } catch (e) {
+                      toast.error(e instanceof Error ? e.message : "Ошибка разбора");
+                    }
+                  }}
+                >
+                  Разобрать договор
+                </Button>
+              </div>
             )}
           </div>
         </TabsContent>

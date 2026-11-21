@@ -243,6 +243,43 @@ describe("wave 2–3 server checks", () => {
     expect(pdf.length).toBeGreaterThan(1000);
   });
 
+  it("applies northern defaults when the calculation is formed", async () => {
+    const formed = createManualProcurement("u-ruk", { title: "Север при создании", region: "Ямал" });
+    expect(readAppData().risks.some((item) => item.procurementId === formed.id)).toBe(true);
+    const uploaded = await saveUpload("est-north", "smeta.xlsx", Buffer.from("estimate"));
+    mutateAppData((data) => {
+      const procurement = data.procurements.find((item) => item.id === formed.id)!;
+      data.documents.unshift({
+        id: "doc-north-labor",
+        orgId: procurement.orgId,
+        procurementId: formed.id,
+        title: "Смета",
+        fileName: "smeta.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: uploaded.storedPath,
+        estimatePositions: [{ id: "lab-1", code: "LAB-1", name: "Оплата труда", unit: "чел-ч", quantity: 10, rate: 1000 }],
+      });
+      data.directories.find((item) => item.type === "rascenki" && item.current)?.rows.unshift({ code: "LAB-1", work: "Оплата труда", unit: "чел-ч", rate: 1000 });
+      return data;
+    });
+    sendProcurementToCalculation("u-ruk", formed.id);
+    const draft = readAppData().calculations.find((item) => item.procurementId === formed.id && item.kind === "resource_draft")!;
+    expect(draft.resourceScheduleParams).toMatchObject({ districtCoefficient: 1.8, northernPayrollShare: 0.8, overheadRate: 0.43 });
+    recomputeCalculationCost("u-ruk", draft.id, { resourceScheduleParams: draft.resourceScheduleParams, useResourceScheduleEconomics: true });
+    const totaled = readAppData().calculations.find((item) => item.id === draft.id)!;
+    expect(totaled.costSummary?.northernAdjustments?.district).toBe(8000);
+    expect(totaled.costSummary?.northernAdjustments?.allowance).toBe(8000);
+    expect((totaled.costSummary?.priceExVat ?? 0)).toBeGreaterThan(20000);
+  });
+
   it("splits a unit out of an existing plan row on read and save", () => {
     const plan = readAppData().planFacts[0]!;
     mutateAppData((data) => {
@@ -329,6 +366,61 @@ describe("wave 2–3 server checks", () => {
     const saved = readAppData().calculations.find((item) => item.id === calculation.id)!;
     expect(saved.positions.some((position) => position.name === "Бурение скважин" && position.quantity === 716 && position.rate === 1400)).toBe(true);
     expect(saved.assumptions.some((line) => line.includes("Бурение скважин 716 м"))).toBe(true);
+  });
+
+  it("reads a volume sheet from the uploaded specification file", async () => {
+    const created = createManualProcurement("u-ruk", { title: "ТЗ файлом", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const calculation = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind !== "customer_original")!;
+    const spec = "Ведомость объёмов.\nБурение скважин 716 м по трассе.";
+    const stored = await saveUpload("tz-file", "Техническое задание.txt", Buffer.from(spec, "utf8"));
+    const JSZip = (await import("jszip")).default;
+    const zip = new JSZip();
+    zip.file("word/document.xml", `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Бурение скважин 716 м по трассе.</w:t></w:r></w:p></w:body></w:document>`);
+    const docx = await zip.generateAsync({ type: "nodebuffer" });
+    const { extractUploadedSpecText } = await import("@/server/volume-sheet");
+    expect(await extractUploadedSpecText("tz.docx", docx)).toContain("Бурение скважин 716 м");
+    const { PDFDocument, StandardFonts } = await import("pdf-lib");
+    const pdf = await PDFDocument.create();
+    const page = pdf.addPage();
+    page.drawText("Drilling 716 m", { x: 50, y: 700, size: 12, font: await pdf.embedFont(StandardFonts.Helvetica) });
+    expect(await extractUploadedSpecText("tz.pdf", Buffer.from(await pdf.save()))).toContain("Drilling 716 m");
+    mutateAppData((data) => {
+      data.documents.unshift({
+        id: "doc-tz-file",
+        orgId: calculation.orgId,
+        procurementId: created.id,
+        title: "Техническое задание",
+        fileName: "Техническое задание.txt",
+        fileType: "other",
+        category: "tz",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "Краткое описание без объёма.",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: stored.storedPath,
+      });
+      data.directories.find((item) => item.type === "rascenki" && item.current)?.rows.unshift({ code: "BUR", work: "Бурение скважин", unit: "м", rate: 1400 });
+      return data;
+    });
+    const { draftVolumeSheet, acceptVolumeDraft } = await import("@/server/volume-sheet");
+    const fromFile = await draftVolumeSheet("u-ruk", calculation.id, async (system, user) => {
+      expect(system).toMatch(/цитата/);
+      expect(user).toContain("Бурение скважин 716 м по трассе");
+      expect(user).not.toMatch(/^Краткое описание/);
+      return JSON.stringify({ rows: [{ work: "Бурение скважин", unit: "м", volume: 716, quote: "Бурение скважин 716 м по трассе" }] });
+    });
+    expect(fromFile.rows[0]).toMatchObject({ volume: 716, rate: 1400 });
+    const invented = await draftVolumeSheet("u-ruk", calculation.id, async () => JSON.stringify({
+      rows: [{ work: "Бурение скважин", unit: "м", volume: 1, quote: "Краткое описание без объёма" }],
+    }));
+    expect(invented.rows).toHaveLength(0);
+    acceptVolumeDraft("u-ruk", calculation.id, fromFile.rows);
+    const saved = readAppData().calculations.find((item) => item.id === calculation.id)!;
+    expect(saved.positions.some((position) => position.name === "Бурение скважин" && position.quantity === 716)).toBe(true);
   });
 
   it("reviews a contract with the model checklist and labels the local fallback", async () => {

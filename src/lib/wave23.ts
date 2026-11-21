@@ -1,4 +1,5 @@
 import type { Citation, GprStage } from "@/lib/types";
+import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS, type ResourceScheduleParams } from "@/lib/resource-schedule-model";
 
 export function rateIsMissing(rate: number | null | undefined): boolean {
   return rate == null || !Number.isFinite(rate) || rate <= 0;
@@ -162,6 +163,18 @@ export const NORTH_DEFAULTS = {
   overheadRate: 0.43,
 };
 
+/** Fill the brief's northern defaults when a calculation is formed and a field is still empty. */
+export function scheduleParamsWithNorthernDefaults(params?: ResourceScheduleParams): ResourceScheduleParams {
+  const base = params ?? EXCEL_RESOURCE_SCHEDULE_DEFAULTS;
+  return {
+    ...EXCEL_RESOURCE_SCHEDULE_DEFAULTS,
+    ...base,
+    districtCoefficient: base.districtCoefficient ?? NORTH_DEFAULTS.districtCoefficient,
+    northernPayrollShare: base.northernPayrollShare ?? NORTH_DEFAULTS.northernPayrollShare,
+    overheadRate: base.overheadRate ?? EXCEL_RESOURCE_SCHEDULE_DEFAULTS.overheadRate,
+  };
+}
+
 export function foldNorthernEconomics(input: {
   labor: number;
   materials: number;
@@ -229,7 +242,7 @@ export function matchDirectorySuppliers<T extends { name: string; materialKeywor
   suppliers: T[],
 ): T[] {
   const name = material.toLocaleLowerCase("ru-RU");
-  return suppliers.filter((supplier) => supplier.materialKeywords.some((keyword) => {
+  return suppliers.filter((supplier) => (supplier.materialKeywords ?? []).some((keyword) => {
     const needle = keyword.trim().toLocaleLowerCase("ru-RU");
     return needle.length > 1 && name.includes(needle);
   }));

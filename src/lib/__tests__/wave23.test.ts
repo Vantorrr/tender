@@ -19,6 +19,7 @@ import {
   groundedStatement,
   mergeQuantities,
   northernAdditionLines,
+  scheduleParamsWithNorthernDefaults,
   ocrFailureMessage,
   ocrPageLimitMessage,
   parseContractChecklist,
@@ -168,6 +169,8 @@ describe("wave 2–3 decisions", () => {
     expect(folded.overhead).toBeCloseTo(1118, 0);
     expect(folded.total).toBeCloseTo(3718, 0);
     expect(folded.total).toBeGreaterThan(1000 * 1.43);
+    expect(scheduleParamsWithNorthernDefaults().districtCoefficient).toBe(1.8);
+    expect(scheduleParamsWithNorthernDefaults({ personHourRate: 1, personnelShiftsPerDay: 1, hoursPerShift: 1, equipmentShiftsPerDay: 1, overheadRate: 0.2, profitMarkupOnCostWithOh: 0.1, districtCoefficient: 1.2 }).districtCoefficient).toBe(1.2);
     expect(migratePlanEntries([{ workName: "Бурение скважин, м", unit: "", plan: 10 }])).toEqual([
       { workName: "Бурение скважин", unit: "м", plan: 10 },
     ]);

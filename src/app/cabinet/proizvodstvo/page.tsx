@@ -130,7 +130,7 @@ function SupplierHints({
   const search = `https://duckduckgo.com/?q=${encodeURIComponent(`${material} поставщик`)}`;
   return (
     <div className="mt-2 space-y-1 text-xs" data-testid="supply-hints">
-      <p>Справочник: {matched.length ? matched.map((supplier) => supplier.name).join(", ") : "подходящих поставщиков нет"}</p>
+      <p data-testid="directory-suppliers">Справочник: {matched.length ? matched.map((supplier) => supplier.name).join(", ") : "подходящих поставщиков нет"}</p>
       <p>
         <a className="underline" href={search} target="_blank" rel="noreferrer">Искать в открытых источниках</a>
         {hints.map((hint) => (
