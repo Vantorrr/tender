@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { calculationArticleName, calculationBreakdownRows } from "@/lib/calculation-breakdown";
 import { linkedWorkRows } from "@/lib/gpr-linked-rows";
+import { entryDisplayFact } from "@/lib/plan-fact-agg";
 import { supplyNeedKey } from "@/lib/supply-need";
 import { SUMMARY_FRESH, SUMMARY_UNCHANGED, summaryRefreshNotice } from "@/lib/summary-notice";
 import { visibleProcurementSource } from "@/lib/display";
@@ -117,6 +118,17 @@ describe("wave 5 visible copy and breakdown", () => {
     expect(linkedWorkRows(shifted, ["a", "b"]).map((stage) => stage.start)).toEqual(["2026-12-03", "2026-12-06"]);
     expect(linkedWorkRows(shifted, ["b"]).map((stage) => stage.name)).toEqual(["Монтаж"]);
     expect(linkedWorkRows(shifted, null).map((stage) => stage.id)).toEqual(["a", "b"]);
+  });
+
+  it("keeps older daily quantity after a new fact is tied to the work", () => {
+    const entry = { id: "pfe-1", workName: "Монтаж", unit: "м", plan: 10, fact: 6 };
+    const daily = [
+      { id: "old", date: "2026-12-01", workName: "Монтаж", unit: "м", quantity: 5, photos: [], authorId: "u", at: "2026-12-01T00:00:00Z" },
+      { id: "new", date: "2026-12-02", workName: "Монтаж", unit: "м", quantity: 1, photos: [], authorId: "u", at: "2026-12-02T00:00:00Z", entryId: "pfe-1" },
+      { id: "hidden", date: "2026-12-03", workName: "Монтаж", unit: "м", quantity: 9, photos: [], authorId: "u", at: "2026-12-03T00:00:00Z", entryId: "pfe-old", archived: true },
+    ];
+    expect(entryDisplayFact(entry, daily)).toBe(6);
+    expect(entryDisplayFact({ ...entry, id: "pfe-2", fact: 0 }, daily)).toBe(5);
   });
 
   it("builds a stable need key from procurement fields", () => {

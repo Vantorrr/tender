@@ -70,14 +70,10 @@ export function entryDisplayFact(
 ): number {
   const list = activeDailyFacts(daily);
   const linked = e.id ? list.filter((fact) => fact.entryId === e.id) : [];
-  if (linked.length) {
-    return Math.round(linked.reduce((sum, fact) => sum + fact.quantity, 0) * 1000) / 1000;
-  }
   const legacy = list.filter((fact) => !fact.entryId && fact.workName === e.workName && fact.unit === e.unit);
-  if (legacy.length) {
-    return Math.round(sumDailyQty(legacy, { workName: e.workName, unit: e.unit }) * 1000) / 1000;
-  }
-  return e.fact;
+  if (!linked.length && !legacy.length) return e.fact;
+  const qty = [...linked, ...legacy].reduce((sum, fact) => sum + fact.quantity, 0);
+  return Math.round(qty * 1000) / 1000;
 }
 
 export function entryDisplayRemain(
