@@ -33,6 +33,7 @@ import type { Procurement } from "@/lib/types";
 import { useStore } from "@/lib/store";
 import { cn } from "@/lib/utils";
 import { plainUserMessage } from "@/lib/plain-user-message";
+import { sanitizeSyncDetail } from "@/lib/wave23";
 import { KonturSearchPanel } from "@/components/kontur-search-panel";
 import type { KonturSearchFilters } from "@/server/procurement-source";
 
@@ -231,7 +232,7 @@ export default function ZakupkiPage() {
         void api("/api/jobs", { method: "POST", body: JSON.stringify({ type: "procurement_sync", filters }) })
           .then(() => refresh())
           .then(() => toast.success("Поиск завершён, карточки обновлены"))
-          .catch((error: unknown) => toast.error(plainUserMessage(error instanceof Error ? error.message : "", "Поиск закупок не выполнен")))
+          .catch((error: unknown) => toast.error(plainUserMessage(error instanceof Error ? error.message : "", "Поиск закупок сейчас недоступен")))
           .finally(() => setSyncing(false));
       }} />
 
@@ -259,7 +260,7 @@ export default function ZakupkiPage() {
           <AlertTriangle className="h-4 w-4" />
           <AlertTitle>Синхронизация не удалась</AlertTitle>
           <AlertDescription>
-            Синхронизация не удалась: {sourceHealth.detail || "источник не ответил"}, последняя успешная: {sourceHealth.lastSuccessAt ? formatDate(sourceHealth.lastSuccessAt) : "ещё не было"}
+            Синхронизация не удалась: {sanitizeSyncDetail(sourceHealth.detail || "источник не ответил")}, последняя успешная: {sourceHealth.lastSuccessAt ? formatDate(sourceHealth.lastSuccessAt) : "ещё не было"}
           </AlertDescription>
         </Alert>
       ) : null}

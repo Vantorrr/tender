@@ -402,8 +402,10 @@ export interface CalcPosition {
   sourceStageName?: string;
   /** Estimate work line used as a task volume, not a priced resource. */
   isWorkItem?: boolean;
-  /** Directory version used for an exact, unit-compatible rate match. */
+  /** Directory version used for a name-and-unit rate match. */
   rateSourceDirectoryId?: string;
+  /** Where the current rate came from. A schedule fallback is not a directory row. */
+  rateBasis?: "directory" | "person_hour";
   code: string;
   name: string;
   unit: string;

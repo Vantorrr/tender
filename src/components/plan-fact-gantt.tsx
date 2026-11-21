@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type Pointe
 import { DateInputRu } from "@/components/date-input-ru";
 import { Button } from "@/components/ui/button";
 import { diffDays } from "@/lib/cost-engine";
+import { visibleDayBounds } from "@/lib/gantt-range";
 import { formatDate, formatDateRangeShort, formatMoney, formatNumber } from "@/lib/format";
 import { stageResourceSummary } from "@/lib/gpr-stage-cost";
 import { gprStageLabel } from "@/lib/gpr-stage-label";
@@ -76,11 +77,15 @@ function visibleRangeForViewport(
   days: number,
   dayWidth: number
 ): [string, string] | null {
-  if (!viewport || !start || !days) return null;
-  const first = Math.max(0, Math.min(days - 1, Math.floor(viewport.scrollLeft / dayWidth)));
-  const visibleDays = Math.max(1, Math.floor((viewport.clientWidth - LABEL_WIDTH) / dayWidth));
-  const last = Math.min(days - 1, first + visibleDays - 1);
-  return [addDays(start, first), addDays(start, last)];
+  if (!viewport || !start || !days || dayWidth <= 0) return null;
+  const bounds = visibleDayBounds(
+    viewport.scrollLeft,
+    Math.max(0, viewport.clientWidth - LABEL_WIDTH),
+    dayWidth,
+    days,
+  );
+  if (!bounds) return null;
+  return [addDays(start, bounds.first), addDays(start, bounds.last)];
 }
 
 function clamp01(n: number) {
@@ -399,8 +404,13 @@ export function PlanFactGantt({
           <Button size="sm" variant="outline" className="h-8" onClick={fitSchedule} disabled={!sorted.length}>
             Вписать график
           </Button>
+          {minStart && maxEnd ? (
+            <span className="rounded-md bg-[var(--tk-brand)] px-2.5 py-1.5 text-xs font-semibold text-white tabular-nums" data-testid="gantt-assigned-dates">
+              Назначено: {formatDateRangeShort(minStart, maxEnd)}
+            </span>
+          ) : null}
           {visibleDateRange ? (
-            <span className="rounded-md bg-[var(--tk-brand)] px-2.5 py-1.5 text-xs font-semibold text-white tabular-nums" data-testid="gantt-visible-dates">
+            <span className="rounded-md border border-[var(--tk-line)] bg-white px-2.5 py-1.5 text-xs font-medium text-[var(--tk-ink)] tabular-nums" data-testid="gantt-visible-dates">
               На экране: {formatDateRangeShort(visibleDateRange[0], visibleDateRange[1])}
             </span>
           ) : null}

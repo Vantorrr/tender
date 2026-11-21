@@ -42,6 +42,13 @@ export function needByPhrase(iso: string | null | undefined): string {
   return `к ${formatDate(raw)}`;
 }
 
+/** True when the typed quantity is the same rounded value already on screen. */
+export function sameRoundedQuantity(stored: number, draft: string, digits = 4): boolean {
+  const parsed = Number(String(draft).trim().replace(",", "."));
+  if (!Number.isFinite(parsed) || !Number.isFinite(stored)) return false;
+  return roundQuantity(parsed, digits) === roundQuantity(stored, digits);
+}
+
 /** A supply with no date is not late. Comparison uses the stored calendar day. */
 export function supplyIsOverdue(needBy: string | null | undefined, asOf: string, remaining: number): boolean {
   const raw = parsedNeedBy(needBy);

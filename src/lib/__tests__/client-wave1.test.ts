@@ -126,7 +126,8 @@ describe("client wave 1 wording and money", () => {
     expect(rated.map((item) => item.days)).toEqual([2, 5]);
     expect(rated.every((item) => item.rate === 25)).toBe(true);
     const resized = patchMergedResources(members, { name: "Возврат: Вода" }, { quantity: 100 });
-    expect(resized.reduce((sum, item) => sum + item.quantity, 0)).toBeCloseTo(-100, 5);
+    expect(resized.every((item) => item.name.startsWith("Возврат:"))).toBe(true);
+    expect(resized.reduce((sum, item) => sum + item.quantity, 0)).toBeCloseTo(100, 5);
   });
 
   it("removes a calculation row only after an explicit confirm", () => {

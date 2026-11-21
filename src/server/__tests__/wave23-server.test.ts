@@ -236,7 +236,7 @@ describe("wave 2–3 server checks", () => {
     const shifted = readAppData().schedules.find((item) => item.id === schedule.id)!.stages.find((stage) => stage.id === second.id)!;
     expect(shifted.dependsOn).toBe(first.id);
     expect(shifted.start > first.end).toBe(true);
-    expect(() => setStagePredecessor("u-ruk", schedule.id, first.id, second.id)).toThrow(/не может начинаться после самой себя/);
+    expect(() => setStagePredecessor("u-ruk", schedule.id, first.id, second.id)).toThrow(/Нельзя ставить работу после самой себя/);
   });
 
   it("saves a customer answer and does not send mail without SMTP", async () => {

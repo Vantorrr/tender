@@ -242,9 +242,9 @@ export function HierarchicalEstimatePanel({
           className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
           data-testid="budget-card-total-z"
         >
-          <p className="text-xs text-[var(--tk-muted)]">Итого</p>
+          <p className="text-xs text-[var(--tk-muted)]">Итого проекта</p>
           <p className="mt-1 font-[family-name:var(--font-display)] text-2xl">
-            {totalZ != null ? formatMoney(totalZ) : "нет данных"}
+            {incomplete && (totalZ == null || totalZ === 0) ? "итог неполный" : totalZ != null ? formatMoney(totalZ) : "нет данных"}
           </p>
           {incompleteLabel ? (
             <p className="mt-1 text-xs text-amber-800" data-testid="budget-incomplete">
@@ -260,9 +260,9 @@ export function HierarchicalEstimatePanel({
           className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
           data-testid="budget-card-labor"
         >
-          <p className="text-xs text-[var(--tk-muted)]">По видам работ</p>
+          <p className="text-xs text-[var(--tk-muted)]">Бюджет работ</p>
           <p className="mt-1 font-[family-name:var(--font-display)] text-2xl">
-            {byWorkTypes != null ? formatMoney(byWorkTypes) : "нет данных"}
+            {incomplete && (byWorkTypes == null || byWorkTypes === 0) ? "нет ставки" : byWorkTypes != null ? formatMoney(byWorkTypes) : "нет данных"}
           </p>
           <p className="mt-1 text-[11px] text-[var(--tk-muted)]">
             Люди
@@ -278,9 +278,9 @@ export function HierarchicalEstimatePanel({
           className="rounded-2xl border border-[var(--tk-line)] bg-white/90 p-4"
           data-testid="budget-card-equipment"
         >
-          <p className="text-xs text-[var(--tk-muted)]">Техника</p>
+          <p className="text-xs text-[var(--tk-muted)]">Бюджет техники</p>
           <p className="mt-1 font-[family-name:var(--font-display)] text-2xl">
-            {equipmentShown != null ? formatMoney(equipmentShown) : "нет данных"}
+            {incomplete && (equipmentShown == null || equipmentShown === 0) ? "нет ставки" : equipmentShown != null ? formatMoney(equipmentShown) : "нет данных"}
           </p>
           {cards.other != null && cards.other > 0 ? (
             <p className="mt-1 text-[11px] text-[var(--tk-muted)]" data-testid="budget-card-other">
@@ -522,7 +522,7 @@ export function HierarchicalEstimatePanel({
             setOpen({});
           }}
         >
-          {expandAll ? "Свернуть всё" : "Развернуть всё"}
+          {expandAll ? "Свернуть все" : "Развернуть все"}
         </Button>
       </div>
 

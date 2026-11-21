@@ -143,14 +143,15 @@ export default function DocumentDetailPage() {
             <Button
               variant="outline"
               onClick={async () => {
-                await reanalyzeDocument(doc.id, { useLlm: false });
-                toast.success("Локальный разбор обновлён (без платной модели)");
+                const before = doc.analyticalNote;
+                const next = await reanalyzeDocument(doc.id, { useLlm: false });
+                toast.success(next.trim() === before.trim() ? "Новых данных нет — записка уже актуальна" : "Сводка обновлена");
               }}
             >
-              Переразобрать
+              Обновить сводку
             </Button>
-            <Button variant="outline" onClick={() => setAskModel(true)}>
-              Записка моделью
+            <Button onClick={() => setAskModel(true)}>
+              Полный анализ ИИ
             </Button>
             <Button
               onClick={() => {

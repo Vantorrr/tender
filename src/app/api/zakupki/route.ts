@@ -101,13 +101,13 @@ export async function POST(req: Request) {
     if (body.action === "refreshKonturDetails") {
       if (!body.id) return json({ error: "Не указана закупка" }, 400);
       if (!(getProcurementSource() instanceof KonturProcurementSource)) {
-        return json({ error: "Источник Контур.Закупки не активен" }, 409);
+        return json({ error: "Поиск закупок сейчас недоступен" }, 409);
       }
       const procurement = getBootstrap(user).data.procurements.find(
         (item) => item.id === body.id && item.orgId === user.orgId
       );
       if (!procurement || procurement.source !== "Контур.Закупки API" || !procurement.externalId) {
-        return json({ error: "Для этой карточки нет подтверждённого ID закупки Контура" }, 404);
+        return json({ error: "Для этой карточки нет внешнего номера закупки" }, 404);
       }
       const result = await (getProcurementSource() as KonturProcurementSource).purchaseDetails(procurement.externalId);
       if (!result.ok || !result.purchase) return json({ error: result.detail }, result.status === "not_configured" ? 503 : 502);
@@ -194,8 +194,11 @@ export async function POST(req: Request) {
       return json(getBootstrap(user));
     }
     if (body.action === "refreshAnalytics") {
-      refreshProcurementAnalytics(user.id, body.id!);
-      return json(getBootstrap(user));
+      const refreshed = refreshProcurementAnalytics(user.id, body.id!);
+      return json({
+        ...getBootstrap(user),
+        analyticsNotice: refreshed.unchanged ? "Новых данных нет — записка уже актуальна" : undefined,
+      });
     }
     if (body.action === "analyzeProject") {
       const result = await analyzeProcurementPackageWithAI(user.id, body.id!);

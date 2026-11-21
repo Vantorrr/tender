@@ -35,9 +35,10 @@ export async function PATCH(req: Request) {
       linkedResources?: { stages: GprStage[] };
     };
     if (!body.id) return json({ error: "Не указан id" }, 400);
+    let directoryRefresh: { matched: number; changed: number } | undefined;
     try {
       if (body.recalcScenario) {
-        recalcCalculation(user.id, body.id, body.recalcScenario);
+        directoryRefresh = recalcCalculation(user.id, body.id, body.recalcScenario);
       } else if (body.recomputeCost) {
         recomputeCalculationCost(user.id, body.id, body.costPatch);
       } else if (body.addFromDirectory) {
@@ -54,7 +55,7 @@ export async function PATCH(req: Request) {
       if (message.includes("Недостаточно прав") || message.startsWith("Нет доступа") || message.includes("Удалять закупку")) throw e;
       return json({ error: message }, 400);
     }
-    return json(getBootstrap(user));
+    return json({ ...getBootstrap(user), ...(directoryRefresh ? { directoryRefresh } : {}) });
   });
 }
 

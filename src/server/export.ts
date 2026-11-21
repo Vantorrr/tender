@@ -9,7 +9,7 @@ import {
   roundMoney,
   sourceEstimateTotals,
 } from "@/lib/calc-math";
-import { formatNumber, formatQuantity, plainPositionName, positionHeading, splitSignedQuantity, visiblePositionCode } from "@/lib/format";
+import { formatNumber, formatQuantity, plainPositionName, positionHeading, roundQuantity, splitSignedQuantity, visiblePositionCode } from "@/lib/format";
 import { humanizeIssues } from "@/lib/issue-text";
 import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
 import {
@@ -136,8 +136,8 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
         code: visiblePositionCode(p.code),
         name: `${plainPositionName(p.name)} (объём работы; ставка ресурса не применяется)`,
         unit: p.unit,
-        qty: Math.abs(p.quantity),
-        difference: p.quantity < 0 ? p.quantity : null,
+        qty: roundQuantity(Math.abs(p.quantity), 2),
+        difference: p.quantity < 0 ? roundQuantity(p.quantity, 2) : null,
         rate: null,
         sum: null,
       });
@@ -148,8 +148,8 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
       code: visiblePositionCode(p.code),
       name: plainPositionName(p.name),
       unit: p.unit,
-      qty: Math.abs(p.quantity),
-      difference: p.quantity < 0 ? p.quantity : null,
+      qty: roundQuantity(Math.abs(p.quantity), 2),
+      difference: p.quantity < 0 ? roundQuantity(p.quantity, 2) : null,
       rate: p.rateMissing ? null : p.rate,
       sum,
     });
@@ -258,14 +258,14 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
         if (dimensions.incomplete.length) hasPartialResource = true;
         resources.addRow({
           stage: stage.name,
-          kind: resource.kind,
+          kind: { labor: "Люди", equipment: "Техника", material: "Материалы", bus: "Техника", other: "Прочее" }[resource.kind] ?? "Прочее",
           name: resource.name,
-          quantity: dimensions.sourceQty,
+          quantity: roundQuantity(Math.abs(dimensions.sourceQty), 2),
           unit: resource.unit ?? "",
           hoursPerShift: dimensions.hoursPerShift,
           shiftsPerDay: dimensions.shiftsPerDay,
           days: dimensions.days,
-          hours: dimensions.hours,
+          hours: dimensions.hours == null ? null : roundQuantity(Math.abs(dimensions.hours), 2),
           rate: dimensions.rate,
           amount: dimensions.amount,
           status: dimensions.incomplete.length ? "Неполно" : "Подтверждено",
@@ -389,7 +389,7 @@ export async function buildCalculationPdf(calcId: string): Promise<Buffer> {
     }
     if (p.rateMissing || !(p.rate > 0)) {
       drawWrapped(
-        `${base} · ставка не заполнена · сумма не подтверждена`,
+        `${base} · нет ставки · сумма не подтверждена`,
         9,
         false,
         accent

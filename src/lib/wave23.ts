@@ -22,7 +22,7 @@ export const NOTE_BLOCK_TITLES = [
   "Паспорт закупки и тайминг",
   "Условия участия и требования к заявке",
   "Сводная ведомость объёмов",
-  "Экономика",
+  "Расчёт себестоимости и экономика",
   "Риски и подводные камни",
 ] as const;
 
@@ -33,13 +33,41 @@ export function composeAnalyticalNote(input: {
 }): string {
   const score = Math.max(0, Math.min(10, Math.round(input.verdict)));
   return [
-    `Вердикт: ${score}/10. ${input.verdictText.trim()}`,
+    `Вердикт ИИ: ${score} / 10 — ${input.verdictText.trim()}`,
     ...NOTE_BLOCK_TITLES.map((title, index) => `${index + 1}. ${title}\n${input.blocks[index].trim() || "нет данных"}`),
   ].join("\n\n");
 }
 
+export const COMPANY_RATE_RULE =
+  "Ставки людей берутся по должности, техники — по модели, материалов — по наименованию и единице. Для строк в чел.-ч без ставки в справочнике берётся ставка персонала из параметров расчёта. Если совпадения нет, у строки остаётся «нет ставки»";
+
+const STALE_RATE_RULE = /ставки взяты только из точного совпадения кода и единицы в справочниках|ставка черновика берётся только из точного совпадения справочника/giu;
+
+/** Saved drafts keep the old code-match sentence until the next import. Show the current rule. */
+export function refreshRateAssumption(text: string): string {
+  return text.replace(STALE_RATE_RULE, COMPANY_RATE_RULE);
+}
+
+export function analyticalNoteBlocks(text: string): Array<{ title: string; body: string }> {
+  return NOTE_BLOCK_TITLES.map((title, index) => {
+    const heading = `${index + 1}. ${title}`;
+    const start = text.indexOf(heading);
+    if (start < 0) return { title, body: "" };
+    const from = start + heading.length;
+    let end = text.length;
+    for (let next = index + 1; next < NOTE_BLOCK_TITLES.length; next += 1) {
+      const at = text.indexOf(`${next + 1}. ${NOTE_BLOCK_TITLES[next]}`, from);
+      if (at >= 0) {
+        end = at;
+        break;
+      }
+    }
+    return { title, body: text.slice(from, end).trim() };
+  });
+}
+
 export function analyticalNoteStructure(text: string): { verdict: number | null; blocks: string[] } {
-  const match = text.match(/Вердикт:\s*(\d{1,2})\s*\/\s*10/u);
+  const match = text.match(/Вердикт(?:\s+ИИ)?:\s*(\d{1,2})\s*\/\s*10/u);
   const score = match ? Number(match[1]) : null;
   return {
     verdict: score != null && score >= 0 && score <= 10 ? score : null,
@@ -248,6 +276,28 @@ export function matchDirectorySuppliers<T extends { name: string; materialKeywor
   }));
 }
 
+/** Plain note for a labour row: northern coefficients and overhead sit in the total, not in the line sum. */
+export function labourLineEconomicsNote(input: {
+  bucket: "labor" | "materials" | "equipment" | "other";
+  rate?: number | null;
+  rateMissing?: boolean;
+  overheadRate?: number | null;
+  districtCoefficient?: number | null;
+  northernApplicable?: boolean | null;
+}): string | null {
+  if (input.bucket !== "labor" || input.rateMissing || !(Number(input.rate) > 0)) return null;
+  const overhead = input.overheadRate ?? 0;
+  const northern = northernEconomicsApplied({
+    applicable: input.northernApplicable,
+    districtCoefficient: input.districtCoefficient,
+  });
+  if (!northern && !(overhead > 0)) return null;
+  const overheadText = overhead > 0 ? `накладные ${Math.round(overhead * 100)}%` : "";
+  if (northern && overheadText) return `В итог по этой строке входят районный коэффициент, северная надбавка и ${overheadText}`;
+  if (northern) return "В итог по этой строке входят районный коэффициент и северная надбавка";
+  return `В итог по этой строке входят ${overheadText}`;
+}
+
 /** True when the district coefficient is actually folded into the total. */
 export function northernEconomicsApplied(input: {
   applicable?: boolean | null;
@@ -263,10 +313,10 @@ export function northernStatusText(input: {
   districtCoefficient?: number | null;
   northernPayrollShare?: number | null;
 }): string {
-  if (!northernEconomicsApplied(input)) return "Северные затраты не применяются.";
+  if (!northernEconomicsApplied(input)) return "Северные затраты отключены";
   const coefficient = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(input.districtCoefficient as number);
   const share = Math.round((input.northernPayrollShare ?? NORTH_DEFAULTS.northernPayrollShare) * 100);
-  return `Применены северные условия: районный коэффициент ${coefficient} и надбавка ${share}% фонда оплаты труда.`;
+  return `Применены северные условия: районный коэффициент ${coefficient} и надбавка ${share}% фонда оплаты труда`;
 }
 
 export function northernAdditionLines(

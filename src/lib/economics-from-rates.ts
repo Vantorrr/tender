@@ -31,6 +31,17 @@ export type EconomicsResult = {
   }>;
 };
 
+/** Rate of the work itself. A resource that only sits under that work is not the work. */
+export function customerWorkRate(workName: string, positions: CalcPosition[]): number | null {
+  const key = (value: string) => value.trim().toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+  const wanted = key(workName);
+  const named = positions.filter((position) => key(position.name) === wanted);
+  const work = named.find((position) => position.isWorkItem)
+    ?? named.find((position) => !position.resourceKind && key(position.sourceWorkName ?? position.name) === wanted);
+  if (!work || work.rateMissing || !(work.rate > 0)) return null;
+  return work.rate;
+}
+
 function rateForWork(
   workName: string,
   unit: string,

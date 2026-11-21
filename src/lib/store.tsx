@@ -90,7 +90,7 @@ interface StoreContextValue {
     }
   ) => Promise<void>;
   updateDocument: (id: string, patch: Partial<DocumentItem>) => Promise<void>;
-  reanalyzeDocument: (id: string, opts?: { useLlm?: boolean }) => Promise<void>;
+  reanalyzeDocument: (id: string, opts?: { useLlm?: boolean }) => Promise<string>;
   createDocumentUpload: (input: {
     procurementId: string;
     title?: string;
@@ -133,7 +133,7 @@ interface StoreContextValue {
   runSyncJob: () => Promise<void>;
   ensureChain: (procurementId: string) => Promise<BootstrapResponse>;
   sendToCalculation: (procurementId: string) => Promise<CalculationSummary>;
-  refreshAnalytics: (procurementId: string) => Promise<void>;
+  refreshAnalytics: (procurementId: string) => Promise<string | undefined>;
   analyzeProjectWithAI: (procurementId: string) => Promise<string | undefined>;
   markAllNotificationsRead: () => Promise<void>;
   setOrganizationActive: (orgId: string, active: boolean) => Promise<void>;
@@ -471,6 +471,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }),
       });
       applyBoot(boot);
+      return boot.data.documents.find((document) => document.id === id)?.analyticalNote ?? "";
     },
     [applyBoot]
   );
@@ -708,7 +709,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const refreshAnalytics = useCallback(
     async (procurementId: string) => {
-      const boot = await api<BootstrapResponse>("/api/zakupki", {
+      const boot = await api<BootstrapResponse & { analyticsNotice?: string }>("/api/zakupki", {
         method: "POST",
         body: JSON.stringify({
           action: "refreshAnalytics",
@@ -716,6 +717,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }),
       });
       applyBoot(boot);
+      return boot.analyticsNotice;
     },
     [applyBoot]
   );

@@ -28,7 +28,7 @@ import {
 import { api, downloadUrl } from "@/lib/api";
 import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-panel";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
-import { NORTH_DEFAULTS, northernAdditionLines, northernEconomicsApplied, northernStatusText } from "@/lib/wave23";
+import { labourLineEconomicsNote, NORTH_DEFAULTS, northernAdditionLines, northernEconomicsApplied, northernStatusText, refreshRateAssumption } from "@/lib/wave23";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engine";
 import { parseDecimalRu } from "@/lib/decimal-ru";
@@ -721,8 +721,14 @@ export default function RaschetDetailPage() {
                   variant="secondary"
                   onClick={async () => {
                     try {
-                      await recalcCalculation(calc.id, calc.scenario);
-                      toast.success("Ставки обновлены из текущих справочников");
+                      const result = await api<{ directoryRefresh?: { matched: number } }>("/api/raschety", {
+                        method: "PATCH",
+                        body: JSON.stringify({ id: calc.id, recalcScenario: calc.scenario }),
+                      });
+                      await refresh();
+                      toast.success((result.directoryRefresh?.matched ?? 0) > 0
+                        ? "Ставки обновлены из текущих справочников"
+                        : "В справочниках нет ставок для этих позиций — в строках указано „нет ставки“");
                     } catch (e) {
                       toast.error(
                         e instanceof Error ? e.message : "Ошибка пересчёта"
@@ -976,7 +982,7 @@ export default function RaschetDetailPage() {
         <section className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950" role="status" data-testid="estimate-seeded-guidance">
           <h2 className="font-semibold">Черновик сформирован из распознанной сметы</h2>
           <p className="mt-1">
-            Исходные количества и строки заказчика перенесены для проверки. Исходная смета остаётся неизменной; её цены в наш черновик не копировались. Ставки сопоставлены только по точному коду и совместимой единице.
+            Исходные количества и строки заказчика перенесены для проверки. Исходная смета остаётся неизменной; её цены в наш черновик не копировались. Ставки берутся из справочников компании: люди — по должности, техника — по модели, материалы — по названию и единице. Если должности нет, для людей ставится ставка из параметров расчёта. Строка без совпадения остаётся «нет ставки».
           </p>
           {missingRateCount > 0 ? (
             <p className="mt-1 font-medium">
@@ -1063,7 +1069,9 @@ export default function RaschetDetailPage() {
                   : "Итого черновика"}
           </div>
           <div className="font-[family-name:var(--font-display)] text-xl">
-            {noPricedPositions ? "Не рассчитано" : formatMoney(total)}
+            {missingRateCount > 0
+              ? `Итог неполный: нет ставок по ${missingRateCount} позициям`
+              : noPricedPositions ? "Не рассчитано" : formatMoney(total)}
             {(calc.costSummary?.totalsIncomplete ||
               draftSlices?.partial ||
               (calc.costSummary?.incomplete?.length ?? 0) > 0) &&
@@ -1183,13 +1191,16 @@ export default function RaschetDetailPage() {
         {volumeMessage ? <p className="mt-3 text-sm" data-testid="volume-sheet-message">{volumeMessage}</p> : null}
         {volumeRows.length ? (
           <div className="mt-3 space-y-2">
+            <div className="hidden gap-2 px-3 text-xs font-medium text-[var(--tk-muted)] md:grid md:grid-cols-4">
+              <span>Вид работ</span><span>Ед.</span><span>Объём</span><span>Цитата</span>
+            </div>
             {volumeRows.map((row, index) => (
               <div key={`${row.quote}-${index}`} className="grid gap-2 rounded-lg border border-[var(--tk-line)] p-3 md:grid-cols-4">
                 <Input aria-label={`Вид работ ${index + 1}`} value={row.work} onChange={(event) => setVolumeRows((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, work: event.target.value } : item))} />
                 <Input aria-label={`Единица ${index + 1}`} value={row.unit} onChange={(event) => setVolumeRows((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, unit: event.target.value } : item))} />
                 <Input aria-label={`Объём ${index + 1}`} value={String(row.volume)} onChange={(event) => setVolumeRows((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, volume: Number(event.target.value.replace(",", ".")) } : item))} />
-                <span className="self-center text-sm">{row.rate != null && row.rate > 0 ? formatMoney(row.rate) : "нет ставки"}</span>
-                <p className="md:col-span-4 text-xs text-[var(--tk-muted)]">Цитата: {row.quote}</p>
+                <Input aria-label={`Цитата ${index + 1}`} value={row.quote} onChange={(event) => setVolumeRows((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, quote: event.target.value } : item))} />
+                <span className="self-center text-sm md:col-span-4">{row.rate != null && row.rate > 0 ? formatMoney(row.rate) : "нет ставки"}</span>
               </div>
             ))}
             <Button disabled={locked} onClick={() => {
@@ -1249,6 +1260,17 @@ export default function RaschetDetailPage() {
                   <TableCell className="min-w-[12rem]">
                     {plainPositionName(p.name)}
                     {p.sourceSectionName ? <div className="text-xs text-[var(--tk-muted)]">{p.sourceSectionName}</div> : null}
+                    {(() => {
+                      const note = labourLineEconomicsNote({
+                        bucket: classifyDirectCostBucket(p),
+                        rate: p.rate,
+                        rateMissing: p.rateMissing,
+                        overheadRate: calc.resourceScheduleParams?.overheadRate,
+                        districtCoefficient: calc.resourceScheduleParams?.districtCoefficient,
+                        northernApplicable: calc.northern?.applicable,
+                      });
+                      return note ? <div className="text-xs text-[var(--tk-muted)]" data-testid={`pos-economics-${p.id}`}>{note}</div> : null;
+                    })()}
                   </TableCell>
                   <TableCell>{p.unit}</TableCell>
                   <TableCell className="text-right" title={quantityPresentation(splitSignedQuantity(p.quantity).quantity, p.unit).title}>
@@ -1401,7 +1423,9 @@ export default function RaschetDetailPage() {
             Север / экономика — подтверждаемые входы
           </h2>
           <p className="mt-1 text-sm text-[var(--tk-muted)]">
-            Вносите только подтверждённые расходы и указывайте источник суммы. {northernSummary} Прибыль считается наценкой либо маржой.
+            Вносите только подтверждённые расходы и указывайте источник суммы. {northernSummary}
+            {calc.positions.some((position) => position.rateBasis === "person_hour") ? ` Ставка персонала ${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(calc.resourceScheduleParams?.personHourRate ?? 1400).replace(/\u00a0/g, " ")} ₽/чел.-ч из параметров расчёта.` : ""}
+            {northernApplied && calc.costSummary?.northernAdjustments && (calc.costSummary.northernAdjustments.district > 0 || calc.costSummary.northernAdjustments.allowance > 0) ? ` Что добавлено: районный коэффициент ${formatMoney(calc.costSummary.northernAdjustments.district)}; северная надбавка ${formatMoney(calc.costSummary.northernAdjustments.allowance)}; накладные ${formatMoney(calc.costSummary.northernAdjustments.overhead)}` : ""}
           </p>
           <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-[var(--tk-muted)]">
             <li>
@@ -1820,11 +1844,24 @@ export default function RaschetDetailPage() {
         <h2 className="font-[family-name:var(--font-display)] text-lg font-semibold">
           Из чего сложился расчёт
         </h2>
-        <ul className="mt-3 space-y-1 text-sm">
-          <li>Что вошло: {calc.positions.length} строк</li>
-          <li>Сумма: {calc.costSummary?.priceExVat != null ? formatMoney(calc.costSummary.priceExVat) : "нет данных"}</li>
-          <li>Откуда: {calc.assumptions.find((item) => item.startsWith("Источники:")) ?? "смета заказчика и справочники компании"}</li>
-        </ul>
+        <div className="mt-3 overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="text-xs text-[var(--tk-muted)]">
+                <th className="py-1 pr-3 font-medium">Что вошло</th>
+                <th className="py-1 pr-3 font-medium">Сумма</th>
+                <th className="py-1 font-medium">Откуда</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td className="py-1 pr-3">{calc.positions.length} строк</td>
+                <td className="py-1 pr-3">{missingRateCount > 0 ? `Итог неполный: нет ставок по ${missingRateCount} позициям` : calc.costSummary?.priceExVat != null ? formatMoney(calc.costSummary.priceExVat) : "нет данных"}</td>
+                <td className="py-1">{refreshRateAssumption(calc.assumptions.find((item) => item.startsWith("Источники:"))?.replace(/^Источники:\s*/u, "") ?? "Ставки людей берутся по должности, техники — по модели, материалов — по наименованию и единице. Если совпадения нет, у строки остаётся «нет ставки».")}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
 
         {calc.assumptions.length > 0 && (
           <div className="mt-5">
@@ -1834,7 +1871,7 @@ export default function RaschetDetailPage() {
                 const scope = assumptionScope(assumption);
                 return (
                   <div key={`${index}:${assumption}`} className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-[var(--tk-line)] bg-white px-3 py-2.5">
-                    <p className="min-w-0 flex-1 text-sm text-[var(--tk-ink-soft)]">{assumption}</p>
+                    <p className="min-w-0 flex-1 text-sm text-[var(--tk-ink-soft)]">{refreshRateAssumption(assumption)}</p>
                     <span className={`shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium ${scope.className}`}>
                       {scope.label}
                     </span>
