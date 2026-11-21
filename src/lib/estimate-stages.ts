@@ -55,7 +55,15 @@ export function periodFromDocumentText(text: string): { start: string; end: stri
 }
 
 const WORK_DURATION_CUE = /срок\s+выполнен|выполнен\p{L}*\s+работ|производств\p{L}*\s+работ|срок\s+работ/iu;
-const OTHER_PERIOD_CUE = /гарант|оплат|при[её]мк|аванс|обеспечен|штраф|неустойк|пен[ия]|подач/iu;
+const OTHER_PERIOD_CUE = /(?<![\p{L}])(?:гарант|оплат|при[её]мк|аванс|обеспечен|штраф|неустойк|пен[ия]|подач)\p{L}*(?![\p{L}])/iu;
+
+function lastMatchIndex(text: string, pattern: RegExp): number {
+  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
+  const global = new RegExp(pattern.source, flags);
+  let at = -1;
+  for (const match of text.matchAll(global)) at = match.index ?? -1;
+  return at;
+}
 
 /** One sentence. A date's dots and «г.» are not a sentence break. */
 function scheduleSentences(text: string): string[] {
@@ -78,9 +86,11 @@ export function calendarDurationDays(text: string): number | null {
     for (const match of sentence.matchAll(pattern)) {
       const span = sentence.slice(cursor, match.index);
       cursor = match.index + match[0].length;
-      const workAt = span.search(WORK_DURATION_CUE);
-      const otherAt = span.search(OTHER_PERIOD_CUE);
-      if (workAt < 0 || (otherAt >= 0 && otherAt < workAt)) continue;
+      const workAt = lastMatchIndex(span, WORK_DURATION_CUE);
+      if (workAt < 0) continue;
+      const introducesCue = span.slice(Math.max(0, workAt - 16), workAt);
+      const untilNumber = span.slice(workAt);
+      if (OTHER_PERIOD_CUE.test(introducesCue) || OTHER_PERIOD_CUE.test(untilNumber)) continue;
       const days = Number(match[1]);
       if (Number.isFinite(days) && days > 0) return days;
     }
