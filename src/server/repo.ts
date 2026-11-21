@@ -25,10 +25,11 @@ import type {
   SupplyStatus,
   User,
 } from "@/lib/types";
-import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
+import { matchCompanyDirectoryRate, rateFromRow } from "@/lib/client-dirs";
+import { modelConfigured } from "@/server/openrouter";
 import { canonicalUploadPath, deleteUpload } from "@/server/uploads";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
-import { buildStagesFromEstimatePositions } from "@/lib/estimate-stages";
+import { buildStagesFromEstimatePositions, datesForStage, GPR_DATES_MISSING, periodFromDocumentText } from "@/lib/estimate-stages";
 import { dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, scheduleAfterPredecessor, scheduleParamsWithNorthernDefaults } from "@/lib/wave23";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
@@ -81,26 +82,12 @@ import {
 
 export { assertOrgAccess };
 
-function comparableUnit(value: string) {
-  return value
-    .toLocaleLowerCase("ru-RU")
-    .replace(/ё/g, "е")
-    .replace(/[\s.·]/g, "")
-    .replace(/м2/g, "м²")
-    .replace(/м3/g, "м³");
-}
-
-function matchingDirectoryRate(data: AppData, code: string, unit: string) {
-  const hit = resolveDirectoryRate(data.directories, code);
-  if (!hit) return null;
-  if (
-    hit.unit &&
-    !hit.unit.toLocaleLowerCase("ru-RU").startsWith("руб") &&
-    comparableUnit(hit.unit) !== comparableUnit(unit)
-  ) {
-    return null;
-  }
-  return hit;
+function matchingDirectoryRate(
+  data: AppData,
+  position: { code: string; name: string; unit: string; resourceKind?: string; isWorkItem?: boolean },
+  personHourRate?: number | null,
+) {
+  return matchCompanyDirectoryRate(data.directories, position, { personHourRate });
 }
 
 function scheduleHasPopulatedResources(stages: GprStage[] | undefined) {
@@ -615,7 +602,7 @@ export function setStagePredecessor(actorId: string, scheduleId: string, stageId
     const predecessor = schedule.stages.find((item) => item.id === dependsOn);
     if (!predecessor) throw new Error("Предшествующая работа не найдена");
     if (dependencyWouldCycle(schedule.stages, stageId, dependsOn)) {
-      throw new Error("Так нельзя: работа не может начинаться после самой себя. Выберите другую работу.");
+      throw new Error("Нельзя ставить работу после самой себя — получится цикл");
     }
     const next = scheduleAfterPredecessor(predecessor.end, inclusiveDays(stage.start, stage.end));
     stage.dependsOn = dependsOn;
@@ -738,24 +725,33 @@ export function recalcCalculation(
 ) {
   // Arithmetic lives in calc-math (code), not LLM text.
   const factor = scenarioFactor(scenario);
-  return mutateAppData((data) => {
+  const summary = { matched: 0, changed: 0 };
+  mutateAppData((data) => {
     const actor = actorUser(data, actorId);
     const item = data.calculations.find((c) => c.id === id);
     if (!item) throw new Error("Расчёт не найден");
     assertOrgAccess(actor, item.orgId, "расчёта");
     assertEditableCalculation(item);
     const positions = item.positions.map((p) => {
-      if (p.code === "НР" || p.code === "СП") return p;
-      const hit = matchingDirectoryRate(data, p.code, p.unit);
-      if (!hit) return p;
-      return {
+      if (p.code === "НР" || p.code === "СП" || p.isWorkItem) return p;
+      const hit = matchingDirectoryRate(data, p, item.resourceScheduleParams?.personHourRate);
+      if (!hit) {
+        const next = { ...p, rate: 0, rateMissing: true, rateBasis: undefined, rateSourceDirectoryId: undefined };
+        if (p.rate !== 0 || !p.rateMissing || p.rateBasis || p.rateSourceDirectoryId) summary.changed += 1;
+        return next;
+      }
+      summary.matched += 1;
+      const next = {
         ...p,
         rate: hit.rate,
         rateMissing: false,
+        rateBasis: hit.basis === "person_hour" ? "person_hour" as const : "directory" as const,
         rateSourceDirectoryId: hit.dirId,
-        name: hit.name ?? p.name,
-        unit: hit.unit && !hit.unit.startsWith("руб") ? hit.unit : p.unit,
       };
+      if (p.rate !== next.rate || p.rateMissing || p.rateBasis !== next.rateBasis || p.rateSourceDirectoryId !== next.rateSourceDirectoryId) {
+        summary.changed += 1;
+      }
+      return next;
     });
     // НР/СП from scenario-factored works — same identity as calculationTotals.
     const works = worksSubtotal(positions, factor);
@@ -795,6 +791,7 @@ export function recalcCalculation(
     );
     return data;
   });
+  return summary;
 }
 
 export function addCalcPositionFromDirectory(
@@ -1982,6 +1979,7 @@ export async function analyzeProcurementPackageWithAI(
       ...(risk.sourceExcerpt ? { sourceExcerpt: risk.sourceExcerpt } : {}),
     })),
   };
+  const previousSummary = prepared.procurements.find((item) => item.id === procurementId)?.analytics?.summary ?? "";
   let generated: ProjectAnalytics;
   let warning: string | undefined;
   let usedAi = true;
@@ -1989,9 +1987,12 @@ export async function analyzeProcurementPackageWithAI(
     generated = await analyzeProjectPackageWithModel(procurement, documents, deterministic, economics, companyContext);
   } catch (error) {
     usedAi = false;
-    warning = "ИИ-модель не вернула полный ответ. Сохранил расчёт, источники и конкретный список того, что нужно подтвердить.";
     const failure = error instanceof Error ? error.message : "Неизвестная ошибка модели";
-    generated = buildProjectAnalysisFallback(procurement, deterministic, economics, companyContext, failure);
+    const modelOff = !modelConfigured() && !/пустой ответ|после \d+ попыток/iu.test(failure);
+    warning = modelOff
+      ? "Разбор не выполнен: модель не подключена"
+      : "ИИ-модель не вернула полный ответ. Сохранил расчёт, источники и конкретный список того, что нужно подтвердить.";
+    generated = buildProjectAnalysisFallback(procurement, deterministic, economics, companyContext, modelOff ? "модель не подключена" : failure);
   }
   mutateAppData((data) => {
     const currentActor = actorUser(data, actorId);
@@ -2003,6 +2004,9 @@ export async function analyzeProcurementPackageWithAI(
       usedAi ? "ИИ-анализ полного пакета документов" : "Сохранена локальная аналитика после ошибки модели");
     return data;
   });
+  if (usedAi && generated.summary.trim() === previousSummary.trim()) {
+    warning = "Новых данных нет — записка уже актуальна";
+  }
   return { warning, usedAi };
 }
 
@@ -2220,11 +2224,28 @@ function isNavigationStub(schedule: { stages: GprStage[] }): boolean {
   );
 }
 
+function procurementDocumentPeriod(data: AppData, procurement: { id: string; deadline?: string | null }) {
+  const documents = data.documents.filter((document) => document.procurementId === procurement.id && (
+    document.category === "tz" || document.category === "contract"
+    || /тз|техническ|договор|контракт/iu.test(`${document.fileName} ${document.title}`)
+  ));
+  return periodFromDocumentText([
+    procurement.deadline ?? "",
+    ...documents.flatMap((document) => [document.analyticalNote, ...document.citations.map((citation) => citation.text)]),
+  ].join("\n"));
+}
+
+function withMissingDatesNote(assumptions: string[], dated: boolean): string[] {
+  if (dated) return assumptions.filter((item) => item !== GPR_DATES_MISSING);
+  return assumptions.includes(GPR_DATES_MISSING) ? assumptions : [...assumptions, GPR_DATES_MISSING];
+}
+
 function buildDraftStagesFromEstimate(
   positions: Calculation["positions"],
-  now: string
+  now: string,
+  period?: { start: string; end: string } | null,
 ): GprStage[] {
-  return buildStagesFromEstimatePositions(positions, now);
+  return buildStagesFromEstimatePositions(positions, now, period);
 }
 
 function mergeEstimateRowsIntoDraft(
@@ -2270,17 +2291,18 @@ export function createProcurementSchedule(actorId: string, procurementId: string
     if (!procurement.calculationId) throw new Error("Сначала сформируйте расчёт");
     const now = new Date().toISOString();
     const draft = data.calculations.find((item) => item.id === procurement.calculationId && item.kind !== "customer_original");
-    const derived = buildDraftStagesFromEstimate(draft?.positions ?? [], now);
+    const period = procurementDocumentPeriod(data, procurement);
+    const derived = buildDraftStagesFromEstimate(draft?.positions ?? [], now, period);
     const existing = procurement.gprId ? data.schedules.find((item) => item.id === procurement.gprId) : undefined;
     if (existing && isNavigationStub(existing) && derived.length > 0) {
       existing.stages = derived;
       existing.calculationId = procurement.calculationId;
       existing.updatedAt = now;
-      existing.assumptions = [
+      existing.assumptions = withMissingDatesNote([
         "Виды работ и вложенные ресурсы сгруппированы по разделам распознанной сметы. Проверьте состав строк и сопоставьте их с видами работ объекта.",
         "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.",
         "Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.",
-      ];
+      ], Boolean(period));
       outcome = "estimate";
       audit(data, actorId, "update", "gpr", existing.id, "Заготовка графика заменена разделами сметы");
       return data;
@@ -2294,20 +2316,23 @@ export function createProcurementSchedule(actorId: string, procurementId: string
     if (existing) return data;
     const gid = `g-${Date.now()}`;
     const stage1 = `gs-${Date.now()}`;
+    const today = now.slice(0, 10);
+    const firstDates = datesForStage(0, 2, today, period);
+    const secondDates = datesForStage(1, 2, today, period);
     const placeholderStages: GprStage[] = [
       ensureStageResources({
         id: stage1,
         name: "Подготовка / мобилизация",
-        start: now.slice(0, 10),
-        end: now.slice(0, 10),
+        start: firstDates.start,
+        end: firstDates.end,
         sequence: 1,
         crewSize: 0,
       }),
       ensureStageResources({
         id: `gs-${Date.now() + 1}`,
         name: "Основные работы",
-        start: now.slice(0, 10),
-        end: now.slice(0, 10),
+        start: secondDates.start,
+        end: secondDates.end,
         sequence: 2,
         dependsOn: stage1,
         dependencyType: "FS",
@@ -2323,7 +2348,7 @@ export function createProcurementSchedule(actorId: string, procurementId: string
       status: "v_rabote",
       version: 1,
       authorId: actorId,
-      assumptions: derived.length
+      assumptions: withMissingDatesNote(derived.length
         ? [
             "Виды работ и вложенные ресурсы сгруппированы по разделам распознанной сметы. Проверьте состав строк и сопоставьте их с видами работ объекта.",
             "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.",
@@ -2332,7 +2357,7 @@ export function createProcurementSchedule(actorId: string, procurementId: string
         : [
             "Начальные даты и этапы — только навигационная заготовка; замените их по ТЗ, производительности и календарю объекта",
             "Состав и количество ресурсов не подтверждены: заполните строки перед использованием итогов",
-          ],
+          ], Boolean(period)),
       stages: derived.length ? derived : placeholderStages,
       updatedAt: now,
     });
@@ -2460,7 +2485,13 @@ export function sendProcurementToCalculation(
         position.quantity !== 0
       )
       .map(({ document, position }) => {
-        const hit = position.isWorkItem ? null : matchingDirectoryRate(data, position.code, position.unit);
+        const hit = position.isWorkItem ? null : matchingDirectoryRate(data, {
+          code: position.code,
+          name: position.name,
+          unit: position.unit,
+          resourceKind: position.resourceKind,
+          isWorkItem: position.isWorkItem,
+        }, EXCEL_RESOURCE_SCHEDULE_DEFAULTS.personHourRate);
         const unitCompatible = Boolean(hit);
         return {
           id: `draft-${position.id}`,
@@ -2477,7 +2508,10 @@ export function sendProcurementToCalculation(
           ...(position.workName ? { sourceWorkName: position.workName } : {}),
           sourceDocumentId: document.id,
           sourcePositionId: position.id,
-          ...(unitCompatible ? { rateSourceDirectoryId: hit!.dirId } : {}),
+          ...(unitCompatible ? {
+            rateSourceDirectoryId: hit!.dirId,
+            rateBasis: hit!.basis === "person_hour" ? "person_hour" as const : "directory" as const,
+          } : {}),
         };
       });
     let draftId = p.calculationId;
@@ -2943,7 +2977,7 @@ function northernInputsForEngine(calc: Calculation): NorthernInputs {
   return calc.northern ?? {
     applicable: fold,
     confirmedItems: [],
-    notes: fold ? [] : ["Северные затраты не применяются"],
+    notes: fold ? [] : ["Северные затраты отключены"],
   };
 }
 
@@ -3671,6 +3705,8 @@ function supplierIdsForMaterial(data: AppData, orgId: string, materialName: stri
 /** Build an idempotent buy list from confirmed material rows in GPR and parsed estimates/VOR. */
 export function generateProcurementMaterialManifest(actorId: string, procurementId: string) {
   let created = 0;
+  let withSupplier = 0;
+  let withoutSupplier = 0;
   mutateAppData((data) => {
     const actor = actorUser(data, actorId);
     const procurement = data.procurements.find((item) => item.id === procurementId);
@@ -3720,13 +3756,16 @@ export function generateProcurementMaterialManifest(actorId: string, procurement
       if (existing) continue;
       const now = new Date().toISOString();
       const id = `sup-${Date.now()}-${randomBytes(3).toString("hex")}`;
+      const supplierIds = supplierIdsForMaterial(data, procurement.orgId, row.name, procurement.region);
+      if (supplierIds.length) withSupplier += 1;
+      else withoutSupplier += 1;
       data.supplyRequests.unshift({
         id, orgId: procurement.orgId, procurementId, workName: row.workName,
         materialName: row.name, unit: row.unit, qtyNeed: row.quantity,
         qtyOrdered: 0, qtyDelivered: 0, needBy: row.needBy ?? procurement.deadline ?? now.slice(0, 10),
         status: "need", source: row.source, sourceFiles: row.sourceFiles,
         quantityNeedsReview: !row.needBy,
-        supplierIds: supplierIdsForMaterial(data, procurement.orgId, row.name, procurement.region),
+        supplierIds,
         createdAt: now, updatedAt: now,
       });
       procurement.supplyRequestIds = [...(procurement.supplyRequestIds ?? []), id];
@@ -3735,7 +3774,7 @@ export function generateProcurementMaterialManifest(actorId: string, procurement
     }
     return data;
   });
-  return { created };
+  return { created, withSupplier, withoutSupplier };
 }
 
 export function markSupplyRequestSent(actorId: string, supplyId: string, supplierId: string) {

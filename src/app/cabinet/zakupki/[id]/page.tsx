@@ -22,7 +22,7 @@ import { AiFailureBanner } from "@/components/ai-failure-banner";
 import { api, downloadUrl, getClientToken } from "@/lib/api";
 import { DocumentWebPreview } from "@/components/document-web-preview";
 import { cleanLabel } from "@/lib/display";
-import { formatDate, formatDateTime, formatMoney, formatNumber, formatQuantity, needByPhrase, roundQuantity } from "@/lib/format";
+import { formatDate, formatDateTime, formatMoney, formatNumber, formatQuantity, needByPhrase, roundQuantity, sameRoundedQuantity } from "@/lib/format";
 import { citationTopicLabel, readableCitations, regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
 import { citationHref, matchDirectorySuppliers } from "@/lib/wave23";
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
@@ -33,7 +33,7 @@ import { PAYMENT_AMOUNT_ERROR, PAYMENT_BUCKET_LABELS, paymentBucket, paymentTota
 import { userHasSection } from "@/lib/acl";
 import { plainExchangeTitle } from "@/lib/exchange-label";
 import { gprStageLabel } from "@/lib/gpr-stage-label";
-import { visibleProcurementNumber } from "@/lib/pipeline";
+import { procurementBoardLabel, visibleProcurementNumber } from "@/lib/pipeline";
 import { STATUS_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
 import type { Citation, DocumentCategory, ReviewStatus, SupplyRequest, SupplyStatus, SupplierDirectoryEntry, OrganizationCompanyCard } from "@/lib/types";
 import type { SupplierSearchCandidate } from "@/server/supplier-discovery";
@@ -552,9 +552,10 @@ export default function ZakupkaDetailPage() {
   async function generateMaterialManifest() {
     setManifestBusy(true);
     try {
-      const result = await api<{ manifest: { created: number } }>("/api/supply", { method: "POST", body: JSON.stringify({ action: "generateManifest", procurementId: procurement!.id }) });
+      const result = await api<{ manifest: { created: number; withSupplier?: number; withoutSupplier?: number } }>("/api/supply", { method: "POST", body: JSON.stringify({ action: "generateManifest", procurementId: procurement!.id }) });
       await refresh();
-      toast.success(result.manifest.created ? `Ведомость создана: добавлено ${result.manifest.created} поз.` : "Новых материальных позиций нет — ведомость уже актуальна");
+      const manifest = result.manifest;
+      toast.success(`Создано ${manifest.created} потребностей. Поставщики подобраны: ${manifest.withSupplier ?? 0}. Без поставщика: ${manifest.withoutSupplier ?? 0}.`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось сформировать ведомость");
     } finally { setManifestBusy(false); }
@@ -592,7 +593,8 @@ export default function ZakupkaDetailPage() {
       });
       setSupplierSearchResults((current) => ({ ...current, [supply.id]: result.candidates }));
     } catch (error) {
-      setSupplierSearchErrors((current) => ({ ...current, [supply.id]: error instanceof Error ? error.message : "Поиск поставщиков не выполнен" }));
+      const reason = error instanceof Error ? error.message : "поиск не ответил";
+      setSupplierSearchErrors((current) => ({ ...current, [supply.id]: `Поставщиков найти не удалось: ${reason}` }));
     } finally { setSupplierSearchBusyId(null); }
   }
 
@@ -645,12 +647,26 @@ export default function ZakupkaDetailPage() {
     }
   }
 
+  async function refreshLocalSummary() {
+    if (!docs.length) return;
+    setAiAnalyzing(true);
+    try {
+      const before = docs.map((document) => document.analyticalNote).join("\n");
+      const notes = await Promise.all(docs.map((document) => reanalyzeDocument(document.id, { useLlm: false })));
+      toast.success(notes.join("\n") === before ? "Новых данных нет — записка уже актуальна" : "Сводка обновлена");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось обновить сводку");
+    } finally {
+      setAiAnalyzing(false);
+    }
+  }
+
   async function analyzeProjectPackage() {
     setAiAnalyzing(true);
     try {
       const warning = await analyzeProjectWithAI(procurement!.id);
       if (warning) toast.warning(warning);
-      else toast.success("ИИ подготовил сводный анализ всего пакета");
+      else toast.success("Сводка обновлена");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось проанализировать пакет");
     } finally {
@@ -913,9 +929,9 @@ export default function ZakupkaDetailPage() {
                   variant="outline"
                   disabled={aiAnalyzing || docs.length === 0}
                   title={docs.length === 0 ? "Сначала загрузите документы" : undefined}
-                  onClick={() => void analyzeProjectPackage()}
+                  onClick={() => void refreshLocalSummary()}
                 >
-                  {aiAnalyzing ? "ИИ анализирует…" : "ИИ-анализ пакета"}
+                  {aiAnalyzing ? "Обновляю сводку…" : "Обновить сводку"}
                 </Button>
                 {docs.length === 0 ? (
                   <span className="text-xs text-[var(--tk-muted)]">Сначала загрузите документы</span>
@@ -1027,15 +1043,7 @@ export default function ZakupkaDetailPage() {
                 >
                   <SelectTrigger className="mt-3 w-full">
                     <SelectValue>
-                      {(value) =>
-                        ({
-                          novaya: "Новое",
-                          na_rassmotrenii: "В работе",
-                          odobrena: "Участвуем",
-                          otklonena: "Не участвуем",
-                          dublirovana: "Дубликат",
-                        } as Record<string, string>)[String(value)] ?? "Рассмотрение"
-                      }
+                      {() => procurementBoardLabel(procurement)}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
@@ -1248,6 +1256,7 @@ export default function ZakupkaDetailPage() {
               <h2 className="font-[family-name:var(--font-display)] text-base" data-testid="analytics-main-title">
                 Главное / краткие выводы
               </h2>
+              <p className="text-sm" data-testid="analytics-board-status">Статус: {procurementBoardLabel(procurement)}</p>
               <div className="flex flex-wrap gap-2">
                 <Button
                   size="sm"
@@ -1255,7 +1264,7 @@ export default function ZakupkaDetailPage() {
                   title={docs.length === 0 ? "Сначала загрузите документы" : "Разбор пакета по загруженным документам"}
                   onClick={() => void analyzeProjectPackage()}
                 >
-                  {aiAnalyzing ? "ИИ анализирует пакет…" : "ИИ-анализ пакета"}
+                  {aiAnalyzing ? "ИИ анализирует пакет…" : "Полный анализ ИИ"}
                 </Button>
                 {docs.length === 0 ? (
                   <span className="self-center text-xs text-[var(--tk-muted)]">Сначала загрузите документы</span>
@@ -1476,9 +1485,7 @@ export default function ZakupkaDetailPage() {
                     <span>{analytics.quality.status === "evidence_backed" ? "Источники разобраны" : analytics.quality.status === "needs_review" ? "Есть замечания — смотрите список действий ниже" : "Не хватает проверяемых исходников"}</span>
                     <span>Документов: {analytics.quality.sourceDocuments}</span>
                     <span>Распознаны типы смета / договор / ТЗ: {analytics.quality.requiredDocumentsFound}/3</span>
-                    <span>Проверяемых фрагментов: {displayCitations.length}</span>
-                    {analytics.quality.acceptedClaims != null ? <span>Тезисов с цитатой: {analytics.quality.acceptedClaims}</span> : null}
-                    {analytics.quality.rejectedClaims ? <span>Отброшено неподтверждённых: {analytics.quality.rejectedClaims}</span> : null}
+                    {analytics.quality.rejectedClaims ? <span>Есть неподтверждённые формулировки</span> : null}
                   </div>
                 ) : null}
                 {analytics.missingInputs.length ? (
@@ -2126,10 +2133,10 @@ export default function ZakupkaDetailPage() {
                           type="number"
                           min="0"
                           step="any"
-                          defaultValue={roundQuantity(s.qtyOrdered, 4)}
+                          defaultValue={String(roundQuantity(s.qtyOrdered, 4))}
                           onBlur={(e) => {
-                            const value = Number(e.target.value);
-                            if (Number.isFinite(value) && value !== s.qtyOrdered) {
+                            const value = Number(e.target.value.replace(",", "."));
+                            if (Number.isFinite(value) && !sameRoundedQuantity(s.qtyOrdered, e.target.value, 4)) {
                               void updateSupply(s, { qtyOrdered: value });
                             }
                           }}
@@ -2142,10 +2149,10 @@ export default function ZakupkaDetailPage() {
                           type="number"
                           min="0"
                           step="any"
-                          defaultValue={roundQuantity(s.qtyDelivered, 4)}
+                          defaultValue={String(roundQuantity(s.qtyDelivered, 4))}
                           onBlur={(e) => {
-                            const value = Number(e.target.value);
-                            if (Number.isFinite(value) && value !== s.qtyDelivered) {
+                            const value = Number(e.target.value.replace(",", "."));
+                            if (Number.isFinite(value) && !sameRoundedQuantity(s.qtyDelivered, e.target.value, 4)) {
                               void updateSupply(s, { qtyDelivered: value });
                             }
                           }}

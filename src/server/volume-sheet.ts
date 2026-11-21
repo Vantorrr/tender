@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { assertOrgAccess } from "@/lib/acl";
 import type { VolumeDraftRow } from "@/lib/wave23";
+import { matchCompanyDirectoryRate } from "@/lib/client-dirs";
 import { parseVolumeDraft, priceVolumeRows } from "@/lib/wave23";
 import { readAppData, mutateAppData } from "@/server/db";
 import { parseDocxBuffer } from "@/server/docx-parse";
@@ -82,20 +83,7 @@ async function specCorpus(data: AppData, procurementId: string): Promise<{ promp
 }
 
 function rateFromDirectory(directories: DirectoryVersion[], work: string, unit: string): number | null {
-  const workKey = work.toLocaleLowerCase("ru-RU");
-  const unitKey = unit.toLocaleLowerCase("ru-RU").replace(/\s+/g, "");
-  for (const directory of directories) {
-    if (!directory.current || (directory.type !== "rascenki" && directory.type !== "ceny")) continue;
-    for (const row of directory.rows) {
-      const name = String(row.work ?? row.name ?? "").toLocaleLowerCase("ru-RU");
-      const rowUnit = String(row.unit ?? "").toLocaleLowerCase("ru-RU").replace(/\s+/g, "");
-      const rate = typeof row.rate === "number" ? row.rate : typeof row.price === "number" ? row.price : null;
-      if (!name || rate == null || rate <= 0) continue;
-      if (rowUnit && rowUnit !== unitKey) continue;
-      if (workKey.includes(name) || name.includes(workKey)) return rate;
-    }
-  }
-  return null;
+  return matchCompanyDirectoryRate(directories, { code: "ВОР", name: work, unit })?.rate ?? null;
 }
 
 export async function draftVolumeSheet(
@@ -109,7 +97,7 @@ export async function draftVolumeSheet(
   if (!calculation) throw new Error("Расчёт не найден");
   assertOrgAccess(actor, calculation.orgId, "расчёта");
   const corpus = await specCorpus(data, calculation.procurementId);
-  if (!corpus.prompt) throw new Error("В карточке нет текста технического задания");
+  if (!corpus.prompt) throw new Error("Нет текста технического задания в карточке. Загрузите ТЗ или заполните ведомость вручную.");
   if (!ask && !modelConfigured()) {
     return { configured: false, message: VOLUME_MODEL_MISSING, rows: [] };
   }
@@ -133,16 +121,21 @@ export function acceptVolumeDraft(actorId: string, calculationId: string, rows: 
     const accepted = rows.filter((row) => row.work.trim() && row.unit.trim() && Number.isFinite(row.volume));
     calculation.positions = [
       ...calculation.positions,
-      ...accepted.map((row) => ({
-        id: `vor-${crypto.randomUUID()}`,
-        code: "ВОР",
-        name: row.work.trim(),
-        unit: row.unit.trim(),
-        quantity: row.volume,
-        rate: row.rate != null && row.rate > 0 ? row.rate : 0,
-        rateMissing: !(row.rate != null && row.rate > 0),
-        sourceWorkName: row.work.trim(),
-      })),
+      ...accepted.map((row) => {
+        const hit = matchCompanyDirectoryRate(data.directories, { code: "ВОР", name: row.work, unit: row.unit });
+        const rate = hit?.rate ?? 0;
+        return {
+          id: `vor-${crypto.randomUUID()}`,
+          code: "ВОР",
+          name: row.work.trim(),
+          unit: row.unit.trim(),
+          quantity: row.volume,
+          rate,
+          rateMissing: !(rate > 0),
+          ...(hit?.basis === "person_hour" ? { rateBasis: "person_hour" as const } : hit ? { rateBasis: "directory" as const, rateSourceDirectoryId: hit.dirId } : {}),
+          sourceWorkName: row.work.trim(),
+        };
+      }),
     ];
     calculation.assumptions = [
       ...calculation.assumptions,

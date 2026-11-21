@@ -6,9 +6,53 @@ import type { CalcPosition, GprStage, GprStageResource } from "@/lib/types";
  * One stage per estimate section and work.
  * Identical materials merge only inside that pair, so a row from another section stays put.
  */
+export const GPR_DATES_MISSING = "Срок не указан в документах — проставьте даты на графике";
+
+export function periodFromDocumentText(text: string): { start: string; end: string } | null {
+  const found: string[] = [];
+  for (const match of text.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) {
+    const iso = `${match[1]}-${match[2]}-${match[3]}`;
+    const date = new Date(`${iso}T00:00:00Z`);
+    if (!Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === iso) found.push(iso);
+  }
+  for (const match of text.matchAll(/\b(\d{1,2})[./](\d{1,2})[./](\d{4})\b/g)) {
+    const day = Number(match[1]);
+    const month = Number(match[2]);
+    const year = Number(match[3]);
+    if (month < 1 || month > 12 || day < 1 || day > 31) continue;
+    const iso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const date = new Date(`${iso}T00:00:00Z`);
+    if (date.getUTCFullYear() === year && date.getUTCMonth() + 1 === month && date.getUTCDate() === day) found.push(iso);
+  }
+  const unique = [...new Set(found)].sort();
+  if (unique.length < 2 || unique[0] === unique[unique.length - 1]) return null;
+  return { start: unique[0], end: unique[unique.length - 1] };
+}
+
+function addDays(iso: string, days: number): string {
+  const date = new Date(`${iso}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+export function datesForStage(
+  index: number,
+  count: number,
+  today: string,
+  period: { start: string; end: string } | null,
+): { start: string; end: string } {
+  if (!period || count <= 0) return { start: today, end: today };
+  const span = Math.max(1, Math.round((Date.parse(`${period.end}T00:00:00Z`) - Date.parse(`${period.start}T00:00:00Z`)) / 86400000) + 1);
+  const slice = Math.max(1, Math.floor(span / Math.max(count, 1)));
+  const start = addDays(period.start, Math.min(index * slice, Math.max(0, span - 1)));
+  const end = index === count - 1 ? period.end : addDays(start, Math.max(0, slice - 1));
+  return end < start ? { start, end: start } : { start, end };
+}
+
 export function buildStagesFromEstimatePositions(
   positions: CalcPosition[],
   now: string,
+  period?: { start: string; end: string } | null,
 ): GprStage[] {
   const sections = new Map<string, { sectionName: string; workName: string; positions: CalcPosition[] }>();
   for (const position of positions) {
@@ -23,7 +67,9 @@ export function buildStagesFromEstimatePositions(
     sections.set(key, group);
   }
 
-  return [...sections.values()].map(({ sectionName, workName, positions: rows }, index) => {
+  const groups = [...sections.values()];
+  const today = now.slice(0, 10);
+  return groups.map(({ sectionName, workName, positions: rows }, index) => {
     const stageId = `gs-est-${index + 1}`;
     const workPositions = rows.filter((position) => position.isWorkItem && position.name === workName);
     const workUnits = new Set(workPositions.map((position) => position.unit));
@@ -63,12 +109,13 @@ export function buildStagesFromEstimatePositions(
       }];
     });
 
+    const dates = datesForStage(index, groups.length, today, period ?? null);
     return {
       id: stageId,
       name: workName,
       ...(workName !== sectionName ? { sectionName, workName } : { sectionName }),
-      start: now.slice(0, 10),
-      end: now.slice(0, 10),
+      start: dates.start,
+      end: dates.end,
       sequence: index + 1,
       crewSize: 0,
       ...(workVolume != null ? { planVolume: workVolume, planUnit: workPositions[0].unit } : {}),
@@ -87,7 +134,8 @@ export function signedQuantityBySection(
       row.name.replace(/^возврат:\s*/iu, "").trim().toLocaleLowerCase("ru-RU"),
       row.unit.trim().toLocaleLowerCase("ru-RU"),
     ].join("|");
-    totals.set(key, (totals.get(key) ?? 0) + row.quantity);
+    const signed = /^возврат:/iu.test(row.name) ? -Math.abs(row.quantity) : row.quantity;
+    totals.set(key, (totals.get(key) ?? 0) + signed);
   }
   return totals;
 }

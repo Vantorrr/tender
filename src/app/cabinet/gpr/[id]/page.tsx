@@ -397,7 +397,20 @@ export default function GprDetailPage() {
             if (typeof name !== "string" || !name.trim()) return;
             const today = new Date().toISOString().slice(0, 10);
             const stage = { id: `gs-${crypto.randomUUID()}`, name: name.trim(), start: today, end: today, sequence: schedule.stages.length + 1, crewSize: 0 };
-            void updateSchedule(schedule.id, { stages: [...schedule.stages, stage] }).then(() => { form.reset(); toast.success("Вид работ добавлен"); });
+            void updateSchedule(schedule.id, { stages: [...schedule.stages, stage] }).then(() => {
+              form.reset();
+              toast.success("Вид работ добавлен", {
+                duration: 10_000,
+                action: {
+                  label: "Отменить",
+                  onClick: () => {
+                    void api("/api/gpr", { method: "PATCH", body: JSON.stringify({ id: schedule.id, action: "deleteStage", stageId: stage.id }) })
+                      .then(() => refresh())
+                      .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось отменить"));
+                  },
+                },
+              });
+            });
           }}>
             <Input name="work" aria-label="Новый вид работ" placeholder="Новый вид работ" className="h-8" />
             <Button type="submit" size="sm">Добавить</Button>

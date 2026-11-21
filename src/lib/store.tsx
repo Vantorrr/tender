@@ -90,7 +90,7 @@ interface StoreContextValue {
     }
   ) => Promise<void>;
   updateDocument: (id: string, patch: Partial<DocumentItem>) => Promise<void>;
-  reanalyzeDocument: (id: string, opts?: { useLlm?: boolean }) => Promise<void>;
+  reanalyzeDocument: (id: string, opts?: { useLlm?: boolean }) => Promise<string>;
   createDocumentUpload: (input: {
     procurementId: string;
     title?: string;
@@ -471,6 +471,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }),
       });
       applyBoot(boot);
+      return boot.data.documents.find((document) => document.id === id)?.analyticalNote ?? "";
     },
     [applyBoot]
   );

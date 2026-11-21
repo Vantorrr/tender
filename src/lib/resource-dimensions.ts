@@ -109,6 +109,10 @@ function resolveCountDims(
 /**
  * Resolve Q/R for one stage resource — shared by tree, sync, exports.
  */
+function creditSign(name: string, quantity: number): number {
+  return /^возврат:/iu.test(name) || quantity < 0 ? -1 : 1;
+}
+
 export function resolveResourceDimensions(
   r: GprStageResource,
   st: Pick<GprStage, "id" | "start" | "end" | "hoursPerShift" | "shiftsPerDay">,
@@ -119,13 +123,15 @@ export function resolveResourceDimensions(
     r.rate == null || !Number.isFinite(r.rate) || r.rate < 0 ? null : r.rate;
   const incomplete: string[] = [];
   if (rate == null) incomplete.push(`missing_tariff:${r.id}`);
+  const shown = Number.isFinite(r.quantity) ? Math.abs(r.quantity) : 0;
+  const signed = shown * creditSign(r.name, r.quantity);
 
   if (basis === "material_qty") {
     const amount =
-      rate == null ? null : roundMoney(r.quantity * rate);
+      rate == null ? null : roundMoney(signed * rate);
     return {
       basis,
-      sourceQty: r.quantity,
+      sourceQty: shown,
       hoursPerShift: null,
       shiftsPerDay: null,
       days: null,
@@ -140,7 +146,7 @@ export function resolveResourceDimensions(
     incomplete.push(`unit_basis_uncertain:${r.id}`);
     return {
       basis,
-      sourceQty: r.quantity,
+      sourceQty: shown,
       hoursPerShift: null,
       shiftsPerDay: null,
       days: null,
@@ -153,15 +159,15 @@ export function resolveResourceDimensions(
 
   if (basis === "total_hours") {
     // L already hours — do NOT re-multiply by N/O/P.
-    const hours = Number.isFinite(r.quantity) ? r.quantity : null;
+    const hours = Number.isFinite(r.quantity) ? signed : null;
     const { amount, incomplete: amtInc } = resourceAmount(hours, rate);
     return {
       basis,
-      sourceQty: r.quantity,
+      sourceQty: shown,
       hoursPerShift: 1,
       shiftsPerDay: 1,
       days: 1,
-      hours,
+      hours: hours == null ? null : Math.abs(hours),
       rate,
       amount: amtInc.length || hours == null ? null : amount,
       incomplete: [
@@ -182,7 +188,7 @@ export function resolveResourceDimensions(
     dims.days != null
   ) {
     hours = resourceHours({
-      quantity: r.quantity,
+      quantity: signed,
       hoursPerShift: dims.hoursPerShift,
       shiftsPerDay: dims.shiftsPerDay,
       days: dims.days,
@@ -198,11 +204,11 @@ export function resolveResourceDimensions(
   const ok = hours != null && rate != null && amtInc.length === 0;
   return {
     basis,
-    sourceQty: r.quantity,
+    sourceQty: shown,
     hoursPerShift: dims.hoursPerShift,
     shiftsPerDay: dims.shiftsPerDay,
     days: dims.days,
-    hours,
+    hours: hours == null ? null : Math.abs(hours),
     rate,
     amount: ok ? amount : null,
     incomplete: [...new Set(incomplete)],

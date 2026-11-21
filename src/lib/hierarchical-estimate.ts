@@ -108,7 +108,9 @@ function leafFromResolved(
     id: r.id,
     source: "stage_resource",
     kind: resourceKind(r),
-    name: r.name,
+    name: /^возврат:/iu.test(r.name) || r.quantity < 0
+      ? `Возврат: ${r.name.replace(/^возврат:\s*/iu, "")}`
+      : r.name,
     unit: r.unit || (r.kind === "labor" ? "чел" : "ед."),
     quantity: resolved.sourceQty,
     rate: resolved.rate,

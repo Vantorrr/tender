@@ -31,7 +31,7 @@ describe("procurement material manifest and supplier matching", () => {
       materialKeywords: ["труба стальная", "кабель ввгнг"], regions: ["Москва"],
     });
 
-    expect(generateProcurementMaterialManifest("u-super", "p-1")).toEqual({ created: 2 });
+    expect(generateProcurementMaterialManifest("u-super", "p-1")).toMatchObject({ created: 2 });
     const rows = readAppData().supplyRequests!.filter((item) => item.procurementId === "p-1");
     expect(rows).toHaveLength(2);
     expect(rows.find((item) => item.materialName === "Труба стальная 57 мм")).toMatchObject({
@@ -40,7 +40,7 @@ describe("procurement material manifest and supplier matching", () => {
     expect(rows.find((item) => item.materialName === "Кабель ВВГнг")).toMatchObject({
       qtyNeed: 20, unit: "м", source: "estimate", supplierIds: [expect.stringMatching(/^supplier-/)],
     });
-    expect(generateProcurementMaterialManifest("u-super", "p-1")).toEqual({ created: 0 });
+    expect(generateProcurementMaterialManifest("u-super", "p-1")).toMatchObject({ created: 0 });
   });
 
   it("sends an explicitly confirmed RFQ only to a matched supplier with the company card attached", async () => {

@@ -22,7 +22,7 @@ export const NOTE_BLOCK_TITLES = [
   "Паспорт закупки и тайминг",
   "Условия участия и требования к заявке",
   "Сводная ведомость объёмов",
-  "Экономика",
+  "Расчёт себестоимости и экономика",
   "Риски и подводные камни",
 ] as const;
 
@@ -33,13 +33,13 @@ export function composeAnalyticalNote(input: {
 }): string {
   const score = Math.max(0, Math.min(10, Math.round(input.verdict)));
   return [
-    `Вердикт: ${score}/10. ${input.verdictText.trim()}`,
+    `Вердикт ИИ: ${score} / 10 — ${input.verdictText.trim()}`,
     ...NOTE_BLOCK_TITLES.map((title, index) => `${index + 1}. ${title}\n${input.blocks[index].trim() || "нет данных"}`),
   ].join("\n\n");
 }
 
 export function analyticalNoteStructure(text: string): { verdict: number | null; blocks: string[] } {
-  const match = text.match(/Вердикт:\s*(\d{1,2})\s*\/\s*10/u);
+  const match = text.match(/Вердикт(?:\s+ИИ)?:\s*(\d{1,2})\s*\/\s*10/u);
   const score = match ? Number(match[1]) : null;
   return {
     verdict: score != null && score >= 0 && score <= 10 ? score : null,
@@ -263,10 +263,10 @@ export function northernStatusText(input: {
   districtCoefficient?: number | null;
   northernPayrollShare?: number | null;
 }): string {
-  if (!northernEconomicsApplied(input)) return "Северные затраты не применяются.";
+  if (!northernEconomicsApplied(input)) return "Северные затраты отключены";
   const coefficient = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(input.districtCoefficient as number);
   const share = Math.round((input.northernPayrollShare ?? NORTH_DEFAULTS.northernPayrollShare) * 100);
-  return `Применены северные условия: районный коэффициент ${coefficient} и надбавка ${share}% фонда оплаты труда.`;
+  return `Применены северные условия: районный коэффициент ${coefficient} и надбавка ${share}% фонда оплаты труда`;
 }
 
 export function northernAdditionLines(

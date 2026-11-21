@@ -120,7 +120,7 @@ export function KonturSearchPanel({ busy, onSearch }: Props) {
           <Lines label="Исключить слова" value={exclude} onChange={setExclude} placeholder="закупка отменена" />
           <Lines label="ИНН заказчика — включить" value={includeInns} onChange={setIncludeInns} placeholder="ИНН, по одному или через запятую" />
           <Lines label="ИНН заказчика — исключить" value={excludeInns} onChange={setExcludeInns} placeholder="ИНН, по одному или через запятую" />
-          <Lines label="ЭТП — ID площадок" value={platformIds} onChange={setPlatformIds} placeholder="числовые ID площадок" />
+          <Lines label="Площадки" value={platformIds} onChange={setPlatformIds} placeholder="номера площадок через запятую" />
           <fieldset className="rounded-lg border border-[var(--tk-line)] p-3"><legend className="px-1 text-xs font-medium">Отрасль</legend><div className="grid gap-2">{SEARCH_INDUSTRIES.map((industry) => <label key={industry.label} className="flex items-start gap-2 text-xs"><Checkbox checked={industryIds.includes(industry.id)} onCheckedChange={(checked) => setIndustryIds(checked ? [...industryIds, industry.id] : industryIds.filter((item) => item !== industry.id))} /><span>{industry.label}</span></label>)}</div></fieldset>
           <Lines label="Участники — ИНН" value={participantInns} onChange={setParticipantInns} placeholder="ИНН участника, поставщика или победителя" />
           <Field label="Срок подачи заявок с"><Input type="date" className="mt-1 h-9" value={deadlineFrom} onChange={(e) => setDeadlineFrom(e.target.value)} /></Field>

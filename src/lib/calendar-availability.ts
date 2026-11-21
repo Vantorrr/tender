@@ -2,6 +2,7 @@
  * Resource + supply availability checks against GPR calendar (UX warnings, not a solver).
  */
 import type { GprStage, SupplyRequest, WorkCalendar } from "@/lib/types";
+import { parsedNeedBy, supplyIsOverdue, todayIsoInTimeZone } from "@/lib/format";
 import { stageDayList } from "@/lib/plan-from-gpr";
 
 export type CalendarWarning = {
@@ -89,8 +90,10 @@ export function supplyCalendarWarnings(
     stages[0].end
   );
   const out: CalendarWarning[] = [];
+  const today = todayIsoInTimeZone();
   for (const s of supplies) {
-    if (!s.needBy) {
+    const due = parsedNeedBy(s.needBy);
+    if (!due) {
       out.push({
         kind: "supply_unscheduled",
         severity: "info",
@@ -99,18 +102,27 @@ export function supplyCalendarWarnings(
       });
       continue;
     }
-    if (s.needBy > maxEnd) {
+    const remaining = Math.max(0, (s.qtyNeed ?? 0) - (s.qtyDelivered ?? 0));
+    if (supplyIsOverdue(due, today, remaining)) {
       out.push({
         kind: "supply_late",
         severity: "warn",
-        message: `Поставка «${s.materialName}»: срок ${s.needBy} позже окончания графика ${maxEnd}`,
+        message: `Поставка «${s.materialName}»: срок прошёл, осталось получить`,
         supplyId: s.id,
       });
-    } else if (s.needBy < minStart) {
+    }
+    if (due > maxEnd) {
+      out.push({
+        kind: "supply_late",
+        severity: "warn",
+        message: `Поставка «${s.materialName}»: срок ${due} позже окончания графика ${maxEnd}`,
+        supplyId: s.id,
+      });
+    } else if (due < minStart) {
       out.push({
         kind: "supply_late",
         severity: "info",
-        message: `Поставка «${s.materialName}»: срок ${s.needBy} раньше начала графика ${minStart}`,
+        message: `Поставка «${s.materialName}»: срок ${due} раньше начала графика ${minStart}`,
         supplyId: s.id,
       });
     }

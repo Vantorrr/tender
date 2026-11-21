@@ -67,7 +67,7 @@ describe("northern wording and closed sections", () => {
     expect(northernStatusText({ districtCoefficient: 1.8, northernPayrollShare: 0.8 })).toMatch(/80%/);
     expect(northernStatusText({ districtCoefficient: 1.8, northernPayrollShare: 0.8 })).not.toMatch(/не применяются/);
     expect(northernEconomicsApplied({ applicable: false, districtCoefficient: 1.8 })).toBe(false);
-    expect(northernStatusText({ applicable: false, districtCoefficient: 1.8 })).toBe("Северные затраты не применяются.");
+    expect(northernStatusText({ applicable: false, districtCoefficient: 1.8 })).toBe("Северные затраты отключены");
   });
 
   it("does not offer a tender specialist a link into ГПР or production", () => {

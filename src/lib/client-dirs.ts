@@ -207,6 +207,141 @@ export function rateFromRow(
   return null;
 }
 
+function foldName(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLocaleLowerCase("ru-RU")
+    .replace(/ё/g, "е")
+    .replace(/[^a-zа-я0-9]+/giu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function unitKey(value: string): string {
+  return foldName(value)
+    .replace(/\s/g, "")
+    .replace(/м2/g, "м²")
+    .replace(/м3/g, "м³")
+    .replace(/^руб\/?/u, "");
+}
+
+function isPersonHourUnit(unit: string): boolean {
+  const key = unitKey(unit);
+  return key === "нч" || key === "челч" || key === "челчас" || key === "человекочас" || key === "нормочас" || key === "нормоч"
+    || key.includes("нормочас") || /чел.*ч/u.test(key);
+}
+
+function isMachineHourUnit(unit: string): boolean {
+  return unitKey(unit).includes("маш");
+}
+
+function titlesMatch(positionName: string, directoryName: string): boolean {
+  const left = foldName(positionName);
+  const right = foldName(directoryName);
+  if (left.length < 4 || right.length < 4) return false;
+  if (left === right) return true;
+  return ` ${left} `.includes(` ${right} `);
+}
+
+function unitsCompatible(rowUnit: string, positionUnit: string, kind: "labor" | "equipment" | "material"): boolean {
+  if (kind === "labor") return isPersonHourUnit(rowUnit) && isPersonHourUnit(positionUnit);
+  if (kind === "equipment") return isMachineHourUnit(rowUnit) && (isMachineHourUnit(positionUnit) || !positionUnit.trim());
+  const left = unitKey(rowUnit);
+  const right = unitKey(positionUnit);
+  if (!left || !right) return false;
+  return left === right;
+}
+
+export type CompanyRateQuery = {
+  code: string;
+  name: string;
+  unit: string;
+  resourceKind?: string;
+  isWorkItem?: boolean;
+};
+
+export type CompanyRateHit = {
+  rate: number;
+  dirId?: string;
+  basis: "job_title" | "equipment_model" | "material" | "person_hour";
+};
+
+function rateCategory(query: CompanyRateQuery): "labor" | "equipment" | "material" | "skip" {
+  if (query.isWorkItem) return "skip";
+  const code = query.code.trim().toLocaleUpperCase("ru-RU");
+  const name = foldName(query.name);
+  if (query.resourceKind === "material" || /^(?:ФССЦ|ФСБЦ|ТССЦ)/u.test(code)) return "material";
+  if (
+    query.resourceKind === "equipment" || query.resourceKind === "bus"
+    || code === "ЗТМ" || name === "зтм" || name === "затраты труда машинистов"
+    || isMachineHourUnit(query.unit) || /^(?:ФСЭМ|ТСЭМ)/u.test(code)
+  ) return "equipment";
+  if (
+    query.resourceKind === "labor" || code === "ЗТ" || name === "зт"
+    || name === "затраты труда" || name === "затраты труда рабочих"
+    || isPersonHourUnit(query.unit)
+  ) return "labor";
+  return "material";
+}
+
+/**
+ * Company directories are priced by job title, machine model, or material name.
+ * Estimate codes (ФЕР, ФССЦ, ЗТ) are never looked up as directory SKUs.
+ * A missing match stays empty. The schedule header rate is only a labour fallback.
+ */
+export function matchCompanyDirectoryRate(
+  directories: DirectoryVersion[],
+  query: CompanyRateQuery,
+  options?: { personHourRate?: number | null },
+): CompanyRateHit | null {
+  const kind = rateCategory(query);
+  if (kind === "skip") return null;
+  const current = (type: DirectoryVersion["type"]) => directories.find((directory) => directory.type === type && directory.current);
+  if (kind === "labor") {
+    const directory = current("rascenki");
+    const hits = (directory?.rows ?? [])
+      .map((row) => ({ row, name: String(row.work ?? row.name ?? "") }))
+      .filter((item) => titlesMatch(query.name, item.name) && unitsCompatible(String(item.row.unit ?? ""), query.unit, "labor"))
+      .sort((a, b) => b.name.length - a.name.length);
+    const best = hits[0];
+    const rate = best ? rateFromRow(best.row) : null;
+    if (best && directory && rate != null && rate > 0) {
+      return { rate, dirId: directory.id, basis: "job_title" };
+    }
+    const fallback = options?.personHourRate;
+    if (fallback != null && Number.isFinite(fallback) && fallback > 0) {
+      return { rate: fallback, basis: "person_hour" };
+    }
+    return null;
+  }
+  if (kind === "equipment") {
+    const directory = current("ceny");
+    const hits = (directory?.rows ?? [])
+      .map((row) => ({ row, name: String(row.name ?? row.work ?? "") }))
+      .filter((item) => titlesMatch(query.name, item.name) && unitsCompatible(String(item.row.unit ?? ""), query.unit, "equipment"))
+      .sort((a, b) => b.name.length - a.name.length);
+    const best = hits[0];
+    const rate = best ? rateFromRow(best.row) : null;
+    if (best && directory && rate != null && rate > 0) {
+      return { rate, dirId: directory.id, basis: "equipment_model" };
+    }
+    return null;
+  }
+  const pools = [current("normy"), current("ceny"), current("rascenki")].filter((directory): directory is DirectoryVersion => Boolean(directory));
+  for (const directory of pools) {
+    const hits = directory.rows
+      .map((row) => ({ row, name: String(row.name ?? row.work ?? "") }))
+      .filter((item) => titlesMatch(query.name, item.name) && unitsCompatible(String(item.row.unit ?? ""), query.unit, "material"))
+      .sort((a, b) => b.name.length - a.name.length);
+    const best = hits[0];
+    const rate = best ? rateFromRow(best.row) : null;
+    if (best && rate != null && rate > 0 && !isPersonHourUnit(String(best.row.unit ?? "")) && !isMachineHourUnit(String(best.row.unit ?? ""))) {
+      return { rate, dirId: directory.id, basis: "material" };
+    }
+  }
+  return null;
+}
+
 export function resolveDirectoryRate(
   directories: DirectoryVersion[],
   code: string

@@ -2,10 +2,13 @@
  * User-facing wording for calculation and GPR issue codes.
  * Raw codes (missing_tariff:res-…, vat_percent_rate, …) must never be shown.
  */
+import { plainPositionName } from "@/lib/format";
 
 const NAMED: Array<[RegExp, (name: string) => string]> = [
   [/^missing_tariff(?::|$)/u, (name) => (name ? `Нет ставки для: ${name}` : "Нет ставки")],
   [/^customer_rate:/u, (name) => (name ? `нет расценки заказчика для: ${name}` : "нет расценки заказчика")],
+  [/^materials_positions$/u, () => "Не учтены позиции материалов"],
+  [/^quantity:/u, (name) => (name ? `Не указано количество: ${name}` : "Не указано количество")],
   [/^customer_estimate_missing$/u, () => "Исходная смета заказчика не загружена"],
   [/^missing_rate:/u, (name) => (name ? `Нет ставки для: ${name}` : "Нет ставки")],
   [/^rate:/u, (name) => (name ? `Нет ставки для: ${name}` : "Нет ставки")],
@@ -23,15 +26,17 @@ function tailName(code: string, names?: Map<string, string>): string {
   const colon = code.indexOf(":");
   if (colon < 0) return "";
   const rest = code.slice(colon + 1);
-  const id = rest.split(":")[0];
-  const lookedUp = names?.get(id) ?? names?.get(rest);
+  const id = rest.split(":")[0] ?? "";
+  const lookedUp = names?.get(rest) ?? names?.get(id);
   if (lookedUp) return lookedUp;
+  if (/[а-яё]/iu.test(rest)) return plainPositionName(rest);
+  const plain = plainPositionName(rest);
+  if (plain !== rest) return plain;
   if (/^(res|cp|gs|urp|draft|source|pay|mat|lab|eq|bus)-/iu.test(id) || /^[0-9a-f-]{8,}$/iu.test(id)) {
     return "";
   }
-  const named = rest.includes(":") ? rest.slice(rest.indexOf(":") + 1) : rest;
-  if (/^[a-z0-9_:-]+$/iu.test(named) && !/[а-яё]/iu.test(named)) return "";
-  return named;
+  if (/^[a-z0-9_:-]+$/iu.test(rest)) return "";
+  return rest;
 }
 
 export function humanizeIssue(code: string, names?: Map<string, string>): string {

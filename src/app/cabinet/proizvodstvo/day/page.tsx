@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useEffect, useRef, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
-import { ErrorState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { DateInputRu } from "@/components/date-input-ru";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -187,11 +186,29 @@ function DayDetailsInner() {
 
   if (!user) return null;
   if (!plan) {
+    const plans = data.planFacts.filter((item) => !user || item.orgId === user.orgId);
     return (
-      <ErrorState
-        title="План/факт не найден"
-        description="Откройте день из производства или Ганта."
-      />
+      <div className="space-y-4" data-testid="day-missing-context">
+        <p className="text-sm">Откройте день из производства или с графика</p>
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="text-xs">Работа
+            <select className="mt-1 block h-9 rounded-md border px-2 text-sm" value={workName} onChange={(event) => setWorkName(event.target.value)}>
+              <option value="">Выберите работу</option>
+              {plans.flatMap((item) => item.entries.map((entry) => (
+                <option key={`${item.id}:${entry.workName}`} value={entry.workName}>{entry.workName}</option>
+              )))}
+            </select>
+          </label>
+          <label className="text-xs">Дата
+            <DateInputRu value={date} onChange={setDate} />
+          </label>
+          <Button type="button" onClick={() => {
+            const chosen = plans.find((item) => item.entries.some((entry) => entry.workName === workName)) ?? plans[0];
+            if (!chosen || !workName) return;
+            router.push(`/cabinet/proizvodstvo/day?planFactId=${encodeURIComponent(chosen.id)}&date=${encodeURIComponent(date)}&work=${encodeURIComponent(workName)}`);
+          }}>Открыть день</Button>
+        </div>
+      </div>
     );
   }
 
@@ -325,8 +342,8 @@ function DayDetailsInner() {
           className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-950"
           data-testid="t25u-test-banner"
         >
-          <span className="font-semibold">TEST</span> — изолированный контур
-          приёмки t25u (не данные школы №12).
+          <span className="font-semibold">TEST</span> — изолированный прогон
+          приёмки (не данные школы №12).
         </div>
       ) : null}
       <nav
@@ -583,6 +600,7 @@ function DayDetailsInner() {
             <AlertDescription>{factError}</AlertDescription>
           </Alert>
         ) : null}
+        <h3 className="mb-3 font-medium">Фотоотчёт</h3>
         <div
           className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"
           data-testid="day-photo-report"

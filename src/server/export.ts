@@ -9,7 +9,7 @@ import {
   roundMoney,
   sourceEstimateTotals,
 } from "@/lib/calc-math";
-import { formatNumber, formatQuantity, plainPositionName, positionHeading, splitSignedQuantity, visiblePositionCode } from "@/lib/format";
+import { formatNumber, formatQuantity, plainPositionName, positionHeading, roundQuantity, splitSignedQuantity, visiblePositionCode } from "@/lib/format";
 import { humanizeIssues } from "@/lib/issue-text";
 import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
 import {
@@ -260,12 +260,12 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
           stage: stage.name,
           kind: resource.kind,
           name: resource.name,
-          quantity: dimensions.sourceQty,
+          quantity: roundQuantity(Math.abs(dimensions.sourceQty), 2),
           unit: resource.unit ?? "",
           hoursPerShift: dimensions.hoursPerShift,
           shiftsPerDay: dimensions.shiftsPerDay,
           days: dimensions.days,
-          hours: dimensions.hours,
+          hours: dimensions.hours == null ? null : roundQuantity(Math.abs(dimensions.hours), 2),
           rate: dimensions.rate,
           amount: dimensions.amount,
           status: dimensions.incomplete.length ? "Неполно" : "Подтверждено",

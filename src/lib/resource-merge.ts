@@ -67,13 +67,13 @@ export function mergeEstimateLeaves<T extends MergeableLeaf>(leaves: T[]): T[] {
             : roundMoney(amounts.reduce((sum, value) => sum + value, 0));
     if (Math.abs(quantity) < 1e-9 && (amount == null || Math.abs(amount) < 0.005)) continue;
     const rates = [...new Set(list.map((leaf) => leaf.rate).filter((rate): rate is number => rate != null))];
-    const isReturn = quantity < 0 || (quantity === 0 && (amount ?? 0) < 0);
+    const isReturn = list.some((leaf) => /^возврат:/iu.test(leaf.name)) || quantity < 0 || (amount != null && amount < 0);
     const incomplete = [...new Set(list.flatMap((leaf) => leaf.incomplete))];
     merged.push({
       ...list[0],
       name: isReturn ? `Возврат: ${baseName}` : baseName,
       quantity: Math.abs(quantity),
-      difference: quantity < 0 ? quantity : null,
+      difference: isReturn ? -Math.abs(quantity) : null,
       hoursQ: hours == null ? null : Math.abs(hours),
       amount,
       rate: rates.length === 1 ? rates[0] : list[0].rate,
@@ -129,18 +129,22 @@ export function patchMergedResources(
     quantityBasis?: GprStageResource["quantityBasis"] | null;
   },
 ): GprStageResource[] {
-  const signedNet = members.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+  const signedNet = members.reduce((sum, item) => {
+    const value = Number(item.quantity) || 0;
+    return sum + (/^возврат:/iu.test(item.name) ? -Math.abs(value) : value);
+  }, 0);
   const isReturn = /^возврат:/iu.test(leaf.name) || signedNet < 0;
-  const target = patch.quantity === undefined ? null : isReturn ? -Math.abs(patch.quantity) : patch.quantity;
+  const target = patch.quantity === undefined ? null : isReturn ? Math.abs(patch.quantity) : patch.quantity;
   return members.map((member, index) => {
+    const share = Math.abs(Number(member.quantity) || 0);
     const quantity = target == null
       ? member.quantity
       : Math.abs(signedNet) < 1e-9
         ? (index === 0 ? target : 0)
-        : member.quantity * (target / signedNet);
+        : share * (target / Math.abs(signedNet));
     return {
       ...member,
-      name: patch.name ?? member.name,
+      name: patch.name ?? (target != null && isReturn ? `Возврат: ${member.name.replace(/^возврат:\s*/iu, "")}` : member.name),
       unit: patch.unit ?? member.unit,
       kind: patch.kind ?? member.kind,
       quantity,
@@ -169,14 +173,17 @@ export function mergeStageResources(resources: GprStageResource[]): GprStageReso
   const merged: GprStageResource[] = [];
   for (const key of order) {
     const list = groups.get(key)!;
-    const quantity = list.reduce((sum, resource) => sum + (Number(resource.quantity) || 0), 0);
+    const quantity = list.reduce((sum, resource) => {
+      const value = Number(resource.quantity) || 0;
+      return sum + (/^возврат:/iu.test(resource.name) ? -Math.abs(value) : value);
+    }, 0);
     if (Math.abs(quantity) < 1e-9) continue;
     const baseName = list[0].name.replace(/^возврат:\s*/iu, "").trim();
     const rates = [...new Set(list.map((resource) => resource.rate).filter((rate): rate is number => rate != null))];
     merged.push({
       ...list[0],
       name: quantity < 0 ? `Возврат: ${baseName}` : baseName,
-      quantity,
+      quantity: Math.abs(quantity),
       rate: rates.length === 1 ? rates[0] : list[0].rate,
     });
   }

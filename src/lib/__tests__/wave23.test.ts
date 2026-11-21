@@ -63,7 +63,7 @@ describe("wave 2–3 decisions", () => {
     );
     const water = resources.find((row) => row.name.includes("Вода"))!;
     expect(water.name.startsWith("Возврат:")).toBe(true);
-    expect(water.quantity).toBeLessThan(0);
+    expect(water.quantity).toBeGreaterThan(0);
     const [node] = buildHierarchicalEstimate({ stages });
     const shown = node.groups.flatMap((group) => group.leaves).find((leaf) => leaf.name.includes("Вода"))!;
     expect(shown.name.startsWith("Возврат:")).toBe(true);
@@ -80,6 +80,7 @@ describe("wave 2–3 decisions", () => {
 
   it("does not call a defect list or an estimate total a purchase condition", () => {
     expect(citationTopicLabel("Основание: Дефектная ведомость № 12 от 01.03.2026")).toBe("Прочее");
+    expect(citationTopicLabel("Основание: Дефектная ведомость №1,2")).toBe("Прочее");
     expect(citationTopicLabel("Сметная стоимость: 469 269,22 тыс. руб.")).toBe("Прочее");
     expect(citationTopicLabel("Штраф 0,1% за каждый день просрочки")).toBe("Ответственность");
   });

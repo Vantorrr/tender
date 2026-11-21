@@ -32,7 +32,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { api, downloadUrl } from "@/lib/api";
 import { parseDecimalRu } from "@/lib/decimal-ru";
 import { DEFAULT_MAX_UPLOAD_BYTES, uploadTooLargeMessage } from "@/lib/upload-limit";
-import { formatDate, formatMoney, formatNumber, formatQuantity, needByPhrase, roundQuantity, supplyIsOverdue, todayIsoInTimeZone } from "@/lib/format";
+import { formatDate, formatMoney, formatNumber, formatQuantity, needByPhrase, roundQuantity, sameRoundedQuantity, supplyIsOverdue, todayIsoInTimeZone } from "@/lib/format";
 import { humanizeIssues } from "@/lib/issue-text";
 import { userHasSection } from "@/lib/acl";
 import { visibleProcurementNumber } from "@/lib/pipeline";
@@ -881,7 +881,28 @@ export default function ProizvodstvoPage() {
                   <div>
                     <h3 className="font-medium">Материалы и поставки</h3>
                   </div>
-                  {canViewProcurement && procurement ? (
+                  {canViewProcurement && procurement?.lifecycle === "production" ? (
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Button size="sm" disabled={supplySavingId === "manifest"} onClick={() => {
+                        setSupplySavingId("manifest");
+                        void api<{ manifest: { created: number; withSupplier?: number; withoutSupplier?: number } }>("/api/supply", {
+                          method: "POST",
+                          body: JSON.stringify({ action: "generateManifest", procurementId: procurement.id }),
+                        }).then(async (result) => {
+                          await refresh();
+                          const manifest = result.manifest;
+                          toast.success(`Создано ${manifest.created} потребностей. Поставщики подобраны: ${manifest.withSupplier ?? 0}. Без поставщика: ${manifest.withoutSupplier ?? 0}.`);
+                        }).catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось создать потребность"))
+                          .finally(() => setSupplySavingId(null));
+                      }}>{supplySavingId === "manifest" ? "Создаю…" : "Создать потребность"}</Button>
+                      <Link
+                        href={`/cabinet/zakupki/${procurement.id}?tab=supply`}
+                        className="text-sm text-[var(--tk-copper-deep)] underline underline-offset-2"
+                      >
+                        Поставщики и запрос КП →
+                      </Link>
+                    </div>
+                  ) : canViewProcurement && procurement ? (
                     <Link
                       href={`/cabinet/zakupki/${procurement.id}?tab=supply`}
                       className="text-sm text-[var(--tk-copper-deep)] underline underline-offset-2"
@@ -965,12 +986,12 @@ export default function ProizvodstvoPage() {
                               type="number"
                               min="0"
                               step="any"
-                              defaultValue={roundQuantity(supply.qtyDelivered, 4)}
+                              defaultValue={String(roundQuantity(supply.qtyDelivered, 4))}
                               disabled={supplySavingId === supply.id}
                               aria-label={`Получено ${supply.materialName}`}
                               onBlur={(event) => {
-                                const amount = Number(event.currentTarget.value);
-                                if (Number.isFinite(amount) && amount >= 0 && amount !== supply.qtyDelivered) {
+                                const amount = Number(event.currentTarget.value.replace(",", "."));
+                                if (Number.isFinite(amount) && amount >= 0 && !sameRoundedQuantity(supply.qtyDelivered, event.currentTarget.value, 4)) {
                                   void updateSupplyReceipt(supply.id, { qtyDelivered: amount });
                                 }
                               }}
