@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 import { signedQuantityBySection, buildStagesFromEstimatePositions } from "@/lib/estimate-stages";
+import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
 import type { CalcPosition } from "@/lib/types";
 import { createSession } from "@/server/auth";
 import { closeDb, ensureReady, healthSnapshot, mutateAppData, readAppData } from "@/server/db";
@@ -84,6 +85,13 @@ describe("wave 2–3 server checks", () => {
     const sourceSections = new Set(source.map((row) => row.section).filter(Boolean));
     const stageSections = new Set(stages.map((stage) => stage.sectionName).filter(Boolean));
     expect(stageSections.size).toBe(sourceSections.size);
+    const shown = buildHierarchicalEstimate({ stages: [], positions }).flatMap((node) => node.groups.flatMap((group) => group.leaves));
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown.every((leaf) => leaf.quantity >= 0)).toBe(true);
+    const difference = (name: string) => shown.filter((leaf) => leaf.name.includes(name)).reduce((sum, leaf) => sum + (leaf.difference ?? 0), 0);
+    expect(difference("Вода")).toBeCloseTo(-2728.28, 2);
+    expect(difference("электросварные")).toBeCloseTo(-14.68, 2);
+    expect(difference("обсадные")).toBeCloseTo(-170.76, 2);
   });
 
   it("extracts a nested zip and downloads one file without leaving the archive", async () => {
@@ -238,7 +246,7 @@ describe("wave 2–3 server checks", () => {
     await workbook.xlsx.load(await buildCalculationXlsx(calculation.id) as unknown as import("exceljs").Buffer);
     const sheet = workbook.getWorksheet("Расчёт")!;
     const labels = sheet.getColumn(2).values.map((value) => String(value ?? ""));
-    expect(labels).toEqual(expect.arrayContaining(["Районный коэффициент", "Северная надбавка", "Накладные"]));
+    expect(labels).toEqual(expect.arrayContaining(["Районный коэффициент", "Северная надбавка", "Накладные расходы"]));
     const pdf = (await buildCalculationPdf(calculation.id)).toString("latin1");
     expect(pdf.length).toBeGreaterThan(1000);
   });

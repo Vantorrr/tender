@@ -1842,7 +1842,7 @@ export default function ZakupkaDetailPage() {
             </section>
 
             <Button data-testid="generate-material-manifest" disabled={manifestBusy} onClick={() => void generateMaterialManifest()}>{manifestBusy ? "Собираю ведомость…" : "Сформировать ведомость материалов"}</Button>
-            <p className="text-xs text-[var(--tk-muted)]">Ведомость собирается по материальным строкам распознанных смет/ВОР и ресурсам ГПР. Позиции без количества система не додумывает. Автоматическая отправка требует настроенного боевого SMTP.</p>
+            <p className="text-xs text-[var(--tk-muted)]">Ведомость собирается по материальным строкам распознанных смет и ведомостей объёмов и по ресурсам графика. Позиции без количества система не додумывает. Автоматическая отправка требует настроенной почты.</p>
             <section
               className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3"
               data-testid="supply-buy-list-gpr"
@@ -2032,7 +2032,7 @@ export default function ZakupkaDetailPage() {
                       {SUPPLY_RU[s.status]} · заказано {s.qtyOrdered} ·
                       поставлено {s.qtyDelivered}
                     </div>
-                    {s.source ? <div className="mt-1 text-xs text-[var(--tk-muted)]">Источник: {s.source === "gpr" ? "ГПР" : s.source === "estimate" ? `смета/ВОР${s.sourceFiles?.length ? ` · ${s.sourceFiles.join(", ")}` : ""}` : "вручную"}{s.quantityNeedsReview ? " · срок поставки требует подтверждения" : ""}</div> : null}
+                    {s.source ? <div className="mt-1 text-xs text-[var(--tk-muted)]">Источник: {s.source === "gpr" ? "график работ" : s.source === "estimate" ? `смета или ведомость объёмов${s.sourceFiles?.length ? ` · ${s.sourceFiles.join(", ")}` : ""}` : "вручную"}{s.quantityNeedsReview ? " · срок поставки требует подтверждения" : ""}</div> : null}
                     <DirectoryNeedHints material={s.materialName} suppliers={suppliers} />
                     {s.workName || s.supplierName || s.supplierEmail ? (
                       <div className="mt-1 text-xs text-[var(--tk-muted)]">

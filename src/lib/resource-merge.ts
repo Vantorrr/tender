@@ -10,6 +10,8 @@ type MergeableLeaf = {
   hoursQ?: number | null;
   amount?: number | null;
   rate?: number | null;
+  /** Signed return from the estimate. The quantity column stays non-negative. */
+  difference?: number | null;
   incomplete: string[];
   memberIds?: string[];
 };
@@ -71,6 +73,7 @@ export function mergeEstimateLeaves<T extends MergeableLeaf>(leaves: T[]): T[] {
       ...list[0],
       name: isReturn ? `Возврат: ${baseName}` : baseName,
       quantity: Math.abs(quantity),
+      difference: quantity < 0 ? quantity : null,
       hoursQ: hours == null ? null : Math.abs(hours),
       amount,
       rate: rates.length === 1 ? rates[0] : list[0].rate,

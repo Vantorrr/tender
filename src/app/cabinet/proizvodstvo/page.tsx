@@ -1163,7 +1163,7 @@ export default function ProizvodstvoPage() {
                       <TableHead className="text-right">За месяц</TableHead>
                       <TableHead className="text-right">Остаток</TableHead>
                       <TableHead className="text-right">План ГПР · срез</TableHead>
-                      <TableHead className="text-right">Δ факт−ГПР</TableHead>
+                      <TableHead className="text-right">Отклонение факта от плана</TableHead>
                       <TableHead title="Оценка по фактическому темпу, только после 3 дней с положительным фактом; выходные берутся из календаря ГПР, праздники не моделируются">Прогноз окончания</TableHead>
                     </TableRow>
                   </TableHeader>

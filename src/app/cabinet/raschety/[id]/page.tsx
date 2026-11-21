@@ -33,7 +33,7 @@ import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engine";
 import { parseDecimalRu } from "@/lib/decimal-ru";
 import { patchMergedResources } from "@/lib/resource-merge";
-import { formatMoney, formatNumber, quantityPresentation } from "@/lib/format";
+import { formatMoney, formatNumber, quantityPresentation, splitSignedQuantity, visiblePositionCode } from "@/lib/format";
 import { visibleProcurementNumber } from "@/lib/pipeline";
 import { rowDeleteConfirmed } from "@/lib/row-delete";
 import { humanizeIssues } from "@/lib/issue-text";
@@ -1185,6 +1185,7 @@ export default function RaschetDetailPage() {
                 <TableHead>Наименование</TableHead>
                 <TableHead>Ед.</TableHead>
                 <TableHead className="text-right">Кол-во / потребность</TableHead>
+                <TableHead className="text-right">Разница</TableHead>
                 <TableHead className="text-right">Расценка</TableHead>
                 <TableHead className="text-right">Стоимость</TableHead>
               </TableRow>
@@ -1192,37 +1193,43 @@ export default function RaschetDetailPage() {
             <TableBody>
               {calc.positions.map((p) => (
                 <TableRow key={p.id}>
-                  <TableCell className="font-mono text-xs">{/^(?:res|cp|urp|draft|source|gs|pay)-/iu.test(p.code) || (p.code.length > 24 && !/[а-яё]/iu.test(p.code)) ? "" : p.code}</TableCell>
+                  <TableCell className="text-xs">{visiblePositionCode(p.code)}</TableCell>
                   <TableCell className="min-w-[12rem]">
                     {p.name}
                     {p.sourceSectionName ? <div className="text-xs text-[var(--tk-muted)]">{p.sourceSectionName}</div> : null}
                   </TableCell>
                   <TableCell>{p.unit}</TableCell>
-                  <TableCell className="text-right" title={quantityPresentation(p.quantity, p.unit).title}>
+                  <TableCell className="text-right" title={quantityPresentation(splitSignedQuantity(p.quantity).quantity, p.unit).title}>
                     {locked ? (
-                      quantityPresentation(p.quantity, p.unit).text
+                      quantityPresentation(splitSignedQuantity(p.quantity).quantity, p.unit).text
                     ) : (
                       <Input
                         key={`qty-${p.id}:${p.quantity}`}
                         className="ml-auto w-28 text-right"
                         data-testid={`pos-qty-${p.id}`}
-                        defaultValue={quantityPresentation(p.quantity, p.unit).text}
-                        title={quantityPresentation(p.quantity, p.unit).title}
+                        defaultValue={quantityPresentation(splitSignedQuantity(p.quantity).quantity, p.unit).text}
+                        title={quantityPresentation(splitSignedQuantity(p.quantity).quantity, p.unit).title}
                         onBlur={(e) => {
+                          const shown = quantityPresentation(splitSignedQuantity(p.quantity).quantity, p.unit).text;
                           const parsed = parseDecimalRu(e.target.value);
-                          if (parsed == null) {
-                            e.target.value = quantityPresentation(p.quantity, p.unit).text;
+                          if (parsed == null || parsed < 0) {
+                            e.target.value = shown;
+                            if (parsed != null && parsed < 0) toast.error("Количество не может быть отрицательным. Возврат показывается в колонке «Разница».");
                             return;
                           }
-                          if (e.target.value.trim() === quantityPresentation(p.quantity, p.unit).text) return;
+                          if (e.target.value.trim() === shown) return;
+                          const quantity = p.quantity < 0 ? -Math.abs(parsed) : parsed;
                           updateCalculation(calc.id, {
                             positions: calc.positions.map((x) =>
-                              x.id === p.id ? { ...x, quantity: parsed } : x
+                              x.id === p.id ? { ...x, quantity } : x
                             ),
                           });
                         }}
                       />
                     )}
+                  </TableCell>
+                  <TableCell className="text-right" data-testid={`pos-difference-${p.id}`}>
+                    {(() => { const difference = splitSignedQuantity(p.quantity).difference; return difference == null ? "—" : formatNumber(difference); })()}
                   </TableCell>
                   <TableCell className="text-right">
                     {p.isWorkItem && calc.kind !== "customer_original" ? (
@@ -1305,17 +1312,21 @@ export default function RaschetDetailPage() {
                 <TableHead>Материал</TableHead>
                 <TableHead>Ед.</TableHead>
                 <TableHead className="text-right">Потребность</TableHead>
+                <TableHead className="text-right">Разница</TableHead>
                 <TableHead className="text-right">Стоимость</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {materials.map((p) => (
                 <TableRow key={`mat-${p.id}`}>
-                  <TableCell className="font-mono text-xs">{p.code}</TableCell>
+                  <TableCell className="text-xs">{visiblePositionCode(p.code)}</TableCell>
                   <TableCell>{p.name}</TableCell>
                   <TableCell>{p.unit}</TableCell>
                   <TableCell className="text-right">
-                    {formatNumber(p.quantity)}
+                    {formatNumber(splitSignedQuantity(p.quantity).quantity)}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {(() => { const difference = splitSignedQuantity(p.quantity).difference; return difference == null ? "—" : formatNumber(difference); })()}
                   </TableCell>
                   <TableCell className="text-right">
                     {formatMoney(
@@ -1338,20 +1349,20 @@ export default function RaschetDetailPage() {
             Север / экономика — подтверждаемые входы
           </h2>
           <p className="mt-1 text-sm text-[var(--tk-muted)]">
-            Вносите только подтверждённые расходы и указывайте источник суммы. Универсальный «северный коэффициент» не применяется. Прибыль — наценка XOR маржа.
+            Вносите только подтверждённые расходы и указывайте источник суммы. Универсальный северный коэффициент не применяется. Прибыль считается либо наценкой, либо маржой.
           </p>
           <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-[var(--tk-muted)]">
             <li>
-              Вахта / РК+СН / северные множители — из подтверждённых баз (ШР/ТС),
-              не универсальный коэффициент
+              Вахта, районный коэффициент и северная надбавка берутся из подтверждённых документов,
+              не как универсальный коэффициент
             </li>
             <li>
               Автобус: полная маш.-ч ставка уже с амортизацией/ГСМ/ФОТ/ТО — не
               добавлять водителя/ГСМ сверху; расход топлива в эталоне — л/час
             </li>
             <li>
-              НР как % от прямых (эталон 43%); прибыль = наценка на с/с с НР
-              (эталон 40%), не маржа выручки
+              Накладные расходы как процент от прямых затрат (эталон 43%); прибыль — наценка на себестоимость с накладными расходами
+              (эталон 40%), не доля от выручки
             </li>
             <li>
               Резерв отпуска ≠ общий резерв непредвиденных (последний — только

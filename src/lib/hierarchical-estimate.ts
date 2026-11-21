@@ -28,8 +28,10 @@ export type EstimateLeaf = {
   kind: EstimateKind;
   name: string;
   unit: string;
-  /** Editable source L (count / hours / material qty). */
+  /** Editable source L (count / hours / material qty). Never negative. */
   quantity: number;
+  /** Signed return or exclusion from the estimate. Null when the line is not a difference. */
+  difference?: number | null;
   rate: number | null;
   amount: number | null;
   stageId?: string;
@@ -395,7 +397,7 @@ export function buildHierarchicalEstimate(opts: {
     if (match(leaf.name) || match(KIND_LABEL[kind])) unbound.push(leaf);
   }
   if (unbound.length) {
-    const groups = groupLeaves(unbound);
+    const groups = groupLeaves(mergeEstimateLeaves(unbound));
     const { subtotal, incomplete } = stageSubtotal(groups);
     nodes.push({
       id: "_unbound",
