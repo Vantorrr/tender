@@ -8,40 +8,57 @@ import type { CalcPosition, GprStage, GprStageResource } from "@/lib/types";
  */
 export const GPR_DATES_MISSING = "Срок не указан в документах — проставьте даты на графике";
 
-function datesInText(text: string): string[] {
-  const found: string[] = [];
-  for (const match of text.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) {
-    const iso = `${match[1]}-${match[2]}-${match[3]}`;
-    const date = new Date(`${iso}T00:00:00Z`);
-    if (!Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === iso) found.push(iso);
+function ruOrIsoDate(value: string): string | null {
+  const iso = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (iso) {
+    const date = new Date(`${value}T00:00:00Z`);
+    return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value ? value : null;
   }
-  for (const match of text.matchAll(/\b(\d{1,2})[./](\d{1,2})[./](\d{4})\b/g)) {
-    const day = Number(match[1]);
-    const month = Number(match[2]);
-    const year = Number(match[3]);
-    if (month < 1 || month > 12 || day < 1 || day > 31) continue;
-    const iso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-    const date = new Date(`${iso}T00:00:00Z`);
-    if (date.getUTCFullYear() === year && date.getUTCMonth() + 1 === month && date.getUTCDate() === day) found.push(iso);
-  }
-  return found;
+  const match = value.match(/^(\d{1,2})[./](\d{1,2})[./](\d{4})$/);
+  if (!match) return null;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const next = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  const date = new Date(`${next}T00:00:00Z`);
+  return date.getUTCFullYear() === year && date.getUTCMonth() + 1 === month && date.getUTCDate() === day ? next : null;
 }
 
-/** A work interval is one sentence that names the job period, not every date in the file. */
+/** «г.» after a year is an abbreviation, not the end of a sentence. */
+function normalizeScheduleText(text: string): string {
+  return text.replace(/(\d{4})\s*г\./giu, "$1");
+}
+
+/**
+ * A work interval is an explicit range or a named start and finish.
+ * Loose dates (a protocol, a bid deadline) do not become the schedule.
+ */
 export function periodFromDocumentText(text: string): { start: string; end: string } | null {
-  const windows = text.split(/\n+|(?<=[.!?])\s+/u);
-  for (const window of windows) {
-    const dates = [...new Set(datesInText(window))].sort();
-    if (dates.length < 2 || dates[0] === dates[dates.length - 1]) continue;
-    const aboutWorks = /работ|выполнен|производств/iu.test(window);
-    const submissionOnly = /подач|заявк|протокол|публикац/iu.test(window) && !aboutWorks;
-    const explicitInterval = /с\s+\d{1,2}[./]\d{1,2}[./]\d{4}\s+по\s+\d{1,2}[./]\d{1,2}[./]\d{4}/iu.test(window)
-      || (/начал/iu.test(window) && /окончан/iu.test(window))
-      || /срок\s+(?:выполнен|работ|производств)/iu.test(window);
-    if (submissionOnly || !explicitInterval) continue;
-    return { start: dates[0], end: dates[dates.length - 1] };
+  const normalized = normalizeScheduleText(text);
+  const range = /с\s+(\d{1,2}[./]\d{1,2}[./]\d{4})\s+по\s+(\d{1,2}[./]\d{1,2}[./]\d{4})/iu.exec(normalized);
+  if (range) {
+    const around = normalized.slice(Math.max(0, range.index - 48), range.index + range[0].length + 48);
+    const submissionOnly = /подач|заявк|протокол/iu.test(around) && !/работ|выполнен|производств/iu.test(around);
+    const start = ruOrIsoDate(range[1]);
+    const end = ruOrIsoDate(range[2]);
+    if (!submissionOnly && start && end && start < end) return { start, end };
+  }
+  const startMatch = /начал\p{L}*(?:\s+работ\p{L}*)?\s+(\d{1,2}[./]\d{1,2}[./]\d{4}|\d{4}-\d{2}-\d{2})/iu.exec(normalized);
+  const endMatch = /окончан\p{L}*(?:\s+работ\p{L}*)?\s+(\d{1,2}[./]\d{1,2}[./]\d{4}|\d{4}-\d{2}-\d{2})/iu.exec(normalized);
+  if (startMatch && endMatch && /работ|выполнен|производств/iu.test(normalized)) {
+    const start = ruOrIsoDate(startMatch[1]);
+    const end = ruOrIsoDate(endMatch[1]);
+    if (start && end && start < end) return { start, end };
   }
   return null;
+}
+
+/** «90 календарных дней» is a duration, not a pair of dates. */
+export function calendarDurationDays(text: string): number | null {
+  const match = normalizeScheduleText(text).match(/(\d+)\s+календарн\p{L}*\s+дн/iu);
+  const days = match ? Number(match[1]) : 0;
+  return Number.isFinite(days) && days > 0 ? days : null;
 }
 
 function addDays(iso: string, days: number): string {
@@ -56,7 +73,10 @@ export function datesForStage(
   today: string,
   period: { start: string; end: string } | null,
 ): { start: string; end: string } {
-  if (!period || count <= 0) return { start: today, end: today };
+  if (!period || count <= 0) {
+    const start = addDays(today, Math.max(0, index));
+    return { start, end: start };
+  }
   const span = Math.max(1, Math.round((Date.parse(`${period.end}T00:00:00Z`) - Date.parse(`${period.start}T00:00:00Z`)) / 86400000) + 1);
   const slice = Math.max(1, Math.floor(span / Math.max(count, 1)));
   const start = addDays(period.start, Math.min(index * slice, Math.max(0, span - 1)));

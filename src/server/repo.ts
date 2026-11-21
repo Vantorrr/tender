@@ -27,10 +27,10 @@ import type {
 } from "@/lib/types";
 import { matchCompanyDirectoryRate, rateFromRow } from "@/lib/client-dirs";
 import { modelConfigured } from "@/server/openrouter";
-import { canonicalUploadPath, deleteUpload } from "@/server/uploads";
+import { canonicalUploadPath, deleteUpload, readUpload, resolveUploadPath } from "@/server/uploads";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
-import { buildStagesFromEstimatePositions, datesForStage, GPR_DATES_MISSING, periodFromDocumentText } from "@/lib/estimate-stages";
-import { dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, scheduleAfterPredecessor, scheduleParamsWithNorthernDefaults } from "@/lib/wave23";
+import { buildStagesFromEstimatePositions, calendarDurationDays, datesForStage, GPR_DATES_MISSING, periodFromDocumentText } from "@/lib/estimate-stages";
+import { composeAnalyticalNote, dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, scheduleAfterPredecessor, scheduleParamsWithNorthernDefaults } from "@/lib/wave23";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
 import {
@@ -50,6 +50,7 @@ import {
 import { assertGprWrite, assertOrgAccess, assertSection } from "@/server/acl";
 import {
   overheadsFromWorks,
+  roundMoney,
   scenarioFactor,
   worksSubtotal,
 } from "@/lib/calc-math";
@@ -59,6 +60,7 @@ import type { UploadAnalysis } from "@/server/grand-smeta";
 import { mutateAppData, readAppData, resetAppData } from "@/server/db";
 import { hashPassword } from "@/server/passwords";
 import { createSession, publicUser } from "@/server/auth";
+import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { economicsFromVolumes } from "@/lib/economics-from-rates";
 import { ensureStageResources } from "@/lib/gpr-resources";
@@ -1859,24 +1861,45 @@ export function resetDemo(actorId: string): { token: string; actorId: string } {
 export function refreshProcurementAnalytics(
   actorId: string,
   procurementId: string
-) {
-  return mutateAppData((data) => {
+): { unchanged: boolean } {
+  let unchanged = false;
+  mutateAppData((data) => {
     const actor = actorUser(data, actorId);
     const p = data.procurements.find((x) => x.id === procurementId);
     if (!p) throw new Error("Закупка не найдена");
     assertOrgAccess(actor, p.orgId, "закупки");
     const docs = data.documents.filter((d) => d.procurementId === p.id);
-    p.analytics = buildProjectAnalytics(p, docs);
-    audit(
-      data,
-      actorId,
-      "analyze",
-      "procurement",
-      procurementId,
-      `Сводка: ${p.analytics.recommendation}`
-    );
+    const built = buildProjectAnalytics(p, docs);
+    const verdict = built.recommendation === "participate" ? 7 : built.recommendation === "do_not_participate" ? 3 : 4;
+    const verdictText = built.recommendation === "participate"
+      ? "Участие возможно после проверки документов."
+      : built.recommendation === "do_not_participate"
+        ? "Участие не рекомендуется по найденным условиям."
+        : "Данных недостаточно для уверенного решения.";
+    const summary = composeAnalyticalNote({
+      verdict,
+      verdictText,
+      blocks: [
+        built.summary.split("\n\n")[0] || "нет данных",
+        docs.some((document) => document.category === "contract" || /договор|контракт/iu.test(document.fileName))
+          ? "Условия участия смотрите в договоре и цитатах карточки."
+          : "нет данных",
+        docs.some((document) => (document.estimatePositions?.length ?? 0) > 0)
+          ? `В сметах распознано ${docs.reduce((sum, document) => sum + (document.estimatePositions?.length ?? 0), 0)} строк.`
+          : "нет данных",
+        "нет данных",
+        built.missingInputs.slice(0, 5).join("\n") || "нет данных",
+      ],
+    });
+    if (p.analytics?.summary === summary) {
+      unchanged = true;
+      return data;
+    }
+    p.analytics = { ...built, summary };
+    audit(data, actorId, "analyze", "procurement", procurementId, `Сводка: ${p.analytics.recommendation}`);
     return data;
   });
+  return { unchanged };
 }
 
 /** Keep the upload successful, but make a failed model pass visible on the card. */
@@ -2224,14 +2247,41 @@ function isNavigationStub(schedule: { stages: GprStage[] }): boolean {
   );
 }
 
-function procurementDocumentPeriod(data: AppData, procurement: { id: string; deadline?: string | null }) {
+function uploadedDocumentText(fileName: string, storedPath: string | undefined): string {
+  if (!storedPath) return "";
+  const bytes = readUpload(storedPath);
+  if (!bytes?.length) return "";
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith(".txt") || lower.endsWith(".text")) return bytes.toString("utf8").replace(/^\uFEFF/, "");
+  if (!lower.endsWith(".docx")) return "";
+  const absolute = resolveUploadPath(storedPath);
+  if (!absolute) return "";
+  const result = spawnSync("unzip", ["-p", absolute, "word/document.xml"], { encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
+  if (result.status !== 0 || !result.stdout) return "";
+  return result.stdout.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+}
+
+function procurementScheduleWindow(data: AppData, procurement: { id: string }, today: string): { start: string; end: string } | null {
   const documents = data.documents.filter((document) => document.procurementId === procurement.id && (
     document.category === "tz" || document.category === "contract"
     || /тз|техническ|договор|контракт/iu.test(`${document.fileName} ${document.title}`)
   ));
-  return periodFromDocumentText(documents
-    .flatMap((document) => [document.analyticalNote, ...document.citations.map((citation) => citation.text)])
-    .join("\n"));
+  const text = documents.flatMap((document) => [
+    document.analyticalNote,
+    ...document.citations.map((citation) => citation.text),
+    uploadedDocumentText(document.fileName, document.storedPath),
+  ]).join("\n");
+  const period = periodFromDocumentText(text);
+  if (period) return period;
+  const days = calendarDurationDays(text);
+  if (!days) return null;
+  return { start: today, end: addScheduleDays(today, days - 1) };
+}
+
+function addScheduleDays(iso: string, days: number): string {
+  const date = new Date(`${iso}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 function withMissingDatesNote(assumptions: string[], dated: boolean): string[] {
@@ -2290,7 +2340,7 @@ export function createProcurementSchedule(actorId: string, procurementId: string
     if (!procurement.calculationId) throw new Error("Сначала сформируйте расчёт");
     const now = new Date().toISOString();
     const draft = data.calculations.find((item) => item.id === procurement.calculationId && item.kind !== "customer_original");
-    const period = procurementDocumentPeriod(data, procurement);
+    const period = procurementScheduleWindow(data, procurement, now.slice(0, 10));
     const derived = buildDraftStagesFromEstimate(draft?.positions ?? [], now, period);
     const existing = procurement.gprId ? data.schedules.find((item) => item.id === procurement.gprId) : undefined;
     if (existing && isNavigationStub(existing) && derived.length > 0) {
@@ -3085,6 +3135,32 @@ function applyResourceDraftAdjustments(calc: Calculation) {
   };
 }
 
+function pricedVolumeSum(positions: Calculation["positions"]): number {
+  return roundMoney(positions
+    .filter((position) => position.code === "ВОР" && !position.isWorkItem && !position.rateMissing && position.rate > 0)
+    .reduce((sum, position) => sum + position.quantity * position.rate, 0));
+}
+
+/** Accepted volume lines add exactly quantity × rate. Overhead is not applied again. */
+function addAcceptedVolumes(calc: Calculation) {
+  const amount = pricedVolumeSum(calc.positions);
+  if (!amount || !calc.costSummary) return;
+  const summary = calc.costSummary;
+  summary.C0 = roundMoney(summary.C0 + amount);
+  summary.C = roundMoney(summary.C + amount);
+  summary.priceExVat = roundMoney((summary.priceExVat ?? 0) + amount);
+  if (summary.priceIncVat != null) summary.priceIncVat = roundMoney(summary.priceIncVat + amount);
+  if (summary.resourceSlices) {
+    summary.resourceSlices = {
+      ...summary.resourceSlices,
+      labor: roundMoney((summary.resourceSlices.labor ?? 0) + amount),
+      direct: roundMoney((summary.resourceSlices.direct ?? 0) + amount),
+      costWithOh: roundMoney((summary.resourceSlices.costWithOh ?? 0) + amount),
+      total: roundMoney((summary.resourceSlices.total ?? 0) + amount),
+    };
+  }
+}
+
 export function recomputeCalculationCost(
   actorId: string,
   calcId: string,
@@ -3149,6 +3225,7 @@ export function recomputeCalculationCost(
       applyResourceDraftAdjustments(item);
       const baseSlices = item.costSummary?.resourceSlices;
       applyNorthernFold(item, baseSlices?.labor ?? 0);
+      addAcceptedVolumes(item);
       const matNeeds = buildMaterialNeeds({
         positions: item.positions,
         stages: linkedSchedule.stages,
@@ -3172,7 +3249,7 @@ export function recomputeCalculationCost(
     }
 
     const buckets = bucketsFromPositions(
-      item.positions,
+      item.positions.filter((position) => position.code !== "ВОР"),
       item.scenarioFactor || 1
     );
     const routes = item.busRoutes ?? [];
@@ -3245,6 +3322,7 @@ export function recomputeCalculationCost(
       at: new Date().toISOString(),
     };
     applyNorthernFold(item, buckets.labor);
+    addAcceptedVolumes(item);
     item.dataFlags = [
       ...(item.dataFlags ?? []).filter((f) => !f.startsWith("cost_")),
       "cost_engine_v1",

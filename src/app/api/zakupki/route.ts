@@ -194,8 +194,11 @@ export async function POST(req: Request) {
       return json(getBootstrap(user));
     }
     if (body.action === "refreshAnalytics") {
-      refreshProcurementAnalytics(user.id, body.id!);
-      return json(getBootstrap(user));
+      const refreshed = refreshProcurementAnalytics(user.id, body.id!);
+      return json({
+        ...getBootstrap(user),
+        analyticsNotice: refreshed.unchanged ? "Новых данных нет — записка уже актуальна" : undefined,
+      });
     }
     if (body.action === "analyzeProject") {
       const result = await analyzeProcurementPackageWithAI(user.id, body.id!);

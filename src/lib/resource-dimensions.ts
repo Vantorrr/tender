@@ -188,13 +188,14 @@ export function resolveResourceDimensions(
     dims.days != null
   ) {
     hours = resourceHours({
-      quantity: signed,
+      quantity: shown,
       hoursPerShift: dims.hoursPerShift,
       shiftsPerDay: dims.shiftsPerDay,
       days: dims.days,
     });
   }
-  const { amount, incomplete: amtInc } = resourceAmount(hours, rate);
+  const signedHours = hours == null ? null : hours * creditSign(r.name, r.quantity);
+  const { amount, incomplete: amtInc } = resourceAmount(signedHours, rate);
   for (const a of amtInc) {
     if (a === "hours_inputs") incomplete.push(`hours_inputs:${r.id}`);
     else if (a === "missing_tariff" && !incomplete.includes(`missing_tariff:${r.id}`)) {

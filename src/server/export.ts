@@ -136,8 +136,8 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
         code: visiblePositionCode(p.code),
         name: `${plainPositionName(p.name)} (объём работы; ставка ресурса не применяется)`,
         unit: p.unit,
-        qty: Math.abs(p.quantity),
-        difference: p.quantity < 0 ? p.quantity : null,
+        qty: roundQuantity(Math.abs(p.quantity), 2),
+        difference: p.quantity < 0 ? roundQuantity(p.quantity, 2) : null,
         rate: null,
         sum: null,
       });
@@ -148,8 +148,8 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
       code: visiblePositionCode(p.code),
       name: plainPositionName(p.name),
       unit: p.unit,
-      qty: Math.abs(p.quantity),
-      difference: p.quantity < 0 ? p.quantity : null,
+      qty: roundQuantity(Math.abs(p.quantity), 2),
+      difference: p.quantity < 0 ? roundQuantity(p.quantity, 2) : null,
       rate: p.rateMissing ? null : p.rate,
       sum,
     });
@@ -258,7 +258,7 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
         if (dimensions.incomplete.length) hasPartialResource = true;
         resources.addRow({
           stage: stage.name,
-          kind: resource.kind,
+          kind: { labor: "Люди", equipment: "Техника", material: "Материалы", bus: "Техника", other: "Прочее" }[resource.kind] ?? "Прочее",
           name: resource.name,
           quantity: roundQuantity(Math.abs(dimensions.sourceQty), 2),
           unit: resource.unit ?? "",
@@ -389,7 +389,7 @@ export async function buildCalculationPdf(calcId: string): Promise<Buffer> {
     }
     if (p.rateMissing || !(p.rate > 0)) {
       drawWrapped(
-        `${base} · ставка не заполнена · сумма не подтверждена`,
+        `${base} · нет ставки · сумма не подтверждена`,
         9,
         false,
         accent

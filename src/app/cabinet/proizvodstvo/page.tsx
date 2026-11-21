@@ -891,7 +891,9 @@ export default function ProizvodstvoPage() {
                         }).then(async (result) => {
                           await refresh();
                           const manifest = result.manifest;
-                          toast.success(`Создано ${manifest.created} потребностей. Поставщики подобраны: ${manifest.withSupplier ?? 0}. Без поставщика: ${manifest.withoutSupplier ?? 0}.`);
+                          toast.success(manifest.created
+                            ? `Создано ${manifest.created} потребностей. Поставщики подобраны: ${manifest.withSupplier ?? 0}. Без поставщика: ${manifest.withoutSupplier ?? 0}.`
+                            : "Новых потребностей нет — всё уже создано");
                         }).catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось создать потребность"))
                           .finally(() => setSupplySavingId(null));
                       }}>{supplySavingId === "manifest" ? "Создаю…" : "Создать потребность"}</Button>

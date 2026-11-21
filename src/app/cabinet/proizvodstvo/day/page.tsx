@@ -16,7 +16,9 @@ import {
   planResourceLinesForDay,
   stagesForWork,
 } from "@/lib/day-resource-plan";
-import { formatDate, formatNumber, todayIsoInTimeZone } from "@/lib/format";
+import { formatDate, formatMoney, formatNumber, todayIsoInTimeZone } from "@/lib/format";
+import { completedWorkCost } from "@/lib/wave23";
+import { humanizeIssue } from "@/lib/issue-text";
 import { allocatePlanForSlice } from "@/lib/plan-from-gpr";
 import {
   entryDisplayFact,
@@ -176,6 +178,7 @@ function DayDetailsInner() {
 
   const [qty, setQty] = useState(String(dayQty || ""));
   const [caption, setCaption] = useState("");
+  const [pickedDay, setPickedDay] = useState("");
 
   useEffect(() => {
     // Reset the local daily draft when its work/date context changes.
@@ -192,20 +195,21 @@ function DayDetailsInner() {
         <p className="text-sm">Откройте день из производства или с графика</p>
         <div className="flex flex-wrap items-end gap-3">
           <label className="text-xs">Работа
-            <select className="mt-1 block h-9 rounded-md border px-2 text-sm" value={workName} onChange={(event) => setWorkName(event.target.value)}>
+            <select className="mt-1 block h-9 min-w-64 rounded-md border px-2 text-sm" value={pickedDay} onChange={(event) => setPickedDay(event.target.value)}>
               <option value="">Выберите работу</option>
-              {plans.flatMap((item) => item.entries.map((entry) => (
-                <option key={`${item.id}:${entry.workName}`} value={entry.workName}>{entry.workName}</option>
-              )))}
+              {plans.flatMap((item) => item.entries.map((row) => {
+                const value = `${item.id}\u0000${row.workName}`;
+                return <option key={value} value={value}>{item.title}: {row.workName}</option>;
+              }))}
             </select>
           </label>
           <label className="text-xs">Дата
             <DateInputRu value={date} onChange={setDate} />
           </label>
           <Button type="button" onClick={() => {
-            const chosen = plans.find((item) => item.entries.some((entry) => entry.workName === workName)) ?? plans[0];
-            if (!chosen || !workName) return;
-            router.push(`/cabinet/proizvodstvo/day?planFactId=${encodeURIComponent(chosen.id)}&date=${encodeURIComponent(date)}&work=${encodeURIComponent(workName)}`);
+            const [planId, chosenWork] = pickedDay.split("\u0000");
+            if (!planId || !chosenWork) return;
+            router.push(`/cabinet/proizvodstvo/day?planFactId=${encodeURIComponent(planId)}&date=${encodeURIComponent(date)}&work=${encodeURIComponent(chosenWork)}`);
           }}>Открыть день</Button>
         </div>
       </div>
@@ -317,6 +321,16 @@ function DayDetailsInner() {
   // zero quantity must not silently fall back to the previous total.
   const factVal = parseDecimalRu(qty) ?? 0;
   const delta = factVal - dayPlan;
+  const customerPositions = data.calculations.find((item) => item.id === procurement?.originalCalculationId)?.positions ?? [];
+  const customerRate = customerPositions.find((position) => {
+    const sameName = position.name.trim().toLocaleLowerCase("ru-RU") === selectedWork.trim().toLocaleLowerCase("ru-RU")
+      || position.sourceWorkName?.trim().toLocaleLowerCase("ru-RU") === selectedWork.trim().toLocaleLowerCase("ru-RU");
+    return sameName && !position.rateMissing && position.rate > 0 && !position.isWorkItem;
+  })?.rate ?? customerPositions.find((position) =>
+    position.name.trim().toLocaleLowerCase("ru-RU") === selectedWork.trim().toLocaleLowerCase("ru-RU")
+    && !position.rateMissing && position.rate > 0
+  )?.rate ?? null;
+  const dayCompleted = completedWorkCost(factVal, customerRate);
   const isTest =
     isT25uTestId(plan.id) ||
     isT25uTestTitle(plan.title) ||
@@ -481,6 +495,13 @@ function DayDetailsInner() {
           </p>
         </div>
       </div>
+
+      <section className="mb-6 rounded-2xl border border-[var(--tk-line)] bg-white/90 p-5" data-testid="day-completed-cost">
+        <p className="text-xs text-[var(--tk-muted)]">Стоимость выполненного</p>
+        <p className="mt-1 text-2xl font-semibold" aria-readonly="true">
+          {dayCompleted != null ? formatMoney(dayCompleted) : humanizeIssue(customerPositions.length ? `customer_rate:${selectedWork}` : "customer_estimate_missing")}
+        </p>
+      </section>
 
       <div className="mb-6 grid gap-4 lg:grid-cols-2">
         <div

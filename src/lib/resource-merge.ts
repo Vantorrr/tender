@@ -50,7 +50,11 @@ export function mergeEstimateLeaves<T extends MergeableLeaf>(leaves: T[]): T[] {
   for (const key of order) {
     const list = groups.get(key)!;
     const baseName = list[0].name.replace(/^возврат:\s*/iu, "").trim();
-    const quantity = list.reduce((sum, leaf) => sum + (Number(leaf.quantity) || 0), 0);
+    const quantity = list.reduce((sum, leaf) => {
+      const value = Number(leaf.quantity) || 0;
+      const credit = /^возврат:/iu.test(leaf.name) || (leaf.difference != null && leaf.difference < 0);
+      return sum + (credit ? -Math.abs(value) : value);
+    }, 0);
     const hoursKnown = list.some((leaf) => leaf.hoursQ != null);
     const hours = hoursKnown
       ? list.reduce((sum, leaf) => sum + (leaf.hoursQ ?? 0), 0)
@@ -67,7 +71,7 @@ export function mergeEstimateLeaves<T extends MergeableLeaf>(leaves: T[]): T[] {
             : roundMoney(amounts.reduce((sum, value) => sum + value, 0));
     if (Math.abs(quantity) < 1e-9 && (amount == null || Math.abs(amount) < 0.005)) continue;
     const rates = [...new Set(list.map((leaf) => leaf.rate).filter((rate): rate is number => rate != null))];
-    const isReturn = list.some((leaf) => /^возврат:/iu.test(leaf.name)) || quantity < 0 || (amount != null && amount < 0);
+    const isReturn = quantity < 0 || (Math.abs(quantity) < 1e-9 && (amount ?? 0) < 0);
     const incomplete = [...new Set(list.flatMap((leaf) => leaf.incomplete))];
     merged.push({
       ...list[0],

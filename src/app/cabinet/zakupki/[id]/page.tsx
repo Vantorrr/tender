@@ -230,6 +230,7 @@ export default function ZakupkaDetailPage() {
     ensureChain,
     sendToCalculation,
     analyzeProjectWithAI,
+    refreshAnalytics,
     reanalyzeDocument,
     createDocumentUpload,
     updateRisk,
@@ -555,7 +556,9 @@ export default function ZakupkaDetailPage() {
       const result = await api<{ manifest: { created: number; withSupplier?: number; withoutSupplier?: number } }>("/api/supply", { method: "POST", body: JSON.stringify({ action: "generateManifest", procurementId: procurement!.id }) });
       await refresh();
       const manifest = result.manifest;
-      toast.success(`Создано ${manifest.created} потребностей. Поставщики подобраны: ${manifest.withSupplier ?? 0}. Без поставщика: ${manifest.withoutSupplier ?? 0}.`);
+      toast.success(manifest.created
+        ? `Создано ${manifest.created} потребностей. Поставщики подобраны: ${manifest.withSupplier ?? 0}. Без поставщика: ${manifest.withoutSupplier ?? 0}.`
+        : "Новых потребностей нет — всё уже создано");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось сформировать ведомость");
     } finally { setManifestBusy(false); }
@@ -644,20 +647,6 @@ export default function ZakupkaDetailPage() {
       toast.error(msg);
     } finally {
       setBusy(false);
-    }
-  }
-
-  async function refreshLocalSummary() {
-    if (!docs.length) return;
-    setAiAnalyzing(true);
-    try {
-      const before = docs.map((document) => document.analyticalNote).join("\n");
-      const notes = await Promise.all(docs.map((document) => reanalyzeDocument(document.id, { useLlm: false })));
-      toast.success(notes.join("\n") === before ? "Новых данных нет — записка уже актуальна" : "Сводка обновлена");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Не удалось обновить сводку");
-    } finally {
-      setAiAnalyzing(false);
     }
   }
 
@@ -929,7 +918,13 @@ export default function ZakupkaDetailPage() {
                   variant="outline"
                   disabled={aiAnalyzing || docs.length === 0}
                   title={docs.length === 0 ? "Сначала загрузите документы" : undefined}
-                  onClick={() => void refreshLocalSummary()}
+                  onClick={() => {
+                    setAiAnalyzing(true);
+                    void refreshAnalytics(procurement!.id)
+                      .then((notice) => toast.success(notice ?? "Сводка обновлена"))
+                      .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось обновить сводку"))
+                      .finally(() => setAiAnalyzing(false));
+                  }}
                 >
                   {aiAnalyzing ? "Обновляю сводку…" : "Обновить сводку"}
                 </Button>
@@ -961,11 +956,7 @@ export default function ZakupkaDetailPage() {
                   Открыть раздел «Обмен»
                 </Link>
               </div>
-            ) : (
-              <p className="mt-3 text-xs text-[var(--tk-muted)]" data-testid="obmen-result-empty">
-                Результат обмена со сметным ПО пока не появлялся в этой карточке.
-              </p>
-            )}
+            ) : null}
           </section>
           <div className="grid gap-4 lg:grid-cols-3">
             <div className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5 lg:col-span-2">

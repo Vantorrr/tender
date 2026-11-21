@@ -133,7 +133,7 @@ interface StoreContextValue {
   runSyncJob: () => Promise<void>;
   ensureChain: (procurementId: string) => Promise<BootstrapResponse>;
   sendToCalculation: (procurementId: string) => Promise<CalculationSummary>;
-  refreshAnalytics: (procurementId: string) => Promise<void>;
+  refreshAnalytics: (procurementId: string) => Promise<string | undefined>;
   analyzeProjectWithAI: (procurementId: string) => Promise<string | undefined>;
   markAllNotificationsRead: () => Promise<void>;
   setOrganizationActive: (orgId: string, active: boolean) => Promise<void>;
@@ -709,7 +709,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const refreshAnalytics = useCallback(
     async (procurementId: string) => {
-      const boot = await api<BootstrapResponse>("/api/zakupki", {
+      const boot = await api<BootstrapResponse & { analyticsNotice?: string }>("/api/zakupki", {
         method: "POST",
         body: JSON.stringify({
           action: "refreshAnalytics",
@@ -717,6 +717,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }),
       });
       applyBoot(boot);
+      return boot.analyticsNotice;
     },
     [applyBoot]
   );
