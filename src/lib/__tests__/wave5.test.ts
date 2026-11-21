@@ -2,12 +2,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { calculationArticleName, calculationBreakdownRows } from "@/lib/calculation-breakdown";
+import { linkedWorkRows } from "@/lib/gpr-linked-rows";
 import { visibleProcurementSource } from "@/lib/display";
 import { recentPaymentId } from "@/lib/duplicate-click";
 import { parseCommittedQuantity } from "@/lib/quantity-draft";
 import { procurementBoardLabel } from "@/lib/pipeline";
 import { neutralizeProcurementJargon, sanitizeSyncDetail } from "@/lib/wave23";
-import type { CalcPosition } from "@/lib/types";
+import type { CalcPosition, GprStage } from "@/lib/types";
 
 describe("wave 5 visible copy and breakdown", () => {
   it("names an article without the estimate code", () => {
@@ -103,6 +104,17 @@ describe("wave 5 visible copy and breakdown", () => {
     expect(cleaned).not.toMatch(/Контур|\bAPI\b|ID закупки/);
     expect(neutralizeProcurementJargon("Документ API")).toBe("файл");
     expect(sanitizeSyncDetail("Источник закупок не подключён.")).toBe("Источник закупок не подключён.");
+  });
+
+  it("keeps live dates in the work table when only the chart filter ids stay the same", () => {
+    const before = [
+      { id: "a", name: "Демонтаж", start: "2026-12-01", end: "2026-12-05", sequence: 1 },
+      { id: "b", name: "Монтаж", start: "2026-12-06", end: "2026-12-10", sequence: 2 },
+    ] as GprStage[];
+    const shifted = before.map((stage) => stage.id === "a" ? { ...stage, start: "2026-12-03", end: "2026-12-08" } : stage);
+    expect(linkedWorkRows(shifted, ["a", "b"]).map((stage) => stage.start)).toEqual(["2026-12-03", "2026-12-06"]);
+    expect(linkedWorkRows(shifted, ["b"]).map((stage) => stage.name)).toEqual(["Монтаж"]);
+    expect(linkedWorkRows(shifted, null).map((stage) => stage.id)).toEqual(["a", "b"]);
   });
 
   it("keeps cabinet and component copy free of internal procurement words", () => {

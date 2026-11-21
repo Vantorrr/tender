@@ -18,6 +18,7 @@ import { GprResourceTree } from "@/components/gpr-resource-tree";
 import { collectCalendarWarnings } from "@/lib/calendar-availability";
 import { bucketsFromPositions } from "@/lib/cost-engine";
 import { formatMoney } from "@/lib/format";
+import { linkedWorkRows } from "@/lib/gpr-linked-rows";
 import { gprStageLabel } from "@/lib/gpr-stage-label";
 import { visibleProcurementNumber } from "@/lib/pipeline";
 import { humanizeIssues } from "@/lib/issue-text";
@@ -47,17 +48,20 @@ export default function GprDetailPage() {
   const [materialsPreview, setMaterialsPreview] = useState<MaterialsPreview | null>(null);
   const [materialsImportBusy, setMaterialsImportBusy] = useState(false);
   const [pendingStageId, setPendingStageId] = useState<string | null>(null);
-  const [chartStages, setChartStages] = useState<GprStage[] | null>(null);
+  const [visibleIds, setVisibleIds] = useState<string[] | null>(null);
   const [tableScroll, setTableScroll] = useState<HTMLDivElement | null>(null);
   const [ganttScroll, setGanttScroll] = useState<HTMLDivElement | null>(null);
   const addingWork = useRef(false);
   const onVisibleStages = useCallback((stages: GprStage[]) => {
-    setChartStages((current) => {
-      const next = stages.map((stage) => stage.id).join("\n");
-      const prev = current?.map((stage) => stage.id).join("\n");
-      return next === prev ? current : stages;
+    setVisibleIds((current) => {
+      const next = stages.map((stage) => stage.id);
+      if (current && current.length === next.length && current.every((id, index) => id === next[index])) return current;
+      return next;
     });
   }, []);
+  useEffect(() => {
+    setVisibleIds(null);
+  }, [params.id]);
   useEffect(() => {
     if (!tableScroll || !ganttScroll) return;
     let lock = false;
@@ -384,7 +388,7 @@ export default function GprDetailPage() {
                 </tr>
               </thead>
               <tbody>
-                {(chartStages ?? [...schedule.stages].sort((a, b) => a.sequence - b.sequence)).map((stage) => (
+                {linkedWorkRows(schedule.stages, visibleIds).map((stage) => (
                   <tr key={stage.id} className="border-t border-[var(--tk-line)]" style={{ height: GPR_LINKED_ROW_PX }} data-testid={`gpr-work-row-${stage.id}`}>
                     <td className="overflow-hidden py-1 pr-2 align-middle">
                       <div className="truncate" title={gprStageLabel(stage).text}>{gprStageLabel(stage).text}</div>
