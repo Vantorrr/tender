@@ -197,11 +197,28 @@ export function foldNorthernEconomics(input: {
 }
 
 export function migratePlanEntries<T extends { workName: string; unit: string }>(entries: T[]): T[] {
-  return entries.map((entry) => {
+  return migratePlanBundle({ entries }).entries;
+}
+
+/** Split a unit out of a plan row and keep daily facts on the same work. */
+export function migratePlanBundle<
+  E extends { workName: string; unit: string },
+  F extends { workName: string; unit: string },
+>(plan: { entries: E[]; dailyFacts?: F[] }): { entries: E[]; dailyFacts: F[] } {
+  const renamed = new Map<string, { workName: string; unit: string }>();
+  const entries = plan.entries.map((entry) => {
     const split = splitEmbeddedUnit(entry.workName, entry.unit);
-    if (split.workName === entry.workName && (split.unit || entry.unit) === entry.unit) return entry;
-    return { ...entry, workName: split.workName, unit: split.unit || entry.unit };
+    const next = { ...entry, workName: split.workName, unit: split.unit || entry.unit };
+    if (next.workName !== entry.workName || next.unit !== entry.unit) {
+      renamed.set(`${entry.workName}\u0000${entry.unit}`, { workName: next.workName, unit: next.unit });
+    }
+    return next;
   });
+  const dailyFacts = (plan.dailyFacts ?? []).map((fact) => {
+    const next = renamed.get(`${fact.workName}\u0000${fact.unit}`);
+    return next ? { ...fact, workName: next.workName, unit: next.unit } : fact;
+  });
+  return { entries, dailyFacts };
 }
 
 export function matchDirectorySuppliers<T extends { name: string; materialKeywords: string[] }>(

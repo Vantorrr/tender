@@ -208,6 +208,8 @@ describe("wave 2–3 server checks", () => {
     });
     recomputeCalculationCost("u-ruk", calculation.id, {
       useResourceScheduleEconomics: true,
+      officeOverhead: 200,
+      northern: { applicable: true, confirmedItems: [{ id: "n1", name: "Вахта", status: "known", amount: 100, basis: "приказ" }], notes: [] },
       resourceScheduleParams: {
         ...EXCEL_RESOURCE_SCHEDULE_DEFAULTS,
         districtCoefficient: 1.8,
@@ -230,7 +232,7 @@ describe("wave 2–3 server checks", () => {
       allowance: expected.allowance,
       overhead: expected.overhead,
     });
-    expect(saved.costSummary?.priceExVat).toBe(expected.total);
+    expect(saved.costSummary?.priceExVat).toBe(expected.total + 200 + 100);
     const { buildCalculationXlsx, buildCalculationPdf } = await import("@/server/export");
     const workbook = new (await import("exceljs")).Workbook();
     await workbook.xlsx.load(await buildCalculationXlsx(calculation.id) as unknown as import("exceljs").Buffer);
@@ -246,16 +248,25 @@ describe("wave 2–3 server checks", () => {
     mutateAppData((data) => {
       const item = data.planFacts.find((row) => row.id === plan.id)!;
       item.entries = [{ id: "old-row", workName: "Бурение скважин, м", unit: "", plan: 12, fact: 0 }];
+      item.dailyFacts = [{
+        id: "day-old",
+        date: "2026-11-02",
+        workName: "Бурение скважин, м",
+        unit: "",
+        quantity: 3,
+        photos: [],
+        authorId: "u-ruk",
+        at: "2026-11-02T08:00:00.000Z",
+      }];
       return data;
     });
     const shown = getBootstrap(readAppData().users.find((user) => user.id === "u-ruk")!).data.planFacts.find((item) => item.id === plan.id)!;
     expect(shown.entries[0]).toMatchObject({ workName: "Бурение скважин", unit: "м" });
+    expect(shown.dailyFacts?.[0]).toMatchObject({ workName: "Бурение скважин", unit: "м", quantity: 3 });
     updatePlanFact("u-ruk", plan.id, { entries: [{ id: "old-row", workName: "Бурение скважин, м", unit: "", plan: 12, fact: 1 }] });
-    expect(readAppData().planFacts.find((item) => item.id === plan.id)!.entries[0]).toMatchObject({
-      workName: "Бурение скважин",
-      unit: "м",
-      fact: 1,
-    });
+    const stored = readAppData().planFacts.find((item) => item.id === plan.id)!;
+    expect(stored.entries[0]).toMatchObject({ workName: "Бурение скважин", unit: "м", fact: 1 });
+    expect(stored.dailyFacts?.[0]).toMatchObject({ workName: "Бурение скважин", unit: "м", quantity: 3 });
   });
 
   it("drafts a volume sheet from the model and saves it into the calculation", async () => {

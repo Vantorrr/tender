@@ -29,7 +29,7 @@ import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
 import { canonicalUploadPath, deleteUpload } from "@/server/uploads";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
 import { buildStagesFromEstimatePositions } from "@/lib/estimate-stages";
-import { dependencyWouldCycle, foldNorthernEconomics, inclusiveDays, migratePlanEntries, scheduleAfterPredecessor } from "@/lib/wave23";
+import { dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, scheduleAfterPredecessor } from "@/lib/wave23";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
 import {
@@ -182,7 +182,7 @@ export function getBootstrap(user: User) {
       risks: data.risks.filter((r) => r.orgId === orgId),
       planFacts: data.planFacts.filter((p) => p.orgId === orgId).map((plan) => ({
         ...plan,
-        entries: migratePlanEntries(plan.entries),
+        ...migratePlanBundle(plan),
       })),
       objects: data.objects.filter((o) => o.orgId === orgId),
       notifications: data.notifications.filter((n) => n.userId === fresh.id),
@@ -1620,16 +1620,20 @@ export function updatePlanFact(
     const safe = rest.dailyFacts
       ? { ...rest, dailyFacts: dailyFactsWithoutPlantedPaths(item, rest.dailyFacts) }
       : rest;
-    data.planFacts = data.planFacts.map((p) =>
-      p.id === id
-        ? {
-            ...p,
-            ...safe,
-            entries: migratePlanEntries(safe.entries ?? p.entries),
-            updatedAt: new Date().toISOString(),
-          }
-        : p
-    );
+    data.planFacts = data.planFacts.map((p) => {
+      if (p.id !== id) return p;
+      const migrated = migratePlanBundle({
+        entries: safe.entries ?? p.entries,
+        dailyFacts: safe.dailyFacts ?? p.dailyFacts,
+      });
+      return {
+        ...p,
+        ...safe,
+        entries: migrated.entries,
+        dailyFacts: migrated.dailyFacts,
+        updatedAt: new Date().toISOString(),
+      };
+    });
     audit(data, actorId, "update", "planfact", id, "Обновление план/факт");
     return data;
   });
@@ -2926,55 +2930,50 @@ export function shiftGprStage(
   });
 }
 
-function applyNorthernFold(
-  calc: Calculation,
-  labor: number,
-  materials: number,
-  equipment: number,
-  other = 0,
-) {
+function applyNorthernFold(calc: Calculation, labor: number) {
   const params = calc.resourceScheduleParams;
   const summary = calc.costSummary;
-  if (!summary || params?.districtCoefficient == null) return;
-  const folded = foldNorthernEconomics({
-    labor,
-    materials,
-    equipment,
-    other,
-    profitRate: params.profitMarkupOnCostWithOh,
-    params: {
-      districtCoefficient: params.districtCoefficient,
-      northernPayrollShare: params.northernPayrollShare ?? 0.8,
-      overheadRate: params.overheadRate,
-    },
+  if (!summary || params?.districtCoefficient == null || calc.northern?.applicable === false) return;
+  const share = params.northernPayrollShare ?? 0.8;
+  const lines = northernAdditionLines(labor, {
+    districtCoefficient: params.districtCoefficient,
+    northernPayrollShare: share,
+    overheadRate: params.overheadRate,
   });
-  const reserve = summary.reserve ?? 0;
+  const district = lines[0]?.amount ?? 0;
+  const allowance = lines[1]?.amount ?? 0;
+  const extraDirect = Math.round((district + allowance) * 100) / 100;
+  const extraOverhead = Math.round(extraDirect * params.overheadRate * 100) / 100;
+  const extraProfit = Math.round((extraDirect + extraOverhead) * params.profitMarkupOnCostWithOh * 100) / 100;
+  const added = Math.round((extraDirect + extraOverhead + extraProfit) * 100) / 100;
+  const priceExVat = Math.round((summary.priceExVat + added) * 100) / 100;
+  const C0 = Math.round((summary.C0 + extraDirect + extraOverhead) * 100) / 100;
+  const profit = Math.round((summary.profit + extraProfit) * 100) / 100;
   const vatAmount = calc.vatPercent == null
     ? summary.vatAmount
-    : Math.round(folded.total * calc.vatPercent) / 100;
+    : Math.round(priceExVat * calc.vatPercent) / 100;
   calc.costSummary = {
     ...summary,
-    C0: folded.costWithOh,
-    C: Math.round((folded.costWithOh + reserve) * 100) / 100,
-    profit: folded.profit,
-    priceExVat: folded.total,
+    C0,
+    C: Math.round((C0 + (summary.reserve ?? 0)) * 100) / 100,
+    profit,
+    priceExVat,
     vatAmount,
-    priceIncVat: vatAmount == null ? null : Math.round((folded.total + vatAmount) * 100) / 100,
+    priceIncVat: vatAmount == null ? null : Math.round((priceExVat + vatAmount) * 100) / 100,
     northernAdjustments: {
-      district: folded.district,
-      allowance: folded.allowance,
-      overhead: folded.overhead,
-      total: folded.total,
+      district,
+      allowance,
+      overhead: lines[2]?.amount ?? extraOverhead,
+      total: priceExVat,
     },
     ...(summary.resourceSlices ? {
       resourceSlices: {
         ...summary.resourceSlices,
-        labor: Math.round((labor + folded.district + folded.allowance) * 100) / 100,
-        direct: folded.direct,
-        overhead: folded.overhead,
-        costWithOh: folded.costWithOh,
-        profit: folded.profit,
-        total: folded.total,
+        direct: Math.round((summary.resourceSlices.direct + extraDirect) * 100) / 100,
+        overhead: Math.round((summary.resourceSlices.overhead + extraOverhead) * 100) / 100,
+        costWithOh: Math.round((summary.resourceSlices.costWithOh + extraDirect + extraOverhead) * 100) / 100,
+        profit: Math.round((summary.resourceSlices.profit + extraProfit) * 100) / 100,
+        total: Math.round((summary.resourceSlices.total + added) * 100) / 100,
       },
     } : {}),
   };
@@ -3085,12 +3084,7 @@ export function recomputeCalculationCost(
       if (item.costSummary) item.costSummary.reserve = reserve;
       applyResourceDraftAdjustments(item);
       const baseSlices = item.costSummary?.resourceSlices;
-      applyNorthernFold(
-        item,
-        baseSlices?.labor ?? 0,
-        baseSlices?.materials ?? 0,
-        baseSlices?.equipment ?? 0,
-      );
+      applyNorthernFold(item, baseSlices?.labor ?? 0);
       const matNeeds = buildMaterialNeeds({
         positions: item.positions,
         stages: linkedSchedule.stages,
@@ -3191,7 +3185,7 @@ export function recomputeCalculationCost(
       totalsIncomplete: incomplete.length > 0,
       at: new Date().toISOString(),
     };
-    applyNorthernFold(item, buckets.labor, buckets.materials, buckets.equipment, buckets.other + logistics);
+    applyNorthernFold(item, buckets.labor);
     item.dataFlags = [
       ...(item.dataFlags ?? []).filter((f) => !f.startsWith("cost_")),
       "cost_engine_v1",
