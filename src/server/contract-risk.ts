@@ -5,6 +5,8 @@
  */
 
 import type { RiskRemark } from "@/lib/types";
+import { CONTRACT_CHECKLIST, parseContractChecklist } from "@/lib/wave23";
+import { completeJson, modelConfigured } from "@/server/openrouter";
 
 export type ParsedRiskRemark = Omit<RiskRemark, "id">;
 
@@ -79,6 +81,35 @@ export type RiskParseResult = {
 /** Parse contract body; empty/short text → нет данных (no invented baseline risks). */
 export function parseContractRisks(contractText: string | null | undefined): ParsedRiskRemark[] {
   return parseContractRisksDetailed(contractText).remarks;
+}
+
+const CONTRACT_REVIEW_SYSTEM = `Разбери договор по чек-листу: ${CONTRACT_CHECKLIST.join("; ")}. Ответ — один JSON {"items":[{"item":"пункт чек-листа","severity":"high|medium|low","quote":"дословная цитата из договора"}]}. Цитата обязана быть непрерывным фрагментом договора. Нет цитаты — не добавляй пункт. Не выдумывай условия.`;
+
+export async function reviewContractText(
+  contractText: string,
+  options?: { ask?: (system: string, user: string) => Promise<string>; configured?: boolean },
+): Promise<{ mode: "model" | "local"; label: string; remarks: ParsedRiskRemark[] }> {
+  const configured = options?.configured ?? modelConfigured();
+  if (!configured) {
+    return {
+      mode: "local",
+      label: "Локальный разбор: модель не подключена",
+      remarks: parseContractRisks(contractText),
+    };
+  }
+  const raw = await (options?.ask ?? completeJson)(CONTRACT_REVIEW_SYSTEM, contractText.slice(0, 14_000));
+  const parsed = parseContractChecklist(raw, contractText);
+  if (parsed.error) throw new Error(parsed.error);
+  return {
+    mode: "model",
+    label: "Разбор по чек-листу с цитатами",
+    remarks: parsed.items.map((item) => ({
+      text: item.item,
+      sourceExcerpt: item.quote,
+      status: "otkryto" as const,
+      severity: item.severity,
+    })),
+  };
 }
 
 export function parseContractRisksDetailed(

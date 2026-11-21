@@ -162,6 +162,59 @@ export const NORTH_DEFAULTS = {
   overheadRate: 0.43,
 };
 
+export function foldNorthernEconomics(input: {
+  labor: number;
+  materials: number;
+  equipment: number;
+  other?: number;
+  profitRate: number;
+  params: { districtCoefficient: number; northernPayrollShare: number; overheadRate: number };
+}): {
+  district: number;
+  allowance: number;
+  overhead: number;
+  direct: number;
+  costWithOh: number;
+  profit: number;
+  total: number;
+} {
+  const lines = northernAdditionLines(input.labor, input.params);
+  const district = lines[0]?.amount ?? 0;
+  const allowance = lines[1]?.amount ?? 0;
+  const direct = Math.round((input.labor + district + allowance + input.materials + input.equipment + (input.other ?? 0)) * 100) / 100;
+  const overhead = Math.round(direct * input.params.overheadRate * 100) / 100;
+  const costWithOh = Math.round((direct + overhead) * 100) / 100;
+  const profit = Math.round(costWithOh * input.profitRate * 100) / 100;
+  return {
+    district,
+    allowance,
+    overhead,
+    direct,
+    costWithOh,
+    profit,
+    total: Math.round((costWithOh + profit) * 100) / 100,
+  };
+}
+
+export function migratePlanEntries<T extends { workName: string; unit: string }>(entries: T[]): T[] {
+  return entries.map((entry) => {
+    const split = splitEmbeddedUnit(entry.workName, entry.unit);
+    if (split.workName === entry.workName && (split.unit || entry.unit) === entry.unit) return entry;
+    return { ...entry, workName: split.workName, unit: split.unit || entry.unit };
+  });
+}
+
+export function matchDirectorySuppliers<T extends { name: string; materialKeywords: string[] }>(
+  material: string,
+  suppliers: T[],
+): T[] {
+  const name = material.toLocaleLowerCase("ru-RU");
+  return suppliers.filter((supplier) => supplier.materialKeywords.some((keyword) => {
+    const needle = keyword.trim().toLocaleLowerCase("ru-RU");
+    return needle.length > 1 && name.includes(needle);
+  }));
+}
+
 export function northernAdditionLines(
   labor: number,
   params: { districtCoefficient: number; northernPayrollShare: number; overheadRate: number } = NORTH_DEFAULTS,

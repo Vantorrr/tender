@@ -9,6 +9,8 @@ import {
 import { withSection, json } from "@/server/http";
 import type { Calculation, GprStage } from "@/lib/types";
 import { analyzeCalculationComparisonWithAI } from "@/server/calc-compare-ai";
+import { acceptVolumeDraft, draftVolumeSheet } from "@/server/volume-sheet";
+import type { VolumeDraftRow } from "@/lib/wave23";
 
 export async function GET(req: Request) {
   return withSection(req, "raschety", (user) =>
@@ -58,7 +60,26 @@ export async function PATCH(req: Request) {
 
 export async function POST(req: Request) {
   return withSection(req, "raschety", async (user) => {
-    const body = (await req.json()) as { action?: string; calculationId?: string };
+    const body = (await req.json()) as { action?: string; calculationId?: string; rows?: VolumeDraftRow[] };
+    if (body.action === "draftVolumes") {
+      if (!body.calculationId) return json({ error: "Укажите расчёт" }, 400);
+      try {
+        return json(await draftVolumeSheet(user.id, body.calculationId));
+      } catch (error) {
+        return json({ error: error instanceof Error ? error.message : "Не удалось выделить ведомость" }, 400);
+      }
+    }
+    if (body.action === "acceptVolumes") {
+      if (!body.calculationId || !body.rows?.length) return json({ error: "Нет строк ведомости" }, 400);
+      try {
+        acceptVolumeDraft(user.id, body.calculationId, body.rows);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Не удалось сохранить ведомость";
+        if (message.includes("Недостаточно прав") || message.startsWith("Нет доступа")) throw error;
+        return json({ error: message }, 400);
+      }
+      return json(getBootstrap(user));
+    }
     if (body.action !== "analyzeCompare" || !body.calculationId) {
       return json({ error: "Укажите действие и расчёт" }, 400);
     }

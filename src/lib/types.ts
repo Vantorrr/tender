@@ -496,6 +496,8 @@ export interface Calculation {
     equipmentShiftsPerDay: number;
     overheadRate: number;
     profitMarkupOnCostWithOh: number;
+    districtCoefficient?: number;
+    northernPayrollShare?: number;
   };
   busRoutes?: Array<{
     people: number;
@@ -647,6 +649,8 @@ export interface RiskRegistry {
   status: CardStatus;
   remarks: RiskRemark[];
   contractParsed: boolean;
+  /** How the latest contract review was produced. */
+  reviewLabel?: string;
   updatedAt: string;
 }
 
@@ -780,6 +784,13 @@ export interface CostSummarySnapshot {
     /** True when V is incomplete → W/X/Y/Z are also partial. */
     partial?: boolean;
     skipped?: string[];
+  };
+  /** District coefficient, northern allowance and overhead folded into the stored total. */
+  northernAdjustments?: {
+    district: number;
+    allowance: number;
+    overhead: number;
+    total: number;
   };
 }
 

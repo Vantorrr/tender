@@ -35,7 +35,7 @@ import { DEFAULT_MAX_UPLOAD_BYTES, uploadTooLargeMessage } from "@/lib/upload-li
 import { formatDate, formatMoney, formatNumber, todayIsoInTimeZone } from "@/lib/format";
 import { userHasSection } from "@/lib/acl";
 import { visibleProcurementNumber } from "@/lib/pipeline";
-import { mergeQuantities, planWorksOnDate, splitEmbeddedUnit } from "@/lib/wave23";
+import { matchDirectorySuppliers, mergeQuantities, planWorksOnDate, splitEmbeddedUnit } from "@/lib/wave23";
 import {
   entryDisplayFact,
   entryDisplayRemain,
@@ -117,6 +117,30 @@ function createDailyFactId() {
   return `df-${crypto.randomUUID()}`;
 }
 
+function SupplierHints({
+  material,
+  suppliers,
+  hints,
+}: {
+  material: string;
+  suppliers: Array<{ name: string; materialKeywords: string[] }>;
+  hints: Array<{ name: string; sourceUrl: string }>;
+}) {
+  const matched = matchDirectorySuppliers(material, suppliers);
+  const search = `https://duckduckgo.com/?q=${encodeURIComponent(`${material} поставщик`)}`;
+  return (
+    <div className="mt-2 space-y-1 text-xs" data-testid="supply-hints">
+      <p>Справочник: {matched.length ? matched.map((supplier) => supplier.name).join(", ") : "подходящих поставщиков нет"}</p>
+      <p>
+        <a className="underline" href={search} target="_blank" rel="noreferrer">Искать в открытых источниках</a>
+        {hints.map((hint) => (
+          <a key={hint.sourceUrl} className="ml-3 underline" href={hint.sourceUrl} target="_blank" rel="noreferrer">{hint.name}</a>
+        ))}
+      </p>
+    </div>
+  );
+}
+
 export default function ProizvodstvoPage() {
   const router = useRouter();
   const { data, user, updatePlanFact, refresh, orgProcurements } = useStore();
@@ -134,6 +158,7 @@ export default function ProizvodstvoPage() {
   const [newWorkPlan, setNewWorkPlan] = useState("");
   const [savingDaily, setSavingDaily] = useState(false);
   const [varianceLoading, setVarianceLoading] = useState(false);
+  const [supplyHints, setSupplyHints] = useState<Record<string, Array<{ name: string; sourceUrl: string }>>>({});
   const [supplySavingId, setSupplySavingId] = useState<string | null>(null);
   const [photoPreview, setPhotoPreview] = useState<{
     photo: DailyFactPhoto;
@@ -367,7 +392,7 @@ export default function ProizvodstvoPage() {
     if (!procurement) return;
     setSupplySavingId(need.key);
     try {
-      await api("/api/supply", {
+      const boot = await api<{ data: { supplyRequests?: Array<{ id: string; materialName: string }> } }>("/api/supply", {
         method: "POST",
         body: JSON.stringify({
           procurementId: procurement.id,
@@ -378,10 +403,20 @@ export default function ProizvodstvoPage() {
           needBy: need.needBy,
         }),
       });
+      const created = (boot.data.supplyRequests ?? []).find((item) => item.materialName === need.materialName);
+      if (created) {
+        try {
+          const found = await api<{ candidates: Array<{ name: string; sourceUrl: string }> }>("/api/supply", {
+            method: "POST",
+            body: JSON.stringify({ action: "discoverSuppliers", id: created.id }),
+          });
+          setSupplyHints((current) => ({ ...current, [need.materialName]: found.candidates }));
+        } catch {
+          setSupplyHints((current) => ({ ...current, [need.materialName]: [] }));
+        }
+      }
       await refresh();
-      const matched = (data.suppliers ?? []).filter((supplier) =>
-        (supplier.materialKeywords ?? []).some((keyword) => need.materialName.toLocaleLowerCase("ru-RU").includes(keyword.toLocaleLowerCase("ru-RU")))
-      );
+      const matched = matchDirectorySuppliers(need.materialName, data.suppliers ?? []);
       toast.success(matched.length
         ? `Потребность создана: ${need.materialName}. В справочнике ${matched.length} поставщиков.`
         : `Потребность создана: ${need.materialName}. В справочнике подходящих поставщиков нет.`);
@@ -636,7 +671,9 @@ export default function ProizvodstvoPage() {
                 </div>
               </section>
 
-              <div className="mb-4 space-y-3">
+              <details className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white/70 p-4">
+                <summary className="cursor-pointer text-sm font-medium">Финансы и разбор отклонений</summary>
+              <div className="mb-4 mt-3 space-y-3">
                 <div className="flex flex-wrap items-center gap-3">
                   <Button
                     disabled={varianceLoading || !selectedEntry || !selectedWorkStages.length}
@@ -820,6 +857,7 @@ export default function ProizvodstvoPage() {
                 </div>
               </div>
               </section>
+              </details>
 
               {gpr ? (
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card px-4 py-3">
@@ -862,6 +900,7 @@ export default function ProizvodstvoPage() {
                           <p className="mt-1 text-xs text-[var(--tk-muted)]">
                             Из ГПР · {need.stageName} · нужно {formatNumber(need.quantity)} {need.unit} · к {formatDate(need.needBy)}
                           </p>
+                          <SupplierHints material={need.materialName} suppliers={data.suppliers ?? []} hints={supplyHints[need.materialName] ?? []} />
                         </div>
                         {canViewProcurement ? (
                           <Button
@@ -886,6 +925,7 @@ export default function ProizvodstvoPage() {
                         >
                           <div>
                             <p className="font-medium">{supply.materialName}</p>
+                            <SupplierHints material={supply.materialName} suppliers={data.suppliers ?? []} hints={supplyHints[supply.materialName] ?? []} />
                             <p className="mt-1 text-xs text-[var(--tk-muted)]">
                               {supply.workName ? `Работа: ${supply.workName} · ` : ""}
                               {supply.supplierName ? `Поставщик: ${supply.supplierName}` : "Поставщик не указан"}

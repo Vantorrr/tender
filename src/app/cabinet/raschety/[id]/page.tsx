@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/table";
 import { api, downloadUrl } from "@/lib/api";
 import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-panel";
+import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
 import { NORTH_DEFAULTS, northernAdditionLines } from "@/lib/wave23";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engine";
@@ -106,11 +107,22 @@ function NorthernCostEditor({
   calculationId,
   value,
   labor,
+  scheduleParams,
   onSaved,
 }: {
   calculationId: string;
   value?: NorthernInputs;
   labor: number;
+  scheduleParams?: {
+    personHourRate: number;
+    personnelShiftsPerDay: number;
+    hoursPerShift: number;
+    equipmentShiftsPerDay: number;
+    overheadRate: number;
+    profitMarkupOnCostWithOh: number;
+    districtCoefficient?: number;
+    northernPayrollShare?: number;
+  };
   onSaved: () => Promise<void>;
 }) {
   const [applicable, setApplicable] = useState(value?.applicable ?? true);
@@ -139,8 +151,14 @@ function NorthernCostEditor({
           id: calculationId,
           recomputeCost: true,
           costPatch: {
-            northern: { applicable, confirmedItems: items, notes: [] },
+            northern: { applicable, confirmedItems: items.map((item) => ({ ...item, status: "known" as const })), notes: [] },
             useResourceScheduleEconomics: true,
+            resourceScheduleParams: {
+              ...(scheduleParams ?? EXCEL_RESOURCE_SCHEDULE_DEFAULTS),
+              districtCoefficient: Number(district) || NORTH_DEFAULTS.districtCoefficient,
+              northernPayrollShare: (Number(allowance) || 80) / 100,
+              overheadRate: (Number(overhead) || 43) / 100,
+            },
           },
         }),
       });
@@ -375,6 +393,9 @@ export default function RaschetDetailPage() {
   const [aiCompareLoading, setAiCompareLoading] = useState(false);
   const [attachEstimateLoading, setAttachEstimateLoading] = useState(false);
   const [pendingPositionId, setPendingPositionId] = useState<string | null>(null);
+  const [volumeRows, setVolumeRows] = useState<Array<{ work: string; unit: string; volume: number; quote: string; rate: number | null }>>([]);
+  const [volumeMessage, setVolumeMessage] = useState("");
+  const [volumeBusy, setVolumeBusy] = useState(false);
 
   const calc = user
     ? data.calculations.find(
@@ -1089,7 +1110,47 @@ export default function RaschetDetailPage() {
       <section className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4" data-testid="volume-sheet">
         <h2 className="text-sm font-semibold">Ведомость объёмов</h2>
         <p className="mt-1 text-sm text-[var(--tk-muted)]">Черновик из технического задания: вид работ, единица, объём и цитата. Цена берётся из справочника компании, смета заказчика остаётся колонкой сравнения. Строка без ставки помечается «нет ставки».</p>
-        <Button className="mt-3" variant="outline" onClick={() => toast.message("Разбор не выполнен: модель не подключена. После подключения здесь появится черновик ведомости, его можно править вручную.")}>Выделить ведомость объёмов из ТЗ</Button>
+        <Button className="mt-3" variant="outline" disabled={volumeBusy || locked} onClick={() => {
+          setVolumeBusy(true);
+          setVolumeMessage("");
+          void api<{ configured: boolean; message?: string; rows: Array<{ work: string; unit: string; volume: number; quote: string; rate: number | null }> }>("/api/raschety", {
+            method: "POST",
+            body: JSON.stringify({ action: "draftVolumes", calculationId: calc.id }),
+          }).then((result) => {
+            if (!result.configured) {
+              setVolumeRows([]);
+              setVolumeMessage(result.message ?? "Разбор не выполнен: модель не подключена. После подключения здесь появится черновик ведомости, его можно править вручную.");
+              return;
+            }
+            setVolumeRows(result.rows);
+            setVolumeMessage(result.rows.length ? "" : "В техническом задании не нашлось объёмов с цитатой.");
+          }).catch((error: unknown) => {
+            setVolumeMessage(error instanceof Error ? error.message : "Не удалось выделить ведомость");
+          }).finally(() => setVolumeBusy(false));
+        }}>{volumeBusy ? "Выделяю…" : "Выделить ведомость объёмов из ТЗ"}</Button>
+        {volumeMessage ? <p className="mt-3 text-sm" data-testid="volume-sheet-message">{volumeMessage}</p> : null}
+        {volumeRows.length ? (
+          <div className="mt-3 space-y-2">
+            {volumeRows.map((row, index) => (
+              <div key={`${row.quote}-${index}`} className="grid gap-2 rounded-lg border border-[var(--tk-line)] p-3 md:grid-cols-4">
+                <Input aria-label={`Вид работ ${index + 1}`} value={row.work} onChange={(event) => setVolumeRows((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, work: event.target.value } : item))} />
+                <Input aria-label={`Единица ${index + 1}`} value={row.unit} onChange={(event) => setVolumeRows((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, unit: event.target.value } : item))} />
+                <Input aria-label={`Объём ${index + 1}`} value={String(row.volume)} onChange={(event) => setVolumeRows((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, volume: Number(event.target.value.replace(",", ".")) } : item))} />
+                <span className="self-center text-sm">{row.rate != null && row.rate > 0 ? formatMoney(row.rate) : "нет ставки"}</span>
+                <p className="md:col-span-4 text-xs text-[var(--tk-muted)]">Цитата: {row.quote}</p>
+              </div>
+            ))}
+            <Button disabled={locked} onClick={() => {
+              void api("/api/raschety", {
+                method: "POST",
+                body: JSON.stringify({ action: "acceptVolumes", calculationId: calc.id, rows: volumeRows }),
+              }).then(() => refresh()).then(() => {
+                setVolumeRows([]);
+                toast.success("Ведомость объёмов сохранена в расчёте");
+              }).catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось сохранить ведомость"));
+            }}>Принять черновик</Button>
+          </div>
+        ) : null}
       </section>
 
       <details className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4">
@@ -1303,6 +1364,7 @@ export default function RaschetDetailPage() {
             calculationId={calc.id}
             value={calc.northern}
             labor={calc.costSummary?.resourceSlices?.labor ?? 0}
+            scheduleParams={calc.resourceScheduleParams}
             onSaved={refresh}
           />
         </section>

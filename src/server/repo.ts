@@ -15,6 +15,7 @@ import type {
   ProjectAnalytics,
   ReviewStatus,
   RiskRegistry,
+  RiskRemark,
   Role,
   SectionKey,
   SupplyRequest,
@@ -28,7 +29,7 @@ import { rateFromRow, resolveDirectoryRate } from "@/lib/client-dirs";
 import { canonicalUploadPath, deleteUpload } from "@/server/uploads";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
 import { buildStagesFromEstimatePositions } from "@/lib/estimate-stages";
-import { dependencyWouldCycle, inclusiveDays, scheduleAfterPredecessor } from "@/lib/wave23";
+import { dependencyWouldCycle, foldNorthernEconomics, inclusiveDays, migratePlanEntries, scheduleAfterPredecessor } from "@/lib/wave23";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
 import {
@@ -179,7 +180,10 @@ export function getBootstrap(user: User) {
       schedules: data.schedules.filter((s) => s.orgId === orgId),
       moneyPlans: data.moneyPlans.filter((m) => m.orgId === orgId),
       risks: data.risks.filter((r) => r.orgId === orgId),
-      planFacts: data.planFacts.filter((p) => p.orgId === orgId),
+      planFacts: data.planFacts.filter((p) => p.orgId === orgId).map((plan) => ({
+        ...plan,
+        entries: migratePlanEntries(plan.entries),
+      })),
       objects: data.objects.filter((o) => o.orgId === orgId),
       notifications: data.notifications.filter((n) => n.userId === fresh.id),
       organizations: isSuper
@@ -1618,7 +1622,12 @@ export function updatePlanFact(
       : rest;
     data.planFacts = data.planFacts.map((p) =>
       p.id === id
-        ? { ...p, ...safe, updatedAt: new Date().toISOString() }
+        ? {
+            ...p,
+            ...safe,
+            entries: migratePlanEntries(safe.entries ?? p.entries),
+            updatedAt: new Date().toISOString(),
+          }
         : p
     );
     audit(data, actorId, "update", "planfact", id, "Обновление план/факт");
@@ -1712,6 +1721,26 @@ export function importSmetaExchange(
       confirmed: false,
     });
     audit(data, actorId, "import", "smeta", id, `Импорт XLSX: ${mapped.length} позиций`);
+    return data;
+  });
+}
+
+export function saveContractReview(
+  actorId: string,
+  riskId: string,
+  review: { label: string; remarks: Array<Omit<RiskRemark, "id">> },
+) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.risks.find((risk) => risk.id === riskId);
+    if (!item) throw new Error("Реестр рисков не найден");
+    assertOrgAccess(actor, item.orgId, "реестра рисков");
+    const now = Date.now();
+    item.remarks = review.remarks.map((remark, index) => ({ ...remark, id: `rm-${now + index}` }));
+    item.contractParsed = true;
+    item.reviewLabel = review.label;
+    item.status = review.remarks.length ? "trebuet_proverki" : item.status;
+    item.updatedAt = new Date().toISOString();
     return data;
   });
 }
@@ -2897,6 +2926,60 @@ export function shiftGprStage(
   });
 }
 
+function applyNorthernFold(
+  calc: Calculation,
+  labor: number,
+  materials: number,
+  equipment: number,
+  other = 0,
+) {
+  const params = calc.resourceScheduleParams;
+  const summary = calc.costSummary;
+  if (!summary || params?.districtCoefficient == null) return;
+  const folded = foldNorthernEconomics({
+    labor,
+    materials,
+    equipment,
+    other,
+    profitRate: params.profitMarkupOnCostWithOh,
+    params: {
+      districtCoefficient: params.districtCoefficient,
+      northernPayrollShare: params.northernPayrollShare ?? 0.8,
+      overheadRate: params.overheadRate,
+    },
+  });
+  const reserve = summary.reserve ?? 0;
+  const vatAmount = calc.vatPercent == null
+    ? summary.vatAmount
+    : Math.round(folded.total * calc.vatPercent) / 100;
+  calc.costSummary = {
+    ...summary,
+    C0: folded.costWithOh,
+    C: Math.round((folded.costWithOh + reserve) * 100) / 100,
+    profit: folded.profit,
+    priceExVat: folded.total,
+    vatAmount,
+    priceIncVat: vatAmount == null ? null : Math.round((folded.total + vatAmount) * 100) / 100,
+    northernAdjustments: {
+      district: folded.district,
+      allowance: folded.allowance,
+      overhead: folded.overhead,
+      total: folded.total,
+    },
+    ...(summary.resourceSlices ? {
+      resourceSlices: {
+        ...summary.resourceSlices,
+        labor: Math.round((labor + folded.district + folded.allowance) * 100) / 100,
+        direct: folded.direct,
+        overhead: folded.overhead,
+        costWithOh: folded.costWithOh,
+        profit: folded.profit,
+        total: folded.total,
+      },
+    } : {}),
+  };
+}
+
 function applyResourceDraftAdjustments(calc: Calculation) {
   const current = calc.costSummary;
   const slices = current?.resourceSlices;
@@ -3001,6 +3084,13 @@ export function recomputeCalculationCost(
       Object.assign(item, synced.calc);
       if (item.costSummary) item.costSummary.reserve = reserve;
       applyResourceDraftAdjustments(item);
+      const baseSlices = item.costSummary?.resourceSlices;
+      applyNorthernFold(
+        item,
+        baseSlices?.labor ?? 0,
+        baseSlices?.materials ?? 0,
+        baseSlices?.equipment ?? 0,
+      );
       const matNeeds = buildMaterialNeeds({
         positions: item.positions,
         stages: linkedSchedule.stages,
@@ -3101,6 +3191,7 @@ export function recomputeCalculationCost(
       totalsIncomplete: incomplete.length > 0,
       at: new Date().toISOString(),
     };
+    applyNorthernFold(item, buckets.labor, buckets.materials, buckets.equipment, buckets.other + logistics);
     item.dataFlags = [
       ...(item.dataFlags ?? []).filter((f) => !f.startsWith("cost_")),
       "cost_engine_v1",

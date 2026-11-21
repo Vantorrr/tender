@@ -6,15 +6,20 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { signedQuantityBySection, buildStagesFromEstimatePositions } from "@/lib/estimate-stages";
 import type { CalcPosition } from "@/lib/types";
 import { createSession } from "@/server/auth";
-import { closeDb, ensureReady, healthSnapshot, readAppData } from "@/server/db";
+import { closeDb, ensureReady, healthSnapshot, mutateAppData, readAppData } from "@/server/db";
 import { parseGrandBuffer } from "@/server/grand-smeta";
+import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
+import { foldNorthernEconomics } from "@/lib/wave23";
 import {
   createManualProcurement,
   createProcurementSchedule,
+  getBootstrap,
+  recomputeCalculationCost,
   saveCustomerAnswer,
   sendProcurementToCalculation,
   deleteGprStage,
   setStagePredecessor,
+  updatePlanFact,
   updateSchedule,
 } from "@/server/repo";
 import { extractArchiveSafely, readArchiveMember } from "@/server/safe-archive";
@@ -125,10 +130,13 @@ describe("wave 2–3 server checks", () => {
     const tarBytes = fs.readFileSync(path.join(tarDir, "pack.tar.gz"));
     const tarNote = readArchiveMember("pack.tar.gz", tarBytes, "note.txt");
     expect(tarNote.ok && tarNote.data.toString("utf8")).toBe("tar-ok");
-    execFileSync("7z", ["a", "-bd", "pack.7z", "note.txt"], { cwd: tarDir });
-    const seven = fs.readFileSync(path.join(tarDir, "pack.7z"));
-    const sevenNote = readArchiveMember("pack.7z", seven, "note.txt");
-    expect(sevenNote.ok && sevenNote.data.toString("utf8")).toBe("tar-ok");
+    if (execFileSync("bash", ["-lc", "command -v 7z || command -v 7zz || true"], { encoding: "utf8" }).trim()) {
+      const sevenBin = execFileSync("bash", ["-lc", "command -v 7z || command -v 7zz"], { encoding: "utf8" }).trim();
+      execFileSync(sevenBin, ["a", "-bd", "pack.7z", "note.txt"], { cwd: tarDir });
+      const seven = fs.readFileSync(path.join(tarDir, "pack.7z"));
+      const sevenNote = readArchiveMember("pack.7z", seven, "note.txt");
+      expect(sevenNote.ok && sevenNote.data.toString("utf8")).toBe("tar-ok");
+    }
   });
 
   it("lets a manager create a schedule and refuses a tender specialist", () => {
@@ -187,5 +195,125 @@ describe("wave 2–3 server checks", () => {
     expect(body.status).toBe("не отправлено");
     expect(body.message).toMatch(/почта не подключена/);
     expect(readAppData().supplyRequests!.find((item) => item.id === supply.id)?.sentToSupplierIds ?? []).not.toContain(supplier.id);
+  });
+
+  it("stores northern add-ons in the calculation total and the workbook", async () => {
+    const created = createManualProcurement("u-ruk", { title: "Северная смета", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const calculation = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind !== "customer_original")!;
+    mutateAppData((data) => {
+      const draft = data.calculations.find((item) => item.id === calculation.id)!;
+      draft.positions = [{ id: "labor-1", code: "LAB-1", name: "Плотник", unit: "чел-ч", quantity: 10, rate: 100 }];
+      return data;
+    });
+    recomputeCalculationCost("u-ruk", calculation.id, {
+      useResourceScheduleEconomics: true,
+      resourceScheduleParams: {
+        ...EXCEL_RESOURCE_SCHEDULE_DEFAULTS,
+        districtCoefficient: 1.8,
+        northernPayrollShare: 0.8,
+        overheadRate: 0.43,
+        profitMarkupOnCostWithOh: 0,
+      },
+    });
+    const saved = readAppData().calculations.find((item) => item.id === calculation.id)!;
+    const expected = foldNorthernEconomics({
+      labor: 1000,
+      materials: 0,
+      equipment: 0,
+      other: 0,
+      profitRate: 0,
+      params: { districtCoefficient: 1.8, northernPayrollShare: 0.8, overheadRate: 0.43 },
+    });
+    expect(saved.costSummary?.northernAdjustments).toMatchObject({
+      district: expected.district,
+      allowance: expected.allowance,
+      overhead: expected.overhead,
+    });
+    expect(saved.costSummary?.priceExVat).toBe(expected.total);
+    const { buildCalculationXlsx, buildCalculationPdf } = await import("@/server/export");
+    const workbook = new (await import("exceljs")).Workbook();
+    await workbook.xlsx.load(await buildCalculationXlsx(calculation.id) as unknown as import("exceljs").Buffer);
+    const sheet = workbook.getWorksheet("Расчёт")!;
+    const labels = sheet.getColumn(2).values.map((value) => String(value ?? ""));
+    expect(labels).toEqual(expect.arrayContaining(["Районный коэффициент", "Северная надбавка", "Накладные"]));
+    const pdf = (await buildCalculationPdf(calculation.id)).toString("latin1");
+    expect(pdf.length).toBeGreaterThan(1000);
+  });
+
+  it("splits a unit out of an existing plan row on read and save", () => {
+    const plan = readAppData().planFacts[0]!;
+    mutateAppData((data) => {
+      const item = data.planFacts.find((row) => row.id === plan.id)!;
+      item.entries = [{ id: "old-row", workName: "Бурение скважин, м", unit: "", plan: 12, fact: 0 }];
+      return data;
+    });
+    const shown = getBootstrap(readAppData().users.find((user) => user.id === "u-ruk")!).data.planFacts.find((item) => item.id === plan.id)!;
+    expect(shown.entries[0]).toMatchObject({ workName: "Бурение скважин", unit: "м" });
+    updatePlanFact("u-ruk", plan.id, { entries: [{ id: "old-row", workName: "Бурение скважин, м", unit: "", plan: 12, fact: 1 }] });
+    expect(readAppData().planFacts.find((item) => item.id === plan.id)!.entries[0]).toMatchObject({
+      workName: "Бурение скважин",
+      unit: "м",
+      fact: 1,
+    });
+  });
+
+  it("drafts a volume sheet from the model and saves it into the calculation", async () => {
+    const created = createManualProcurement("u-ruk", { title: "Ведомость из ТЗ", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const calculation = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind !== "customer_original")!;
+    mutateAppData((data) => {
+      data.documents.unshift({
+        id: "doc-tz-wave",
+        orgId: calculation.orgId,
+        procurementId: created.id,
+        title: "Техническое задание",
+        fileName: "tz.txt",
+        fileType: "other",
+        category: "tz",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "Бурение скважин 716 м по трассе.",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+      });
+      const rates = data.directories.find((item) => item.type === "rascenki" && item.current);
+      rates?.rows.unshift({ code: "BUR", work: "Бурение скважин", unit: "м", rate: 1400 });
+      return data;
+    });
+    const { draftVolumeSheet, acceptVolumeDraft, VOLUME_MODEL_MISSING } = await import("@/server/volume-sheet");
+    const missing = await draftVolumeSheet("u-ruk", calculation.id);
+    expect(missing.configured).toBe(false);
+    expect(missing.message).toBe(VOLUME_MODEL_MISSING);
+    const drafted = await draftVolumeSheet("u-ruk", calculation.id, async () => JSON.stringify({
+      rows: [{ work: "Бурение скважин", unit: "м", volume: 716, quote: "Бурение скважин 716 м" }],
+    }));
+    expect(drafted.rows[0]).toMatchObject({ volume: 716, rate: 1400, quote: "Бурение скважин 716 м" });
+    acceptVolumeDraft("u-ruk", calculation.id, drafted.rows);
+    const saved = readAppData().calculations.find((item) => item.id === calculation.id)!;
+    expect(saved.positions.some((position) => position.name === "Бурение скважин" && position.quantity === 716 && position.rate === 1400)).toBe(true);
+    expect(saved.assumptions.some((line) => line.includes("Бурение скважин 716 м"))).toBe(true);
+  });
+
+  it("reviews a contract with the model checklist and labels the local fallback", async () => {
+    const { reviewContractText } = await import("@/server/contract-risk");
+    const text = "Неустойка 0,1% за каждый день просрочки. Аванс не предусмотрен.";
+    const local = await reviewContractText(text, { configured: false });
+    expect(local.mode).toBe("local");
+    expect(local.label).toMatch(/модель не подключена/);
+    const model = await reviewContractText(text, {
+      configured: true,
+      ask: async () => JSON.stringify({
+        items: [{ item: "Штрафы и неустойка", severity: "high", quote: "Неустойка 0,1% за каждый день просрочки" }],
+      }),
+    });
+    expect(model.mode).toBe("model");
+    expect(model.remarks[0]).toMatchObject({ text: "Штрафы и неустойка", sourceExcerpt: "Неустойка 0,1% за каждый день просрочки" });
+    const risk = readAppData().risks[0]!;
+    const { saveContractReview } = await import("@/server/repo");
+    saveContractReview("u-ruk", risk.id, model);
+    expect(readAppData().risks.find((item) => item.id === risk.id)?.reviewLabel).toBe("Разбор по чек-листу с цитатами");
   });
 });

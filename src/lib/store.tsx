@@ -117,7 +117,7 @@ interface StoreContextValue {
   ) => Promise<void>;
   updateMoney: (id: string, patch: Partial<MoneyPlan>) => Promise<void>;
   updateRisk: (id: string, patch: Partial<RiskRegistry>) => Promise<void>;
-  parseRiskContract: (id: string) => Promise<void>;
+  parseRiskContract: (id: string) => Promise<string>;
   updatePlanFact: (id: string, patch: Partial<PlanFact>) => Promise<void>;
   setDirectoryCurrent: (id: string) => Promise<void>;
   importDirectoryRows: (
@@ -583,11 +583,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const parseRiskContract = useCallback(
     async (id: string) => {
-      const boot = await api<BootstrapResponse>("/api/riski", {
+      const boot = await api<BootstrapResponse & { reviewLabel?: string }>("/api/riski", {
         method: "PATCH",
         body: JSON.stringify({ id, action: "parse" }),
       });
       applyBoot(boot);
+      return boot.reviewLabel ?? "Разбор договора выполнен";
     },
     [applyBoot]
   );

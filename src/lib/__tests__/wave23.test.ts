@@ -11,6 +11,9 @@ import {
   combineEstimateTotals,
   completedWorkCost,
   composeAnalyticalNote,
+  foldNorthernEconomics,
+  matchDirectorySuppliers,
+  migratePlanEntries,
   CONTRACT_CHECKLIST,
   dependencyWouldCycle,
   groundedStatement,
@@ -150,6 +153,28 @@ describe("wave 2–3 decisions", () => {
     }), corpus);
     expect(reviewed.items).toHaveLength(1);
     expect(reviewed.items[0].quote).toContain("Неустойка");
+  });
+
+  it("folds northern add-ons into the total and splits an old plan row", () => {
+    const folded = foldNorthernEconomics({
+      labor: 1000,
+      materials: 0,
+      equipment: 0,
+      profitRate: 0,
+      params: { districtCoefficient: 1.8, northernPayrollShare: 0.8, overheadRate: 0.43 },
+    });
+    expect(folded.district).toBe(800);
+    expect(folded.allowance).toBe(800);
+    expect(folded.overhead).toBeCloseTo(1118, 0);
+    expect(folded.total).toBeCloseTo(3718, 0);
+    expect(folded.total).toBeGreaterThan(1000 * 1.43);
+    expect(migratePlanEntries([{ workName: "Бурение скважин, м", unit: "", plan: 10 }])).toEqual([
+      { workName: "Бурение скважин", unit: "м", plan: 10 },
+    ]);
+    expect(matchDirectorySuppliers("Долото трехшарошечное", [
+      { name: "СеверСнаб", materialKeywords: ["долото"] },
+      { name: "Кабель", materialKeywords: ["кабель"] },
+    ]).map((item) => item.name)).toEqual(["СеверСнаб"]);
   });
 
   it("merges material needs, splits a contract row, and lists works on a date", () => {

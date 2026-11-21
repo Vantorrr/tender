@@ -2239,8 +2239,8 @@ export default function ZakupkaDetailPage() {
                     variant="secondary"
                     onClick={async () => {
                       try {
-                        await parseRiskContract(risk.id);
-                        toast.success("Разбор договора выполнен");
+                        const label = await parseRiskContract(risk.id);
+                        toast.success(label);
                       } catch (e) {
                         toast.error(
                           e instanceof Error ? e.message : "Ошибка разбора"

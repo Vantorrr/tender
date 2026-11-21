@@ -151,6 +151,13 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
   }
   const dir = data.directories.find((d) => d.id === calc.directoryVersionId);
   ws.addRow({});
+  if (calc.costSummary?.northernAdjustments) {
+    const north = calc.costSummary.northernAdjustments;
+    ws.addRow({ code: "РК", name: "Районный коэффициент", sum: north.district });
+    ws.addRow({ code: "СН", name: "Северная надбавка", sum: north.allowance });
+    ws.addRow({ code: "НР", name: "Накладные", sum: north.overhead });
+    ws.addRow({ code: "ИТОГО", name: "Итого с северными условиями", sum: north.total });
+  }
 
   const slices = calc.costSummary?.resourceSlices;
   const partial =
@@ -398,6 +405,13 @@ export async function buildCalculationPdf(calcId: string): Promise<Buffer> {
     drawWrapped(`Себестоимость с накладными X: ${money(slices.costWithOh)}${tag}`, 10);
     drawWrapped(`Прибыль Y: ${money(slices.profit)}${tag}`, 10);
     drawWrapped(`Итого ресурсного черновика Z: ${money(slices.total)}${tag}`, 12, true);
+    if (calc.costSummary?.northernAdjustments) {
+      const north = calc.costSummary.northernAdjustments;
+      drawWrapped(`Районный коэффициент: ${money(north.district)}`, 10);
+      drawWrapped(`Северная надбавка: ${money(north.allowance)}`, 10);
+      drawWrapped(`Накладные: ${money(north.overhead)}`, 10);
+      drawWrapped(`Итого с северными условиями: ${money(north.total)}`, 11, true);
+    }
     drawWrapped(`Материалы S: ${money(slices.materials)} · Люди T: ${money(slices.labor)} · Техника U: ${money(slices.equipment)}`, 9, false, muted);
     if (calc.officeOverhead != null) drawWrapped(`Офисные расходы отдельно: ${money(calc.officeOverhead)}`, 9, false, muted);
     if (calc.costSummary?.reserve != null) drawWrapped(`Непредвиденные расходы: ${money(calc.costSummary.reserve)}`, 9, false, muted);
@@ -410,6 +424,13 @@ export async function buildCalculationPdf(calcId: string): Promise<Buffer> {
         ? "Итого исходной сметы заказчика"
         : "Итого расчёта";
     drawWrapped(`${label}: ${money(totals.total)}${partial ? " · неполный расчёт" : ""}`, 12, true);
+    if (calc.costSummary?.northernAdjustments) {
+      const north = calc.costSummary.northernAdjustments;
+      drawWrapped(`Районный коэффициент: ${money(north.district)}`, 10);
+      drawWrapped(`Северная надбавка: ${money(north.allowance)}`, 10);
+      drawWrapped(`Накладные: ${money(north.overhead)}`, 10);
+      drawWrapped(`Итого с северными условиями: ${money(north.total)}`, 11, true);
+    }
   }
   if (partial || calc.positions.some((position) => position.rateMissing && !position.isWorkItem)) {
     y -= 8;
@@ -840,6 +861,12 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
       cs.priceExVat,
       totalsPartial ? "PARTIAL" : "",
     ]);
+    if (cs.northernAdjustments) {
+      sumSheet.addRow(["Районный коэффициент", cs.northernAdjustments.district, "включено в итог"]);
+      sumSheet.addRow(["Северная надбавка", cs.northernAdjustments.allowance, "включено в итог"]);
+      sumSheet.addRow(["Накладные", cs.northernAdjustments.overhead, "включено в итог"]);
+      sumSheet.addRow(["Итого с северными условиями", cs.northernAdjustments.total, "включено в итог"]);
+    }
     sumSheet.addRow([
       `НДС${ptag}`,
       cs.vatAmount == null ? "нет данных" : cs.vatAmount,
