@@ -277,7 +277,41 @@ describe("wave 2–3 server checks", () => {
     const totaled = readAppData().calculations.find((item) => item.id === draft.id)!;
     expect(totaled.costSummary?.northernAdjustments?.district).toBe(8000);
     expect(totaled.costSummary?.northernAdjustments?.allowance).toBe(8000);
-    expect((totaled.costSummary?.priceExVat ?? 0)).toBeGreaterThan(20000);
+    const firstTotal = totaled.costSummary?.priceExVat ?? 0;
+    expect(firstTotal).toBeGreaterThan(20000);
+
+    sendProcurementToCalculation("u-ruk", formed.id);
+    const again = readAppData().calculations.find((item) => item.id === draft.id)!;
+    recomputeCalculationCost("u-ruk", again.id, { resourceScheduleParams: again.resourceScheduleParams, useResourceScheduleEconomics: true });
+    const repeated = readAppData().calculations.find((item) => item.id === draft.id)!;
+    expect(repeated.resourceScheduleParams?.districtCoefficient).toBe(1.8);
+    expect(repeated.costSummary?.priceExVat).toBe(firstTotal);
+
+    recomputeCalculationCost("u-ruk", draft.id, {
+      resourceScheduleParams: { ...repeated.resourceScheduleParams!, districtCoefficient: 1.2 },
+      useResourceScheduleEconomics: true,
+    });
+    const edited = readAppData().calculations.find((item) => item.id === draft.id)!;
+    const editedTotal = edited.costSummary?.priceExVat ?? 0;
+    expect(edited.resourceScheduleParams?.districtCoefficient).toBe(1.2);
+    expect(editedTotal).not.toBe(firstTotal);
+    sendProcurementToCalculation("u-ruk", formed.id);
+    const kept = readAppData().calculations.find((item) => item.id === draft.id)!;
+    recomputeCalculationCost("u-ruk", kept.id, { resourceScheduleParams: kept.resourceScheduleParams, useResourceScheduleEconomics: true });
+    const afterEdit = readAppData().calculations.find((item) => item.id === draft.id)!;
+    expect(afterEdit.resourceScheduleParams?.districtCoefficient).toBe(1.2);
+    expect(afterEdit.costSummary?.priceExVat).toBe(editedTotal);
+
+    const { districtCoefficient: _district, northernPayrollShare: _share, ...scheduleWithoutNorth } = afterEdit.resourceScheduleParams!;
+    void _district;
+    void _share;
+    recomputeCalculationCost("u-ruk", draft.id, { resourceScheduleParams: scheduleWithoutNorth, useResourceScheduleEconomics: true });
+    const plainTotal = readAppData().calculations.find((item) => item.id === draft.id)!.costSummary?.priceExVat;
+    sendProcurementToCalculation("u-ruk", formed.id);
+    const untouched = readAppData().calculations.find((item) => item.id === draft.id)!;
+    expect(untouched.resourceScheduleParams?.districtCoefficient).toBeUndefined();
+    recomputeCalculationCost("u-ruk", untouched.id, { resourceScheduleParams: untouched.resourceScheduleParams, useResourceScheduleEconomics: true });
+    expect(readAppData().calculations.find((item) => item.id === draft.id)!.costSummary?.priceExVat).toBe(plainTotal);
   });
 
   it("splits a unit out of an existing plan row on read and save", () => {

@@ -2567,7 +2567,9 @@ export function sendProcurementToCalculation(
           "seeded_from_customer_estimate",
           "requires_manual_check",
         ];
-        linked.resourceScheduleParams = scheduleParamsWithNorthernDefaults(linked.resourceScheduleParams);
+        // Defaults belong to the first draft only. A repeat send must not
+        // fill a missing coefficient into an existing schedule or replace an edit.
+        linked.resourceScheduleParams ??= scheduleParamsWithNorthernDefaults();
       }
       linked.updatedAt = now;
       linked.changeLog = [
@@ -2940,6 +2942,18 @@ export function shiftGprStage(
   });
 }
 
+function northernDelta(district: number, allowance: number, params: { overheadRate: number; profitMarkupOnCostWithOh: number }) {
+  const extraDirect = Math.round((district + allowance) * 100) / 100;
+  const extraOverhead = Math.round(extraDirect * params.overheadRate * 100) / 100;
+  const extraProfit = Math.round((extraDirect + extraOverhead) * params.profitMarkupOnCostWithOh * 100) / 100;
+  return {
+    extraDirect,
+    extraOverhead,
+    extraProfit,
+    added: Math.round((extraDirect + extraOverhead + extraProfit) * 100) / 100,
+  };
+}
+
 function applyNorthernFold(calc: Calculation, labor: number) {
   const params = calc.resourceScheduleParams;
   const summary = calc.costSummary;
@@ -2952,13 +2966,19 @@ function applyNorthernFold(calc: Calculation, labor: number) {
   });
   const district = lines[0]?.amount ?? 0;
   const allowance = lines[1]?.amount ?? 0;
-  const extraDirect = Math.round((district + allowance) * 100) / 100;
-  const extraOverhead = Math.round(extraDirect * params.overheadRate * 100) / 100;
-  const extraProfit = Math.round((extraDirect + extraOverhead) * params.profitMarkupOnCostWithOh * 100) / 100;
-  const added = Math.round((extraDirect + extraOverhead + extraProfit) * 100) / 100;
-  const priceExVat = Math.round((summary.priceExVat + added) * 100) / 100;
-  const C0 = Math.round((summary.C0 + extraDirect + extraOverhead) * 100) / 100;
-  const profit = Math.round((summary.profit + extraProfit) * 100) / 100;
+  const next = northernDelta(district, allowance, params);
+  // A stored total may already contain this fold. Remove that copy before
+  // writing the current one so a second pass does not add it again.
+  const previous = summary.northernAdjustments
+    ? northernDelta(summary.northernAdjustments.district, summary.northernAdjustments.allowance, params)
+    : null;
+  const basePrice = Math.round((summary.priceExVat - (previous?.added ?? 0)) * 100) / 100;
+  const baseC0 = Math.round((summary.C0 - (previous ? previous.extraDirect + previous.extraOverhead : 0)) * 100) / 100;
+  const baseProfit = Math.round((summary.profit - (previous?.extraProfit ?? 0)) * 100) / 100;
+  const priceExVat = Math.round((basePrice + next.added) * 100) / 100;
+  const C0 = Math.round((baseC0 + next.extraDirect + next.extraOverhead) * 100) / 100;
+  const profit = Math.round((baseProfit + next.extraProfit) * 100) / 100;
+  const { extraDirect, extraOverhead, extraProfit, added } = next;
   const vatAmount = calc.vatPercent == null
     ? summary.vatAmount
     : Math.round(priceExVat * calc.vatPercent) / 100;
@@ -2979,11 +2999,11 @@ function applyNorthernFold(calc: Calculation, labor: number) {
     ...(summary.resourceSlices ? {
       resourceSlices: {
         ...summary.resourceSlices,
-        direct: Math.round((summary.resourceSlices.direct + extraDirect) * 100) / 100,
-        overhead: Math.round((summary.resourceSlices.overhead + extraOverhead) * 100) / 100,
-        costWithOh: Math.round((summary.resourceSlices.costWithOh + extraDirect + extraOverhead) * 100) / 100,
-        profit: Math.round((summary.resourceSlices.profit + extraProfit) * 100) / 100,
-        total: Math.round((summary.resourceSlices.total + added) * 100) / 100,
+        direct: Math.round((summary.resourceSlices.direct - (previous?.extraDirect ?? 0) + extraDirect) * 100) / 100,
+        overhead: Math.round((summary.resourceSlices.overhead - (previous?.extraOverhead ?? 0) + extraOverhead) * 100) / 100,
+        costWithOh: Math.round((summary.resourceSlices.costWithOh - (previous ? previous.extraDirect + previous.extraOverhead : 0) + extraDirect + extraOverhead) * 100) / 100,
+        profit: Math.round((summary.resourceSlices.profit - (previous?.extraProfit ?? 0) + extraProfit) * 100) / 100,
+        total: Math.round((summary.resourceSlices.total - (previous?.added ?? 0) + added) * 100) / 100,
       },
     } : {}),
   };
