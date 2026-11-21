@@ -215,8 +215,11 @@ export function migratePlanBundle<
     return next;
   });
   const dailyFacts = (plan.dailyFacts ?? []).map((fact) => {
-    const next = renamed.get(`${fact.workName}\u0000${fact.unit}`);
-    return next ? { ...fact, workName: next.workName, unit: next.unit } : fact;
+    const fromEntry = renamed.get(`${fact.workName}\u0000${fact.unit}`);
+    const split = fromEntry ?? splitEmbeddedUnit(fact.workName, fact.unit);
+    const unit = split.unit || fact.unit;
+    if (split.workName === fact.workName && unit === fact.unit) return fact;
+    return { ...fact, workName: split.workName, unit };
   });
   return { entries, dailyFacts };
 }

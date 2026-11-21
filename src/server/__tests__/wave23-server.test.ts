@@ -267,6 +267,29 @@ describe("wave 2–3 server checks", () => {
     const stored = readAppData().planFacts.find((item) => item.id === plan.id)!;
     expect(stored.entries[0]).toMatchObject({ workName: "Бурение скважин", unit: "м", fact: 1 });
     expect(stored.dailyFacts?.[0]).toMatchObject({ workName: "Бурение скважин", unit: "м", quantity: 3 });
+    mutateAppData((data) => {
+      const item = data.planFacts.find((row) => row.id === plan.id)!;
+      item.entries = [{ id: "old-row", workName: "Бурение скважин", unit: "м", plan: 12, fact: 1 }];
+      item.dailyFacts = [{
+        id: "day-old",
+        date: "2026-11-02",
+        workName: "Бурение скважин, м",
+        unit: "",
+        quantity: 3,
+        photos: [],
+        authorId: "u-ruk",
+        at: "2026-11-02T08:00:00.000Z",
+      }];
+      return data;
+    });
+    updatePlanFact("u-ruk", plan.id, {
+      entries: [{ id: "old-row", workName: "Бурение скважин", unit: "м", plan: 12, fact: 1 }],
+    });
+    expect(readAppData().planFacts.find((item) => item.id === plan.id)!.dailyFacts?.[0]).toMatchObject({
+      workName: "Бурение скважин",
+      unit: "м",
+      quantity: 3,
+    });
   });
 
   it("drafts a volume sheet from the model and saves it into the calculation", async () => {
