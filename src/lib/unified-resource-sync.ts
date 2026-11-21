@@ -198,11 +198,8 @@ export function positionsFromStages(
       if (!categoryOf(r.kind)) continue;
       i += 1;
       const resolved = resolveResourceDimensions(r, st, params);
-      // A volume line (ВОР) stays on the draft. Adopting it by name would
-      // put its code on the stage resource, and the cost pass would add it twice.
-      const candidates = (prevByName.get(r.name.trim().toLowerCase()) ?? []).filter(
-        (position) => position.code !== "ВОР",
-      );
+      // A volume line with the same name is this resource, not a second row.
+      const candidates = prevByName.get(r.name.trim().toLowerCase()) ?? [];
       const prev =
         candidates.find(
           (p) => p.sourceResourceId === r.id && !usedPreviousIds.has(p.id)

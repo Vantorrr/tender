@@ -4,6 +4,7 @@ import ExcelJS from "exceljs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { buildStagesFromEstimatePositions, GPR_DATES_MISSING } from "@/lib/estimate-stages";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
+import { scheduleParamsWithNorthernDefaults } from "@/lib/wave23";
 import type { CalcPosition } from "@/lib/types";
 import { closeDb, ensureReady, mutateAppData, readAppData } from "@/server/db";
 import { buildCalculationXlsx } from "@/server/export";
@@ -199,6 +200,29 @@ describe("wave 4 pricing, volumes and return quantities", () => {
     expect(readAppData().schedules.find((item) => item.procurementId === created.id)!.assumptions ?? []).not.toContain(GPR_DATES_MISSING);
   });
 
+  it("prices an accepted labour line once, with northern coefficients and overhead, before and after the schedule", () => {
+    const created = createManualProcurement("u-ruk", { title: "Кладовщик один раз", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const draft = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "resource_draft")!;
+    updateCalculation("u-ruk", draft.id, { positions: [], resourceScheduleParams: scheduleParamsWithNorthernDefaults() });
+    acceptVolumeDraft("u-ruk", draft.id, [{ work: "Кладовщик", unit: "чел.-ч", volume: 10, quote: "Кладовщик 10 чел.-ч", rate: null }]);
+    const accepted = readAppData().calculations.find((item) => item.id === draft.id)!;
+    const acceptedTotal = accepted.costSummary?.C0 ?? 0;
+    expect(accepted.positions.filter((position) => position.name === "Кладовщик")).toHaveLength(1);
+    expect(acceptedTotal).toBeCloseTo(32755.58, 2);
+    createProcurementSchedule("u-ruk", created.id);
+    const stages = readAppData().schedules.find((item) => item.procurementId === created.id)!.stages;
+    const resources = stages.flatMap((stage) => stage.resources ?? []).filter((resource) => resource.name === "Кладовщик");
+    expect(resources).toHaveLength(1);
+    expect(resources[0]).toMatchObject({ kind: "labor", quantity: 10, rate: 881 });
+    recomputeCalculationCost("u-ruk", draft.id, { useResourceScheduleEconomics: true });
+    const scheduled = readAppData().calculations.find((item) => item.id === draft.id)!;
+    expect(scheduled.positions.filter((position) => position.name === "Кладовщик")).toHaveLength(1);
+    expect(scheduled.costSummary?.C0 ?? 0).toBeCloseTo(acceptedTotal, 2);
+    recomputeCalculationCost("u-ruk", draft.id, { useResourceScheduleEconomics: true });
+    expect(readAppData().calculations.find((item) => item.id === draft.id)!.costSummary?.C0 ?? 0).toBeCloseTo(acceptedTotal, 2);
+  });
+
   it("adds an accepted priced volume line to the cost total exactly once", () => {
     const created = createManualProcurement("u-ruk", { title: "Ведомость в итоге", region: "Ямал" });
     sendProcurementToCalculation("u-ruk", created.id);
@@ -210,7 +234,9 @@ describe("wave 4 pricing, volumes and return quantities", () => {
     const line = accepted.positions.find((position) => position.name === "Кладовщик")!;
     expect(line.rate).toBe(881);
     expect(line.rateMissing).toBe(false);
-    expect((accepted.costSummary?.C0 ?? 0) - before).toBeCloseTo(10 * 881, 2);
+    const direct = 10 * 881;
+    const overhead = Math.round(direct * 0.43 * 100) / 100;
+    expect((accepted.costSummary?.C0 ?? 0) - before).toBeCloseTo(direct + overhead, 2);
     recomputeCalculationCost("u-ruk", draft.id, { useResourceScheduleEconomics: true });
     const repeated = readAppData().calculations.find((item) => item.id === draft.id)!;
     expect(repeated.costSummary?.C0 ?? 0).toBeCloseTo(accepted.costSummary?.C0 ?? 0, 2);
@@ -229,7 +255,9 @@ describe("wave 4 pricing, volumes and return quantities", () => {
     recalcCalculation("u-ruk", draft.id, "bazovyy");
     const after = readAppData().calculations.find((item) => item.id === draft.id)!;
     expect(after.positions.find((position) => position.id === "vor-1")?.rate).toBe(881);
-    expect((after.costSummary?.C0 ?? 0) - before).toBeCloseTo(10 * 881, 2);
+    const direct = 10 * 881;
+    const overhead = Math.round(direct * 0.43 * 100) / 100;
+    expect((after.costSummary?.C0 ?? 0) - before).toBeCloseTo(direct + overhead, 2);
     recalcCalculation("u-ruk", draft.id, "bazovyy");
     expect(readAppData().calculations.find((item) => item.id === draft.id)!.costSummary?.C0 ?? 0).toBeCloseTo(after.costSummary?.C0 ?? 0, 2);
   });
@@ -270,7 +298,9 @@ describe("wave 4 pricing, volumes and return quantities", () => {
     });
     recomputeCalculationCost("u-ruk", draft.id, { useResourceScheduleEconomics: true });
     const withOther = readAppData().calculations.find((item) => item.id === draft.id)!;
-    expect((withOther.costSummary?.C0 ?? 0) - base).toBeCloseTo(2 * 1157, 2);
+    const extraDirect = 2 * 1157;
+    const extraOverhead = Math.round(extraDirect * 0.43 * 100) / 100;
+    expect((withOther.costSummary?.C0 ?? 0) - base).toBeCloseTo(extraDirect + extraOverhead, 2);
     recomputeCalculationCost("u-ruk", draft.id, { useResourceScheduleEconomics: true });
     expect(readAppData().calculations.find((item) => item.id === draft.id)!.costSummary?.C0 ?? 0).toBeCloseTo(withOther.costSummary?.C0 ?? 0, 2);
     updateCalculation("u-ruk", draft.id, {

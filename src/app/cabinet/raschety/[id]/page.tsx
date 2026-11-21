@@ -28,7 +28,7 @@ import {
 import { api, downloadUrl } from "@/lib/api";
 import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-panel";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
-import { NORTH_DEFAULTS, northernAdditionLines, northernEconomicsApplied, northernStatusText, refreshRateAssumption } from "@/lib/wave23";
+import { labourLineEconomicsNote, NORTH_DEFAULTS, northernAdditionLines, northernEconomicsApplied, northernStatusText, refreshRateAssumption } from "@/lib/wave23";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engine";
 import { parseDecimalRu } from "@/lib/decimal-ru";
@@ -1260,6 +1260,17 @@ export default function RaschetDetailPage() {
                   <TableCell className="min-w-[12rem]">
                     {plainPositionName(p.name)}
                     {p.sourceSectionName ? <div className="text-xs text-[var(--tk-muted)]">{p.sourceSectionName}</div> : null}
+                    {(() => {
+                      const note = labourLineEconomicsNote({
+                        bucket: classifyDirectCostBucket(p),
+                        rate: p.rate,
+                        rateMissing: p.rateMissing,
+                        overheadRate: calc.resourceScheduleParams?.overheadRate,
+                        districtCoefficient: calc.resourceScheduleParams?.districtCoefficient,
+                        northernApplicable: calc.northern?.applicable,
+                      });
+                      return note ? <div className="text-xs text-[var(--tk-muted)]" data-testid={`pos-economics-${p.id}`}>{note}</div> : null;
+                    })()}
                   </TableCell>
                   <TableCell>{p.unit}</TableCell>
                   <TableCell className="text-right" title={quantityPresentation(splitSignedQuantity(p.quantity).quantity, p.unit).title}>

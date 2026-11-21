@@ -213,8 +213,8 @@ describe("analytical note shape", () => {
     ], [
       { id: "vor-1", code: "ВОР", name: "Кладовщик", unit: "чел.-ч", quantity: 10, rate: 881 },
     ], EXCEL_RESOURCE_SCHEDULE_DEFAULTS);
-    expect(adopted.filter((position) => position.code === "ВОР")).toHaveLength(1);
-    expect(adopted.find((position) => position.sourceResourceId)?.code).not.toBe("ВОР");
+    expect(adopted).toHaveLength(1);
+    expect(adopted[0]).toMatchObject({ code: "ВОР", sourceResourceId: "r1", name: "Кладовщик" });
     expect(analyticalNoteStructure(note).blocks).toEqual([
       "Паспорт закупки и тайминг",
       "Условия участия и требования к заявке",

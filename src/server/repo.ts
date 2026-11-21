@@ -3175,46 +3175,37 @@ function volumeNameKey(name: string): string {
   return name.trim().toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
 }
 
-/** Stage resources that already contribute money. A volume line with the same name is not added again. */
-function coveredVolumeNames(stages: GprStage[] | undefined): Set<string> {
-  const names = new Set<string>();
-  for (const stage of stages ?? []) {
-    for (const resource of stage.resources ?? []) {
-      if ((resource.rate ?? 0) > 0 && Math.abs(resource.quantity) > 0) names.add(volumeNameKey(resource.name));
-    }
-  }
-  return names;
-}
-
-function pricedVolumeSum(positions: Calculation["positions"], coveredNames: Set<string>): number {
-  return roundMoney(positions
-    .filter((position) => position.code === "ВОР"
-      && !position.isWorkItem
-      && !position.sourceResourceId
-      && !position.rateMissing
-      && position.rate > 0
-      && !coveredNames.has(volumeNameKey(position.name)))
-    .reduce((sum, position) => sum + position.quantity * position.rate, 0));
-}
-
-/** Accepted volume lines add exactly quantity × rate. Overhead is not applied again. */
-function addAcceptedVolumes(calc: Calculation, coveredNames: Set<string> = new Set()) {
-  const amount = pricedVolumeSum(calc.positions, coveredNames);
-  if (!amount || !calc.costSummary) return;
+/**
+ * Volume lines already linked to a stage are in the rollup.
+ * A volume line that is still only on the draft is labour, material or
+ * equipment like any other row: direct cost plus overhead, once.
+ */
+function foldUnlinkedVolumes(calc: Calculation): number {
+  const params = calc.resourceScheduleParams;
   const summary = calc.costSummary;
-  summary.C0 = roundMoney(summary.C0 + amount);
-  summary.C = roundMoney(summary.C + amount);
-  summary.priceExVat = roundMoney((summary.priceExVat ?? 0) + amount);
-  if (summary.priceIncVat != null) summary.priceIncVat = roundMoney(summary.priceIncVat + amount);
+  if (!params || !summary) return 0;
+  const extra = bucketsFromPositions(calc.positions.filter((position) =>
+    position.code === "ВОР" && !position.sourceResourceId && !position.isWorkItem));
+  const direct = roundMoney(extra.labor + extra.materials + extra.equipment + extra.other);
+  if (!direct) return extra.labor;
+  const overhead = roundMoney(direct * (params.overheadRate ?? 0));
+  const added = roundMoney(direct + overhead);
+  summary.C0 = roundMoney(summary.C0 + added);
+  summary.C = roundMoney(summary.C + added);
+  summary.priceExVat = roundMoney((summary.priceExVat ?? 0) + added);
   if (summary.resourceSlices) {
     summary.resourceSlices = {
       ...summary.resourceSlices,
-      labor: roundMoney((summary.resourceSlices.labor ?? 0) + amount),
-      direct: roundMoney((summary.resourceSlices.direct ?? 0) + amount),
-      costWithOh: roundMoney((summary.resourceSlices.costWithOh ?? 0) + amount),
-      total: roundMoney((summary.resourceSlices.total ?? 0) + amount),
+      labor: roundMoney((summary.resourceSlices.labor ?? 0) + extra.labor),
+      materials: roundMoney((summary.resourceSlices.materials ?? 0) + extra.materials),
+      equipment: roundMoney((summary.resourceSlices.equipment ?? 0) + extra.equipment),
+      direct: roundMoney((summary.resourceSlices.direct ?? 0) + direct),
+      overhead: roundMoney((summary.resourceSlices.overhead ?? 0) + overhead),
+      costWithOh: roundMoney((summary.resourceSlices.costWithOh ?? 0) + added),
+      total: roundMoney((summary.resourceSlices.total ?? 0) + added),
     };
   }
+  return extra.labor;
 }
 
 export function recomputeCalculationCost(
@@ -3273,15 +3264,26 @@ export function recomputeCalculationCost(
         0,
         patch?.reserve ?? item.costSummary?.reserve ?? 0
       );
+      for (const stage of linkedSchedule.stages) {
+        for (const resource of stage.resources ?? []) {
+          if ((resource.rate ?? 0) > 0) continue;
+          const priced = item.positions.find((position) => position.code === "ВОР"
+            && !position.isWorkItem
+            && !position.rateMissing
+            && position.rate > 0
+            && volumeNameKey(position.name) === volumeNameKey(resource.name));
+          if (priced) resource.rate = priced.rate;
+        }
+      }
       const synced = syncDraftFromStages(item, linkedSchedule.stages, {
         replacePositions: true,
       });
       Object.assign(item, synced.calc);
       if (item.costSummary) item.costSummary.reserve = reserve;
       applyResourceDraftAdjustments(item);
-      const baseSlices = item.costSummary?.resourceSlices;
-      applyNorthernFold(item, baseSlices?.labor ?? 0);
-      addAcceptedVolumes(item, coveredVolumeNames(linkedSchedule.stages));
+      const stageLabor = item.costSummary?.resourceSlices?.labor ?? 0;
+      const extraLabor = foldUnlinkedVolumes(item);
+      applyNorthernFold(item, stageLabor + extraLabor);
       const matNeeds = buildMaterialNeeds({
         positions: item.positions,
         stages: linkedSchedule.stages,
@@ -3304,10 +3306,7 @@ export function recomputeCalculationCost(
       return data;
     }
 
-    const buckets = bucketsFromPositions(
-      item.positions.filter((position) => position.code !== "ВОР"),
-      item.scenarioFactor || 1
-    );
+    const buckets = bucketsFromPositions(item.positions, item.scenarioFactor || 1);
     const routes = item.busRoutes ?? [];
     let logistics = 0;
     const busFlags: string[] = [];
@@ -3378,7 +3377,6 @@ export function recomputeCalculationCost(
       at: new Date().toISOString(),
     };
     applyNorthernFold(item, buckets.labor);
-    addAcceptedVolumes(item);
     item.dataFlags = [
       ...(item.dataFlags ?? []).filter((f) => !f.startsWith("cost_")),
       "cost_engine_v1",

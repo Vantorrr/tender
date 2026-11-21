@@ -5,6 +5,7 @@ import path from "node:path";
 import { assertOrgAccess } from "@/lib/acl";
 import type { VolumeDraftRow } from "@/lib/wave23";
 import { matchCompanyDirectoryRate } from "@/lib/client-dirs";
+import { classifyDirectCostBucket } from "@/lib/cost-engine";
 import { parseVolumeDraft, priceVolumeRows } from "@/lib/wave23";
 import { readAppData, mutateAppData } from "@/server/db";
 import { recomputeCalculationCost } from "@/server/repo";
@@ -125,6 +126,8 @@ export function acceptVolumeDraft(actorId: string, calculationId: string, rows: 
       ...accepted.map((row) => {
         const hit = matchCompanyDirectoryRate(data.directories, { code: "ВОР", name: row.work, unit: row.unit });
         const rate = hit?.rate ?? 0;
+        const bucket = classifyDirectCostBucket({ code: "ВОР", name: row.work, unit: row.unit });
+        const resourceKind = bucket === "labor" ? "labor" as const : bucket === "materials" ? "material" as const : bucket === "equipment" ? "equipment" as const : undefined;
         return {
           id: `vor-${crypto.randomUUID()}`,
           code: "ВОР",
@@ -133,6 +136,7 @@ export function acceptVolumeDraft(actorId: string, calculationId: string, rows: 
           quantity: row.volume,
           rate,
           rateMissing: !(rate > 0),
+          ...(resourceKind ? { resourceKind } : {}),
           ...(hit?.basis === "person_hour" ? { rateBasis: "person_hour" as const } : hit ? { rateBasis: "directory" as const, rateSourceDirectoryId: hit.dirId } : {}),
           sourceWorkName: row.work.trim(),
         };

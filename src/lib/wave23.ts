@@ -276,6 +276,28 @@ export function matchDirectorySuppliers<T extends { name: string; materialKeywor
   }));
 }
 
+/** Plain note for a labour row: northern coefficients and overhead sit in the total, not in the line sum. */
+export function labourLineEconomicsNote(input: {
+  bucket: "labor" | "materials" | "equipment" | "other";
+  rate?: number | null;
+  rateMissing?: boolean;
+  overheadRate?: number | null;
+  districtCoefficient?: number | null;
+  northernApplicable?: boolean | null;
+}): string | null {
+  if (input.bucket !== "labor" || input.rateMissing || !(Number(input.rate) > 0)) return null;
+  const overhead = input.overheadRate ?? 0;
+  const northern = northernEconomicsApplied({
+    applicable: input.northernApplicable,
+    districtCoefficient: input.districtCoefficient,
+  });
+  if (!northern && !(overhead > 0)) return null;
+  const overheadText = overhead > 0 ? `накладные ${Math.round(overhead * 100)}%` : "";
+  if (northern && overheadText) return `В итог по этой строке входят районный коэффициент, северная надбавка и ${overheadText}`;
+  if (northern) return "В итог по этой строке входят районный коэффициент и северная надбавка";
+  return `В итог по этой строке входят ${overheadText}`;
+}
+
 /** True when the district coefficient is actually folded into the total. */
 export function northernEconomicsApplied(input: {
   applicable?: boolean | null;
