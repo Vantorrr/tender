@@ -144,6 +144,9 @@ describe("calendar dates and returns", () => {
     expect(calendarDurationDays("Аванс не предусмотрен, срок выполнения работ составляет 90 календарных дней.")).toBe(90);
     expect(calendarDurationDays("Работы ведутся в две степени, срок выполнения работ составляет 90 календарных дней.")).toBe(90);
     expect(calendarDurationDays("Срок выполнения работ при оплате в течение 60 календарных дней.")).toBeNull();
+    expect(calendarDurationDays("Срок выполнения работ при предоплате в течение 60 календарных дней.")).toBeNull();
+    expect(calendarDurationDays("Гарантийный срок на выполненные работы составляет 60 календарных дней.")).toBeNull();
+    expect(calendarDurationDays("Аванс 30%, срок выполнения работ — 90 календарных дней.")).toBe(90);
     expect(calendarDurationDays("Оплата в течение 60 календарных дней после приемки.")).toBeNull();
     expect(calendarDurationDays("Гарантийный срок — 60 календарных дней.")).toBeNull();
     expect(calendarDurationDays("Гарантийный срок на работы — 60 месяцев.")).toBeNull();

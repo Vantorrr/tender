@@ -55,15 +55,8 @@ export function periodFromDocumentText(text: string): { start: string; end: stri
 }
 
 const WORK_DURATION_CUE = /срок\s+выполнен|выполнен\p{L}*\s+работ|производств\p{L}*\s+работ|срок\s+работ/iu;
-const OTHER_PERIOD_CUE = /(?<![\p{L}])(?:гарант|оплат|при[её]мк|аванс|обеспечен|штраф|неустойк|пен[ия]|подач)\p{L}*(?![\p{L}])/iu;
-
-function lastMatchIndex(text: string, pattern: RegExp): number {
-  const flags = pattern.flags.includes("g") ? pattern.flags : `${pattern.flags}g`;
-  const global = new RegExp(pattern.source, flags);
-  let at = -1;
-  for (const match of text.matchAll(global)) at = match.index ?? -1;
-  return at;
-}
+const OTHER_PERIOD_CUE = /(?<![\p{L}])(?:(?:пред|пере)?оплат|(?:пере)?обеспечен|гарант|при[её]мк|аванс|штраф|неустойк|пен[ия]|подач)\p{L}*(?![\p{L}])/iu;
+const CALENDAR_DAYS = /(\d{1,4})\s+календарн\p{L}*\s+дн\p{L}*/iu;
 
 /** One sentence. A date's dots and «г.» are not a sentence break. */
 function scheduleSentences(text: string): string[] {
@@ -75,24 +68,26 @@ function scheduleSentences(text: string): string[] {
 
 /**
  * Only a duration of the works themselves («срок выполнения работ»).
- * The cue may sit anywhere before the number. A warranty, payment, acceptance
- * or bid phrase that introduces that number is not the schedule, even when it
- * also says «срок выполнения работ».
+ * Warranty, payment, acceptance and bid clauses are skipped even when they
+ * also mention the works. An earlier advance in another clause does not cancel
+ * the works period.
  */
 export function calendarDurationDays(text: string): number | null {
-  const pattern = /(\d{1,4})\s+календарн\p{L}*\s+дн\p{L}*/giu;
   for (const sentence of scheduleSentences(text)) {
-    let cursor = 0;
-    for (const match of sentence.matchAll(pattern)) {
-      const span = sentence.slice(cursor, match.index);
-      cursor = match.index + match[0].length;
-      const workAt = lastMatchIndex(span, WORK_DURATION_CUE);
-      if (workAt < 0) continue;
-      const introducesCue = span.slice(Math.max(0, workAt - 16), workAt);
-      const untilNumber = span.slice(workAt);
-      if (OTHER_PERIOD_CUE.test(introducesCue) || OTHER_PERIOD_CUE.test(untilNumber)) continue;
-      const days = Number(match[1]);
-      if (Number.isFinite(days) && days > 0) return days;
+    let pendingWork = false;
+    for (const clause of sentence.split(/[;,]\s*/u)) {
+      const part = clause.trim();
+      if (!part) continue;
+      const blocked = OTHER_PERIOD_CUE.test(part);
+      const work = WORK_DURATION_CUE.test(part);
+      const match = CALENDAR_DAYS.exec(part);
+      const days = match ? Number(match[1]) : 0;
+      if (blocked) {
+        pendingWork = false;
+        continue;
+      }
+      if (days > 0 && (work || pendingWork)) return days;
+      pendingWork = work;
     }
   }
   return null;
