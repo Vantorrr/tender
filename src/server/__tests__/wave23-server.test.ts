@@ -10,6 +10,8 @@ import { createSession } from "@/server/auth";
 import { closeDb, ensureReady, healthSnapshot, mutateAppData, readAppData } from "@/server/db";
 import { parseGrandBuffer } from "@/server/grand-smeta";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
+import { positionLineSum } from "@/lib/calc-math";
+import { patchMergedPositions } from "@/lib/resource-merge";
 import { foldNorthernEconomics } from "@/lib/wave23";
 import {
   createManualProcurement,
@@ -20,6 +22,7 @@ import {
   sendProcurementToCalculation,
   deleteGprStage,
   setStagePredecessor,
+  updateCalculation,
   updatePlanFact,
   updateSchedule,
 } from "@/server/repo";
@@ -92,6 +95,37 @@ describe("wave 2–3 server checks", () => {
     expect(difference("Вода")).toBeCloseTo(-2728.28, 2);
     expect(difference("электросварные")).toBeCloseTo(-14.68, 2);
     expect(difference("обсадные")).toBeCloseTo(-170.76, 2);
+  });
+
+  it("keeps a return negative when its shown quantity is saved", () => {
+    const created = createManualProcurement("u-ruk", { title: "Возврат воды", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const draft = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind !== "customer_original")!;
+    const positions: CalcPosition[] = [
+      { id: "pay", code: "LAB-1", name: "Плотник", unit: "чел-ч", quantity: 10, rate: 100 },
+      { id: "ret-a", code: "ФССЦ-1", name: "Вода", unit: "м3", quantity: -10, rate: 20, resourceKind: "material" },
+      { id: "ret-b", code: "ФССЦ-1", name: "Вода", unit: "м3", quantity: -5, rate: 20, resourceKind: "material" },
+    ];
+    const lineTotal = (rows: CalcPosition[]) => rows.reduce((sum, row) => sum + positionLineSum(row), 0);
+    mutateAppData((data) => {
+      data.calculations.find((item) => item.id === draft.id)!.positions = positions;
+      return data;
+    });
+    const before = lineTotal(positions);
+    const leaf = buildHierarchicalEstimate({ stages: [], positions })
+      .flatMap((node) => node.groups.flatMap((group) => group.leaves))
+      .find((item) => item.name.includes("Вода"))!;
+    expect(leaf.quantity).toBe(15);
+    expect(leaf.difference).toBeCloseTo(-15);
+    updateCalculation("u-ruk", draft.id, { positions: patchMergedPositions(positions, leaf, leaf.quantity) });
+    const kept = readAppData().calculations.find((item) => item.id === draft.id)!.positions;
+    expect(lineTotal(kept)).toBeCloseTo(before);
+    expect(kept.filter((row) => row.name === "Вода").every((row) => row.quantity < 0)).toBe(true);
+    updateCalculation("u-ruk", draft.id, { positions: patchMergedPositions(kept, leaf, 18) });
+    const edited = readAppData().calculations.find((item) => item.id === draft.id)!.positions;
+    expect(lineTotal(edited) - before).toBeCloseTo(-60);
+    expect(edited.find((row) => row.id === "pay")).toMatchObject({ quantity: 10, rate: 100 });
+    expect(edited.filter((row) => row.name === "Вода").reduce((sum, row) => sum + row.quantity, 0)).toBeCloseTo(-18);
   });
 
   it("extracts a nested zip and downloads one file without leaving the archive", async () => {

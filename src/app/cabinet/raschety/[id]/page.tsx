@@ -32,7 +32,7 @@ import { NORTH_DEFAULTS, northernAdditionLines } from "@/lib/wave23";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engine";
 import { parseDecimalRu } from "@/lib/decimal-ru";
-import { patchMergedResources } from "@/lib/resource-merge";
+import { patchMergedPositions, patchMergedResources } from "@/lib/resource-merge";
 import { formatMoney, formatNumber, quantityPresentation, splitSignedQuantity, visiblePositionCode } from "@/lib/format";
 import { visibleProcurementNumber } from "@/lib/pipeline";
 import { rowDeleteConfirmed } from "@/lib/row-delete";
@@ -573,13 +573,15 @@ export default function RaschetDetailPage() {
       }
       if (leaf.source === "calc_position" && leaf.positionId) {
         const rateMissing = patch.rate == null;
+        const positions = patch.quantity == null
+          ? calc!.positions
+          : patchMergedPositions(calc!.positions, leaf, patch.quantity);
         await updateCalculation(calc!.id, {
-          positions: calc!.positions.map((p) =>
+          positions: positions.map((p) =>
             p.id !== leaf.positionId
               ? p
               : {
                   ...p,
-                  quantity: patch.quantity ?? p.quantity,
                   rate:
                     patch.rate === undefined
                       ? p.rate
