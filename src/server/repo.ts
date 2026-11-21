@@ -48,7 +48,7 @@ import {
   type BusRouteInput,
   type NorthernInputs,
 } from "@/lib/cost-engine";
-import { assertGprWrite, assertOrgAccess, assertSection } from "@/server/acl";
+import { assertDeleteAllowed, assertGprWrite, assertOrgAccess, assertSection } from "@/server/acl";
 import {
   overheadsFromWorks,
   roundMoney,
@@ -426,6 +426,9 @@ export function deleteCustomerAnswer(actorId: string, procurementId: string, que
     assertOrgAccess(actor, item.orgId, "закупки");
     const asked = question.trim();
     if (!asked) throw new Error("Нужен вопрос");
+    const saved = (item.customerAnswers ?? []).find((row) => row.question === asked);
+    if (!saved) return data;
+    assertDeleteAllowed(actor, saved.authorId, "zakupki", "ответ");
     item.customerAnswers = (item.customerAnswers ?? []).filter((row) => row.question !== asked);
     audit(data, actorId, "update", "procurement", procurementId, "Ответ удалён");
     return data;
@@ -564,12 +567,12 @@ export function deleteProcurement(actorId: string, id: string) {
 export function deleteGprStage(actorId: string, scheduleId: string, stageId: string) {
   return mutateAppData((data) => {
     const actor = actorUser(data, actorId);
-    assertGprWrite(actor);
     const schedule = data.schedules.find((item) => item.id === scheduleId);
     if (!schedule) throw new Error("ГПР не найден");
     assertOrgAccess(actor, schedule.orgId, "ГПР");
     const stage = schedule.stages.find((item) => item.id === stageId);
     if (!stage) throw new Error("Этап не найден");
+    assertDeleteAllowed(actor, stage.createdBy ?? schedule.authorId, "gpr", "этап");
     const removedResourceIds = new Set((stage.resources ?? []).map((resource) => resource.id));
     const removedWorks = new Set(
       [stage.name, stage.workName, ...(stage.workNames ?? [])].map((name) => name?.trim()).filter(Boolean) as string[]
@@ -1676,6 +1679,21 @@ export function updatePlanFact(
       };
     });
     audit(data, actorId, "update", "planfact", id, "Обновление план/факт");
+    return data;
+  });
+}
+
+/** Removes one work row from the plan as it is now, leaving every other row in place. */
+export function deletePlanFactEntry(actorId: string, planId: string, entryId: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.planFacts.find((plan) => plan.id === planId);
+    if (!item) throw new Error("План/факт не найден");
+    assertOrgAccess(actor, item.orgId, "план/факт");
+    if (!item.entries.some((entry) => entry.id === entryId)) throw new Error("Вид работ не найден");
+    item.entries = item.entries.filter((entry) => entry.id !== entryId);
+    item.updatedAt = new Date().toISOString();
+    audit(data, actorId, "delete", "planfact", planId, `Вид работ ${entryId}`);
     return data;
   });
 }
@@ -3698,6 +3716,7 @@ export function upsertSupplier(
       materialKeywords: [...new Set(input.materialKeywords.map((value) => value.trim()).filter(Boolean))],
       regions: [...new Set(input.regions.map((value) => value.trim()).filter(Boolean))],
       website: input.website?.trim() || undefined, note: input.note?.trim() || undefined,
+      createdBy: actor.id,
       createdAt: now, updatedAt: now,
     };
     data.suppliers.unshift(supplier);
@@ -3721,6 +3740,7 @@ export function deleteSupplier(actorId: string, supplierId: string) {
     const supplier = data.suppliers?.find((item) => item.id === supplierId);
     if (!supplier) throw new Error("Поставщик не найден");
     assertOrgAccess(actor, supplier.orgId, "поставщика");
+    assertDeleteAllowed(actor, supplier.createdBy, "zakupki", "поставщика");
     data.suppliers = (data.suppliers ?? []).filter((item) => item.id !== supplierId);
     data.supplyRequests = (data.supplyRequests ?? []).map((item) => ({
       ...item,
@@ -3839,6 +3859,7 @@ export function upsertSupplyRequest(
       source: input.source ?? "manual",
       sourceFiles: input.sourceFiles,
       quantityNeedsReview: input.quantityNeedsReview,
+      createdBy: actor.id,
       createdAt: now,
       updatedAt: now,
     };
@@ -3855,6 +3876,7 @@ export function deleteSupplyRequest(actorId: string, supplyId: string) {
     const row = (data.supplyRequests ?? []).find((item) => item.id === supplyId);
     if (!row) throw new Error("Потребность не найдена");
     assertOrgAccess(actor, row.orgId, "поставок");
+    assertDeleteAllowed(actor, row.createdBy, "zakupki", "потребность");
     data.supplyRequests = (data.supplyRequests ?? []).filter((item) => item.id !== supplyId);
     const procurement = data.procurements.find((item) => item.id === row.procurementId);
     if (procurement) {

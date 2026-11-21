@@ -52,6 +52,8 @@ export interface SupplierDirectoryEntry {
   regions: string[];
   website?: string;
   note?: string;
+  /** User who added the supplier. Missing on older rows. */
+  createdBy?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -285,6 +287,8 @@ export interface SupplyRequest {
   /** Several supplier offers for comparison; legacy supplier fields mirror the selected quote. */
   quotes?: SupplierQuote[];
   selectedQuoteId?: string;
+  /** User who created the need. Missing on older rows. */
+  createdBy?: string;
   updatedAt: string;
   createdAt: string;
 }
@@ -587,6 +591,8 @@ export interface GprStage {
   workName?: string;
   /** A GPR stage can cover several production work types. */
   workNames?: string[];
+  /** User who added this stage. Older stages fall back to the schedule author. */
+  createdBy?: string;
 }
 
 export interface WorkCalendar {

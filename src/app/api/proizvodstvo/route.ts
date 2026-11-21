@@ -1,5 +1,6 @@
 import {
   addDailyProductionFact,
+  deletePlanFactEntry,
   getBootstrap,
   transferProcurementToProduction,
   updateProductionSupplyReceipt,
@@ -154,7 +155,8 @@ export async function POST(req: Request) {
     }
 
     const body = (await req.json()) as {
-      action?: "transferToProduction" | "dailyFact" | "analyzeVariance" | "updateSupplyReceipt";
+      action?: "transferToProduction" | "dailyFact" | "analyzeVariance" | "updateSupplyReceipt" | "deleteEntry";
+      entryId?: string;
       procurementId?: string;
       planFactId?: string;
       supplyId?: string;
@@ -176,6 +178,11 @@ export async function POST(req: Request) {
         factId?: string;
       };
     };
+    if (body.action === "deleteEntry") {
+      if (!body.planFactId || !body.entryId) return json({ error: "Нужны план и вид работ" }, 400);
+      deletePlanFactEntry(user.id, body.planFactId, body.entryId);
+      return json(getBootstrap(user));
+    }
     if (body.action === "updateSupplyReceipt") {
       if (!user.sections.includes("proizvodstvo") && user.role !== "superadmin") {
         return json({ error: "Недостаточно прав для производства" }, 403);

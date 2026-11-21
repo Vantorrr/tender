@@ -24,6 +24,7 @@ import { DocumentWebPreview } from "@/components/document-web-preview";
 import { visibleProcurementSource } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney, formatNumber, formatQuantity, needByPhrase, roundQuantity, sameRoundedQuantity } from "@/lib/format";
 import { citationTopicLabel, readableCitations, regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
+import { SUMMARY_FRESH, SUMMARY_UNCHANGED } from "@/lib/summary-notice";
 import { analyticalNoteBlocks, citationHref, matchDirectorySuppliers } from "@/lib/wave23";
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_CHECKLIST } from "@/lib/ai-topics";
@@ -328,6 +329,7 @@ export default function ZakupkaDetailPage() {
   const [payTitle, setPayTitle] = useState("");
   const [payType, setPayType] = useState<PaymentBucket>("postuplenie");
   const [payAmount, setPayAmount] = useState("");
+  const [payError, setPayError] = useState<string | null>(null);
   const [paySaving, setPaySaving] = useState(false);
   const [summaryNotice, setSummaryNotice] = useState<string | null>(null);
   const [ask, setAsk] = useState<
@@ -728,8 +730,15 @@ export default function ZakupkaDetailPage() {
     setAiAnalyzing(true);
     try {
       const warning = await analyzeProjectWithAI(procurement!.id);
-      if (warning) toast.warning(warning);
-      else toast.success("Сводка обновлена");
+      if (!warning || warning === SUMMARY_FRESH) {
+        setSummaryNotice(SUMMARY_FRESH);
+        toast.success(SUMMARY_FRESH);
+      } else if (warning === SUMMARY_UNCHANGED) {
+        setSummaryNotice(SUMMARY_UNCHANGED);
+        toast.success(SUMMARY_UNCHANGED);
+      } else {
+        toast.warning(warning);
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось проанализировать пакет");
     } finally {
@@ -1012,8 +1021,7 @@ export default function ZakupkaDetailPage() {
                     setAiAnalyzing(true);
                     setSummaryNotice("Обновляю сводку…");
                     void refreshAnalytics(procurement!.id)
-                      .then((notice) => {
-                        const text = notice ?? "Сводка обновлена";
+                      .then((text) => {
                         setSummaryNotice(text);
                         toast.success(text);
                       })
@@ -1828,8 +1836,9 @@ export default function ZakupkaDetailPage() {
                   <Input
                     className="w-28"
                     value={payAmount}
-                    onChange={(e) => setPayAmount(e.target.value)}
+                    onChange={(e) => { setPayAmount(e.target.value); setPayError(null); }}
                   />
+                  {payError ? <p className="w-full text-sm text-rose-700" role="alert">{payError}</p> : null}
                   <DateInputRu
                     value={payDate}
                     onChange={setPayDate}
@@ -1842,9 +1851,10 @@ export default function ZakupkaDetailPage() {
                       if (paySavingRef.current) return;
                       const amount = parseDecimalRu(payAmount);
                       if (amount == null || amount <= 0) {
-                        toast.error(PAYMENT_AMOUNT_ERROR);
+                        setPayError(PAYMENT_AMOUNT_ERROR);
                         return;
                       }
+                      setPayError(null);
                       paySavingRef.current = true;
                       setPaySaving(true);
                       try {
@@ -1871,6 +1881,7 @@ export default function ZakupkaDetailPage() {
                           return;
                         }
                         toast.success("Платёж добавлен", {
+                          id: created.paymentId ? `payment-undo-${created.paymentId}` : undefined,
                           duration: 10_000,
                           action: created.paymentId ? {
                             label: "Отменить",

@@ -41,6 +41,7 @@ export default function DengiPage() {
   const [payAmount, setPayAmount] = useState("");
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
   const [paySaving, setPaySaving] = useState(false);
+  const [payError, setPayError] = useState<string | null>(null);
   const paySavingRef = useRef(false);
 
   const plans = useMemo(
@@ -107,9 +108,10 @@ export default function DengiPage() {
     if (!plan || paySavingRef.current) return;
     const amount = parseDecimalRu(payAmount);
     if (amount == null || amount <= 0) {
-      toast.error(PAYMENT_AMOUNT_ERROR);
+      setPayError(PAYMENT_AMOUNT_ERROR);
       return;
     }
+    setPayError(null);
     paySavingRef.current = true;
     setPaySaving(true);
     try {
@@ -137,6 +139,7 @@ export default function DengiPage() {
       }
       const paymentId = result.paymentId;
       toast.success("Платёж добавлен", {
+        id: paymentId ? `payment-undo-${paymentId}` : undefined,
         duration: 10_000,
         action: paymentId
           ? {
@@ -325,7 +328,8 @@ export default function DengiPage() {
                 <option value="postuplenie">Поступление</option>
                 <option value="spisanie">Списание</option>
               </select>
-              <Input className="w-32" aria-label="Сумма нового платежа" inputMode="decimal" value={payAmount} onChange={(event) => setPayAmount(event.target.value)} />
+              <Input className="w-32" aria-label="Сумма нового платежа" inputMode="decimal" value={payAmount} onChange={(event) => { setPayAmount(event.target.value); setPayError(null); }} />
+              {payError ? <p className="w-full text-sm text-rose-700" role="alert">{payError}</p> : null}
               <DateInputRu value={payDate} onChange={setPayDate} className="w-[140px]" />
               <Button data-testid="dengi-add-payment" disabled={paySaving} onClick={() => void addPayment()}>
                 {paySaving ? "Сохраняю…" : "Добавить платёж"}

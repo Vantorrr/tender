@@ -10,6 +10,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { SUMMARY_UNCHANGED, summaryRefreshNotice } from "@/lib/summary-notice";
 import { createSeedData } from "./seed";
 import { api, setClientToken } from "./api";
 import type {
@@ -134,7 +135,7 @@ interface StoreContextValue {
   runSyncJob: () => Promise<void>;
   ensureChain: (procurementId: string) => Promise<BootstrapResponse>;
   sendToCalculation: (procurementId: string) => Promise<CalculationSummary>;
-  refreshAnalytics: (procurementId: string) => Promise<string | undefined>;
+  refreshAnalytics: (procurementId: string) => Promise<string>;
   analyzeProjectWithAI: (procurementId: string) => Promise<string | undefined>;
   markAllNotificationsRead: () => Promise<void>;
   setOrganizationActive: (orgId: string, active: boolean) => Promise<void>;
@@ -722,19 +723,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
       applyBoot(boot);
       const after = boot.data.procurements.find((item) => item.id === procurementId)?.analytics?.summary ?? "";
-      if (after.trim() === before.trim()) return "Новых данных нет — записка уже актуальна";
-      return boot.analyticsNotice;
+      return summaryRefreshNotice(before, after);
     },
     [applyBoot]
   );
 
   const analyzeProjectWithAI = useCallback(
     async (procurementId: string) => {
+      const before = dataRef.current.procurements.find((item) => item.id === procurementId)?.analytics?.summary ?? "";
       const boot = await api<BootstrapResponse & { analysisWarning?: string }>("/api/zakupki", {
         method: "POST",
         body: JSON.stringify({ action: "analyzeProject", id: procurementId }),
       });
       applyBoot(boot);
+      const after = boot.data.procurements.find((item) => item.id === procurementId)?.analytics?.summary ?? "";
+      if (summaryRefreshNotice(before, after) === SUMMARY_UNCHANGED) return SUMMARY_UNCHANGED;
       return boot.analysisWarning;
     },
     [applyBoot]

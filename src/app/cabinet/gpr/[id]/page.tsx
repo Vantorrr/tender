@@ -434,7 +434,7 @@ export default function GprDetailPage() {
             if (typeof name !== "string" || !name.trim()) return;
             addingWork.current = true;
             const today = new Date().toISOString().slice(0, 10);
-            const stage = { id: `gs-${crypto.randomUUID()}`, name: name.trim(), start: today, end: today, sequence: schedule.stages.length + 1, crewSize: 0 };
+            const stage = { id: `gs-${crypto.randomUUID()}`, name: name.trim(), start: today, end: today, sequence: schedule.stages.length + 1, crewSize: 0, createdBy: user.id };
             void updateSchedule(schedule.id, { stages: [...schedule.stages, stage] }).then(() => {
               form.reset();
               toast.success("Вид работ добавлен", {

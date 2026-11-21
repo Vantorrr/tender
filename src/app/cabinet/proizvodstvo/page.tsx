@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/page-header";
 import { ProjectAiChat } from "@/components/project-ai-chat";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { QuantityCommitField } from "@/components/quantity-commit-field";
 import {
@@ -29,7 +30,6 @@ import {
 } from "@/components/ui/table";
 import { DateInputRu } from "@/components/date-input-ru";
 import { ProductionPlanFactChart } from "@/components/production-plan-fact-chart";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { api, downloadUrl } from "@/lib/api";
 import { parseDecimalRu } from "@/lib/decimal-ru";
 import { DEFAULT_MAX_UPLOAD_BYTES, uploadTooLargeMessage } from "@/lib/upload-limit";
@@ -171,6 +171,7 @@ export default function ProizvodstvoPage() {
   const [date, setDate] = useState(todayIsoInTimeZone());
   const [qty, setQty] = useState("1");
   const [newWorkName, setNewWorkName] = useState("");
+  const [pendingWork, setPendingWork] = useState<{ id: string; name: string } | null>(null);
   const [newWorkUnit, setNewWorkUnit] = useState("");
   const [newWorkPlan, setNewWorkPlan] = useState("");
   const [savingDaily, setSavingDaily] = useState(false);
@@ -438,18 +439,22 @@ export default function ProizvodstvoPage() {
       await refresh();
       const matched = matchDirectorySuppliers(need.materialName, data.suppliers ?? []);
       const createdId = (boot.data.supplyRequests ?? []).find((item) => !beforeIds.has(item.id))?.id;
+      if (!createdId) {
+        toast.message("Такая потребность уже есть");
+        return;
+      }
       toast.success(matched.length
         ? `Потребность создана: ${need.materialName}. В справочнике ${matched.length} поставщиков.`
         : `Потребность создана: ${need.materialName}. В справочнике подходящих поставщиков нет.`, {
         duration: 10_000,
-        action: createdId ? {
+        action: {
           label: "Отменить",
           onClick: () => {
             void api("/api/supply", { method: "POST", body: JSON.stringify({ action: "deleteSupply", id: createdId }) })
               .then(() => refresh())
               .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось отменить"));
           },
-        } : undefined,
+        },
       });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось создать потребность");
@@ -1086,15 +1091,21 @@ export default function ProizvodstvoPage() {
                     }
                     const volume = Number(newWorkPlan);
                     const entryId = `pfe-manual-${crypto.randomUUID()}`;
-                    const nextEntries = [...plan.entries, { id: entryId, workName: name, unit: split.unit, plan: volume, fact: 0, contractRemaining: volume }];
-                    updatePlanFact(plan.id, { entries: nextEntries });
+                    const planId = plan.id;
+                    updatePlanFact(planId, { entries: [...plan.entries, { id: entryId, workName: name, unit: split.unit, plan: volume, fact: 0, contractRemaining: volume }] });
                     setWorkName(name);
                     setNewWorkName(""); setNewWorkUnit(""); setNewWorkPlan("");
                     toast.success("Вид работ добавлен в план договора", {
+                      id: `work-undo-${entryId}`,
                       duration: 10_000,
                       action: {
                         label: "Отменить",
-                        onClick: () => updatePlanFact(plan.id, { entries: nextEntries.filter((entry) => entry.id !== entryId) }),
+                        onClick: () => {
+                          void api("/api/proizvodstvo", {
+                            method: "POST",
+                            body: JSON.stringify({ action: "deleteEntry", planFactId: planId, entryId }),
+                          }).then(() => refresh()).catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось отменить"));
+                        },
                       },
                     });
                   }}>Добавить работу</Button>
@@ -1221,6 +1232,7 @@ export default function ProizvodstvoPage() {
                       <TableHead className="text-right">План ГПР · срез</TableHead>
                       <TableHead className="text-right">Отклонение факта от плана</TableHead>
                       <TableHead title="Оценка по фактическому темпу, только после 3 дней с положительным фактом; выходные берутся из календаря ГПР, праздники не моделируются">Прогноз окончания</TableHead>
+                      <TableHead />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1332,12 +1344,35 @@ export default function ProizvodstvoPage() {
                               </>
                             )}
                           </TableCell>
+                          <TableCell>
+                            <Button size="sm" variant="ghost" onClick={() => setPendingWork({ id: e.id, name: e.workName })}>Удалить</Button>
+                          </TableCell>
                         </TableRow>
                       );
                     })}
                   </TableBody>
                 </Table>
               </div>
+              <Dialog open={pendingWork != null} onOpenChange={(open) => { if (!open) setPendingWork(null); }}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Удалить вид работ?</DialogTitle>
+                    <DialogDescription>Вид работ «{pendingWork?.name}» будет удалён из плана договора. Остальные строки останутся.</DialogDescription>
+                  </DialogHeader>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setPendingWork(null)}>Отмена</Button>
+                    <Button onClick={() => {
+                      const target = pendingWork;
+                      setPendingWork(null);
+                      if (!target || !plan) return;
+                      void api("/api/proizvodstvo", {
+                        method: "POST",
+                        body: JSON.stringify({ action: "deleteEntry", planFactId: plan.id, entryId: target.id }),
+                      }).then(() => refresh()).then(() => toast.success("Вид работ удалён")).catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось удалить вид работ"));
+                    }}>Удалить</Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
 
               <div className="mt-6">
                 <h3 className="mb-2 font-medium">Дневные записи и фотоотчёт</h3>

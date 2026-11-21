@@ -5,9 +5,12 @@ import {
   addMoneyPayment,
   deleteCustomerAnswer,
   deleteMoneyPayment,
+  deletePlanFactEntry,
   deleteSupplyRequest,
   refreshProcurementAnalytics,
   saveCustomerAnswer,
+  updatePlanFact,
+  upsertSupplier,
   upsertSupplyRequest,
 } from "@/server/repo";
 import "./setup";
@@ -112,5 +115,62 @@ describe("wave 5 money, answers and supplies", () => {
     deleteSupplyRequest("u-ruk", rows[0].id);
     expect((readAppData().supplyRequests ?? []).some((item) => item.id === rows[0].id)).toBe(false);
     expect(() => deleteSupplyRequest("u-beta-tender", "missing")).toThrow(/не найдена|организац/);
+  });
+
+  it("undo of a contract work removes only that row from the current plan", () => {
+    const plan = readAppData().planFacts[0];
+    const kept = plan.entries.map((entry) => entry.id);
+    updatePlanFact("u-ruk", plan.id, {
+      entries: [
+        ...plan.entries,
+        { id: "pfe-a", workName: "Работа A", unit: "м", plan: 1, fact: 0 },
+        { id: "pfe-b", workName: "Работа B", unit: "м", plan: 2, fact: 0 },
+      ],
+    });
+    deletePlanFactEntry("u-ruk", plan.id, "pfe-a");
+    const ids = readAppData().planFacts.find((item) => item.id === plan.id)!.entries.map((entry) => entry.id);
+    expect(ids).not.toContain("pfe-a");
+    expect(ids).toEqual([...kept, "pfe-b"]);
+  });
+
+  it("lets only the author or a manager delete a supply, supplier, answer and GPR stage", async () => {
+    const supply = upsertSupplyRequest("u-ruk", {
+      procurementId: "p-1",
+      materialName: "Чужая труба",
+      unit: "м",
+      qtyNeed: 3,
+      needBy: "2026-12-01",
+    }).supplyRequests!.find((item) => item.materialName === "Чужая труба")!;
+    const supplier = upsertSupplier("u-ruk", { name: "Чужой поставщик", email: "other@example.test", materialKeywords: ["труба"], regions: ["Москва"] });
+    saveCustomerAnswer("u-tender", "p-1", "Кто автор ответа?", "Тендер");
+
+    const { POST: supplyPost } = await import("@/app/api/supply/route");
+    const { POST: zakupkiPost } = await import("@/app/api/zakupki/route");
+    const { PATCH: gprPatch } = await import("@/app/api/gpr/route");
+    const call = (route: (req: Request) => Promise<Response>, userId: string, body: unknown, path: string, method = "POST") =>
+      route(new Request(`http://local${path}`, {
+        method,
+        headers: { "content-type": "application/json", authorization: `Bearer ${createSession(userId)}` },
+        body: JSON.stringify(body),
+      }));
+
+    const tenderSupply = await call(supplyPost, "u-tender", { action: "deleteSupply", id: supply.id }, "/api/supply");
+    expect(tenderSupply.status).toBe(403);
+    expect(String((await tenderSupply.json()).error)).toMatch(/автор, руководитель или администратор/);
+    expect((await call(supplyPost, "u-admin", { action: "deleteSupply", id: supply.id }, "/api/supply")).status).toBe(200);
+
+    const tenderSupplier = await call(supplyPost, "u-tender", { action: "deleteSupplier", supplierId: supplier.id }, "/api/supply");
+    expect(tenderSupplier.status).toBe(403);
+    expect((await call(supplyPost, "u-ruk", { action: "deleteSupplier", supplierId: supplier.id }, "/api/supply")).status).toBe(200);
+
+    const otherAnswer = await call(zakupkiPost, "u-obj", { action: "deleteCustomerAnswer", id: "p-1", question: "Кто автор ответа?" }, "/api/zakupki");
+    expect(otherAnswer.status).toBe(403);
+    expect(String((await otherAnswer.json()).error)).toMatch(/автор, руководитель или администратор/);
+    expect((await call(zakupkiPost, "u-tender", { action: "deleteCustomerAnswer", id: "p-1", question: "Кто автор ответа?" }, "/api/zakupki")).status).toBe(200);
+
+    const objectStage = await call(gprPatch, "u-obj", { id: "g-1", action: "deleteStage", stageId: "gs-2" }, "/api/gpr", "PATCH");
+    expect(objectStage.status).toBe(403);
+    expect(readAppData().schedules.find((item) => item.id === "g-1")!.stages.some((stage) => stage.id === "gs-2")).toBe(true);
+    expect((await call(gprPatch, "u-admin", { id: "g-1", action: "deleteStage", stageId: "gs-2" }, "/api/gpr", "PATCH")).status).toBe(200);
   });
 });
