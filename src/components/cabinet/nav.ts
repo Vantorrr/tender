@@ -9,7 +9,8 @@ import {
   Video,
   Warehouse,
 } from "lucide-react";
-import type { SectionKey } from "@/lib/types";
+import { userHasSection } from "@/lib/acl";
+import type { SectionKey, User } from "@/lib/types";
 
 export interface NavItem {
   section: SectionKey;
@@ -77,6 +78,15 @@ export const SECTION_ROUTES: Array<{ section: SectionKey; href: string }> = [
   { section: "riski", href: "/cabinet/riski" },
   { section: "obmen", href: "/cabinet/obmen" },
 ];
+
+/** A cabinet link is shown only when this role can open that section. */
+export function canOpenCabinetPath(user: User | null | undefined, href: string): boolean {
+  if (!user) return false;
+  const path = (href.split("?")[0] ?? href).split("#")[0] ?? href;
+  const section = sectionForPath(path);
+  if (!section) return true;
+  return userHasSection(user, section);
+}
 
 export function sectionForPath(pathname: string): SectionKey | null {
   const ordered = [...SECTION_ROUTES].sort(

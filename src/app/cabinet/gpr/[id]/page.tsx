@@ -26,6 +26,7 @@ import { useStore } from "@/lib/store";
 import type { CalcPosition, GprStageResource } from "@/lib/types";
 import { ProjectAiChat } from "@/components/project-ai-chat";
 import { userHasSection } from "@/lib/acl";
+import { canOpenCabinetPath } from "@/components/cabinet/nav";
 import { inclusiveDays } from "@/lib/wave23";
 
 type MaterialsPreview = {
@@ -188,8 +189,11 @@ export default function GprDetailPage() {
         className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--tk-line)] bg-white/80 px-3 py-2 text-sm"
         data-testid="project-matryoshka"
       >
-        {projectPath.map((step, index) => (
+        {projectPath.map((step, index) => {
+          const open = Boolean(step.current) || canOpenCabinetPath(user, step.href);
+          return (
           <span key={step.label} className="inline-flex items-center gap-2">
+            {open ? (
             <Link
               href={step.href}
               aria-current={step.current ? "step" : undefined}
@@ -201,11 +205,15 @@ export default function GprDetailPage() {
             >
               {step.label}
             </Link>
+            ) : (
+              <span className="text-[var(--tk-ink)]">{step.label}</span>
+            )}
             {index < projectPath.length - 1 ? (
               <span aria-hidden="true" className="text-[var(--tk-muted)]">›</span>
             ) : null}
           </span>
-        ))}
+          );
+        })}
         <span className="ml-auto text-xs text-[var(--tk-muted)]">
           {procurement ? visibleProcurementNumber(procurement) : `Заявка ${schedule.procurementId}`}
         </span>
@@ -499,11 +507,11 @@ export default function GprDetailPage() {
                     </div>
                   ) : null}
                   <div>
-                    C0 (без резерва): {formatMoney(cost.C0)}
+                    Себестоимость без резерва: {formatMoney(cost.C0)}
                     {cost.totalsIncomplete ? " · неполно" : ""}
                   </div>
                   <div>Резерв: {formatMoney(cost.reserve)}</div>
-                  <div>C (с резервом): {formatMoney(cost.C)}</div>
+                  <div>Себестоимость с резервом: {formatMoney(cost.C)}</div>
                   <div>Прибыль: {formatMoney(cost.profit)}</div>
                   <div>Цена без НДС: {formatMoney(cost.priceExVat)}</div>
                 </>

@@ -9,7 +9,7 @@ import {
   roundMoney,
   sourceEstimateTotals,
 } from "@/lib/calc-math";
-import { visiblePositionCode } from "@/lib/format";
+import { formatNumber, formatQuantity, plainPositionName, positionHeading, splitSignedQuantity, visiblePositionCode } from "@/lib/format";
 import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
 import {
   resolveResourceDimensions,
@@ -133,7 +133,7 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
     if (p.isWorkItem && calc.kind !== "customer_original") {
       ws.addRow({
         code: visiblePositionCode(p.code),
-        name: `${p.name} (объём работы; ставка ресурса не применяется)`,
+        name: `${plainPositionName(p.name)} (объём работы; ставка ресурса не применяется)`,
         unit: p.unit,
         qty: Math.abs(p.quantity),
         difference: p.quantity < 0 ? p.quantity : null,
@@ -145,7 +145,7 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
     const sum = p.rateMissing ? null : positionLineSum(p, factor);
     ws.addRow({
       code: visiblePositionCode(p.code),
-      name: p.name,
+      name: plainPositionName(p.name),
       unit: p.unit,
       qty: Math.abs(p.quantity),
       difference: p.quantity < 0 ? p.quantity : null,
@@ -369,20 +369,26 @@ export async function buildCalculationPdf(calcId: string): Promise<Buffer> {
   page.drawLine({ start: { x: margin, y }, end: { x: pageSize[0] - margin, y }, thickness: 1, color: accent });
   y -= 18;
   drawWrapped("Позиции сметы", 11, true);
+  drawWrapped("Код · Наименование · Количество · Разница · Расценка · Стоимость", 8, false, muted);
   const factor = calc.scenarioFactor || 1;
   for (const p of calc.positions) {
+    const signed = splitSignedQuantity(p.quantity);
+    const title = positionHeading(p.code, p.name);
+    const qty = formatQuantity(signed.quantity, p.unit);
+    const difference = signed.difference == null ? "—" : formatNumber(signed.difference);
+    const base = `${title} · ${qty} · Разница ${difference}`;
     if (p.isWorkItem && calc.kind !== "customer_original") {
       drawWrapped(
-        `${p.code} · ${p.name} · ${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 3 }).format(p.quantity)} ${p.unit} · объём работы; ресурсная ставка не применяется`,
+        `${base} · объём работы; ресурсная ставка не применяется`,
         9,
         false,
         muted
       );
       continue;
     }
-    if (p.rateMissing) {
+    if (p.rateMissing || !(p.rate > 0)) {
       drawWrapped(
-        `${p.code} · ${p.name} · ${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 3 }).format(p.quantity)} ${p.unit} · ставка не заполнена · сумма не подтверждена`,
+        `${base} · ставка не заполнена · сумма не подтверждена`,
         9,
         false,
         accent
@@ -390,7 +396,7 @@ export async function buildCalculationPdf(calcId: string): Promise<Buffer> {
     } else {
       const sum = positionLineSum(p, factor);
       drawWrapped(
-        `${p.code} · ${p.name} · ${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 3 }).format(p.quantity)} ${p.unit} × ${money(p.rate)} = ${money(sum)}`,
+        `${base} × ${money(p.rate)} = ${money(sum)}`,
         9
       );
     }
@@ -903,7 +909,7 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
     "Q=L*N*O*P",
     "кол-во×ч/смена×смен/сут×дни",
   ]);
-  rsSheet.addRow(["Сумма ресурса", "R=Q*M", "ставка без двойного ГСМ/водителя"]);
+  rsSheet.addRow(["Сумма ресурса", "R=Q*M", "ставка без двойного топлива и водителя"]);
   const slices = cs?.resourceSlices;
   const ptag = partialTag(totalsPartial);
   rsSheet.addRow([

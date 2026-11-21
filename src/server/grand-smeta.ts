@@ -691,10 +691,10 @@ export function analysisFromDrawing(fileName: string, pages = 24): UploadAnalysi
       id: "h-draw",
       text: matched
         ? `${GRAND_PROFILE.drawing}, ${GRAND_PROFILE.drawingStage}`
-        : "Чертёж не совпал с шифром эталона",
+        : "Чертёж не совпал с ожидаемым шифром",
       reason: matched
         ? "В файле нет текстового слоя. Марки опор и объёмы сверьте с локальными сметами вручную."
-        : `Эталон чертежа: ${GRAND_PROFILE.drawing}, шифр ${GRAND_PROFILE.cipher}.`,
+        : `Ожидаемый чертёж: ${GRAND_PROFILE.drawing}, шифр ${GRAND_PROFILE.cipher}.`,
       severity: matched ? "warning" : "critical",
       page: 1,
     },
@@ -1109,7 +1109,7 @@ function unrecognized(fileName: string, reason: string): UploadAnalysis {
     highlights: [
       {
         id: "h-form",
-        text: "Форма не совпала с эталоном",
+        text: "Форма файла не распознана",
         reason,
         severity: "warning",
         page: 1,

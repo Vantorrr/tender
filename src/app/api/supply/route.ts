@@ -13,6 +13,7 @@ import { withSection, json } from "@/server/http";
 import type { SupplyStatus } from "@/lib/types";
 import { saveUpload, readUpload } from "@/server/uploads";
 import { config } from "@/server/config";
+import { formatQuantity } from "@/lib/format";
 import { quoteRequestOutcome } from "@/lib/wave23";
 import { mailStatus, sendMail } from "@/server/mail";
 import { discoverMaterialSuppliers } from "@/server/supplier-discovery";
@@ -114,7 +115,7 @@ export async function POST(req: Request) {
       if (!supply || !supplier || !procurement) return json({ error: "Позиция, поставщик или закупка не найдены" }, 404);
       if (!(supply.supplierIds ?? []).includes(supplier.id)) return json({ error: "Этот поставщик не сопоставлен с материалом" }, 409);
       if ((supply.sentToSupplierIds ?? []).includes(supplier.id)) return json({ error: "Запрос этому поставщику уже отправлен" }, 409);
-      const text = [`Здравствуйте, ${supplier.name}!`, "Просим направить коммерческое предложение по материалу:", `Объект: ${procurement.title}`, `Позиция: ${supply.materialName}`, `Количество: ${supply.qtyNeed} ${supply.unit}`, supply.workName ? `Вид работ: ${supply.workName}` : null, `Желаемый срок поставки: ${supply.needBy}`, "Просим указать цену, срок действия предложения, срок и условия доставки.", "Карточка предприятия приложена к письму."].filter(Boolean).join("\n");
+      const text = [`Здравствуйте, ${supplier.name}!`, "Просим направить коммерческое предложение по материалу:", `Объект: ${procurement.title}`, `Позиция: ${supply.materialName}`, `Количество: ${formatQuantity(supply.qtyNeed, supply.unit)}`, supply.workName ? `Вид работ: ${supply.workName}` : null, `Желаемый срок поставки: ${supply.needBy}`, "Просим указать цену, срок действия предложения, срок и условия доставки.", "Карточка предприятия приложена к письму."].filter(Boolean).join("\n");
       const readiness = mailStatus();
       if (!readiness.live) {
         const outcome = quoteRequestOutcome(false);

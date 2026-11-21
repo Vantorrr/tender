@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { formatMoney, formatNumber } from "@/lib/format";
+import { formatMoney, formatNumber, roundQuantity } from "@/lib/format";
 import { rowDeleteConfirmed } from "@/lib/row-delete";
 import { diffDays } from "@/lib/cost-engine";
 import type { EstimateLeaf, EstimateStageNode } from "@/lib/hierarchical-estimate";
@@ -57,7 +57,9 @@ const BASIS_LABEL: Record<ResourceQuantityBasis, string> = {
 };
 
 function cellString(value: string | number | null | undefined) {
-  return value == null ? "" : String(value);
+  if (value == null) return "";
+  if (typeof value === "number") return String(roundQuantity(value, 4));
+  return String(value);
 }
 
 function GridInput({
