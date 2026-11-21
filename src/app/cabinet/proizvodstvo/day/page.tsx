@@ -17,6 +17,7 @@ import {
   stagesForWork,
 } from "@/lib/day-resource-plan";
 import { formatDate, formatMoney, formatNumber, todayIsoInTimeZone } from "@/lib/format";
+import { customerWorkRate } from "@/lib/economics-from-rates";
 import { completedWorkCost } from "@/lib/wave23";
 import { humanizeIssue } from "@/lib/issue-text";
 import { allocatePlanForSlice } from "@/lib/plan-from-gpr";
@@ -322,14 +323,7 @@ function DayDetailsInner() {
   const factVal = parseDecimalRu(qty) ?? 0;
   const delta = factVal - dayPlan;
   const customerPositions = data.calculations.find((item) => item.id === procurement?.originalCalculationId)?.positions ?? [];
-  const customerRate = customerPositions.find((position) => {
-    const sameName = position.name.trim().toLocaleLowerCase("ru-RU") === selectedWork.trim().toLocaleLowerCase("ru-RU")
-      || position.sourceWorkName?.trim().toLocaleLowerCase("ru-RU") === selectedWork.trim().toLocaleLowerCase("ru-RU");
-    return sameName && !position.rateMissing && position.rate > 0 && !position.isWorkItem;
-  })?.rate ?? customerPositions.find((position) =>
-    position.name.trim().toLocaleLowerCase("ru-RU") === selectedWork.trim().toLocaleLowerCase("ru-RU")
-    && !position.rateMissing && position.rate > 0
-  )?.rate ?? null;
+  const customerRate = customerWorkRate(selectedWork, customerPositions);
   const dayCompleted = completedWorkCost(factVal, customerRate);
   const isTest =
     isT25uTestId(plan.id) ||

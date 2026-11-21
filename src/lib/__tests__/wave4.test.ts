@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { supplyCalendarWarnings } from "@/lib/calendar-availability";
 import { clientDirectoryVersions, matchCompanyDirectoryRate } from "@/lib/client-dirs";
+import { customerWorkRate } from "@/lib/economics-from-rates";
 import { calendarDurationDays, datesForStage, periodFromDocumentText, signedQuantityBySection } from "@/lib/estimate-stages";
 import { sameRoundedQuantity } from "@/lib/format";
 import { humanizeIssue } from "@/lib/issue-text";
@@ -146,6 +147,13 @@ describe("calendar dates and returns", () => {
     expect(credited.hours).toBe(22);
     expect(credited.amount).toBe(-2200);
     expect(credited.incomplete.join(" ")).not.toMatch(/hours_inputs/);
+    expect(customerWorkRate("Бурение", [
+      { id: "work", code: "ФЕР-1", name: "Бурение", unit: "м", quantity: 10, rate: 500, isWorkItem: true },
+      { id: "pipe", code: "М-1", name: "Труба", unit: "м", quantity: 4, rate: 9000, sourceWorkName: "Бурение", resourceKind: "material" },
+    ])).toBe(500);
+    expect(customerWorkRate("Бурение", [
+      { id: "pipe", code: "М-1", name: "Труба", unit: "м", quantity: 4, rate: 9000, sourceWorkName: "Бурение", resourceKind: "material" },
+    ])).toBeNull();
     expect(datesForStage(0, 2, "2026-11-21", { start: "2026-12-01", end: "2026-12-20" }).start).toBe("2026-12-01");
     expect(datesForStage(0, 1, "2026-11-21", null)).toEqual({ start: "2026-11-21", end: "2026-11-21" });
   });
