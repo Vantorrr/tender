@@ -124,7 +124,9 @@ describe("calendar dates and returns", () => {
     expect(merged.every((row) => row.quantity > 0 && row.name.startsWith("Возврат:"))).toBe(true);
     const signed = signedQuantityBySection(merged.map((row) => ({ name: row.name, unit: row.unit, quantity: row.quantity })));
     expect(signed.get("|вода|м3")).toBeCloseTo(-7.16);
-    expect(periodFromDocumentText("Начало 01.12.2026, окончание 20.12.2026")).toEqual({ start: "2026-12-01", end: "2026-12-20" });
+    expect(periodFromDocumentText("Начало работ 01.12.2026, окончание 20.12.2026.")).toEqual({ start: "2026-12-01", end: "2026-12-20" });
+    expect(periodFromDocumentText("Протокол от 01.01.2020. Срок подачи заявки 15.11.2026.")).toBeNull();
+    expect(periodFromDocumentText("2026-01-01\n2026-12-31")).toBeNull();
     expect(datesForStage(0, 2, "2026-11-21", { start: "2026-12-01", end: "2026-12-20" }).start).toBe("2026-12-01");
     expect(datesForStage(0, 1, "2026-11-21", null)).toEqual({ start: "2026-11-21", end: "2026-11-21" });
   });

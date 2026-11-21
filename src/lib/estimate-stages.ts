@@ -8,7 +8,7 @@ import type { CalcPosition, GprStage, GprStageResource } from "@/lib/types";
  */
 export const GPR_DATES_MISSING = "Срок не указан в документах — проставьте даты на графике";
 
-export function periodFromDocumentText(text: string): { start: string; end: string } | null {
+function datesInText(text: string): string[] {
   const found: string[] = [];
   for (const match of text.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) {
     const iso = `${match[1]}-${match[2]}-${match[3]}`;
@@ -24,9 +24,24 @@ export function periodFromDocumentText(text: string): { start: string; end: stri
     const date = new Date(`${iso}T00:00:00Z`);
     if (date.getUTCFullYear() === year && date.getUTCMonth() + 1 === month && date.getUTCDate() === day) found.push(iso);
   }
-  const unique = [...new Set(found)].sort();
-  if (unique.length < 2 || unique[0] === unique[unique.length - 1]) return null;
-  return { start: unique[0], end: unique[unique.length - 1] };
+  return found;
+}
+
+/** A work interval is one sentence that names the job period, not every date in the file. */
+export function periodFromDocumentText(text: string): { start: string; end: string } | null {
+  const windows = text.split(/\n+|(?<=[.!?])\s+/u);
+  for (const window of windows) {
+    const dates = [...new Set(datesInText(window))].sort();
+    if (dates.length < 2 || dates[0] === dates[dates.length - 1]) continue;
+    const aboutWorks = /работ|выполнен|производств/iu.test(window);
+    const submissionOnly = /подач|заявк|протокол|публикац/iu.test(window) && !aboutWorks;
+    const explicitInterval = /с\s+\d{1,2}[./]\d{1,2}[./]\d{4}\s+по\s+\d{1,2}[./]\d{1,2}[./]\d{4}/iu.test(window)
+      || (/начал/iu.test(window) && /окончан/iu.test(window))
+      || /срок\s+(?:выполнен|работ|производств)/iu.test(window);
+    if (submissionOnly || !explicitInterval) continue;
+    return { start: dates[0], end: dates[dates.length - 1] };
+  }
+  return null;
 }
 
 function addDays(iso: string, days: number): string {

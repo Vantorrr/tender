@@ -2229,10 +2229,9 @@ function procurementDocumentPeriod(data: AppData, procurement: { id: string; dea
     document.category === "tz" || document.category === "contract"
     || /тз|техническ|договор|контракт/iu.test(`${document.fileName} ${document.title}`)
   ));
-  return periodFromDocumentText([
-    procurement.deadline ?? "",
-    ...documents.flatMap((document) => [document.analyticalNote, ...document.citations.map((citation) => citation.text)]),
-  ].join("\n"));
+  return periodFromDocumentText(documents
+    .flatMap((document) => [document.analyticalNote, ...document.citations.map((citation) => citation.text)])
+    .join("\n"));
 }
 
 function withMissingDatesNote(assumptions: string[], dated: boolean): string[] {
