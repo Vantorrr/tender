@@ -573,6 +573,48 @@ function sevenZipBin(): string | null {
   return null;
 }
 
+type Listed7z = { name: string; size: number; symlink: boolean };
+
+function parse7zList(stdout: string): Listed7z[] {
+  const listed: Listed7z[] = [];
+  let block: Record<string, string> | null = null;
+  const flush = () => {
+    if (!block?.Path || block.Type) {
+      block = null;
+      return;
+    }
+    if (block.Folder === "+") {
+      block = null;
+      return;
+    }
+    const attributes = block.Attributes ?? "";
+    listed.push({
+      name: block.Path,
+      size: Number(block.Size ?? "0"),
+      symlink: Boolean(block["Symbolic Link"]) || /^\s*l/i.test(attributes) || attributes.includes(" l") || /symlink/i.test(attributes),
+    });
+    block = null;
+  };
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.trim()) {
+      flush();
+      continue;
+    }
+    const match = /^([^=]+?) = (.*)$/.exec(line);
+    if (!match) continue;
+    block ??= {};
+    block[match[1].trim()] = match[2];
+  }
+  flush();
+  return listed;
+}
+
+function pathInside(root: string, candidate: string): boolean {
+  const resolvedRoot = fs.realpathSync(root);
+  const resolved = fs.realpathSync(candidate);
+  return resolved === resolvedRoot || resolved.startsWith(resolvedRoot + path.sep);
+}
+
 function extract7zEntries(bytes: Buffer): MemoryEntry[] {
   const bin = sevenZipBin();
   if (!bin) {
@@ -581,26 +623,75 @@ function extract7zEntries(bytes: Buffer): MemoryEntry[] {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tk-7z-"));
   try {
     const archivePath = path.join(tmp, "archive.7z");
+    fs.writeFileSync(archivePath, bytes);
+    const listed = spawnSync(/*turbopackIgnore: true*/ bin, ["l", "-slt", "-bd", archivePath], {
+      encoding: "utf8",
+      maxBuffer: 8 * 1024 * 1024,
+    });
+    if (listed.status !== 0) {
+      return [{ name: "archive.7z", error: "Не удалось прочитать состав архива 7z" }];
+    }
+    const members = parse7zList(listed.stdout ?? "");
+    const rejected: MemoryEntry[] = [];
+    let total = 0;
+    let files = 0;
+    for (const member of members) {
+      if (member.symlink) {
+        rejected.push({ name: member.name, error: "symlink rejected" });
+        continue;
+      }
+      const unsafe = unsafeName(member.name);
+      if (unsafe) {
+        rejected.push({ name: member.name, error: unsafe });
+        continue;
+      }
+      files += 1;
+      const singleLimit = isNestedArchive(member.name) ? MAX_SINGLE_ARCHIVE : MAX_SINGLE;
+      if (!Number.isFinite(member.size) || member.size < 0 || member.size > singleLimit || total + member.size > MAX_UNCOMPRESSED || files > MAX_FILES) {
+        rejected.push({ name: member.name, error: files > MAX_FILES ? `file limit ${MAX_FILES} exceeded` : "archive uncompressed size limit exceeded" });
+        continue;
+      }
+      total += member.size;
+    }
+    if (rejected.length) return rejected;
+
     const outDir = path.join(tmp, "out");
     fs.mkdirSync(outDir);
-    fs.writeFileSync(archivePath, bytes);
-    const result = spawnSync(/*turbopackIgnore: true*/ bin, ["x", "-y", `-o${outDir}`, archivePath], { encoding: "utf8" });
-    if (result.status !== 0) {
+    const extracted = spawnSync(/*turbopackIgnore: true*/ bin, ["x", "-y", "-bd", `-o${outDir}`, archivePath], { encoding: "utf8" });
+    if (extracted.status !== 0) {
       return [{ name: "archive.7z", error: "Не удалось распаковать архив 7z" }];
     }
     const entries: MemoryEntry[] = [];
-    const walk = (dir: string, prefix: string) => {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-        const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
-        const abs = path.join(dir, entry.name);
-        if (entry.isDirectory()) walk(abs, rel);
-        else if (entry.isFile()) {
-          const data = fs.readFileSync(abs);
-          const unsafe = unsafeName(rel);
-          if (unsafe) entries.push({ name: rel, error: unsafe });
-          else entries.push({ name: rel, data });
+    let readTotal = 0;
+    const walk = (dir: string, prefix: string): boolean => {
+      for (const entry of fs.readdirSync(dir)) {
+        const rel = prefix ? `${prefix}/${entry}` : entry;
+        const abs = path.join(dir, entry);
+        const stat = fs.lstatSync(abs);
+        if (stat.isSymbolicLink() || !pathInside(outDir, abs)) {
+          entries.length = 0;
+          entries.push({ name: rel, error: stat.isSymbolicLink() ? "symlink rejected" : "path traversal rejected" });
+          return false;
         }
+        if (stat.isDirectory()) {
+          if (!walk(abs, rel)) return false;
+          continue;
+        }
+        if (!stat.isFile()) {
+          entries.length = 0;
+          entries.push({ name: rel, error: "symlink rejected" });
+          return false;
+        }
+        const unsafe = unsafeName(rel);
+        if (unsafe || stat.size > MAX_SINGLE_ARCHIVE || readTotal + stat.size > MAX_UNCOMPRESSED) {
+          entries.length = 0;
+          entries.push({ name: rel, error: unsafe ?? "archive uncompressed size limit exceeded" });
+          return false;
+        }
+        readTotal += stat.size;
+        entries.push({ name: rel, data: fs.readFileSync(abs) });
       }
+      return true;
     };
     walk(outDir, "");
     return entries;

@@ -181,6 +181,37 @@ describe("wave 2–3 server checks", () => {
     }
   });
 
+  it("rejects a 7z path traversal and an oversized member before extracting", () => {
+    const bin = execFileSync("bash", ["-lc", "command -v 7z || command -v 7zz || true"], { encoding: "utf8" }).trim();
+    if (!bin) return;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tk-7z-guard-"));
+    try {
+      fs.writeFileSync(path.join(dir, "note.txt"), "внутри");
+      const traversal = path.join(dir, "traversal.7z");
+      execFileSync(bin, ["a", "-bd", "-mx=0", traversal, "note.txt"], { cwd: dir, stdio: "pipe" });
+      execFileSync(bin, ["rn", traversal, "note.txt", "../escape.txt"], { cwd: dir, stdio: "pipe" });
+      const traversalBytes = fs.readFileSync(traversal);
+      const outside = path.join(dir, "escape.txt");
+      const target = path.join(dir, "out");
+      const extracted = extractArchiveSafely("traversal.7z", traversalBytes, target);
+      expect(extracted.ok).toBe(false);
+      expect(extracted.files).toHaveLength(0);
+      expect(extracted.errors.join(" ")).toMatch(/traversal/i);
+      expect(fs.existsSync(outside)).toBe(false);
+
+      const big = path.join(dir, "big.bin");
+      execFileSync("dd", ["if=/dev/zero", "of=" + big, "bs=1048576", "count=33"], { stdio: "pipe" });
+      const oversized = path.join(dir, "big.7z");
+      execFileSync(bin, ["a", "-bd", "-mx=0", oversized, "big.bin"], { cwd: dir, stdio: "pipe" });
+      const limited = extractArchiveSafely("big.7z", fs.readFileSync(oversized), path.join(dir, "big-out"));
+      expect(limited.ok).toBe(false);
+      expect(limited.files).toHaveLength(0);
+      expect(limited.errors.join(" ")).toMatch(/size limit/i);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("lets a manager create a schedule and refuses a tender specialist", () => {
     const created = createManualProcurement("u-ruk", { title: "Доступ к графику", region: "Ямал" });
     sendProcurementToCalculation("u-ruk", created.id);

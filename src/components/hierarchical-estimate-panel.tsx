@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { parseDecimalRu } from "@/lib/decimal-ru";
-import { formatMoney, formatNumber, quantityPresentation } from "@/lib/format";
+import { formatMoney, formatNumber, quantityPresentation, visiblePositionCode } from "@/lib/format";
 import {
   buildHierarchicalEstimate,
   estimateBudgetCards,
@@ -146,7 +146,7 @@ export function HierarchicalEstimatePanel({
         key={leaf.id}
         className={`grid grid-cols-[minmax(12rem,1fr)_5.5rem_5.5rem_5.5rem_5.5rem_7rem] items-center gap-2 px-3 py-1.5 ${nested ? "pl-14" : "pl-10"} text-sm`}
         data-testid={`estimate-leaf-${leaf.id}`}
-        title={leaf.sourceCode ? `Код сметы: ${leaf.sourceCode}` : undefined}
+        title={(() => { const code = leaf.sourceCode ? visiblePositionCode(leaf.sourceCode) : ""; return code ? `Код сметы: ${code}` : undefined; })()}
       >
         <div className="min-w-0 truncate">{leaf.name}</div>
         <div className="text-right" title={quantityPresentation(leaf.quantity, leaf.unit).title}>
