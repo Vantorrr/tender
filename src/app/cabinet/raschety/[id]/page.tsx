@@ -1650,7 +1650,7 @@ export default function RaschetDetailPage() {
               : "нет данных"}
           </div>
           <div>
-            Δ итого:{" "}
+            Разница итого:{" "}
             {compare.totals.deltaTotal != null
               ? formatMoney(compare.totals.deltaTotal)
               : "нет данных"}
@@ -1708,7 +1708,7 @@ export default function RaschetDetailPage() {
                   const row = compare.rows[rowIndex];
                   return (
                     <li key={finding.rowId}>
-                      <span className="font-medium">{row?.code} · {row?.name}: </span>
+                      <span className="font-medium">{row ? visiblePositionCode(row.code) : finding.rowId} · {row?.name}: </span>
                       {finding.text}
                       <span className="mt-1 block text-xs text-[var(--tk-muted)]">
                         Основание: «{finding.sourceExcerpt}»
@@ -1734,13 +1734,13 @@ export default function RaschetDetailPage() {
                 <TableHead>Код</TableHead>
                 <TableHead>Статус</TableHead>
                 <TableHead>Причина</TableHead>
-                <TableHead className="text-right">Δ</TableHead>
+                <TableHead className="text-right">Разница</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {compare.rows.map((r, index) => (
                 <TableRow key={`compare-row-${index}`}>
-                  <TableCell className="font-mono text-xs">{r.code}</TableCell>
+                  <TableCell className="text-xs">{visiblePositionCode(r.code)}</TableCell>
                   <TableCell>{
                     r.status === "matched" ? "Совпадает" :
                       r.status === "diff" ? "Отклонение" :

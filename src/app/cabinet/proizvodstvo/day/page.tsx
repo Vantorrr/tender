@@ -452,7 +452,7 @@ function DayDetailsInner() {
             )}
           </p>
           <p className="mt-2 text-sm">
-            Δ к плану дня:{" "}
+            Разница к плану дня:{" "}
             <span className={delta < 0 ? "text-rose-200" : "text-teal-100"}>
               {linkedStages.length === 0 ? "—" : formatNumber(delta)}
             </span>
