@@ -54,21 +54,29 @@ export function periodFromDocumentText(text: string): { start: string; end: stri
   return null;
 }
 
+const WORK_DURATION_CUE = /срок\s+выполнен|выполнен\p{L}*\s+работ|производств\p{L}*\s+работ|срок\s+работ/iu;
+const OTHER_PERIOD_CUE = /гарант|оплат|при[её]мк|аванс|обеспечен|штраф|неустойк|пен[ия]|подач/iu;
+
+/** One sentence. A date's dots and «г.» are not a sentence break. */
+function scheduleSentences(text: string): string[] {
+  return normalizeScheduleText(text)
+    .split(/\n+|(?<=[.!?])\s+/u)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
 /**
  * Only a duration of the works themselves («срок выполнения работ»).
- * Warranty, payment, acceptance and bid periods are not the schedule.
+ * The cue may sit anywhere in that sentence. Warranty, payment, acceptance
+ * and bid periods are not the schedule.
  */
 export function calendarDurationDays(text: string): number | null {
-  const normalized = normalizeScheduleText(text);
-  const pattern = /(\d{1,4})\s+календарн\p{L}*\s+дн\p{L}*/giu;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(normalized))) {
-    const days = Number(match[1]);
-    if (!Number.isFinite(days) || days <= 0) continue;
-    const window = normalized.slice(Math.max(0, match.index - 36), match.index + match[0].length + 16);
-    if (/гарант|оплат|при[её]мк|аванс|обеспечен|штраф|неустойк|пен[ия]|подач/iu.test(window)) continue;
-    if (!/срок\s+выполнен|выполнен\p{L}*\s+работ|производств\p{L}*\s+работ|срок\s+работ/iu.test(window)) continue;
-    return days;
+  for (const sentence of scheduleSentences(text)) {
+    if (!WORK_DURATION_CUE.test(sentence)) continue;
+    if (OTHER_PERIOD_CUE.test(sentence) && !/срок\s+выполнен\p{L}*\s+работ|срок\s+работ/iu.test(sentence)) continue;
+    const match = /(\d{1,4})\s+календарн\p{L}*\s+дн\p{L}*/iu.exec(sentence);
+    const days = match ? Number(match[1]) : 0;
+    if (Number.isFinite(days) && days > 0) return days;
   }
   return null;
 }

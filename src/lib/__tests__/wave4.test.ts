@@ -136,6 +136,8 @@ describe("calendar dates and returns", () => {
     expect(periodFromDocumentText("Начало работ 01.12.2026\nокончание 20.12.2026")).toEqual({ start: "2026-12-01", end: "2026-12-20" });
     expect(calendarDurationDays("Договор: 90 календарных дней.")).toBeNull();
     expect(calendarDurationDays("Срок выполнения работ — 90 календарных дней.")).toBe(90);
+    expect(calendarDurationDays("Срок выполнения работ по настоящему договору составляет 90 календарных дней.")).toBe(90);
+    expect(calendarDurationDays("Гарантийный срок — 60 календарных дней. Срок выполнения работ по настоящему договору составляет 90 календарных дней.")).toBe(90);
     expect(calendarDurationDays("Оплата в течение 60 календарных дней после приемки.")).toBeNull();
     expect(calendarDurationDays("Гарантийный срок — 60 календарных дней.")).toBeNull();
     expect(calendarDurationDays("Гарантийный срок на работы — 60 месяцев.")).toBeNull();

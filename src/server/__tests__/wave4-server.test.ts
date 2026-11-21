@@ -441,6 +441,83 @@ describe("wave 4 pricing, volumes and return quantities", () => {
     expect(generateProcurementMaterialManifest("u-ruk", created.id).created).toBe(0);
   });
 
+  it("keeps a directory rate after the schedule rebuilds the draft", () => {
+    const created = createManualProcurement("u-ruk", { title: "Ставка на графике", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const draft = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "resource_draft")!;
+    updateCalculation("u-ruk", draft.id, {
+      resourceScheduleParams: { ...EXCEL_RESOURCE_SCHEDULE_DEFAULTS },
+      positions: [{ id: "pos-klad", code: "ЗТ", name: "Кладовщик", unit: "чел.-ч", quantity: 10, rate: 0, rateMissing: true, sourceResourceId: "res-klad", resourceKind: "labor" }],
+    });
+    createProcurementSchedule("u-ruk", created.id);
+    mutateAppData((data) => {
+      const schedule = data.schedules.find((item) => item.procurementId === created.id)!;
+      schedule.calculationId = draft.id;
+      schedule.stages = [{
+        id: "st-klad",
+        name: "Склад",
+        start: "2026-12-01",
+        end: "2026-12-02",
+        sequence: 1,
+        resources: [{ id: "res-klad", kind: "labor", name: "Кладовщик", unit: "чел.-ч", quantity: 10, rate: null, quantityBasis: "total_hours" }],
+      }];
+      return data;
+    });
+    const first = recalcCalculation("u-ruk", draft.id, "bazovyy");
+    const after = readAppData();
+    const priced = after.calculations.find((item) => item.id === draft.id)!;
+    const resource = after.schedules.find((item) => item.procurementId === created.id)!.stages[0]?.resources?.[0];
+    expect(first.matched).toBeGreaterThan(0);
+    expect(priced.positions.find((position) => position.name === "Кладовщик")?.rate).toBe(881);
+    expect(resource?.rate).toBe(881);
+    const total = priced.costSummary?.C0 ?? 0;
+    expect(total).toBeGreaterThan(0);
+    recalcCalculation("u-ruk", draft.id, "bazovyy");
+    const repeated = readAppData().calculations.find((item) => item.id === draft.id)!;
+    expect(repeated.positions.find((position) => position.name === "Кладовщик")?.rate).toBe(881);
+    expect(repeated.costSummary?.C0 ?? 0).toBeCloseTo(total, 2);
+  });
+
+  it("nets an estimate quantity of the same material from another work", () => {
+    const created = createManualProcurement("u-ruk", { title: "Вода из сметы", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    createProcurementSchedule("u-ruk", created.id);
+    const procurement = readAppData().procurements.find((item) => item.id === created.id)!;
+    mutateAppData((data) => {
+      const schedule = data.schedules.find((item) => item.procurementId === created.id)!;
+      schedule.stages = [{
+        id: "st-a", name: "Раздел 1", start: "2026-12-01", end: "2026-12-10", sequence: 1,
+        resources: [{ id: "w1", kind: "material", name: "Возврат: Вода", unit: "м3", quantity: 100, rate: null, quantityBasis: "material_qty" }],
+      }];
+      data.documents.unshift({
+        id: "doc-water",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        title: "Смета",
+        fileName: "smeta.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        estimatePositions: [
+          { id: "same-work", code: "М-1", name: "Вода", unit: "м3", quantity: 100, rate: 0, resourceKind: "material", workName: "Раздел 1" },
+          { id: "other-work", code: "М-1", name: "Вода", unit: "м3", quantity: 40, rate: 0, resourceKind: "material", workName: "Раздел 2" },
+        ],
+      });
+      return data;
+    });
+    expect(generateProcurementMaterialManifest("u-ruk", created.id).created).toBe(1);
+    const supplies = (readAppData().supplyRequests ?? []).filter((item) => item.procurementId === created.id);
+    expect(supplies).toHaveLength(1);
+    expect(supplies[0]?.materialName).toBe("Возврат: Вода");
+    expect(supplies[0]?.qtyNeed).toBeCloseTo(60, 2);
+  });
+
   it("stores the current rate rule on a draft filled from an estimate", async () => {
     const created = createManualProcurement("u-ruk", { title: "Правило ставок", region: "Ямал" });
     const uploaded = await saveUpload("rate-rule", "smeta.xlsx", Buffer.from("placeholder"));

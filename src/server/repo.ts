@@ -783,6 +783,22 @@ export function recalcCalculation(
           }
         : c
     );
+    const linkedSchedule = data.schedules.find((schedule) => schedule.calculationId === id);
+    for (const position of withExtras) {
+      if (!linkedSchedule) break;
+      if (position.code === "НР" || position.code === "СП" || position.code === "ВОР" || position.isWorkItem) continue;
+      if (!(position.rate > 0) || position.rateMissing) continue;
+      if (position.rateBasis !== "directory" && position.rateBasis !== "person_hour") continue;
+      for (const stage of linkedSchedule.stages) {
+        for (const resource of stage.resources ?? []) {
+          const sameResource = position.sourceResourceId != null && position.sourceResourceId === resource.id;
+          const sameLine = position.sourceResourceId == null
+            && volumeNameKey(resource.name) === volumeNameKey(position.name)
+            && normalizeSupplierTerm(resource.unit) === normalizeSupplierTerm(position.unit);
+          if (sameResource || sameLine) resource.rate = position.rate;
+        }
+      }
+    }
     audit(
       data,
       actorId,
@@ -3817,6 +3833,11 @@ function manifestMaterialKey(name: string, unit: string) {
   return `${normalizeSupplierTerm(bareMaterialName(name))}|${normalizeSupplierTerm(unit)}`;
 }
 
+/** Skip only the estimate row that repeats the same work. Another work of this material still counts. */
+function manifestSourceKey(name: string, unit: string, workName?: string) {
+  return `${manifestMaterialKey(name, unit)}|${normalizeSupplierTerm(workName ?? "")}`;
+}
+
 function signedManifestQuantity(name: string, quantity: number) {
   const value = Math.abs(quantity);
   return /^возврат:/iu.test(name) ? -value : value;
@@ -3851,8 +3872,7 @@ export function generateProcurementMaterialManifest(actorId: string, procurement
     for (const stage of schedule?.stages ?? []) {
       for (const resource of stage.resources ?? []) {
         if (resource.kind !== "material" || !Number.isFinite(resource.quantity) || resource.quantity <= 0) continue;
-        const key = manifestMaterialKey(resource.name, resource.unit);
-        gprKeys.add(key);
+        gprKeys.add(manifestSourceKey(resource.name, resource.unit, stage.name));
         rows.push({ name: resource.name.trim(), unit: resource.unit || "шт", quantity: resource.quantity, workName: stage.name, needBy: stage.end, source: "gpr" });
       }
     }
@@ -3864,8 +3884,7 @@ export function generateProcurementMaterialManifest(actorId: string, procurement
           (position.sectionName && item.sectionName && normalizeSupplierTerm(item.sectionName) === normalizeSupplierTerm(position.sectionName))
         );
         const workName = stage?.name ?? position.workName ?? position.sectionName;
-        const key = manifestMaterialKey(position.name, position.unit);
-        if (gprKeys.has(key)) continue;
+        if (gprKeys.has(manifestSourceKey(position.name, position.unit, workName))) continue;
         rows.push({ name: position.name.trim(), unit: position.unit || "шт", quantity: position.quantity, workName, needBy: stage?.end, source: "estimate", sourceFiles: [doc.fileName] });
       }
     }
