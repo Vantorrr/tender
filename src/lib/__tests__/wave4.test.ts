@@ -215,6 +215,13 @@ describe("analytical note shape", () => {
     ], EXCEL_RESOURCE_SCHEDULE_DEFAULTS);
     expect(adopted).toHaveLength(1);
     expect(adopted[0]).toMatchObject({ code: "ВОР", sourceResourceId: "r1", name: "Кладовщик" });
+    const folded = positionsFromStages([
+      { id: "s2", name: "Работа", start: "2026-12-01", end: "2026-12-02", sequence: 1, resources: [{ id: "r2", kind: "labor", name: "Съёмщик", unit: "чел.-ч", quantity: 10, rate: 100, quantityBasis: "total_hours" }] },
+    ], [
+      { id: "vor-yo", code: "ВОР", name: "Съемщик", unit: "чел.-ч", quantity: 10, rate: 100 },
+      { id: "vor-yo-2", code: "ВОР", name: "Съемщик", unit: "чел.-ч", quantity: 10, rate: 100 },
+    ], EXCEL_RESOURCE_SCHEDULE_DEFAULTS);
+    expect(folded.filter((position) => position.sourceResourceId === "r2")).toHaveLength(1);
     expect(analyticalNoteStructure(note).blocks).toEqual([
       "Паспорт закупки и тайминг",
       "Условия участия и требования к заявке",

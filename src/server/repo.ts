@@ -3184,8 +3184,14 @@ function foldUnlinkedVolumes(calc: Calculation): number {
   const params = calc.resourceScheduleParams;
   const summary = calc.costSummary;
   if (!params || !summary) return 0;
+  const covered = new Set(calc.positions
+    .filter((position) => position.sourceResourceId)
+    .map((position) => volumeNameKey(position.name)));
   const extra = bucketsFromPositions(calc.positions.filter((position) =>
-    position.code === "ВОР" && !position.sourceResourceId && !position.isWorkItem));
+    position.code === "ВОР"
+    && !position.sourceResourceId
+    && !position.isWorkItem
+    && !covered.has(volumeNameKey(position.name))));
   const direct = roundMoney(extra.labor + extra.materials + extra.equipment + extra.other);
   if (!direct) return extra.labor;
   const overhead = roundMoney(direct * (params.overheadRate ?? 0));

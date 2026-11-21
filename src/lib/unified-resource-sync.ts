@@ -170,6 +170,10 @@ export function stagesToResourceLines(
   };
 }
 
+function resourceNameKey(name: string): string {
+  return name.trim().toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+}
+
 function codeForResource(r: GprStageResource, index: number): string {
   if (r.kind === "labor") return `LAB-${index}`;
   if (r.kind === "material") return `MAT-${index}`;
@@ -187,7 +191,7 @@ export function positionsFromStages(
   const prevByName = new Map<string, CalcPosition[]>();
   for (const position of previous) {
     if (position.code === "НР" || position.code === "СП") continue;
-    const key = position.name.trim().toLowerCase();
+    const key = resourceNameKey(position.name);
     prevByName.set(key, [...(prevByName.get(key) ?? []), position]);
   }
   const usedPreviousIds = new Set<string>();
@@ -199,7 +203,7 @@ export function positionsFromStages(
       i += 1;
       const resolved = resolveResourceDimensions(r, st, params);
       // A volume line with the same name is this resource, not a second row.
-      const candidates = prevByName.get(r.name.trim().toLowerCase()) ?? [];
+      const candidates = prevByName.get(resourceNameKey(r.name)) ?? [];
       const prev =
         candidates.find(
           (p) => p.sourceResourceId === r.id && !usedPreviousIds.has(p.id)

@@ -223,6 +223,39 @@ describe("wave 4 pricing, volumes and return quantities", () => {
     expect(readAppData().calculations.find((item) => item.id === draft.id)!.costSummary?.C0 ?? 0).toBeCloseTo(acceptedTotal, 2);
   });
 
+  it("does not add a second same-name volume line on top of the schedule", () => {
+    const created = createManualProcurement("u-ruk", { title: "Одна фамилия", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const draft = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "resource_draft")!;
+    updateCalculation("u-ruk", draft.id, { positions: [], resourceScheduleParams: { ...EXCEL_RESOURCE_SCHEDULE_DEFAULTS } });
+    createProcurementSchedule("u-ruk", created.id);
+    mutateAppData((data) => {
+      const schedule = data.schedules.find((item) => item.procurementId === created.id)!;
+      schedule.calculationId = draft.id;
+      schedule.stages = [{
+        id: "st-yo",
+        name: "Смена",
+        start: "2026-12-01",
+        end: "2026-12-02",
+        sequence: 1,
+        resources: [{ id: "res-yo", kind: "labor", name: "Съёмщик", unit: "чел.-ч", quantity: 10, rate: 100, quantityBasis: "total_hours" }],
+      }];
+      const calc = data.calculations.find((item) => item.id === draft.id)!;
+      calc.positions = [
+        { id: "vor-a", code: "ВОР", name: "Съемщик", unit: "чел.-ч", quantity: 10, rate: 100, rateMissing: false },
+        { id: "vor-b", code: "ВОР", name: "Съемщик", unit: "чел.-ч", quantity: 10, rate: 100, rateMissing: false },
+      ];
+      return data;
+    });
+    recomputeCalculationCost("u-ruk", draft.id, { useResourceScheduleEconomics: true });
+    const once = readAppData().calculations.find((item) => item.id === draft.id)!.costSummary?.C0 ?? 0;
+    const direct = 10 * 100;
+    const overhead = Math.round(direct * 0.43 * 100) / 100;
+    expect(once).toBeCloseTo(direct + overhead, 2);
+    recomputeCalculationCost("u-ruk", draft.id, { useResourceScheduleEconomics: true });
+    expect(readAppData().calculations.find((item) => item.id === draft.id)!.costSummary?.C0 ?? 0).toBeCloseTo(once, 2);
+  });
+
   it("adds an accepted priced volume line to the cost total exactly once", () => {
     const created = createManualProcurement("u-ruk", { title: "Ведомость в итоге", region: "Ямал" });
     sendProcurementToCalculation("u-ruk", created.id);
