@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { calculationArticleName, calculationBreakdownRows } from "@/lib/calculation-breakdown";
 import { linkedWorkRows } from "@/lib/gpr-linked-rows";
+import { supplyNeedKey } from "@/lib/supply-need";
 import { SUMMARY_FRESH, SUMMARY_UNCHANGED, summaryRefreshNotice } from "@/lib/summary-notice";
 import { visibleProcurementSource } from "@/lib/display";
 import { recentPaymentId } from "@/lib/duplicate-click";
@@ -116,6 +117,13 @@ describe("wave 5 visible copy and breakdown", () => {
     expect(linkedWorkRows(shifted, ["a", "b"]).map((stage) => stage.start)).toEqual(["2026-12-03", "2026-12-06"]);
     expect(linkedWorkRows(shifted, ["b"]).map((stage) => stage.name)).toEqual(["Монтаж"]);
     expect(linkedWorkRows(shifted, null).map((stage) => stage.id)).toEqual(["a", "b"]);
+  });
+
+  it("builds a stable need key from procurement fields", () => {
+    expect(supplyNeedKey({ materialName: "Кабель", unit: "м", workName: "Монтаж", source: "gpr" }))
+      .toBe(supplyNeedKey({ materialName: " кабель ", unit: "М", workName: "монтаж", source: "gpr" }));
+    expect(supplyNeedKey({ materialName: "Кабель", unit: "м", workName: "Демонтаж", source: "gpr" }))
+      .not.toBe(supplyNeedKey({ materialName: "Кабель", unit: "м", workName: "Монтаж", source: "manual" }));
   });
 
   it("says the note is already current only when the text is the same", () => {

@@ -1986,8 +1986,7 @@ export default function ZakupkaDetailPage() {
                         variant="outline"
                         onClick={async () => {
                           try {
-                            const beforeIds = new Set(supplies.map((item) => item.id));
-                            const boot = await api<{ data: { supplyRequests?: Array<{ id: string }> } }>("/api/supply", {
+                            const boot = await api<{ supplyCreated?: boolean; supplyId?: string }>("/api/supply", {
                               method: "POST",
                               body: JSON.stringify({
                                 procurementId: procurement.id,
@@ -1996,21 +1995,26 @@ export default function ZakupkaDetailPage() {
                                 qtyNeed: need.qtyNeed,
                                 needBy: need.needBy,
                                 workName: need.workName,
+                                source: "gpr",
                                 status: "need",
                               }),
                             });
                             await refresh();
-                            const createdId = boot.data.supplyRequests?.find((item) => !beforeIds.has(item.id))?.id;
-                            toast.success(createdId ? "Потребность создана из ГПР" : "Такая потребность уже есть", {
+                            if (!boot.supplyCreated || !boot.supplyId) {
+                              toast.message("Такая потребность уже есть");
+                              return;
+                            }
+                            const createdId = boot.supplyId;
+                            toast.success("Потребность создана из ГПР", {
                               duration: 10_000,
-                              action: createdId ? {
+                              action: {
                                 label: "Отменить",
                                 onClick: () => {
                                   void api("/api/supply", { method: "POST", body: JSON.stringify({ action: "deleteSupply", id: createdId }) })
                                     .then(() => refresh())
                                     .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось отменить"));
                                 },
-                              } : undefined,
+                              },
                             });
                           } catch (e) {
                             toast.error(
@@ -2103,8 +2107,7 @@ export default function ZakupkaDetailPage() {
                     return;
                   }
                   try {
-                    const beforeIds = new Set(supplies.map((item) => item.id));
-                    const boot = await api<{ data: { supplyRequests?: Array<{ id: string }> } }>("/api/supply", {
+                    const boot = await api<{ supplyCreated?: boolean; supplyId?: string }>("/api/supply", {
                       method: "POST",
                       body: JSON.stringify({
                         procurementId: procurement.id,
@@ -2120,17 +2123,21 @@ export default function ZakupkaDetailPage() {
                       }),
                     });
                     await refresh();
-                    const createdId = boot.data.supplyRequests?.find((item) => !beforeIds.has(item.id))?.id;
-                    toast.success(createdId ? "Потребность сохранена" : "Такая потребность уже есть", {
+                    if (!boot.supplyCreated || !boot.supplyId) {
+                      toast.message("Такая потребность уже есть");
+                      return;
+                    }
+                    const createdId = boot.supplyId;
+                    toast.success("Потребность сохранена", {
                       duration: 10_000,
-                      action: createdId ? {
+                      action: {
                         label: "Отменить",
                         onClick: () => {
                           void api("/api/supply", { method: "POST", body: JSON.stringify({ action: "deleteSupply", id: createdId }) })
                             .then(() => refresh())
                             .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось отменить"));
                         },
-                      } : undefined,
+                      },
                     });
                     setMatName("");
                     setMatWork("");

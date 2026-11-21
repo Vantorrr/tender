@@ -707,6 +707,10 @@ export interface DailyFact {
   photos: DailyFactPhoto[];
   authorId: string;
   at: string;
+  /** Plan row this fact belongs to. Name matching is only a fallback for older rows. */
+  entryId?: string;
+  /** Hidden together with its work row. A new row with the same name does not pick these up. */
+  archived?: boolean;
 }
 
 export interface ContractPnl {

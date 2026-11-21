@@ -1,13 +1,14 @@
 import {
   addDailyProductionFact,
   deletePlanFactEntry,
+  restorePlanFactEntry,
   getBootstrap,
   transferProcurementToProduction,
   updateProductionSupplyReceipt,
   updatePlanFact,
 } from "@/server/repo";
 import { withAnySection, json } from "@/server/http";
-import type { DailyResourceLine, PlanFact } from "@/lib/types";
+import type { DailyResourceLine, PlanFact, PlanFactEntry } from "@/lib/types";
 import type { SupplyStatus } from "@/lib/types";
 import { saveUpload } from "@/server/uploads";
 import { config } from "@/server/config";
@@ -155,8 +156,9 @@ export async function POST(req: Request) {
     }
 
     const body = (await req.json()) as {
-      action?: "transferToProduction" | "dailyFact" | "analyzeVariance" | "updateSupplyReceipt" | "deleteEntry";
+      action?: "transferToProduction" | "dailyFact" | "analyzeVariance" | "updateSupplyReceipt" | "deleteEntry" | "restoreEntry";
       entryId?: string;
+      entry?: PlanFactEntry;
       procurementId?: string;
       planFactId?: string;
       supplyId?: string;
@@ -181,6 +183,11 @@ export async function POST(req: Request) {
     if (body.action === "deleteEntry") {
       if (!body.planFactId || !body.entryId) return json({ error: "Нужны план и вид работ" }, 400);
       deletePlanFactEntry(user.id, body.planFactId, body.entryId);
+      return json(getBootstrap(user));
+    }
+    if (body.action === "restoreEntry") {
+      if (!body.planFactId || !body.entry?.id) return json({ error: "Нужны план и вид работ" }, 400);
+      restorePlanFactEntry(user.id, body.planFactId, body.entry);
       return json(getBootstrap(user));
     }
     if (body.action === "updateSupplyReceipt") {

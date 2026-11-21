@@ -737,8 +737,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
       applyBoot(boot);
       const after = boot.data.procurements.find((item) => item.id === procurementId)?.analytics?.summary ?? "";
+      if (boot.analysisWarning && boot.analysisWarning !== SUMMARY_UNCHANGED) return boot.analysisWarning;
       if (summaryRefreshNotice(before, after) === SUMMARY_UNCHANGED) return SUMMARY_UNCHANGED;
-      return boot.analysisWarning;
+      return undefined;
     },
     [applyBoot]
   );

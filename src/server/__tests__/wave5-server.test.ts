@@ -5,14 +5,22 @@ import {
   addMoneyPayment,
   deleteCustomerAnswer,
   deleteMoneyPayment,
+  createManualProcurement,
+  createProcurementSchedule,
   deletePlanFactEntry,
+  deleteGprStage,
   deleteSupplyRequest,
+  generateProcurementMaterialManifest,
   refreshProcurementAnalytics,
+  restorePlanFactEntry,
   saveCustomerAnswer,
+  sendProcurementToCalculation,
   updatePlanFact,
+  updateSchedule,
   upsertSupplier,
   upsertSupplyRequest,
 } from "@/server/repo";
+import { entryDisplayFact } from "@/lib/plan-fact-agg";
 import "./setup";
 
 describe("wave 5 money, answers and supplies", () => {
@@ -115,6 +123,123 @@ describe("wave 5 money, answers and supplies", () => {
     deleteSupplyRequest("u-ruk", rows[0].id);
     expect((readAppData().supplyRequests ?? []).some((item) => item.id === rows[0].id)).toBe(false);
     expect(() => deleteSupplyRequest("u-beta-tender", "missing")).toThrow(/не найдена|организац/);
+  });
+
+  it("keeps a single supply for the same procurement, material, unit, work and source", () => {
+    const procurement = readAppData().procurements[0];
+    const input = {
+      procurementId: procurement.id,
+      materialName: "Кабель насовсем",
+      unit: "м",
+      qtyNeed: 4,
+      needBy: "2026-12-01",
+      workName: "Монтаж",
+      source: "gpr" as const,
+    };
+    const first = upsertSupplyRequest("u-ruk", input);
+    const second = upsertSupplyRequest("u-ruk", { ...input, qtyNeed: 9 });
+    const third = upsertSupplyRequest("u-ruk", input);
+    const rows = (readAppData().supplyRequests ?? []).filter((item) => item.materialName === "Кабель насовсем");
+    expect(rows).toHaveLength(1);
+    expect(first.supplyCreated).toBe(true);
+    expect(second).toMatchObject({ supplyCreated: false, supplyId: first.supplyId });
+    expect(third.supplyId).toBe(first.supplyId);
+    expect(upsertSupplyRequest("u-ruk", { ...input, workName: "Демонтаж" }).supplyCreated).toBe(true);
+    mutateAppData((data) => {
+      const row = data.supplyRequests!.find((item) => item.id === first.supplyId)!;
+      row.status = "cancelled";
+      return data;
+    });
+    expect(upsertSupplyRequest("u-ruk", input).supplyCreated).toBe(true);
+  });
+
+  it("marks manifest rows and imported schedule stages with the actor", () => {
+    mutateAppData((data) => {
+      const stage = data.schedules.find((item) => item.id === "g-1")!.stages[0];
+      stage.resources = [{ id: "mat-cable", kind: "material", name: "Кабель ведомости", unit: "м", quantity: 6, rate: 10 }];
+      return data;
+    });
+    const manifest = generateProcurementMaterialManifest("u-tender", "p-1");
+    expect(manifest.created).toBeGreaterThan(0);
+    const row = readAppData().supplyRequests!.find((item) => item.materialName === "Кабель ведомости")!;
+    expect(row.createdBy).toBe("u-tender");
+    expect(() => deleteSupplyRequest("u-tender", row.id)).not.toThrow();
+
+    const created = createManualProcurement("u-smet", { title: "График автора", region: "Ямал" });
+    sendProcurementToCalculation("u-smet", created.id);
+    createProcurementSchedule("u-smet", created.id);
+    const schedule = readAppData().schedules.find((item) => item.procurementId === created.id)!;
+    expect(schedule.stages.length).toBeGreaterThan(0);
+    expect(schedule.stages.every((stage) => stage.createdBy === "u-smet")).toBe(true);
+    updateSchedule("u-smet", schedule.id, {
+      stages: [...schedule.stages, {
+        id: "gs-imported",
+        name: "Импортированный этап",
+        start: "2026-12-01",
+        end: "2026-12-02",
+        sequence: schedule.stages.length + 1,
+        crewSize: 0,
+      }],
+    });
+    const imported = readAppData().schedules.find((item) => item.id === schedule.id)!.stages.find((stage) => stage.id === "gs-imported")!;
+    expect(imported.createdBy).toBe("u-smet");
+    const foreign = createManualProcurement("u-ruk", { title: "Чужой график", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", foreign.id);
+    createProcurementSchedule("u-ruk", foreign.id);
+    const foreignSchedule = readAppData().schedules.find((item) => item.procurementId === foreign.id)!;
+    updateSchedule("u-smet", foreignSchedule.id, {
+      stages: [...foreignSchedule.stages, {
+        id: "gs-by-smet",
+        name: "Этап сметчика",
+        start: "2026-12-03",
+        end: "2026-12-04",
+        sequence: foreignSchedule.stages.length + 1,
+        crewSize: 0,
+      }],
+    });
+    expect(readAppData().schedules.find((item) => item.id === foreignSchedule.id)!.stages.find((stage) => stage.id === "gs-by-smet")!.createdBy).toBe("u-smet");
+    expect(() => deleteGprStage("u-smet", foreignSchedule.id, "gs-by-smet")).not.toThrow();
+    const legacyId = foreignSchedule.stages[0].id;
+    mutateAppData((data) => {
+      const legacy = data.schedules.find((item) => item.id === foreignSchedule.id)!.stages.find((stage) => stage.id === legacyId)!;
+      delete legacy.createdBy;
+      return data;
+    });
+    expect(() => deleteGprStage("u-smet", foreignSchedule.id, legacyId)).toThrow(/автор, руководитель или администратор/);
+    expect(() => deleteGprStage("u-ruk", foreignSchedule.id, legacyId)).not.toThrow();
+  });
+
+  it("hides daily facts with the work id and restores them on undo", () => {
+    const plan = readAppData().planFacts[0];
+    const entry = { id: "pfe-photo", workName: "С фото", unit: "м", plan: 3, fact: 2 };
+    updatePlanFact("u-ruk", plan.id, { entries: [...plan.entries, entry] });
+    mutateAppData((data) => {
+      const item = data.planFacts.find((row) => row.id === plan.id)!;
+      item.dailyFacts = [...(item.dailyFacts ?? []), {
+        id: "df-photo",
+        date: "2026-12-02",
+        workName: "С фото",
+        unit: "м",
+        quantity: 2,
+        photos: [{ id: "ph-1", fileName: "a.jpg", at: "2026-12-02T00:00:00Z" }],
+        authorId: "u-ruk",
+        at: "2026-12-02T00:00:00Z",
+      }];
+      return data;
+    });
+    deletePlanFactEntry("u-ruk", plan.id, entry.id);
+    const hidden = readAppData().planFacts.find((row) => row.id === plan.id)!;
+    expect(hidden.entries.some((row) => row.id === entry.id)).toBe(false);
+    expect(hidden.dailyFacts!.find((fact) => fact.id === "df-photo")).toMatchObject({ archived: true, entryId: entry.id });
+    const again = { id: "pfe-photo-2", workName: "С фото", unit: "м", plan: 3, fact: 0 };
+    updatePlanFact("u-ruk", plan.id, { entries: [...hidden.entries, again] });
+    const readded = readAppData().planFacts.find((row) => row.id === plan.id)!;
+    expect(entryDisplayFact(again, readded.dailyFacts)).toBe(0);
+    restorePlanFactEntry("u-ruk", plan.id, entry);
+    const restored = readAppData().planFacts.find((row) => row.id === plan.id)!;
+    expect(restored.entries.some((row) => row.id === entry.id)).toBe(true);
+    expect(restored.dailyFacts!.find((fact) => fact.id === "df-photo")!.archived).toBe(false);
+    expect(entryDisplayFact(entry, restored.dailyFacts)).toBe(2);
   });
 
   it("undo of a contract work removes only that row from the current plan", () => {

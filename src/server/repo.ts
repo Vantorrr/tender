@@ -29,6 +29,7 @@ import { matchCompanyDirectoryRate, rateFromRow } from "@/lib/client-dirs";
 import { modelConfigured } from "@/server/openrouter";
 import { canonicalUploadPath, deleteUpload, readUpload, resolveUploadPath } from "@/server/uploads";
 import { recentPaymentId } from "@/lib/duplicate-click";
+import { supplyNeedKey } from "@/lib/supply-need";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
 import { buildStagesFromEstimatePositions, calendarDurationDays, datesForStage, GPR_DATES_MISSING, periodFromDocumentText } from "@/lib/estimate-stages";
 import { COMPANY_RATE_RULE, composeAnalyticalNote, dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, scheduleAfterPredecessor, scheduleParamsWithNorthernDefaults } from "@/lib/wave23";
@@ -1211,6 +1212,7 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
             end: start,
             sequence: 1,
             crewSize: 0,
+            createdBy: actorId,
           }),
           ensureStageResources({
             id: stage2,
@@ -1221,6 +1223,7 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
             dependsOn: stage1,
             dependencyType: "FS",
             crewSize: 0,
+            createdBy: actorId,
           }),
         ],
         updatedAt: now,
@@ -1411,8 +1414,17 @@ export function updateSchedule(
     data.schedules = data.schedules.map((s) => {
       if (s.id !== id) return s;
       const calc = data.calculations.find((item) => item.id === s.calculationId);
+      const priorStages = new Map(s.stages.map((stage) => [stage.id, stage]));
       const stages = safe.stages
-        ? linkEstimateWorksToStages(safe.stages, calc?.positions ?? [])
+        ? linkEstimateWorksToStages(safe.stages.map((stage) => {
+            const previous = priorStages.get(stage.id);
+            if (previous) {
+              const { createdBy: _clientAuthor, ...rest } = stage;
+              void _clientAuthor;
+              return previous.createdBy ? { ...rest, createdBy: previous.createdBy } : rest;
+            }
+            return { ...stage, createdBy: stage.createdBy ?? actorId };
+          }), calc?.positions ?? [])
         : s.stages;
       return { ...s, ...safe, stages, updatedAt: new Date().toISOString() };
     });
@@ -1690,10 +1702,36 @@ export function deletePlanFactEntry(actorId: string, planId: string, entryId: st
     const item = data.planFacts.find((plan) => plan.id === planId);
     if (!item) throw new Error("План/факт не найден");
     assertOrgAccess(actor, item.orgId, "план/факт");
-    if (!item.entries.some((entry) => entry.id === entryId)) throw new Error("Вид работ не найден");
-    item.entries = item.entries.filter((entry) => entry.id !== entryId);
+    const entry = item.entries.find((row) => row.id === entryId);
+    if (!entry) throw new Error("Вид работ не найден");
+    item.dailyFacts = (item.dailyFacts ?? []).map((fact) => {
+      const linked = fact.entryId
+        ? fact.entryId === entry.id
+        : fact.workName.trim() === entry.workName.trim() && fact.unit.trim() === entry.unit.trim();
+      return linked ? { ...fact, entryId: entry.id, archived: true } : fact;
+    });
+    item.entries = item.entries.filter((row) => row.id !== entryId);
     item.updatedAt = new Date().toISOString();
     audit(data, actorId, "delete", "planfact", planId, `Вид работ ${entryId}`);
+    return data;
+  });
+}
+
+/** Puts back a work row and the daily facts that were hidden with it. */
+export function restorePlanFactEntry(actorId: string, planId: string, entry: PlanFactEntry) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.planFacts.find((plan) => plan.id === planId);
+    if (!item) throw new Error("План/факт не найден");
+    assertOrgAccess(actor, item.orgId, "план/факт");
+    if (!item.entries.some((row) => row.id === entry.id)) {
+      item.entries = [...item.entries, entry];
+    }
+    item.dailyFacts = (item.dailyFacts ?? []).map((fact) =>
+      fact.entryId === entry.id ? { ...fact, archived: false } : fact
+    );
+    item.updatedAt = new Date().toISOString();
+    audit(data, actorId, "restore", "planfact", planId, `Вид работ ${entry.id}`);
     return data;
   });
 }
@@ -2081,10 +2119,16 @@ export async function analyzeProcurementPackageWithAI(
     usedAi = false;
     const failure = error instanceof Error ? error.message : "Неизвестная ошибка модели";
     const modelOff = !modelConfigured() && !/пустой ответ|после \d+ попыток/iu.test(failure);
-    warning = modelOff
-      ? "Разбор не выполнен: модель не подключена"
-      : "ИИ-модель не вернула полный ответ. Сохранил расчёт, источники и конкретный список того, что нужно подтвердить.";
-    generated = buildProjectAnalysisFallback(procurement, deterministic, economics, companyContext, modelOff ? "модель не подключена" : failure);
+    const previousAnalytics = prepared.procurements.find((item) => item.id === procurementId)?.analytics;
+    if (previousAnalytics?.summary?.trim()) {
+      warning = "Разбор не удался, записка не менялась — попробуйте позже";
+      generated = previousAnalytics;
+    } else {
+      warning = modelOff
+        ? "Разбор не выполнен: модель не подключена"
+        : "ИИ-модель не вернула полный ответ. Сохранил расчёт, источники и конкретный список того, что нужно подтвердить.";
+      generated = buildProjectAnalysisFallback(procurement, deterministic, economics, companyContext, modelOff ? "модель не подключена" : failure);
+    }
   }
   mutateAppData((data) => {
     const currentActor = actorUser(data, actorId);
@@ -2410,10 +2454,11 @@ export function createProcurementSchedule(actorId: string, procurementId: string
     const now = new Date().toISOString();
     const draft = data.calculations.find((item) => item.id === procurement.calculationId && item.kind !== "customer_original");
     const period = procurementScheduleWindow(data, procurement, now.slice(0, 10));
-    const derived = buildDraftStagesFromEstimate(draft?.positions ?? [], now, period);
+    const stampAuthor = (stages: GprStage[]) => stages.map((stage) => ({ ...stage, createdBy: stage.createdBy ?? actorId }));
+    const derived = stampAuthor(buildDraftStagesFromEstimate(draft?.positions ?? [], now, period));
     const existing = procurement.gprId ? data.schedules.find((item) => item.id === procurement.gprId) : undefined;
     if (existing && isNavigationStub(existing) && derived.length > 0) {
-      existing.stages = derived;
+      existing.stages = stampAuthor(derived);
       existing.calculationId = procurement.calculationId;
       existing.updatedAt = now;
       existing.assumptions = withMissingDatesNote([
@@ -2476,7 +2521,7 @@ export function createProcurementSchedule(actorId: string, procurementId: string
             "Начальные даты и этапы — только навигационная заготовка; замените их по ТЗ, производительности и календарю объекта",
             "Состав и количество ресурсов не подтверждены: заполните строки перед использованием итогов",
           ], Boolean(period)),
-      stages: derived.length ? derived : placeholderStages,
+      stages: stampAuthor(derived.length ? derived : placeholderStages),
       updatedAt: now,
     });
     procurement.gprId = gid;
@@ -3585,6 +3630,7 @@ export function addDailyProductionFact(
       photos,
       authorId: actorId,
       at: new Date().toISOString(),
+      entryId: row?.id ?? existing?.entryId,
     };
     // New submissions are ledger entries, so several updates of one work/day
     // add up. An explicit factId edits that entry without double-counting it.
@@ -3792,8 +3838,10 @@ export function upsertSupplyRequest(
     qtyDelivered?: number;
     unitPrice?: number | null;
   }
-) {
-  return mutateAppData((data) => {
+): AppData & { supplyCreated: boolean; supplyId: string } {
+  let supplyCreated = false;
+  let supplyId = "";
+  const data = mutateAppData((data) => {
     const actor = actorUser(data, actorId);
     const p = data.procurements.find((x) => x.id === input.procurementId);
     if (!p) throw new Error("Закупка не найдена");
@@ -3825,18 +3873,26 @@ export function upsertSupplyRequest(
         updatedAt: now,
       });
       audit(data, actorId, "update", "supply", row.id, row.materialName);
+      supplyCreated = false;
+      supplyId = row.id;
       return data;
     }
-    const duplicate = data.supplyRequests.find((item) => {
-      const stamp = Date.parse(item.createdAt);
-      return item.procurementId === p.id
-        && item.materialName.trim() === input.materialName.trim()
-        && item.unit === input.unit
-        && item.qtyNeed === input.qtyNeed
-        && Number.isFinite(stamp)
-        && Date.now() - stamp < 3000;
+    const wanted = supplyNeedKey({
+      materialName: input.materialName,
+      unit: input.unit,
+      workName: input.workName,
+      source: input.source ?? "manual",
     });
-    if (duplicate) return data;
+    const duplicate = data.supplyRequests.find((item) =>
+      item.procurementId === p.id
+      && item.status !== "cancelled"
+      && supplyNeedKey(item) === wanted
+    );
+    if (duplicate) {
+      supplyCreated = false;
+      supplyId = duplicate.id;
+      return data;
+    }
     const id = `sup-${Date.now()}`;
     const row: SupplyRequest = {
       id,
@@ -3866,8 +3922,11 @@ export function upsertSupplyRequest(
     data.supplyRequests.unshift(row);
     p.supplyRequestIds = [...(p.supplyRequestIds ?? []), id];
     audit(data, actorId, "create", "supply", id, row.materialName);
+    supplyCreated = true;
+    supplyId = id;
     return data;
   });
+  return Object.assign(data, { supplyCreated, supplyId });
 }
 
 export function deleteSupplyRequest(actorId: string, supplyId: string) {
@@ -3986,6 +4045,7 @@ export function generateProcurementMaterialManifest(actorId: string, procurement
         status: "need", source: row.source, sourceFiles: row.sourceFiles,
         quantityNeedsReview: !row.needBy,
         supplierIds,
+        createdBy: actor.id,
         createdAt: now, updatedAt: now,
       });
       procurement.supplyRequestIds = [...(procurement.supplyRequestIds ?? []), id];

@@ -53,6 +53,11 @@ describe("package analysis workflow", () => {
   });
 
   it("persists an actionable fallback instead of surfacing an empty-model error", async () => {
+    mutateAppData((data) => {
+      const procurement = data.procurements.find((item) => item.id === "p-2")!;
+      procurement.analytics = undefined;
+      return data;
+    });
     model.analyze.mockRejectedValueOnce(new Error("Модель вернула пустой ответ после 3 попыток"));
     const result = await analyzeProcurementPackageWithAI("u-tender", "p-2");
     const procurement = readAppData().procurements.find((item) => item.id === "p-2")!;
@@ -62,6 +67,31 @@ describe("package analysis workflow", () => {
     expect(model.fallback).toHaveBeenCalledOnce();
     expect(procurement.analytics?.method).toBe("deterministic_fallback_after_model_failure");
     expect(procurement.analytics?.summary).toContain("пустой ответ");
+  });
+
+  it("keeps a written note when the model fails", async () => {
+    const kept = "Вердикт ИИ: 8 / 10 — эту записку нельзя заменить заглушкой";
+    mutateAppData((data) => {
+      const procurement = data.procurements.find((item) => item.id === "p-2")!;
+      procurement.analytics = {
+        recommendation: "participate",
+        summary: kept,
+        missingInputs: [],
+        citationIds: [],
+        citations: [],
+        generatedAt: "2026-11-01T00:00:00Z",
+        method: "разбор пакета по цитатам документов",
+        disclaimer: "проверка",
+      };
+      return data;
+    });
+    model.analyze.mockRejectedValueOnce(new Error("Модель вернула пустой ответ после 3 попыток"));
+    const result = await analyzeProcurementPackageWithAI("u-tender", "p-2");
+    const procurement = readAppData().procurements.find((item) => item.id === "p-2")!;
+    expect(result.usedAi).toBe(false);
+    expect(result.warning).toBe("Разбор не удался, записка не менялась — попробуйте позже");
+    expect(procurement.analytics?.summary).toBe(kept);
+    expect(model.fallback).not.toHaveBeenCalled();
   });
 
   it("rejects an unknown procurement before model invocation", async () => {

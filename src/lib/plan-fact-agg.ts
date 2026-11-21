@@ -3,11 +3,15 @@
  */
 import type { DailyFact, PlanFact, PlanFactEntry } from "@/lib/types";
 
+export function activeDailyFacts(daily: DailyFact[] | undefined): DailyFact[] {
+  return (daily ?? []).filter((fact) => !fact.archived);
+}
+
 export function sumDailyQty(
   daily: DailyFact[] | undefined,
   opts?: { workName?: string; unit?: string; date?: string; monthPrefix?: string }
 ): number {
-  const list = daily ?? [];
+  const list = activeDailyFacts(daily);
   return list.reduce((s, d) => {
     if (opts?.workName && d.workName !== opts.workName) return s;
     if (opts?.unit && d.unit !== opts.unit) return s;
@@ -23,7 +27,7 @@ export function sumDailyQty(
  * otherwise the stored entry.fact (opening / seed) is kept.
  */
 export function recomputeEntriesFromDaily(pf: PlanFact): PlanFact {
-  const daily = pf.dailyFacts ?? [];
+  const daily = activeDailyFacts(pf.dailyFacts);
   const workKeysFromDaily = new Set(daily.map((d) => `${d.workName}\u0000${d.unit}`));
   pf.entries = (pf.entries ?? []).map((e) => {
     const key = `${e.workName}\u0000${e.unit}`;
@@ -64,9 +68,14 @@ export function entryDisplayFact(
   e: PlanFactEntry,
   daily: DailyFact[] | undefined
 ): number {
-  const list = daily ?? [];
-  if (list.some((d) => d.workName === e.workName && d.unit === e.unit)) {
-    return Math.round(sumDailyQty(list, { workName: e.workName, unit: e.unit }) * 1000) / 1000;
+  const list = activeDailyFacts(daily);
+  const linked = e.id ? list.filter((fact) => fact.entryId === e.id) : [];
+  if (linked.length) {
+    return Math.round(linked.reduce((sum, fact) => sum + fact.quantity, 0) * 1000) / 1000;
+  }
+  const legacy = list.filter((fact) => !fact.entryId && fact.workName === e.workName && fact.unit === e.unit);
+  if (legacy.length) {
+    return Math.round(sumDailyQty(legacy, { workName: e.workName, unit: e.unit }) * 1000) / 1000;
   }
   return e.fact;
 }

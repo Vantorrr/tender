@@ -167,7 +167,7 @@ export async function POST(req: Request) {
         400
       );
     }
-    upsertSupplyRequest(user.id, {
+    const saved = upsertSupplyRequest(user.id, {
       id: body.id,
       procurementId: body.procurementId,
       materialName: body.materialName,
@@ -188,6 +188,6 @@ export async function POST(req: Request) {
       sourceFiles: body.sourceFiles,
       quantityNeedsReview: body.quantityNeedsReview,
     });
-    return json(getBootstrap(user));
+    return json({ ...getBootstrap(user), supplyCreated: saved.supplyCreated, supplyId: saved.supplyId });
   });
 }

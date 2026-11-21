@@ -49,7 +49,7 @@ import { forecastWorkCompletion } from "@/lib/production-forecast";
 import { paymentBucket } from "@/lib/money-payments";
 import { useStore } from "@/lib/store";
 import type { ProductionVarianceReport } from "@/server/production-variance-ai";
-import type { DailyFactPhoto, SupplyStatus } from "@/lib/types";
+import type { DailyFactPhoto, PlanFactEntry, SupplyStatus } from "@/lib/types";
 
 function QuietNumberInput({
   id,
@@ -171,7 +171,7 @@ export default function ProizvodstvoPage() {
   const [date, setDate] = useState(todayIsoInTimeZone());
   const [qty, setQty] = useState("1");
   const [newWorkName, setNewWorkName] = useState("");
-  const [pendingWork, setPendingWork] = useState<{ id: string; name: string } | null>(null);
+  const [pendingWork, setPendingWork] = useState<PlanFactEntry | null>(null);
   const [newWorkUnit, setNewWorkUnit] = useState("");
   const [newWorkPlan, setNewWorkPlan] = useState("");
   const [savingDaily, setSavingDaily] = useState(false);
@@ -189,6 +189,7 @@ export default function ProizvodstvoPage() {
     report: ProductionVarianceReport;
   } | null>(null);
   const savingDailyRef = useRef(false);
+  const supplyCreateLock = useRef<string | null>(null);
   const pendingFactIdRef = useRef<string | null>(null);
   const photoRef = useRef<HTMLInputElement>(null);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
@@ -248,7 +249,7 @@ export default function ProizvodstvoPage() {
 
   if (!user) return null;
 
-  const daily = plan?.dailyFacts ?? [];
+  const daily = (plan?.dailyFacts ?? []).filter((fact) => !fact.archived);
   const dayFacts = daily.filter((d) => d.date === date);
   const monthKey = date.slice(0, 7);
   const monthFacts = daily.filter((d) => d.date.startsWith(monthKey));
@@ -409,11 +410,11 @@ export default function ProizvodstvoPage() {
   }
 
   async function createSupplyFromGpr(need: (typeof gprMaterialNeeds)[number]) {
-    if (!procurement) return;
+    if (!procurement || supplyCreateLock.current) return;
+    supplyCreateLock.current = need.key;
     setSupplySavingId(need.key);
     try {
-      const beforeIds = new Set((data.supplyRequests ?? []).map((item) => item.id));
-      const boot = await api<{ data: { supplyRequests?: Array<{ id: string; materialName: string }> } }>("/api/supply", {
+      const boot = await api<{ supplyCreated?: boolean; supplyId?: string; data: { supplyRequests?: Array<{ id: string; materialName: string }> } }>("/api/supply", {
         method: "POST",
         body: JSON.stringify({
           procurementId: procurement.id,
@@ -422,27 +423,25 @@ export default function ProizvodstvoPage() {
           unit: need.unit,
           qtyNeed: need.quantity,
           needBy: need.needBy,
+          source: "gpr",
         }),
       });
-      const created = (boot.data.supplyRequests ?? []).find((item) => item.materialName === need.materialName);
-      if (created) {
-        try {
-          const found = await api<{ candidates: Array<{ name: string; sourceUrl: string }> }>("/api/supply", {
-            method: "POST",
-            body: JSON.stringify({ action: "discoverSuppliers", id: created.id }),
-          });
-          setSupplyHints((current) => ({ ...current, [need.materialName]: found.candidates }));
-        } catch {
-          setSupplyHints((current) => ({ ...current, [need.materialName]: [] }));
-        }
-      }
-      await refresh();
-      const matched = matchDirectorySuppliers(need.materialName, data.suppliers ?? []);
-      const createdId = (boot.data.supplyRequests ?? []).find((item) => !beforeIds.has(item.id))?.id;
-      if (!createdId) {
+      if (!boot.supplyCreated || !boot.supplyId) {
         toast.message("Такая потребность уже есть");
         return;
       }
+      const createdId = boot.supplyId;
+      try {
+        const found = await api<{ candidates: Array<{ name: string; sourceUrl: string }> }>("/api/supply", {
+          method: "POST",
+          body: JSON.stringify({ action: "discoverSuppliers", id: createdId }),
+        });
+        setSupplyHints((current) => ({ ...current, [need.materialName]: found.candidates }));
+      } catch {
+        setSupplyHints((current) => ({ ...current, [need.materialName]: [] }));
+      }
+      await refresh();
+      const matched = matchDirectorySuppliers(need.materialName, data.suppliers ?? []);
       toast.success(matched.length
         ? `Потребность создана: ${need.materialName}. В справочнике ${matched.length} поставщиков.`
         : `Потребность создана: ${need.materialName}. В справочнике подходящих поставщиков нет.`, {
@@ -459,6 +458,7 @@ export default function ProizvodstvoPage() {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось создать потребность");
     } finally {
+      supplyCreateLock.current = null;
       setSupplySavingId(null);
     }
   }
@@ -919,6 +919,8 @@ export default function ProizvodstvoPage() {
                   {canViewProcurement && procurement?.lifecycle === "production" ? (
                     <div className="flex flex-wrap items-center gap-3">
                       <Button size="sm" disabled={supplySavingId === "manifest"} onClick={() => {
+                        if (supplyCreateLock.current) return;
+                        supplyCreateLock.current = "manifest";
                         setSupplySavingId("manifest");
                         void api<{ manifest: { created: number; withSupplier?: number; withoutSupplier?: number } }>("/api/supply", {
                           method: "POST",
@@ -930,7 +932,10 @@ export default function ProizvodstvoPage() {
                             ? `Создано ${manifest.created} потребностей. Поставщики подобраны: ${manifest.withSupplier ?? 0}. Без поставщика: ${manifest.withoutSupplier ?? 0}.`
                             : "Новых потребностей нет — всё уже создано");
                         }).catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось создать потребность"))
-                          .finally(() => setSupplySavingId(null));
+                          .finally(() => {
+                            supplyCreateLock.current = null;
+                            setSupplySavingId(null);
+                          });
                       }}>{supplySavingId === "manifest" ? "Создаю…" : "Создать потребность"}</Button>
                       <Link
                         href={`/cabinet/zakupki/${procurement.id}?tab=supply`}
@@ -1092,7 +1097,8 @@ export default function ProizvodstvoPage() {
                     const volume = Number(newWorkPlan);
                     const entryId = `pfe-manual-${crypto.randomUUID()}`;
                     const planId = plan.id;
-                    updatePlanFact(planId, { entries: [...plan.entries, { id: entryId, workName: name, unit: split.unit, plan: volume, fact: 0, contractRemaining: volume }] });
+                    const entry = { id: entryId, workName: name, unit: split.unit, plan: volume, fact: 0, contractRemaining: volume };
+                    updatePlanFact(planId, { entries: [...plan.entries, entry] });
                     setWorkName(name);
                     setNewWorkName(""); setNewWorkUnit(""); setNewWorkPlan("");
                     toast.success("Вид работ добавлен в план договора", {
@@ -1345,7 +1351,7 @@ export default function ProizvodstvoPage() {
                             )}
                           </TableCell>
                           <TableCell>
-                            <Button size="sm" variant="ghost" onClick={() => setPendingWork({ id: e.id, name: e.workName })}>Удалить</Button>
+                            <Button size="sm" variant="ghost" onClick={() => setPendingWork(e)}>Удалить</Button>
                           </TableCell>
                         </TableRow>
                       );
@@ -1357,18 +1363,32 @@ export default function ProizvodstvoPage() {
                 <DialogContent>
                   <DialogHeader>
                     <DialogTitle>Удалить вид работ?</DialogTitle>
-                    <DialogDescription>Вид работ «{pendingWork?.name}» будет удалён из плана договора. Остальные строки останутся.</DialogDescription>
+                    <DialogDescription>Вид работ «{pendingWork?.workName}» будет удалён из плана вместе с дневными фактами и фото. Остальные работы останутся.</DialogDescription>
                   </DialogHeader>
                   <DialogFooter>
                     <Button variant="outline" onClick={() => setPendingWork(null)}>Отмена</Button>
                     <Button onClick={() => {
                       const target = pendingWork;
+                      const planId = plan?.id;
                       setPendingWork(null);
-                      if (!target || !plan) return;
+                      if (!target || !planId) return;
                       void api("/api/proizvodstvo", {
                         method: "POST",
-                        body: JSON.stringify({ action: "deleteEntry", planFactId: plan.id, entryId: target.id }),
-                      }).then(() => refresh()).then(() => toast.success("Вид работ удалён")).catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось удалить вид работ"));
+                        body: JSON.stringify({ action: "deleteEntry", planFactId: planId, entryId: target.id }),
+                      }).then(() => refresh()).then(() => {
+                        toast.success("Вид работ удалён", {
+                          duration: 10_000,
+                          action: {
+                            label: "Отменить",
+                            onClick: () => {
+                              void api("/api/proizvodstvo", {
+                                method: "POST",
+                                body: JSON.stringify({ action: "restoreEntry", planFactId: planId, entry: target }),
+                              }).then(() => refresh()).catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось вернуть вид работ"));
+                            },
+                          },
+                        });
+                      }).catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось удалить вид работ"));
                     }}>Удалить</Button>
                   </DialogFooter>
                 </DialogContent>
