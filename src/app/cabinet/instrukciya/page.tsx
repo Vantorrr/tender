@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { PageHeader } from "@/components/page-header";
+import { canOpenCabinetPath } from "@/components/cabinet/nav";
 import { ROLE_LABELS } from "@/lib/roles";
+import { useStore } from "@/lib/store";
 
 /**
  * Критерии приёмки 1–11 из Приложения №1 к Договору TMA361 (конец ТЗ).
@@ -100,6 +102,7 @@ const accounts = [
 ];
 
 export default function InstrukciyaPage() {
+  const { user } = useStore();
   return (
     <div>
       <PageHeader
@@ -150,12 +153,16 @@ export default function InstrukciyaPage() {
               <h2 className="font-[family-name:var(--font-display)] text-base">
                 {s.n}. {s.title}
               </h2>
-              <Link
-                href={s.route}
-                className="text-sm text-[var(--tk-copper-deep)] underline"
-              >
-                {s.route}
-              </Link>
+              {user && canOpenCabinetPath(user, s.route) ? (
+                <Link
+                  href={s.route}
+                  className="text-sm text-[var(--tk-copper-deep)] underline"
+                >
+                  {s.route}
+                </Link>
+              ) : (
+                <span className="text-sm text-[var(--tk-muted)]">{s.route}</span>
+              )}
             </div>
             <p className="mt-2 text-sm leading-relaxed text-[var(--tk-ink-soft)]">
               {s.steps}
@@ -171,21 +178,27 @@ export default function InstrukciyaPage() {
         <ul className="mt-2 list-disc space-y-1 pl-5 text-[var(--tk-ink-soft)]">
           <li>
             Администрирование, журнал, цепочка артефактов:{" "}
-            <Link className="underline" href="/cabinet/admin">
-              /cabinet/admin
-            </Link>
+            {user && canOpenCabinetPath(user, "/cabinet/admin") ? (
+              <Link className="underline" href="/cabinet/admin">/cabinet/admin</Link>
+            ) : (
+              <span>/cabinet/admin</span>
+            )}
           </li>
           <li>
             Справочники (нормы/расценки/цены/профиль):{" "}
-            <Link className="underline" href="/cabinet/spravochniki">
-              /cabinet/spravochniki
-            </Link>
+            {user && canOpenCabinetPath(user, "/cabinet/spravochniki") ? (
+              <Link className="underline" href="/cabinet/spravochniki">/cabinet/spravochniki</Link>
+            ) : (
+              <span>/cabinet/spravochniki</span>
+            )}
           </li>
           <li>
             Обмен со сметным ПО:{" "}
-            <Link className="underline" href="/cabinet/obmen">
-              /cabinet/obmen
-            </Link>
+            {user && canOpenCabinetPath(user, "/cabinet/obmen") ? (
+              <Link className="underline" href="/cabinet/obmen">/cabinet/obmen</Link>
+            ) : (
+              <span>/cabinet/obmen</span>
+            )}
           </li>
           <li>
             Разбор документов ориентирован на ГРАНД-Смета 2022.3 (локальная смета,

@@ -350,6 +350,7 @@ describe("wave 2–3 server checks", () => {
     const totaled = readAppData().calculations.find((item) => item.id === draft.id)!;
     expect(totaled.costSummary?.northernAdjustments?.district).toBe(8000);
     expect(totaled.costSummary?.northernAdjustments?.allowance).toBe(8000);
+    expect(totaled.dataFlags ?? []).not.toContain("northern_not_applicable");
     const firstTotal = totaled.costSummary?.priceExVat ?? 0;
     expect(firstTotal).toBeGreaterThan(20000);
 

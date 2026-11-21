@@ -94,7 +94,7 @@ export function supplyCalendarWarnings(
       out.push({
         kind: "supply_unscheduled",
         severity: "info",
-        message: `Поставка «${s.materialName}»: нет даты needBy`,
+        message: `Поставка «${s.materialName}»: срок не указан`,
         supplyId: s.id,
       });
       continue;
@@ -103,14 +103,14 @@ export function supplyCalendarWarnings(
       out.push({
         kind: "supply_late",
         severity: "warn",
-        message: `Поставка «${s.materialName}» needBy ${s.needBy} позже окончания ГПР ${maxEnd}`,
+        message: `Поставка «${s.materialName}»: срок ${s.needBy} позже окончания графика ${maxEnd}`,
         supplyId: s.id,
       });
     } else if (s.needBy < minStart) {
       out.push({
         kind: "supply_late",
         severity: "info",
-        message: `Поставка «${s.materialName}» needBy ${s.needBy} до старта ГПР ${minStart}`,
+        message: `Поставка «${s.materialName}»: срок ${s.needBy} раньше начала графика ${minStart}`,
         supplyId: s.id,
       });
     }

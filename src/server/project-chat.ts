@@ -7,6 +7,7 @@ import type {
 } from "@/lib/types";
 import { CHAT_CALC_POSITIONS, CHAT_CITATION_BLOCK_CHARS, CHAT_CITATIONS_PER_DOCUMENT, CHAT_DOCUMENTS, CHAT_ESTIMATE_POSITIONS, CHAT_PROMPT_SOURCE_CHARS, CHAT_PROMPT_SOURCES, PROJECT_CHAT_SYSTEM } from "@/server/ai-prompts";
 import { completeJson, modelConfigured } from "@/server/openrouter";
+import { humanizeIssues } from "@/lib/issue-text";
 import { visibleProcurementNumber } from "@/lib/pipeline";
 import { getBootstrap } from "@/server/repo";
 import { mutateAppData, readAppData } from "@/server/db";
@@ -259,7 +260,7 @@ function buildSources(data: AppData, procurementId: string): Source[] {
         `Тип: ${calc.kind ?? "не указан"}`,
         `Сценарий: ${calc.scenario}`,
         `Итог: ${calc.costSummary?.priceIncVat ?? calc.costSummary?.C0 ?? "нет подтверждённого итога"} ₽`,
-        `Неполные входные данные: ${(calc.costSummary?.incomplete ?? calc.dataFlags ?? []).join("; ") || "не указаны"}`,
+        `Неполные входные данные: ${humanizeIssues(calc.costSummary?.incomplete ?? []).join("; ") || "не указаны"}`,
         `Допущения: ${(calc.assumptions ?? []).join("; ") || "не указаны"}`,
       ].join("\n"),
       `/cabinet/raschety/${calc.id}`

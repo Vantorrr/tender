@@ -22,7 +22,7 @@ import { AiFailureBanner } from "@/components/ai-failure-banner";
 import { api, downloadUrl, getClientToken } from "@/lib/api";
 import { DocumentWebPreview } from "@/components/document-web-preview";
 import { cleanLabel } from "@/lib/display";
-import { formatDate, formatDateTime, formatMoney, formatNumber } from "@/lib/format";
+import { formatDate, formatDateTime, formatMoney, formatNumber, formatQuantity, needByPhrase, roundQuantity } from "@/lib/format";
 import { citationTopicLabel, readableCitations, regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
 import { citationHref, matchDirectorySuppliers } from "@/lib/wave23";
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
@@ -731,7 +731,7 @@ export default function ZakupkaDetailPage() {
                     });
                     await refresh();
                     toast.success("Тендер отмечен выигранным и передан в производство");
-                    router.push("/cabinet/proizvodstvo");
+                    if (canProduction) router.push("/cabinet/proizvodstvo");
                   } catch (error) {
                     toast.error(error instanceof Error ? error.message : "Не удалось передать проект");
                   } finally {
@@ -1871,7 +1871,7 @@ export default function ZakupkaDetailPage() {
                           {need.unit}
                         </div>
                         <div className="text-xs text-[var(--tk-muted)]">
-                          Работа: {need.workName} · к {formatDate(need.needBy)}
+                          Работа: {need.workName} · {needByPhrase(need.needBy)}
                         </div>
                       </div>
                       <Button
@@ -2025,12 +2025,11 @@ export default function ZakupkaDetailPage() {
                     data-testid={`supply-${s.id}`}
                   >
                     <div className="font-medium">
-                      {s.materialName} · {s.qtyNeed} {s.unit} · к{" "}
-                      {formatDate(s.needBy)}
+                      {s.materialName} · {formatQuantity(s.qtyNeed, s.unit)} · {needByPhrase(s.needBy)}
                     </div>
                     <div className="text-xs text-[var(--tk-muted)]">
-                      {SUPPLY_RU[s.status]} · заказано {s.qtyOrdered} ·
-                      поставлено {s.qtyDelivered}
+                      {SUPPLY_RU[s.status]} · заказано {formatNumber(s.qtyOrdered)} ·
+                      поставлено {formatNumber(s.qtyDelivered)}
                     </div>
                     {s.source ? <div className="mt-1 text-xs text-[var(--tk-muted)]">Источник: {s.source === "gpr" ? "график работ" : s.source === "estimate" ? `смета или ведомость объёмов${s.sourceFiles?.length ? ` · ${s.sourceFiles.join(", ")}` : ""}` : "вручную"}{s.quantityNeedsReview ? " · срок поставки требует подтверждения" : ""}</div> : null}
                     <DirectoryNeedHints material={s.materialName} suppliers={suppliers} />
@@ -2127,7 +2126,7 @@ export default function ZakupkaDetailPage() {
                           type="number"
                           min="0"
                           step="any"
-                          defaultValue={s.qtyOrdered}
+                          defaultValue={roundQuantity(s.qtyOrdered, 4)}
                           onBlur={(e) => {
                             const value = Number(e.target.value);
                             if (Number.isFinite(value) && value !== s.qtyOrdered) {
@@ -2143,7 +2142,7 @@ export default function ZakupkaDetailPage() {
                           type="number"
                           min="0"
                           step="any"
-                          defaultValue={s.qtyDelivered}
+                          defaultValue={roundQuantity(s.qtyDelivered, 4)}
                           onBlur={(e) => {
                             const value = Number(e.target.value);
                             if (Number.isFinite(value) && value !== s.qtyDelivered) {

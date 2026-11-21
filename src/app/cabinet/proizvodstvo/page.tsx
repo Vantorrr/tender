@@ -32,7 +32,8 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { api, downloadUrl } from "@/lib/api";
 import { parseDecimalRu } from "@/lib/decimal-ru";
 import { DEFAULT_MAX_UPLOAD_BYTES, uploadTooLargeMessage } from "@/lib/upload-limit";
-import { formatDate, formatMoney, formatNumber, todayIsoInTimeZone } from "@/lib/format";
+import { formatDate, formatMoney, formatNumber, formatQuantity, needByPhrase, roundQuantity, supplyIsOverdue, todayIsoInTimeZone } from "@/lib/format";
+import { humanizeIssues } from "@/lib/issue-text";
 import { userHasSection } from "@/lib/acl";
 import { visibleProcurementNumber } from "@/lib/pipeline";
 import { matchDirectorySuppliers, mergeQuantities, planWorksOnDate, splitEmbeddedUnit } from "@/lib/wave23";
@@ -654,9 +655,11 @@ export default function ProizvodstvoPage() {
                   </p>
                   {(productionEconomics?.customerEstimateIncomplete.length ?? 0) > 0 ? (
                     <span className="mt-2 block text-xs text-amber-800">
-                      {customerEstimateMissingSource
+                      {customerEstimateMissingSource && (productionEconomics?.customerEstimateIncomplete.length ?? 0) === 1
                         ? "Исходная смета заказчика не загружена"
-                        : `нет точной ставки: ${productionEconomics?.customerEstimateIncomplete.slice(0, 3).join(", ")}`}
+                        : humanizeIssues(
+                            (productionEconomics?.customerEstimateIncomplete ?? []).filter((code) => code !== "customer_estimate_missing"),
+                          ).slice(0, 3).join("; ")}
                     </span>
                   ) : null}
                 </div>
@@ -865,7 +868,7 @@ export default function ProizvodstvoPage() {
                     <p className="text-sm font-semibold">График производства работ</p>
                     <p className="mt-1 text-sm text-muted-foreground">{gpr.title} · {gpr.stages.length} этапов</p>
                   </div>
-                  <Link href={`/cabinet/gpr/${gpr.id}`} className="text-sm font-medium text-primary underline underline-offset-4">Открыть ГПР →</Link>
+                  {user && userHasSection(user, "gpr") ? <Link href={`/cabinet/gpr/${gpr.id}`} className="text-sm font-medium text-primary underline underline-offset-4">Открыть ГПР →</Link> : null}
                 </div>
               ) : null}
 
@@ -898,7 +901,7 @@ export default function ProizvodstvoPage() {
                         <div>
                           <p className="font-medium">{need.materialName}</p>
                           <p className="mt-1 text-xs text-[var(--tk-muted)]">
-                            Из ГПР · {need.stageName} · нужно {formatNumber(need.quantity)} {need.unit} · к {formatDate(need.needBy)}
+                            Из ГПР · {need.stageName} · нужно {formatQuantity(need.quantity, need.unit)} · {needByPhrase(need.needBy)}
                           </p>
                           <SupplierHints material={need.materialName} suppliers={data.suppliers ?? []} hints={supplyHints[need.materialName] ?? []} />
                         </div>
@@ -916,7 +919,9 @@ export default function ProizvodstvoPage() {
                     ))}
                     {projectSupplies.map((supply) => {
                       const remaining = Math.max(0, supply.qtyNeed - supply.qtyDelivered);
-                      const overdue = supply.needBy < date && remaining > 0;
+                      const due = needByPhrase(supply.needBy);
+                      const overdue = !["delivered", "accepted", "cancelled"].includes(supply.status)
+                        && supplyIsOverdue(supply.needBy, date, remaining);
                       return (
                         <div
                           key={supply.id}
@@ -937,7 +942,7 @@ export default function ProizvodstvoPage() {
                           </div>
                           <div>
                             <label className="text-xs text-[var(--tk-muted)]" htmlFor={`supply-status-${supply.id}`}>
-                              Статус · срок {formatDate(supply.needBy)}
+                              Статус · {due === "срок не указан" ? "срок не указан" : `срок ${formatDate(supply.needBy)}`}
                             </label>
                             <select
                               id={`supply-status-${supply.id}`}
@@ -950,7 +955,7 @@ export default function ProizvodstvoPage() {
                                 <option key={status} value={status}>{SUPPLY_STATUS_LABELS[status]}</option>
                               ))}
                             </select>
-                            {overdue ? <p className="mt-1 text-xs font-medium text-rose-700">Поставка просрочена · требовалась к {formatDate(supply.needBy)}</p> : null}
+                            {overdue ? <p className="mt-1 text-xs font-medium text-rose-700">Поставка просрочена · требовалась {due}</p> : null}
                           </div>
                           <label className="text-xs text-[var(--tk-muted)]">
                             Получено ({supply.unit})
@@ -960,7 +965,7 @@ export default function ProizvodstvoPage() {
                               type="number"
                               min="0"
                               step="any"
-                              defaultValue={supply.qtyDelivered}
+                              defaultValue={roundQuantity(supply.qtyDelivered, 4)}
                               disabled={supplySavingId === supply.id}
                               aria-label={`Получено ${supply.materialName}`}
                               onBlur={(event) => {
@@ -1234,9 +1239,13 @@ export default function ProizvodstvoPage() {
                             {formatNumber(remain)}
                           </TableCell>
                           <TableCell className="text-right text-[var(--tk-muted)]">
-                            {workPlanSlice.source === "none"
-                              ? workStages.length ? "нет календарных дат" : "нет связи с ГПР"
-                              : formatNumber(workPlanSlice.plan)}
+                            {workStages.length === 0 ? (
+                              <span title="не связано с ГПР">—</span>
+                            ) : workPlanSlice.source === "none" ? (
+                              <span title="нет календарных дат">—</span>
+                            ) : (
+                              formatNumber(workPlanSlice.plan)
+                            )}
                           </TableCell>
                           <TableCell
                             className={`text-right ${
@@ -1295,8 +1304,7 @@ export default function ProizvodstvoPage() {
                           data-testid={`daily-${d.id}`}
                         >
                           <div>
-                            {formatDate(d.date)} · {d.workName}: {d.quantity}{" "}
-                            {d.unit}
+                            {formatDate(d.date)} · {d.workName}: {formatQuantity(d.quantity, d.unit)}
                             {d.comment ? ` · ${d.comment}` : ""}
                           </div>
                           {(d.photos?.length ?? 0) > 0 ? (

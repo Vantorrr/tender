@@ -248,6 +248,27 @@ export function matchDirectorySuppliers<T extends { name: string; materialKeywor
   }));
 }
 
+/** True when the district coefficient is actually folded into the total. */
+export function northernEconomicsApplied(input: {
+  applicable?: boolean | null;
+  districtCoefficient?: number | null;
+}): boolean {
+  return input.applicable !== false
+    && input.districtCoefficient != null
+    && Number.isFinite(input.districtCoefficient);
+}
+
+export function northernStatusText(input: {
+  applicable?: boolean | null;
+  districtCoefficient?: number | null;
+  northernPayrollShare?: number | null;
+}): string {
+  if (!northernEconomicsApplied(input)) return "Северные затраты не применяются.";
+  const coefficient = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(input.districtCoefficient as number);
+  const share = Math.round((input.northernPayrollShare ?? NORTH_DEFAULTS.northernPayrollShare) * 100);
+  return `Применены северные условия: районный коэффициент ${coefficient} и надбавка ${share}% фонда оплаты труда.`;
+}
+
 export function northernAdditionLines(
   labor: number,
   params: { districtCoefficient: number; northernPayrollShare: number; overheadRate: number } = NORTH_DEFAULTS,

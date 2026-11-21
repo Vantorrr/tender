@@ -7,10 +7,46 @@ export function formatMoney(value: number | null | undefined): string {
   }).format(value);
 }
 
+/** Drop binary float noise, then keep a fixed number of decimal places. */
+export function roundQuantity(value: number, digits = 2): number {
+  if (!Number.isFinite(value)) return value;
+  const normalized = Number(value.toPrecision(12));
+  const factor = 10 ** digits;
+  return Math.round(normalized * factor) / factor;
+}
+
 export function formatNumber(value: number, digits = 2): string {
+  const safe = Number.isFinite(value) ? roundQuantity(value, digits) : value;
   return new Intl.NumberFormat("ru-RU", {
     maximumFractionDigits: digits,
-  }).format(value);
+  }).format(safe);
+}
+
+/** Quantity plus unit, Russian decimal comma, no raw binary tail. */
+export function formatQuantity(value: number, unit?: string, digits = 2): string {
+  const text = formatNumber(value, digits);
+  const clean = unit?.trim();
+  return clean ? `${text} ${clean}` : text;
+}
+
+/** A real calendar day, or null when the supply has no usable date. */
+export function parsedNeedBy(iso: string | null | undefined): string | null {
+  if (!iso || !String(iso).trim()) return null;
+  return formatDate(iso) === "не указан" ? null : iso.trim();
+}
+
+/** «к 01.12.2026», or a complete phrase when the date is empty. Never «к не указан». */
+export function needByPhrase(iso: string | null | undefined): string {
+  const raw = parsedNeedBy(iso);
+  if (!raw) return "срок не указан";
+  return `к ${formatDate(raw)}`;
+}
+
+/** A supply with no date is not late. Comparison uses the stored calendar day. */
+export function supplyIsOverdue(needBy: string | null | undefined, asOf: string, remaining: number): boolean {
+  const raw = parsedNeedBy(needBy);
+  if (!raw || !(remaining > 0)) return false;
+  return raw < asOf;
 }
 
 /** A return or exclusion keeps its sign only as a difference. The quantity itself stays positive. */
@@ -32,10 +68,24 @@ const PLAIN_POSITION_CODES: Record<string, string> = {
 
 /** Codes that are internal labels, not a line from the customer's estimate. */
 export function visiblePositionCode(code: string): string {
-  const key = code.trim().toLocaleUpperCase("ru-RU");
+  const key = code.trim().toLocaleUpperCase("ru-RU").replace(/\s+/g, "");
   if (PLAIN_POSITION_CODES[key]) return PLAIN_POSITION_CODES[key];
   if (/^(?:res|cp|urp|draft|source|gs|pay)-/iu.test(code) || (code.length > 24 && !/[а-яё]/iu.test(code))) return "";
   return code;
+}
+
+/** Labour rows stored as «ЗТ» / «ЗТм» are shown in words. Other names stay as written. */
+export function plainPositionName(name: string): string {
+  const key = name.trim().toLocaleUpperCase("ru-RU").replace(/\s+/g, "");
+  return PLAIN_POSITION_CODES[key] ?? name;
+}
+
+/** Code and name the way the calculation table and Excel already show them. */
+export function positionHeading(code: string, name: string): string {
+  const shownCode = visiblePositionCode(code);
+  const shownName = plainPositionName(name);
+  if (!shownCode || shownCode === shownName) return shownName || shownCode;
+  return `${shownCode} · ${shownName}`;
 }
 
 /** Piece counts from a norm are fractional. Show two decimals and explain the source. */

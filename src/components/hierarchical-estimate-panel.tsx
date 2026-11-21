@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { parseDecimalRu } from "@/lib/decimal-ru";
-import { formatMoney, formatNumber, quantityPresentation, visiblePositionCode } from "@/lib/format";
+import { formatMoney, formatNumber, plainPositionName, quantityPresentation, visiblePositionCode } from "@/lib/format";
 import {
   buildHierarchicalEstimate,
   estimateBudgetCards,
@@ -148,7 +148,7 @@ export function HierarchicalEstimatePanel({
         data-testid={`estimate-leaf-${leaf.id}`}
         title={(() => { const code = leaf.sourceCode ? visiblePositionCode(leaf.sourceCode) : ""; return code ? `Код сметы: ${code}` : undefined; })()}
       >
-        <div className="min-w-0 truncate">{leaf.name}</div>
+        <div className="min-w-0 truncate">{plainPositionName(leaf.name)}</div>
         <div className="text-right" title={quantityPresentation(leaf.quantity, leaf.unit).title}>
           {locked ? quantityPresentation(leaf.quantity, leaf.unit).text : (
             <Input
@@ -602,7 +602,7 @@ export function HierarchicalEstimatePanel({
                             >
                               <span className="min-w-0 truncate">
                                 <span className="mr-2 text-[var(--tk-muted)]">{expanded ? "▾" : "▸"}</span>
-                                {first.name}
+                                {plainPositionName(first.name)}
                                 <span className="ml-2 text-xs font-normal text-muted-foreground">{leaves.length} строк сметы</span>
                               </span>
                               <span className="text-right">{formatNumber(leaves.reduce((total, leaf) => total + leaf.quantity, 0))}</span>

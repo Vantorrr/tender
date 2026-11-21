@@ -28,12 +28,12 @@ import {
 import { api, downloadUrl } from "@/lib/api";
 import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-panel";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
-import { NORTH_DEFAULTS, northernAdditionLines } from "@/lib/wave23";
+import { NORTH_DEFAULTS, northernAdditionLines, northernEconomicsApplied, northernStatusText } from "@/lib/wave23";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engine";
 import { parseDecimalRu } from "@/lib/decimal-ru";
 import { patchMergedPositions, patchMergedResources } from "@/lib/resource-merge";
-import { formatMoney, formatNumber, quantityPresentation, splitSignedQuantity, visiblePositionCode } from "@/lib/format";
+import { formatMoney, formatNumber, plainPositionName, quantityPresentation, splitSignedQuantity, visiblePositionCode } from "@/lib/format";
 import { visibleProcurementNumber } from "@/lib/pipeline";
 import { rowDeleteConfirmed } from "@/lib/row-delete";
 import { humanizeIssues } from "@/lib/issue-text";
@@ -51,6 +51,7 @@ import type { NorthernInputs } from "@/lib/cost-engine";
 import type { CalcCompareAiReport } from "@/server/calc-compare-ai";
 import { ProjectAiChat } from "@/components/project-ai-chat";
 import { userHasSection } from "@/lib/acl";
+import { canOpenCabinetPath } from "@/components/cabinet/nav";
 
 function VatRateEditor({
   calculationId,
@@ -202,7 +203,11 @@ function NorthernCostEditor({
           ))}
         </div>
       ) : (
-        <p className="text-sm text-[var(--tk-muted)]">Подтверждённые северные затраты не добавлены. Автоматический коэффициент не применяется.</p>
+        <p className="text-sm text-[var(--tk-muted)]">
+          {applicable
+            ? "Дополнительные статьи не добавлены. Районный коэффициент и надбавка входят в итог по значениям ниже."
+            : "Северные затраты в итог не входят."}
+        </p>
       )}
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" size="sm" onClick={() => setItems((current) => [...current, { id: `north-${Date.now()}`, name: "", status: "known", amount: null, basis: "" }])}>Добавить статью</Button>
@@ -210,7 +215,7 @@ function NorthernCostEditor({
       </div>
       <div className="grid gap-2 sm:grid-cols-3">
         <label className="text-xs">Районный коэффициент<Input className="mt-1" value={district} onChange={(event) => setDistrict(event.target.value)} /></label>
-        <label className="text-xs">Северная надбавка, % ФОТ<Input className="mt-1" value={allowance} onChange={(event) => setAllowance(event.target.value)} /></label>
+        <label className="text-xs">Северная надбавка, % фонда оплаты труда<Input className="mt-1" value={allowance} onChange={(event) => setAllowance(event.target.value)} /></label>
         <label className="text-xs">Накладные, %<Input className="mt-1" value={overhead} onChange={(event) => setOverhead(event.target.value)} /></label>
       </div>
       <p className="text-xs text-[var(--tk-muted)]">По умолчанию северные условия Норильска и Ямала: коэффициент 1,8 и надбавка 80% фонда оплаты. Поля можно изменить.</p>
@@ -350,12 +355,32 @@ function assumptionScope(text: string): { label: string; className: string } {
   return { label: "Источник / пояснение", className: "border-border bg-muted text-muted-foreground" };
 }
 
-function calculationFlagInfo(flag: string) {
+function profitMethodLabel(method: string): string | null {
+  if (method === "markup") return "наценка";
+  if (method === "margin") return "маржа";
+  return null;
+}
+
+function ruPositions(count: number): string {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return "позиция";
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return "позиции";
+  return "позиций";
+}
+
+function calculationFlagInfo(flag: string, northernApplied = false) {
+  if (flag === "northern_not_applicable" && northernApplied) return null;
   if (HIDDEN_TECHNICAL_CALC_FLAGS.has(flag) || /^migrated_schema_/u.test(flag) || /^cost_/u.test(flag)) return null;
   const known = CALCULATION_FLAG_INFO[flag];
   if (known) return known;
   if (flag.startsWith("profit_method:")) {
-    return { title: "Способ расчёта прибыли", effect: `В расчёте выбран метод «${flag.slice("profit_method:".length)}».`, severity: "info" as const };
+    const method = profitMethodLabel(flag.slice("profit_method:".length));
+    return {
+      title: "Способ расчёта прибыли",
+      effect: method ? `В расчёте выбран метод «${method}».` : "В расчёте выбран один способ расчёта прибыли.",
+      severity: "info" as const,
+    };
   }
   if (flag.startsWith("tariff_basis:")) {
     return { title: "Основание тарифа техники", effect: "В расчёт передан выбранный тип тарифа из справочника.", severity: "info" as const };
@@ -623,6 +648,15 @@ export default function RaschetDetailPage() {
   }
 
   const isTest = isT25uTestId(calc.id) || isT25uTestTitle(calc.title);
+  const northernApplied = northernEconomicsApplied({
+    applicable: calc.northern?.applicable,
+    districtCoefficient: calc.resourceScheduleParams?.districtCoefficient,
+  });
+  const northernSummary = northernStatusText({
+    applicable: calc.northern?.applicable,
+    districtCoefficient: calc.resourceScheduleParams?.districtCoefficient,
+    northernPayrollShare: calc.resourceScheduleParams?.northernPayrollShare,
+  });
   const pathSteps: Array<{ label: string; href: string; current?: boolean }> = [
     { label: "Заявка", href: `/cabinet/zakupki/${calc.procurementId}` },
     { label: "Расчёт", href: `/cabinet/raschety/${calc.id}`, current: true },
@@ -774,8 +808,11 @@ export default function RaschetDetailPage() {
         className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--tk-line)] bg-white/80 px-3 py-2 text-sm"
         data-testid="project-matryoshka"
       >
-        {pathSteps.map((step, index) => (
+        {pathSteps.map((step, index) => {
+          const open = Boolean(step.current) || canOpenCabinetPath(user, step.href);
+          return (
           <span key={step.label} className="inline-flex items-center gap-2">
+            {open ? (
             <Link
               href={step.href}
               aria-current={step.current ? "step" : undefined}
@@ -787,11 +824,15 @@ export default function RaschetDetailPage() {
             >
               {step.label}
             </Link>
+            ) : (
+              <span className="text-[var(--tk-ink)]">{step.label}</span>
+            )}
             {index < pathSteps.length - 1 ? (
               <span aria-hidden="true" className="text-[var(--tk-muted)]">›</span>
             ) : null}
           </span>
-        ))}
+          );
+        })}
         <span className="ml-auto text-xs text-[var(--tk-muted)]">
           {procurement ? visibleProcurementNumber(procurement) : `Заявка ${calc.procurementId}`}
         </span>
@@ -841,17 +882,26 @@ export default function RaschetDetailPage() {
         className="mb-5 grid gap-3 lg:grid-cols-3"
         data-testid="calculation-project-workspace"
       >
-        <Link
-          href={linkedSchedule ? `/cabinet/gpr/${linkedSchedule.id}` : `/cabinet/zakupki/${calc.procurementId}`}
-          className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4 hover:border-[var(--tk-copper)]"
-        >
-          <h2 className="font-medium">График работ</h2>
-          <p className="mt-1 text-sm text-[var(--tk-muted)]">
-            {linkedSchedule
-              ? `${linkedSchedule.stages.length} этапов · ресурсный календарь и Гант`
-              : "ГПР ещё не создан — вернитесь в карточку заявки"}
-          </p>
-        </Link>
+        {(() => {
+          const scheduleHref = linkedSchedule ? `/cabinet/gpr/${linkedSchedule.id}` : `/cabinet/zakupki/${calc.procurementId}`;
+          const scheduleBody = (
+            <>
+              <h2 className="font-medium">График работ</h2>
+              <p className="mt-1 text-sm text-[var(--tk-muted)]">
+                {linkedSchedule
+                  ? `${linkedSchedule.stages.length} этапов · ресурсный календарь и Гант`
+                  : "ГПР ещё не создан — вернитесь в карточку заявки"}
+              </p>
+            </>
+          );
+          return canOpenCabinetPath(user, scheduleHref) ? (
+            <Link href={scheduleHref} className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4 hover:border-[var(--tk-copper)]">
+              {scheduleBody}
+            </Link>
+          ) : (
+            <div className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4">{scheduleBody}</div>
+          );
+        })()}
         <Link
           href={`/cabinet/zakupki/${calc.procurementId}?tab=risks`}
           className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4 hover:border-[var(--tk-copper)]"
@@ -928,9 +978,9 @@ export default function RaschetDetailPage() {
           <p className="mt-1">
             Исходные количества и строки заказчика перенесены для проверки. Исходная смета остаётся неизменной; её цены в наш черновик не копировались. Ставки сопоставлены только по точному коду и совместимой единице.
           </p>
-          {calc.positions.some((position) => position.rateMissing && !position.isWorkItem) ? (
+          {missingRateCount > 0 ? (
             <p className="mt-1 font-medium">
-              Нужны ставки для {calc.positions.filter((position) => position.rateMissing && !position.isWorkItem).length} строк. Они исключены из стоимости, пока не подтверждены. Нулевые цены не подставляются.
+              Нужны ставки для {missingRateCount} {ruPositions(missingRateCount)}. Они исключены из стоимости, пока не подтверждены. Нулевые цены не подставляются.
             </p>
           ) : null}
         </section>
@@ -1096,7 +1146,7 @@ export default function RaschetDetailPage() {
                 : stage
             ));
           }}
-          onOpenSchedule={linkedSchedule ? () => router.push(`/cabinet/gpr/${linkedSchedule.id}`) : undefined}
+          onOpenSchedule={linkedSchedule && canOpenCabinetPath(user, `/cabinet/gpr/${linkedSchedule.id}`) ? () => router.push(`/cabinet/gpr/${linkedSchedule.id}`) : undefined}
           onExport={exportExcelLike}
           onAddClick={() => {
             setShowDirAdd(true);
@@ -1197,7 +1247,7 @@ export default function RaschetDetailPage() {
                 <TableRow key={p.id}>
                   <TableCell className="text-xs">{visiblePositionCode(p.code)}</TableCell>
                   <TableCell className="min-w-[12rem]">
-                    {p.name}
+                    {plainPositionName(p.name)}
                     {p.sourceSectionName ? <div className="text-xs text-[var(--tk-muted)]">{p.sourceSectionName}</div> : null}
                   </TableCell>
                   <TableCell>{p.unit}</TableCell>
@@ -1322,7 +1372,7 @@ export default function RaschetDetailPage() {
               {materials.map((p) => (
                 <TableRow key={`mat-${p.id}`}>
                   <TableCell className="text-xs">{visiblePositionCode(p.code)}</TableCell>
-                  <TableCell>{p.name}</TableCell>
+                  <TableCell>{plainPositionName(p.name)}</TableCell>
                   <TableCell>{p.unit}</TableCell>
                   <TableCell className="text-right">
                     {formatNumber(splitSignedQuantity(p.quantity).quantity)}
@@ -1351,26 +1401,32 @@ export default function RaschetDetailPage() {
             Север / экономика — подтверждаемые входы
           </h2>
           <p className="mt-1 text-sm text-[var(--tk-muted)]">
-            Вносите только подтверждённые расходы и указывайте источник суммы. Универсальный северный коэффициент не применяется. Прибыль считается либо наценкой, либо маржой.
+            Вносите только подтверждённые расходы и указывайте источник суммы. {northernSummary} Прибыль считается наценкой либо маржой.
           </p>
           <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-[var(--tk-muted)]">
             <li>
-              Вахта, районный коэффициент и северная надбавка берутся из подтверждённых документов,
-              не как универсальный коэффициент
+              {northernApplied
+                ? "Районный коэффициент и северная надбавка уже включены в итог."
+                : "Районный коэффициент и северная надбавка в итог не входят."}
             </li>
             <li>
-              Автобус: полная маш.-ч ставка уже с амортизацией/ГСМ/ФОТ/ТО — не
-              добавлять водителя/ГСМ сверху; расход топлива в эталоне — л/час
+              Автобус: полная ставка за машино-час уже включает амортизацию, топливо, фонд оплаты труда и техобслуживание — не
+              добавлять водителя и топливо сверху; расход топлива задаётся в литрах в час
             </li>
             <li>
-              Накладные расходы как процент от прямых затрат (эталон 43%); прибыль — наценка на себестоимость с накладными расходами
-              (эталон 40%), не доля от выручки
+              Накладные расходы как процент от прямых затрат (по умолчанию 43%); прибыль — наценка на себестоимость с накладными расходами
+              (по умолчанию 40%), не доля от выручки
             </li>
             <li>
               Резерв отпуска ≠ общий резерв непредвиденных (последний — только
               если подтверждён отдельно)
             </li>
-            <li>НДС %, дата цен, валюта; 14 позиций без тарифа → 0 + «неполно»</li>
+            <li>
+              НДС, дата цен и валюта.{" "}
+              {missingRateCount > 0
+                ? `${missingRateCount} ${ruPositions(missingRateCount)} без тарифа: сумма 0, расчёт неполный.`
+                : "Позиций без тарифа нет."}
+            </li>
           </ul>
           <NorthernCostEditor
             key={`${calc.id}:${calc.updatedAt}:${JSON.stringify(calc.northern ?? null)}`}
@@ -1544,8 +1600,8 @@ export default function RaschetDetailPage() {
             Сводка расчёта
           </h2>
           <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
-            <div>C0 (без резерва): {formatMoney(calc.costSummary.C0)}</div>
-            <div>C (с резервом): {formatMoney(calc.costSummary.C)}</div>
+            <div>Себестоимость без резерва: {formatMoney(calc.costSummary.C0)}</div>
+            <div>Себестоимость с резервом: {formatMoney(calc.costSummary.C)}</div>
             <div>Прибыль: {formatMoney(calc.costSummary.profit)}</div>
             <div>Цена без НДС: {formatMoney(calc.costSummary.priceExVat)}</div>
             <div>
@@ -1791,7 +1847,7 @@ export default function RaschetDetailPage() {
 
         {(() => {
           const flags = [...new Set(calc.dataFlags ?? [])]
-            .map((flag) => ({ flag, info: calculationFlagInfo(flag) }))
+            .map((flag) => ({ flag, info: calculationFlagInfo(flag, northernApplied) }))
             .filter((item): item is { flag: string; info: NonNullable<ReturnType<typeof calculationFlagInfo>> } => item.info != null);
           if (flags.length === 0) return null;
           return (
@@ -1813,7 +1869,7 @@ export default function RaschetDetailPage() {
           );
         })()}
 
-        {calc.assumptions.length === 0 && (calc.dataFlags ?? []).every((flag) => !calculationFlagInfo(flag)) && (
+        {calc.assumptions.length === 0 && (calc.dataFlags ?? []).every((flag) => !calculationFlagInfo(flag, northernApplied)) && (
           <p className="mt-4 rounded-lg bg-muted px-3 py-2 text-sm text-[var(--tk-muted)]">
             Дополнительных исходных условий и проверок для этого расчёта нет.
           </p>

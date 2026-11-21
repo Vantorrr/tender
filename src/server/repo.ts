@@ -2878,11 +2878,7 @@ export function shiftGprStage(
           logistics =
             Math.round((logistics + busCost(r).total) * 100) / 100;
         }
-        const northern = calc.northern ?? {
-          applicable: false,
-          confirmedItems: [],
-          notes: ["Северные ставки не подтверждены"],
-        };
+        const northern = northernInputsForEngine(calc);
         const rs = calc.resourceScheduleParams;
         const useRs = Boolean(rs);
         const Dapprox =
@@ -2940,6 +2936,15 @@ export function shiftGprStage(
     );
     return data;
   });
+}
+
+function northernInputsForEngine(calc: Calculation): NorthernInputs {
+  const fold = calc.northern?.applicable !== false && calc.resourceScheduleParams?.districtCoefficient != null;
+  return calc.northern ?? {
+    applicable: fold,
+    confirmedItems: [],
+    notes: fold ? [] : ["Северные затраты не применяются"],
+  };
 }
 
 function northernDelta(district: number, allowance: number, params: { overheadRate: number; profitMarkupOnCostWithOh: number }) {
@@ -3028,11 +3033,7 @@ function applyResourceDraftAdjustments(calc: Calculation) {
     // Preserve the Excel formula: contingency is separate from the markup base.
     includeReserveInPriceBase: false,
     vatPercent: calc.vatPercent ?? null,
-    northern: calc.northern ?? {
-      applicable: false,
-      confirmedItems: [],
-      notes: [],
-    },
+    northern: northernInputsForEngine(calc),
   });
   const incomplete = [...new Set([...current.incomplete, ...engine.incomplete])];
   calc.costSummary = {
@@ -3149,13 +3150,8 @@ export function recomputeCalculationCost(
       logistics = Math.round((logistics + b.total) * 100) / 100;
       busFlags.push(...b.flags);
     }
-    const northern: NorthernInputs = item.northern ?? {
-      applicable: false,
-      confirmedItems: [],
-      notes: [
-        "Северные и вахтовые затраты берутся из подтверждённых документов; универсальный коэффициент не применяется без этой базы",
-      ],
-    };
+    const northern: NorthernInputs = northernInputsForEngine(item);
+    const northernFold = northern.applicable && item.resourceScheduleParams?.districtCoefficient != null;
     const rs = item.resourceScheduleParams;
     const Dapprox =
       buckets.labor + buckets.materials + buckets.equipment + buckets.other + logistics;
@@ -3220,7 +3216,7 @@ export function recomputeCalculationCost(
       ...(item.dataFlags ?? []).filter((f) => !f.startsWith("cost_")),
       "cost_engine_v1",
       ...(useRs ? ["resource_schedule_excel_economics"] : []),
-      ...engine.flags,
+      ...engine.flags.filter((flag) => !(northernFold && flag === "northern_not_applicable")),
       ...busFlags,
       ...(engine.incomplete.length ? ["requires_manual_check"] : []),
     ];
