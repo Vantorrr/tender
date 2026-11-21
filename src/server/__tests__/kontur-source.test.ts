@@ -164,6 +164,9 @@ it("explains missing purchase permission and masked details without leaking data
     .mockResolvedValueOnce(new Response(JSON.stringify({ Title: "░░░" })));
   vi.stubGlobal("fetch", fetcher);
   const source = new KonturProcurementSource();
-  expect((await source.purchaseDetails("id")).detail).toContain("группа purchase");
-  expect((await source.purchaseDetails("id")).detail).toContain("тестовый API-ключ");
+  const denied = await source.purchaseDetails("id");
+  const masked = await source.purchaseDetails("id");
+  expect(denied.detail).toContain("тарифу");
+  expect(masked.detail).toContain("замаскированные");
+  expect(`${denied.detail} ${masked.detail}`).not.toMatch(/Контур|\bAPI\b|purchase/iu);
 });

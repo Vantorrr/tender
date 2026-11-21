@@ -234,7 +234,7 @@ export interface Procurement {
   closedAt?: string;
   wonAt?: string;
   /** Answers kept on the procurement. They are not emailed. */
-  customerAnswers?: Array<{ question: string; answer: string; at: string }>;
+  customerAnswers?: Array<{ question: string; answer: string; at: string; authorId?: string; authorName?: string }>;
   /** Materials / supply cycle (need → quote draft → delivery) — no auto-send. */
   supplyRequestIds?: string[];
 }

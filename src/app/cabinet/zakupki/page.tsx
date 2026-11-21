@@ -399,6 +399,7 @@ export default function ZakupkiPage() {
                     <div className="mt-1 text-xs text-[var(--tk-muted)]">
                       {visibleProcurementNumber(p)}
                     </div>
+                    <div className="mt-1 text-xs font-medium">{col.label}</div>
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
                       <span>{p.region}</span>
                       {p.workType ? (

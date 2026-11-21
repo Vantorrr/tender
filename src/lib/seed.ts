@@ -232,6 +232,20 @@ export function createSeedData(): AppData {
         tags: ["капремонт", "образование", "44-ФЗ"],
         workType: "общестрой",
         createdAt: "2026-10-20T09:00:00Z",
+        analytics: {
+          recommendation: "insufficient_data",
+          summary: "Сводка по документам школы. Срок и обеспечение заявки нужно сверить с извещением.",
+          missingInputs: ["Подтвердить обеспечение контракта"],
+          citationIds: ["cit-1"],
+          citations: [],
+          customerQuestions: [
+            "Подтвердите, кто обеспечивает временное электроснабжение на период ремонта.",
+            "Уточните срок поставки материалов на объект.",
+          ],
+          generatedAt: "2026-10-27T06:55:00Z",
+          method: "черновик карточки",
+          disclaimer: "Оценка по документам не заменяет решение по статусу закупки.",
+        },
       },
       {
         id: "p-2",
@@ -518,7 +532,15 @@ export function createSeedData(): AppData {
         ],
         analyticalNote:
           "Разбор в процессе. Предварительно: металлокаркас + сэндвич-панели, площадь 8 400 м², два пролёта.",
-        citations: [],
+        citations: [
+          {
+            id: "cit-d3",
+            text: "Монтаж металлокаркаса",
+            page: 1,
+            sourceFile: "proekt.pdf",
+            sheet: "Каркас",
+          },
+        ],
         highlights: [],
         uploadedBy: "u-tender",
         uploadedAt: "2026-10-22T12:00:00Z",
@@ -606,6 +628,8 @@ export function createSeedData(): AppData {
             unit: "т",
             quantity: 420,
             rate: 68500,
+            sourceDocumentId: "d-3",
+            sourceSectionName: "Каркас",
           },
           {
             id: "cp-7",
@@ -614,6 +638,8 @@ export function createSeedData(): AppData {
             unit: "м²",
             quantity: 6200,
             rate: 4100,
+            sourceDocumentId: "d-3",
+            sourceSectionName: "Стены",
           },
         ],
         assumptions: ["Черновик: объёмы из ПД без уточнения"],

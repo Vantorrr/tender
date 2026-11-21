@@ -9,11 +9,10 @@ import {
 } from "lucide-react";
 import { EntityCard } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
-import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
-import { cleanLabel } from "@/lib/display";
+import { visibleProcurementSource } from "@/lib/display";
 import { formatMoney } from "@/lib/format";
-import { visibleProcurementNumber } from "@/lib/pipeline";
+import { procurementBoardLabel, visibleProcurementNumber } from "@/lib/pipeline";
 import { ROLE_LABELS } from "@/lib/roles";
 import { useStore } from "@/lib/store";
 
@@ -88,17 +87,16 @@ export default function CabinetHomePage() {
             href={`/cabinet/zakupki/${p.id}`}
             title={p.title}
             subtitle={`${visibleProcurementNumber(p)} · ${p.customer}`}
-            status={p.status}
             meta={
               <div className="flex flex-wrap gap-x-4 gap-y-1">
                 <span>НМЦК {formatMoney(p.nmck)}</span>
                 <span>{p.region}</span>
+                <span>Статус: {procurementBoardLabel(p)}</span>
               </div>
             }
             footer={
               <div className="flex items-center justify-between text-xs text-[var(--tk-muted)]">
-                <span>Источник: {cleanLabel(p.source)}</span>
-                <StatusBadge status={p.status} className="hidden" />
+                <span>Источник: {visibleProcurementSource(p.source)}</span>
               </div>
             }
           />

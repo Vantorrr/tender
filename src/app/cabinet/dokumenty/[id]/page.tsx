@@ -89,6 +89,8 @@ export default function DocumentDetailPage() {
   ].filter(Boolean).join(", ");
   const { orgDocuments, data, reanalyzeDocument } = useStore();
   const [retryingAi, setRetryingAi] = useState(false);
+  const [summaryBusy, setSummaryBusy] = useState(false);
+  const [summaryNotice, setSummaryNotice] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(Boolean(anchorLabel));
   const [askModel, setAskModel] = useState(false);
   const doc = orgDocuments.find((d) => d.id === params.id);
@@ -142,13 +144,25 @@ export default function DocumentDetailPage() {
             </Button>
             <Button
               variant="outline"
+              disabled={summaryBusy}
               onClick={async () => {
                 const before = doc.analyticalNote;
-                const next = await reanalyzeDocument(doc.id, { useLlm: false });
-                toast.success(next.trim() === before.trim() ? "Новых данных нет — записка уже актуальна" : "Сводка обновлена");
+                setSummaryBusy(true);
+                setSummaryNotice("Обновляю сводку…");
+                try {
+                  const next = await reanalyzeDocument(doc.id, { useLlm: false });
+                  const text = next.trim() === before.trim() ? "Новых данных нет — записка уже актуальна" : "Сводка обновлена";
+                  setSummaryNotice(text);
+                  toast.success(text);
+                } catch (error) {
+                  setSummaryNotice(null);
+                  toast.error(error instanceof Error ? error.message : "Не удалось обновить сводку");
+                } finally {
+                  setSummaryBusy(false);
+                }
               }}
             >
-              Обновить сводку
+              {summaryBusy ? "Обновляю сводку…" : "Обновить сводку"}
             </Button>
             <Button onClick={() => setAskModel(true)}>
               Полный анализ ИИ
@@ -188,6 +202,8 @@ export default function DocumentDetailPage() {
           </>
         }
       />
+
+      {summaryNotice ? <p className="mb-4 text-sm" role="status" data-testid="document-summary-status">{summaryNotice}</p> : null}
 
       {doc.aiFailure ? (
         <div className="mb-4">

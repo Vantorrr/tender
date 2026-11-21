@@ -14,6 +14,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api } from "@/lib/api";
+import { sanitizeSyncDetail } from "@/lib/wave23";
 import { formatDateTime } from "@/lib/format";
 import {
   ACTION_LABELS,
@@ -106,7 +107,7 @@ function IntegrationPanel() {
           title: "Источник закупок",
           ready: integrations.procurement.status === "ok",
           status: integrations.procurement.status === "demo" ? "Демо" : integrations.procurement.status === "ok" ? "Работает" : "Не подключён",
-          detail: integrations.procurement.detail,
+          detail: sanitizeSyncDetail(integrations.procurement.detail),
           next: integrations.procurement.status === "ok"
             ? "Открытая лента «Норникеля» подключена. Закрытые площадки настраиваются отдельно."
             : "Для реальной синхронизации укажите поддерживаемый источник и доступы площадки.",

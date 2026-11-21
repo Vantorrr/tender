@@ -21,7 +21,7 @@ import { DateInputRu } from "@/components/date-input-ru";
 import { AiFailureBanner } from "@/components/ai-failure-banner";
 import { api, downloadUrl, getClientToken } from "@/lib/api";
 import { DocumentWebPreview } from "@/components/document-web-preview";
-import { cleanLabel } from "@/lib/display";
+import { visibleProcurementSource } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney, formatNumber, formatQuantity, needByPhrase, roundQuantity, sameRoundedQuantity } from "@/lib/format";
 import { citationTopicLabel, readableCitations, regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
 import { analyticalNoteBlocks, citationHref, matchDirectorySuppliers } from "@/lib/wave23";
@@ -39,6 +39,7 @@ import type { Citation, DocumentCategory, ReviewStatus, SupplyRequest, SupplySta
 import type { SupplierSearchCandidate } from "@/server/supplier-discovery";
 import { useStore } from "@/lib/store";
 import { Input } from "@/components/ui/input";
+import { QuantityCommitField } from "@/components/quantity-commit-field";
 import { ProjectAiChat } from "@/components/project-ai-chat";
 
 const SUPPLY_RU: Record<SupplyStatus, string> = {
@@ -218,6 +219,76 @@ function SupplierQuotesEditor({
   );
 }
 
+function CustomerQuestions({
+  procurementId,
+  questions,
+  answers,
+}: {
+  procurementId: string;
+  questions: string[];
+  answers: Array<{ question: string; answer: string; at: string; authorName?: string }>;
+}) {
+  const { refresh } = useStore();
+  if (questions.length === 0 && answers.length === 0) return null;
+  const rows = questions.length ? questions : answers.map((item) => item.question);
+  return (
+    <section className="rounded-xl border border-[var(--tk-line)] bg-white p-4" data-testid="card-customer-questions">
+      <h3 className="text-sm font-semibold">Вопросы</h3>
+      <ul className="mt-2 space-y-3 text-sm">
+        {rows.map((question, index) => {
+          const saved = answers.find((item) => item.question === question);
+          return (
+            <li key={`${index}-${question}`} className="rounded-lg border border-[var(--tk-line)] p-3">
+              <p>{question}</p>
+              {saved ? (
+                <p className="mt-1 text-xs text-[var(--tk-muted)]">
+                  Ответил {saved.authorName || "сотрудник"}, {formatDateTime(saved.at)}. {saved.answer}
+                </p>
+              ) : null}
+              <form className="mt-2 flex flex-wrap items-center gap-2" onSubmit={(event) => {
+                event.preventDefault();
+                const form = event.currentTarget;
+                const answer = new FormData(form).get("answer");
+                if (typeof answer !== "string" || !answer.trim()) return;
+                const previous = saved?.answer;
+                void api("/api/zakupki", { method: "POST", body: JSON.stringify({ action: "answerCustomerQuestion", id: procurementId, question, answer }) })
+                  .then(() => refresh())
+                  .then(() => {
+                    form.reset();
+                    toast.success("Ответ сохранён", {
+                      duration: 10_000,
+                      action: {
+                        label: "Отменить",
+                        onClick: () => {
+                          const rollback = previous
+                            ? api("/api/zakupki", { method: "POST", body: JSON.stringify({ action: "answerCustomerQuestion", id: procurementId, question, answer: previous }) })
+                            : api("/api/zakupki", { method: "POST", body: JSON.stringify({ action: "deleteCustomerAnswer", id: procurementId, question }) });
+                          void rollback.then(() => refresh()).catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось отменить ответ"));
+                        },
+                      },
+                    });
+                  })
+                  .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось сохранить ответ"));
+              }}>
+                <Input name="answer" aria-label={`Ответ · ${question}`} defaultValue={saved?.answer ?? ""} placeholder="Ответ сохранится в карточке" className="h-9 max-w-md" />
+                <Button type="submit" size="sm" variant="outline">Ответить</Button>
+                {saved ? (
+                  <Button type="button" size="sm" variant="ghost" onClick={() => {
+                    void api("/api/zakupki", { method: "POST", body: JSON.stringify({ action: "deleteCustomerAnswer", id: procurementId, question }) })
+                      .then(() => refresh())
+                      .then(() => toast.success("Ответ удалён"))
+                      .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось удалить ответ"));
+                  }}>Удалить ответ</Button>
+                ) : null}
+              </form>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 export default function ZakupkaDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -258,6 +329,7 @@ export default function ZakupkaDetailPage() {
   const [payType, setPayType] = useState<PaymentBucket>("postuplenie");
   const [payAmount, setPayAmount] = useState("");
   const [paySaving, setPaySaving] = useState(false);
+  const [summaryNotice, setSummaryNotice] = useState<string | null>(null);
   const [ask, setAsk] = useState<
     | null
     | { kind: "payment"; id: string; title: string }
@@ -501,7 +573,9 @@ export default function ZakupkaDetailPage() {
       });
       await refresh();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Не удалось сохранить поставку");
+      const message = error instanceof Error ? error.message : "Не удалось сохранить поставку";
+      toast.error(message);
+      throw error instanceof Error ? error : new Error(message);
     }
   }
 
@@ -711,7 +785,7 @@ export default function ZakupkaDetailPage() {
     <div>
       <PageHeader
         title={procurement.title}
-        description={`${visibleProcurementNumber(procurement)} · ${procurement.customer}`}
+        description={`${visibleProcurementNumber(procurement)} · ${procurement.customer} · ${procurementBoardLabel(procurement)}`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" onClick={() => router.push("/cabinet/zakupki")}>Назад</Button>
@@ -889,7 +963,6 @@ export default function ZakupkaDetailPage() {
                 </p>
                 {analytics ? (
                   <div className="mt-3 space-y-3">
-                    <p className="text-sm font-medium">Рекомендация: {PARTICIPATE_LABELS[analytics.recommendation]}</p>
                     <p className="text-sm text-[var(--tk-ink)]">{analytics.summary.split(/\n\n/)[0]}</p>
                     <div className="space-y-2" data-testid="overview-note-blocks">
                       {analyticalNoteBlocks(analytics.summary).map((block) => (
@@ -908,6 +981,7 @@ export default function ZakupkaDetailPage() {
                       Открыть записку целиком
                     </button>
                     <p className="text-xs text-[var(--tk-muted)]">Документов: {analytics.quality?.sourceDocuments ?? docs.length}</p>
+                    <p className="text-xs text-[var(--tk-muted)]">Оценка по документам: {PARTICIPATE_LABELS[analytics.recommendation]}</p>
                   </div>
                 ) : (
                   <p className="mt-3 text-sm text-[var(--tk-muted)]">Сводки пока нет. После загрузки документа она появится здесь.</p>
@@ -936,14 +1010,23 @@ export default function ZakupkaDetailPage() {
                   title={docs.length === 0 ? "Сначала загрузите документы" : undefined}
                   onClick={() => {
                     setAiAnalyzing(true);
+                    setSummaryNotice("Обновляю сводку…");
                     void refreshAnalytics(procurement!.id)
-                      .then((notice) => toast.success(notice ?? "Сводка обновлена"))
-                      .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось обновить сводку"))
+                      .then((notice) => {
+                        const text = notice ?? "Сводка обновлена";
+                        setSummaryNotice(text);
+                        toast.success(text);
+                      })
+                      .catch((error: unknown) => {
+                        setSummaryNotice(null);
+                        toast.error(error instanceof Error ? error.message : "Не удалось обновить сводку");
+                      })
                       .finally(() => setAiAnalyzing(false));
                   }}
                 >
                   {aiAnalyzing ? "Обновляю сводку…" : "Обновить сводку"}
                 </Button>
+                {summaryNotice ? <p className="text-sm" role="status" data-testid="summary-refresh-status">{summaryNotice}</p> : null}
                 {docs.length === 0 ? (
                   <span className="text-xs text-[var(--tk-muted)]">Сначала загрузите документы</span>
                 ) : null}
@@ -974,6 +1057,13 @@ export default function ZakupkaDetailPage() {
               </div>
             ) : null}
           </section>
+          <div className="mb-4">
+            <CustomerQuestions
+              procurementId={procurement.id}
+              questions={analytics?.customerQuestions ?? []}
+              answers={procurement.customerAnswers ?? []}
+            />
+          </div>
           <div className="grid gap-4 lg:grid-cols-3">
             <div className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5 lg:col-span-2">
               <h2 className="font-[family-name:var(--font-display)] text-base">
@@ -1005,7 +1095,7 @@ export default function ZakupkaDetailPage() {
                 <div>
                   <dt className="text-[var(--tk-muted)]">Источник</dt>
                   <dd className="font-semibold">
-                    {procurement.source === "manual" ? "Создано вручную" : /контур|api/iu.test(procurement.source) ? "Площадка" : cleanLabel(procurement.source)}{" "}
+                    {visibleProcurementSource(procurement.source)}{" "}
                     {procurement.sourceUrl ? <a href={procurement.sourceUrl} target="_blank" rel="noreferrer" className="ml-1 text-xs font-normal underline">Открыть на площадке</a> : null}
                   </dd>
                 </div>
@@ -1038,7 +1128,7 @@ export default function ZakupkaDetailPage() {
             <div className="space-y-4">
               <div className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
                 <h2 className="font-[family-name:var(--font-display)] text-base">
-                  Рассмотрение
+                  Статус
                 </h2>
                 <Select
                   value={procurement.reviewStatus}
@@ -1290,15 +1380,12 @@ export default function ZakupkaDetailPage() {
                   data-testid="analytics-brief"
                   aria-label="Главное и краткие выводы"
                 >
-                  <p className="text-sm font-semibold">
-                    Рекомендация: {PARTICIPATE_LABELS[analytics.recommendation]}
+                  <p className="text-xs text-[var(--tk-muted)]">
+                    Оценка по документам: {PARTICIPATE_LABELS[analytics.recommendation]}
                   </p>
                   <div className="mt-2 space-y-1 text-sm leading-relaxed text-[var(--tk-foreground)]">
                     {analytics.summary.split("\n").filter((line) => line.trim()).map((line, index) => (
                       <p key={`${index}-${line}`} className={index === 0 ? "font-medium" : "text-[var(--tk-muted)]"}>{line}</p>
-                    ))}
-                    {(procurement.customerAnswers ?? []).map((item) => (
-                      <p key={item.question}>Ответ на вопрос «{item.question}»: {item.answer}</p>
                     ))}
                   </div>
                 </section>
@@ -1357,33 +1444,13 @@ export default function ZakupkaDetailPage() {
                     </div>
                   </section>
                 ) : null}
-                {analytics.customerQuestions?.length ? (
-                  <section className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white p-4" data-testid="analytics-customer-questions">
-                    <h3 className="text-sm font-semibold">Вопросы заказчику</h3>
-                    <ul className="mt-2 space-y-3 text-sm">
-                      {analytics.customerQuestions.map((question, index) => {
-                        const saved = procurement.customerAnswers?.find((item) => item.question === question);
-                        return <li key={`${index}-${question}`} className="rounded-lg border border-[var(--tk-line)] p-3">
-                          <p>{question}</p>
-                          {saved ? <p className="mt-1 text-[var(--tk-muted)]">Ответ: {saved.answer}</p> : null}
-                          <form className="mt-2 flex flex-wrap gap-2" onSubmit={(event) => {
-                            event.preventDefault();
-                            const answer = new FormData(event.currentTarget).get("answer");
-                            if (typeof answer !== "string" || !answer.trim()) return;
-                            void api("/api/zakupki", { method: "POST", body: JSON.stringify({ action: "answerCustomerQuestion", id: procurement.id, question, answer }) })
-                              .then(() => refresh())
-                              .then(() => toast.success("Ответ сохранён в карточке"))
-                              .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось сохранить ответ"));
-                          }}>
-                            <Input name="answer" aria-label={`Ответ · ${question}`} defaultValue={saved?.answer ?? ""} placeholder="Ответ сохранится в карточке" className="h-9 max-w-md" />
-                            <Button type="submit" size="sm" variant="outline">Ответить</Button>
-                          </form>
-                        </li>;
-                      })}
-                    </ul>
-                    {procurement.customerAnswers?.length ? <p className="mt-3 text-xs text-[var(--tk-muted)]">Ответы добавлены в записку и чат этой закупки. Письмо заказчику не отправляется.</p> : null}
-                  </section>
-                ) : null}
+                <div className="mb-4">
+                  <CustomerQuestions
+                    procurementId={procurement.id}
+                    questions={analytics.customerQuestions ?? []}
+                    answers={procurement.customerAnswers ?? []}
+                  />
+                </div>
                 {analytics.economics ? (
                   <section className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white p-4" data-testid="analytics-economics">
                     <h3 className="text-sm font-semibold">Себестоимость и рентабельность</h3>
@@ -1781,7 +1848,7 @@ export default function ZakupkaDetailPage() {
                       paySavingRef.current = true;
                       setPaySaving(true);
                       try {
-                        await api("/api/zakupki", {
+                        const created = await api<{ paymentId?: string; created?: boolean }>("/api/zakupki", {
                           method: "POST",
                           body: JSON.stringify({
                             action: "addMoneyPayment",
@@ -1799,7 +1866,22 @@ export default function ZakupkaDetailPage() {
                         await refresh();
                         setPayTitle("");
                         setPayAmount("");
-                        toast.success("Платёж сохранён");
+                        if (created.created === false) {
+                          toast.message("Такой платёж уже есть");
+                          return;
+                        }
+                        toast.success("Платёж добавлен", {
+                          duration: 10_000,
+                          action: created.paymentId ? {
+                            label: "Отменить",
+                            onClick: () => {
+                              void api("/api/zakupki", {
+                                method: "POST",
+                                body: JSON.stringify({ action: "deleteMoneyPayment", moneyId: money.id, paymentId: created.paymentId }),
+                              }).then(() => refresh()).catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось отменить"));
+                            },
+                          } : undefined,
+                        });
                       } catch (e) {
                         toast.error(
                           e instanceof Error ? e.message : "Ошибка сохранения"
@@ -1893,7 +1975,8 @@ export default function ZakupkaDetailPage() {
                         variant="outline"
                         onClick={async () => {
                           try {
-                            await api("/api/supply", {
+                            const beforeIds = new Set(supplies.map((item) => item.id));
+                            const boot = await api<{ data: { supplyRequests?: Array<{ id: string }> } }>("/api/supply", {
                               method: "POST",
                               body: JSON.stringify({
                                 procurementId: procurement.id,
@@ -1906,7 +1989,18 @@ export default function ZakupkaDetailPage() {
                               }),
                             });
                             await refresh();
-                            toast.success("Потребность создана из ГПР");
+                            const createdId = boot.data.supplyRequests?.find((item) => !beforeIds.has(item.id))?.id;
+                            toast.success(createdId ? "Потребность создана из ГПР" : "Такая потребность уже есть", {
+                              duration: 10_000,
+                              action: createdId ? {
+                                label: "Отменить",
+                                onClick: () => {
+                                  void api("/api/supply", { method: "POST", body: JSON.stringify({ action: "deleteSupply", id: createdId }) })
+                                    .then(() => refresh())
+                                    .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось отменить"));
+                                },
+                              } : undefined,
+                            });
                           } catch (e) {
                             toast.error(
                               e instanceof Error ? e.message : "Ошибка"
@@ -1998,7 +2092,8 @@ export default function ZakupkaDetailPage() {
                     return;
                   }
                   try {
-                    await api("/api/supply", {
+                    const beforeIds = new Set(supplies.map((item) => item.id));
+                    const boot = await api<{ data: { supplyRequests?: Array<{ id: string }> } }>("/api/supply", {
                       method: "POST",
                       body: JSON.stringify({
                         procurementId: procurement.id,
@@ -2014,7 +2109,18 @@ export default function ZakupkaDetailPage() {
                       }),
                     });
                     await refresh();
-                    toast.success("Потребность сохранена");
+                    const createdId = boot.data.supplyRequests?.find((item) => !beforeIds.has(item.id))?.id;
+                    toast.success(createdId ? "Потребность сохранена" : "Такая потребность уже есть", {
+                      duration: 10_000,
+                      action: createdId ? {
+                        label: "Отменить",
+                        onClick: () => {
+                          void api("/api/supply", { method: "POST", body: JSON.stringify({ action: "deleteSupply", id: createdId }) })
+                            .then(() => refresh())
+                            .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось отменить"));
+                        },
+                      } : undefined,
+                    });
                     setMatName("");
                     setMatWork("");
                     setMatQuote("");
@@ -2038,8 +2144,16 @@ export default function ZakupkaDetailPage() {
                     className="rounded-lg border px-3 py-2"
                     data-testid={`supply-${s.id}`}
                   >
-                    <div className="font-medium">
-                      {s.materialName} · {formatQuantity(s.qtyNeed, s.unit)} · {needByPhrase(s.needBy)}
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div className="font-medium">
+                        {s.materialName} · {formatQuantity(s.qtyNeed, s.unit)} · {needByPhrase(s.needBy)}
+                      </div>
+                      <Button size="sm" variant="ghost" onClick={() => {
+                        void api("/api/supply", { method: "POST", body: JSON.stringify({ action: "deleteSupply", id: s.id }) })
+                          .then(() => refresh())
+                          .then(() => toast.success("Потребность удалена"))
+                          .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось удалить потребность"));
+                      }}>Удалить</Button>
                     </div>
                     <div className="text-xs text-[var(--tk-muted)]">
                       {SUPPLY_RU[s.status]} · заказано {formatNumber(s.qtyOrdered)} ·
@@ -2149,22 +2263,13 @@ export default function ZakupkaDetailPage() {
                           }}
                         />
                       </label>
-                      <label className="text-xs">
-                        Поставлено
-                        <Input
-                          className="mt-1 w-28"
-                          type="number"
-                          min="0"
-                          step="any"
-                          defaultValue={String(roundQuantity(s.qtyDelivered, 4))}
-                          onBlur={(e) => {
-                            const value = Number(e.target.value.replace(",", "."));
-                            if (Number.isFinite(value) && !sameRoundedQuantity(s.qtyDelivered, e.target.value, 4)) {
-                              void updateSupply(s, { qtyDelivered: value });
-                            }
-                          }}
-                        />
-                      </label>
+                      <QuantityCommitField
+                        label="Поставлено"
+                        value={s.qtyDelivered}
+                        ariaLabel={`Поставлено ${s.materialName}`}
+                        testId={`supply-delivered-${s.id}`}
+                        onCommit={(value) => updateSupply(s, { qtyDelivered: value })}
+                      />
                       <label className="text-xs">
                         Цена за единицу, ₽
                         <Input

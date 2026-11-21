@@ -1,5 +1,6 @@
 import {
   deleteSupplier,
+  deleteSupplyRequest,
   generateProcurementMaterialManifest,
   getBootstrap,
   markSupplyRequestSent,
@@ -42,7 +43,7 @@ export async function POST(req: Request) {
     }
     const body = (await req.json()) as {
       id?: string;
-      action?: "recordQuote" | "selectQuote" | "upsertSupplier" | "deleteSupplier" | "generateManifest" | "sendRfq" | "discoverSuppliers";
+      action?: "recordQuote" | "selectQuote" | "upsertSupplier" | "deleteSupplier" | "deleteSupply" | "generateManifest" | "sendRfq" | "discoverSuppliers";
       quoteId?: string;
       supplierId?: string;
       confirmed?: boolean;
@@ -83,6 +84,11 @@ export async function POST(req: Request) {
     if (body.action === "deleteSupplier") {
       if (!body.supplierId) return json({ error: "Не указан поставщик" }, 400);
       deleteSupplier(user.id, body.supplierId);
+      return json(getBootstrap(user));
+    }
+    if (body.action === "deleteSupply") {
+      if (!body.id) return json({ error: "Не указана потребность" }, 400);
+      deleteSupplyRequest(user.id, body.id);
       return json(getBootstrap(user));
     }
     if (body.action === "generateManifest") {

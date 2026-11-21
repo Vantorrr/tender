@@ -17,6 +17,7 @@ const GANTT_FILTER_EVENT = "tma361:gantt-filter-change";
 const ganttFilterFallback = new Map<string, string>();
 const DAY_MS = 86_400_000;
 const LABEL_WIDTH = 360;
+export const GPR_LINKED_ROW_PX = 76;
 
 type Scale = "day" | "week" | "month";
 type DragMode = "move" | "resize";
@@ -126,6 +127,10 @@ type Props = {
   planFactId?: string;
   filterScope?: string;
   weekendDays?: number[];
+  /** Chart only: the work names stay in the table beside this diagram. */
+  timelineOnly?: boolean;
+  scrollElementRef?: (node: HTMLDivElement | null) => void;
+  onVisibleStages?: (stages: GprStage[]) => void;
   onShift: (
     stageId: string,
     deltaDays: number,
@@ -140,6 +145,9 @@ export function PlanFactGantt({
   planFactId,
   filterScope,
   weekendDays = [0, 6],
+  timelineOnly = false,
+  scrollElementRef,
+  onVisibleStages,
   onShift,
 }: Props) {
   const [scale, setScale] = useState<Scale>("week");
@@ -174,6 +182,11 @@ export function PlanFactGantt({
     if (resourceFilter === "all") return sorted;
     return sorted.filter((stage) => (stage.resources ?? []).some((resource) => resource.kind === resourceFilter));
   }, [sorted, resourceFilter]);
+  const labelWidth = timelineOnly ? 0 : LABEL_WIDTH;
+
+  useEffect(() => {
+    onVisibleStages?.(visible);
+  }, [visible, onVisibleStages]);
 
   const minStart = sorted.reduce((min, stage) => (stage.start < min ? stage.start : min), sorted[0]?.start ?? "");
   const maxEnd = sorted.reduce((max, stage) => (stage.end > max ? stage.end : max), sorted[0]?.end ?? "");
@@ -188,7 +201,7 @@ export function PlanFactGantt({
     if (!autoFit || !scrollRef.current || totalDays <= 0) return;
     const viewport = scrollRef.current;
     const fit = () => {
-      const available = Math.max(320, viewport.clientWidth - LABEL_WIDTH - 20);
+      const available = Math.max(320, viewport.clientWidth - labelWidth - 20);
       const nextScale: Scale = totalDays > 120 ? "month" : totalDays <= 45 ? "day" : "week";
       const minWidth = nextScale === "month" ? 1.25 : 10;
       const maxWidth = nextScale === "day" ? 34 : nextScale === "week" ? 18 : 7;
@@ -199,7 +212,7 @@ export function PlanFactGantt({
     const observer = new ResizeObserver(fit);
     observer.observe(viewport);
     return () => observer.disconnect();
-  }, [autoFit, totalDays]);
+  }, [autoFit, labelWidth, totalDays]);
 
   useEffect(() => {
     const viewport = scrollRef.current;
@@ -339,12 +352,32 @@ export function PlanFactGantt({
   const dragPreviewEnd = addDays(dragPreviewStart, dragPreviewDuration - 1);
 
   return (
-    <div className="space-y-3" data-testid="plan-fact-gantt">
-      <h3 className="font-[family-name:var(--font-display)] text-base" data-testid="gantt-title">
-        График — план и факт
+    <div className={`min-w-0 ${timelineOnly ? "" : "space-y-3"}`} data-testid="plan-fact-gantt" data-timeline-only={timelineOnly ? "1" : "0"}>
+      <h3 className={timelineOnly ? "mb-2 flex h-8 items-center justify-between gap-2 text-sm font-semibold" : "font-[family-name:var(--font-display)] text-base"} data-testid="gantt-title">
+        <span>{timelineOnly ? "Лента сроков" : "График — план и факт"}</span>
+        {timelineOnly ? (
+          <span className="inline-flex rounded-lg border border-[var(--tk-line)] bg-white p-0.5 font-normal" role="group" aria-label="Масштаб календаря">
+            {(["day", "week", "month"] as const).map((item) => (
+              <button
+                key={item}
+                type="button"
+                aria-pressed={scale === item}
+                data-testid={`gantt-scale-${item}`}
+                onClick={() => {
+                  setAutoFit(false);
+                  setFitDayWidth(null);
+                  setScale(item);
+                }}
+                className={`rounded-md px-2 py-0.5 text-xs ${scale === item ? "bg-[var(--tk-brand)] text-white" : "text-[var(--tk-muted)]"}`}
+              >
+                {item === "day" ? "Дни" : item === "week" ? "Недели" : "Месяцы"}
+              </button>
+            ))}
+          </span>
+        ) : null}
       </h3>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2 text-xs text-[var(--tk-muted)]">
+      <div className={timelineOnly ? "hidden" : "flex flex-wrap items-center justify-between gap-3"}>
+        <div className={`flex flex-wrap items-center gap-2 text-xs text-[var(--tk-muted)] ${timelineOnly ? "hidden" : ""}`}>
           <span className="rounded-md border border-[var(--tk-line)] bg-white px-2.5 py-1.5">
             <strong className="text-[var(--tk-ink)]">{sorted.length}</strong> этапов
           </span>
@@ -380,7 +413,7 @@ export function PlanFactGantt({
               ))}
             </select>
           </label>
-          <div className="inline-flex rounded-lg border border-[var(--tk-line)] bg-white p-0.5" role="group" aria-label="Масштаб календаря">
+          {!timelineOnly ? <div className="inline-flex rounded-lg border border-[var(--tk-line)] bg-white p-0.5" role="group" aria-label="Масштаб календаря">
             {(["day", "week", "month"] as const).map((item) => (
               <button
                 key={item}
@@ -397,7 +430,7 @@ export function PlanFactGantt({
                 {item === "day" ? "Дни" : item === "week" ? "Недели" : "Месяцы"}
               </button>
             ))}
-          </div>
+          </div> : null}
           <Button size="sm" variant="outline" className="h-8" onClick={scrollToToday} disabled={!minStart || todayOffset < 0}>
             Сегодня
           </Button>
@@ -417,7 +450,7 @@ export function PlanFactGantt({
         </div>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--tk-line)] bg-stone-50 px-3 py-2 text-xs text-[var(--tk-muted)]">
+      <div className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--tk-line)] bg-stone-50 px-3 py-2 text-xs text-[var(--tk-muted)] ${timelineOnly ? "hidden" : ""}`}>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           <span className="inline-flex items-center gap-1.5"><i className="h-3 w-5 rounded-full bg-stone-300" /> План</span>
           <span className="inline-flex items-center gap-1.5"><i className="h-3 w-5 rounded-full bg-[var(--tk-brand)]" /> Факт по объёму</span>
@@ -428,8 +461,11 @@ export function PlanFactGantt({
       </div>
 
       <div
-        ref={scrollRef}
-        className="overflow-auto rounded-xl border border-[var(--tk-line)] bg-white shadow-sm"
+        ref={(node) => {
+          scrollRef.current = node;
+          scrollElementRef?.(node);
+        }}
+        className={`overflow-auto bg-white shadow-sm ${timelineOnly ? "max-h-[70vh] rounded-none border-0" : "rounded-xl border border-[var(--tk-line)]"}`}
         onScroll={(event) => setVisibleDateRange(
           visibleRangeForViewport(event.currentTarget, minStart, totalDays, dayWidth)
         )}
@@ -439,20 +475,20 @@ export function PlanFactGantt({
           <div className="p-8 text-center text-sm text-[var(--tk-muted)]">Добавьте этапы, чтобы построить календарный график.</div>
         ) : (
           <div
-            style={{ minWidth: LABEL_WIDTH + timelineWidth }}
+            style={{ minWidth: labelWidth + timelineWidth }}
             data-testid="gantt-rows"
             data-row-count={visible.length}
             data-resource-filter={resourceFilter}
           >
-            <div className="sticky top-0 z-20 grid border-b border-[var(--tk-line)] bg-stone-50" style={{ gridTemplateColumns: `${LABEL_WIDTH}px ${timelineWidth}px` }}>
-              <div className="sticky left-0 z-30 border-r border-[var(--tk-line)] bg-stone-50 px-3 py-3 text-[11px] font-semibold text-[var(--tk-muted)]">
+            <div className="sticky top-0 z-20 grid border-b border-[var(--tk-line)] bg-stone-50" style={{ gridTemplateColumns: timelineOnly ? `${timelineWidth}px` : `${LABEL_WIDTH}px ${timelineWidth}px`, height: timelineOnly ? GPR_LINKED_ROW_PX : undefined }}>
+              {timelineOnly ? null : <div className="sticky left-0 z-30 border-r border-[var(--tk-line)] bg-stone-50 px-3 py-3 text-[11px] font-semibold text-[var(--tk-muted)]">
                 <div className="grid grid-cols-[1.4fr_0.55fr_0.55fr_0.7fr] gap-1">
                   <span>Работа</span>
                   <span className="text-right">Люди</span>
                   <span className="text-right">Техника</span>
                   <span className="text-right">Стоимость</span>
                 </div>
-              </div>
+              </div>}
               <div className="relative h-11 overflow-hidden">
                 {ticks.map((tick, index) => {
                   const next = ticks[index + 1]?.offset ?? totalDays;
@@ -492,13 +528,13 @@ export function PlanFactGantt({
                 <div
                   key={stage.id}
                   className={`grid border-b border-[var(--tk-line)] last:border-b-0 ${index % 2 ? "bg-stone-50/30" : "bg-white"}`}
-                  style={{ gridTemplateColumns: `${LABEL_WIDTH}px ${timelineWidth}px` }}
+                  style={{ gridTemplateColumns: timelineOnly ? `${timelineWidth}px` : `${LABEL_WIDTH}px ${timelineWidth}px`, height: timelineOnly ? GPR_LINKED_ROW_PX : undefined }}
                   onPointerMove={moveDrag}
                   onPointerUp={(event) => finishDrag(event)}
                   onPointerCancel={(event) => finishDrag(event, true)}
                   data-testid={`gantt-row-${stage.id}`}
                 >
-                  <div className="sticky left-0 z-10 border-r border-[var(--tk-line)] bg-inherit px-3 py-3">
+                  {timelineOnly ? null : <div className="sticky left-0 z-10 border-r border-[var(--tk-line)] bg-inherit px-3 py-3">
                     <div className="grid grid-cols-[1.4fr_0.55fr_0.55fr_0.7fr] gap-1 text-xs">
                       <div className="min-w-0">
                         <div className="break-words text-sm font-semibold leading-snug text-[var(--tk-ink)]" title={gprStageLabel(stage).title}>
@@ -605,11 +641,11 @@ export function PlanFactGantt({
                       >
                         +1 дн.
                       </Button>
-                      <span className="text-[11px] font-medium text-[var(--tk-brand)]">
-                        {factPct == null
-                          ? "Факт не привязан"
-                          : `Факт ${Math.round(factPct * 100)}%${stageFact != null ? ` · ${stageFact.toLocaleString("ru-RU")}` : ""}`}
-                      </span>
+                      {factPct == null ? null : (
+                        <span className="text-[11px] font-medium text-[var(--tk-brand)]">
+                          {`Факт ${Math.round(factPct * 100)}%${stageFact != null ? ` · ${stageFact.toLocaleString("ru-RU")}` : ""}`}
+                        </span>
+                      )}
                     </div>
                     {planFactId && entry ? (
                       <Link
@@ -620,12 +656,13 @@ export function PlanFactGantt({
                         Детали дня и фото →
                       </Link>
                     ) : null}
-                  </div>
+                  </div>}
 
                   <div
-                    className="relative min-h-[108px] touch-pan-x"
+                    className={`relative touch-pan-x ${timelineOnly ? "" : "min-h-[108px]"}`}
                     style={{
                       width: timelineWidth,
+                      height: timelineOnly ? GPR_LINKED_ROW_PX : undefined,
                       backgroundImage: dayWidth < 8 ? "none" : `repeating-linear-gradient(to right, transparent 0, transparent ${dayWidth - 1}px, color-mix(in srgb, var(--tk-line) 65%, transparent) ${dayWidth - 1}px, color-mix(in srgb, var(--tk-line) 65%, transparent) ${dayWidth}px)`,
                     }}
                   >
@@ -681,7 +718,7 @@ export function PlanFactGantt({
                       />
                     </div>
                     <div
-                      aria-label={factPct == null ? `Факт не привязан к этапу ${stage.name}` : `Факт ${stage.name}: ${Math.round(factPct * 100)}%`}
+                      aria-label={factPct == null ? `Срок: ${stage.name}` : `Факт ${stage.name}: ${Math.round(factPct * 100)}%`}
                       data-testid={`gantt-bar-${stage.id}`}
                       role="img"
                       className="absolute top-[62px] z-[6] h-3 rounded-full bg-[var(--tk-brand)] shadow-sm transition-[width]"

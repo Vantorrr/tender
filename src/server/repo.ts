@@ -28,6 +28,7 @@ import type {
 import { matchCompanyDirectoryRate, rateFromRow } from "@/lib/client-dirs";
 import { modelConfigured } from "@/server/openrouter";
 import { canonicalUploadPath, deleteUpload, readUpload, resolveUploadPath } from "@/server/uploads";
+import { recentPaymentId } from "@/lib/duplicate-click";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
 import { buildStagesFromEstimatePositions, calendarDurationDays, datesForStage, GPR_DATES_MISSING, periodFromDocumentText } from "@/lib/estimate-stages";
 import { COMPANY_RATE_RULE, composeAnalyticalNote, dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, scheduleAfterPredecessor, scheduleParamsWithNorthernDefaults } from "@/lib/wave23";
@@ -410,9 +411,23 @@ export function saveCustomerAnswer(actorId: string, procurementId: string, quest
     if (!asked || !text) throw new Error("Нужны вопрос и ответ");
     item.customerAnswers = [
       ...(item.customerAnswers ?? []).filter((row) => row.question !== asked),
-      { question: asked, answer: text, at: new Date().toISOString() },
+      { question: asked, answer: text, at: new Date().toISOString(), authorId: actor.id, authorName: actor.name },
     ];
     audit(data, actorId, "update", "procurement", procurementId, "Ответ на вопрос заказчику");
+    return data;
+  });
+}
+
+export function deleteCustomerAnswer(actorId: string, procurementId: string, question: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.procurements.find((row) => row.id === procurementId);
+    if (!item) throw new Error("Закупка не найдена");
+    assertOrgAccess(actor, item.orgId, "закупки");
+    const asked = question.trim();
+    if (!asked) throw new Error("Нужен вопрос");
+    item.customerAnswers = (item.customerAnswers ?? []).filter((row) => row.question !== asked);
+    audit(data, actorId, "update", "procurement", procurementId, "Ответ удалён");
     return data;
   });
 }
@@ -991,7 +1006,7 @@ export function reanalyzeDocument(
         title: d.title.startsWith("Разбор поставлен") ? prepared.title : d.title,
         status: prepared.status,
         versions: [...d.versions, version],
-        analyticalNote: prepared.analyticalNote,
+        analyticalNote: prepared.analyticalNote.trim() ? prepared.analyticalNote : d.analyticalNote,
         citations: stampCitationSourceVersion(prepared.citations, versionLabel),
         highlights: prepared.highlights,
         analysis: prepared.analysis,
@@ -3792,6 +3807,16 @@ export function upsertSupplyRequest(
       audit(data, actorId, "update", "supply", row.id, row.materialName);
       return data;
     }
+    const duplicate = data.supplyRequests.find((item) => {
+      const stamp = Date.parse(item.createdAt);
+      return item.procurementId === p.id
+        && item.materialName.trim() === input.materialName.trim()
+        && item.unit === input.unit
+        && item.qtyNeed === input.qtyNeed
+        && Number.isFinite(stamp)
+        && Date.now() - stamp < 3000;
+    });
+    if (duplicate) return data;
     const id = `sup-${Date.now()}`;
     const row: SupplyRequest = {
       id,
@@ -3820,6 +3845,22 @@ export function upsertSupplyRequest(
     data.supplyRequests.unshift(row);
     p.supplyRequestIds = [...(p.supplyRequestIds ?? []), id];
     audit(data, actorId, "create", "supply", id, row.materialName);
+    return data;
+  });
+}
+
+export function deleteSupplyRequest(actorId: string, supplyId: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const row = (data.supplyRequests ?? []).find((item) => item.id === supplyId);
+    if (!row) throw new Error("Потребность не найдена");
+    assertOrgAccess(actor, row.orgId, "поставок");
+    data.supplyRequests = (data.supplyRequests ?? []).filter((item) => item.id !== supplyId);
+    const procurement = data.procurements.find((item) => item.id === row.procurementId);
+    if (procurement) {
+      procurement.supplyRequestIds = (procurement.supplyRequestIds ?? []).filter((id) => id !== supplyId);
+    }
+    audit(data, actorId, "delete", "supply", supplyId, row.materialName);
     return data;
   });
 }
@@ -4042,22 +4083,48 @@ export function addMoneyPayment(
   actorId: string,
   moneyId: string,
   payment: Omit<MoneyPayment, "id">
-) {
-  return mutateAppData((data) => {
+): { paymentId: string; created: boolean } {
+  let result = { paymentId: "", created: false };
+  mutateAppData((data) => {
     const actor = actorUser(data, actorId);
     const plan = data.moneyPlans.find((m) => m.id === moneyId);
     if (!plan) throw new Error("Денежный план не найден");
     assertOrgAccess(actor, plan.orgId, "денежного плана");
     const amountError = paymentAmountError(payment.amount);
     if (amountError) throw new Error(amountError);
+    const storedType = paymentTypeForSave(payment);
+    const title = payment.title?.trim() || "Платёж";
+    const existingId = recentPaymentId(plan.payments, { ...payment, type: storedType, title });
+    if (existingId) {
+      result = { paymentId: existingId, created: false };
+      return data;
+    }
     const row: MoneyPayment = {
       ...payment,
-      type: paymentTypeForSave(payment),
+      title,
+      type: storedType,
       id: `pay-${Date.now()}`,
     };
     plan.payments = [...plan.payments, row];
     plan.updatedAt = new Date().toISOString();
     audit(data, actorId, "create", "money_payment", row.id, row.title);
+    result = { paymentId: row.id, created: true };
+    return data;
+  });
+  return result;
+}
+
+export function deleteMoneyPayment(actorId: string, moneyId: string, paymentId: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const plan = data.moneyPlans.find((item) => item.id === moneyId);
+    if (!plan) throw new Error("Денежный план не найден");
+    assertOrgAccess(actor, plan.orgId, "денежного плана");
+    const payment = plan.payments.find((item) => item.id === paymentId);
+    if (!payment) throw new Error("Платёж не найден");
+    plan.payments = plan.payments.filter((item) => item.id !== paymentId);
+    plan.updatedAt = new Date().toISOString();
+    audit(data, actorId, "delete", "money_payment", paymentId, payment.title);
     return data;
   });
 }

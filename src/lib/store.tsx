@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -169,6 +170,8 @@ function applyBootstrap(
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [data, setData] = useState<AppData>(createSeedData);
+  const dataRef = useRef(data);
+  dataRef.current = data;
   const [user, setUser] = useState<PublicUser | null>(null);
 
   const refresh = useCallback(async () => {
@@ -709,6 +712,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const refreshAnalytics = useCallback(
     async (procurementId: string) => {
+      const before = dataRef.current.procurements.find((item) => item.id === procurementId)?.analytics?.summary ?? "";
       const boot = await api<BootstrapResponse & { analyticsNotice?: string }>("/api/zakupki", {
         method: "POST",
         body: JSON.stringify({
@@ -717,6 +721,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }),
       });
       applyBoot(boot);
+      const after = boot.data.procurements.find((item) => item.id === procurementId)?.analytics?.summary ?? "";
+      if (after.trim() === before.trim()) return "Новых данных нет — записка уже актуальна";
       return boot.analyticsNotice;
     },
     [applyBoot]

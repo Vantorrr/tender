@@ -11,6 +11,7 @@ import { ProjectAiChat } from "@/components/project-ai-chat";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { QuantityCommitField } from "@/components/quantity-commit-field";
 import {
   Select,
   SelectContent,
@@ -67,38 +68,53 @@ function QuietNumberInput({
   const [focused, setFocused] = useState(false);
   const latest = useRef(text);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [error, setError] = useState<string | null>(null);
   function commit(raw: string) {
     if (timer.current) clearTimeout(timer.current);
     const trimmed = raw.trim();
     if (!trimmed) {
+      setError(null);
       onCommit(emptyAsNull ? null : 0);
       return;
     }
     const parsed = parseDecimalRu(trimmed);
-    if (parsed == null) return;
+    if (parsed == null || parsed < 0) {
+      setError("Введите число, например 1 500 или 12,5");
+      return;
+    }
+    setError(null);
     onCommit(parsed);
   }
   return (
-    <Input
-      id={id}
-      data-testid={testId}
-      value={focused ? text : value == null ? "" : String(value)}
-      onFocus={() => {
-        setFocused(true);
-        setText(value == null ? "" : String(value));
-      }}
-      onChange={(event) => {
-        const next = event.target.value;
-        latest.current = next;
-        setText(next);
-        if (timer.current) clearTimeout(timer.current);
-        timer.current = setTimeout(() => commit(next), 400);
-      }}
-      onBlur={() => {
-        setFocused(false);
-        commit(latest.current);
-      }}
-    />
+    <div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          id={id}
+          data-testid={testId}
+          value={focused ? text : value == null ? "" : String(value)}
+          onFocus={() => {
+            setFocused(true);
+            setText(value == null ? "" : String(value));
+          }}
+          onChange={(event) => {
+            const next = event.target.value;
+            latest.current = next;
+            setText(next);
+            setError(null);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              setFocused(false);
+              commit(latest.current);
+            }
+          }}
+          onBlur={() => setFocused(false)}
+        />
+        <Button type="button" size="sm" variant="outline" onClick={() => { setFocused(false); commit(latest.current); }}>Сохранить</Button>
+      </div>
+      {error ? <p className="mt-1 text-xs text-rose-700" role="alert">{error}</p> : null}
+    </div>
   );
 }
 
@@ -383,7 +399,9 @@ export default function ProizvodstvoPage() {
       await refresh();
       toast.success("Факт поставки обновлён");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Не удалось обновить поставку");
+      const message = error instanceof Error ? error.message : "Не удалось обновить поставку";
+      toast.error(message);
+      throw error instanceof Error ? error : new Error(message);
     } finally {
       setSupplySavingId(null);
     }
@@ -393,6 +411,7 @@ export default function ProizvodstvoPage() {
     if (!procurement) return;
     setSupplySavingId(need.key);
     try {
+      const beforeIds = new Set((data.supplyRequests ?? []).map((item) => item.id));
       const boot = await api<{ data: { supplyRequests?: Array<{ id: string; materialName: string }> } }>("/api/supply", {
         method: "POST",
         body: JSON.stringify({
@@ -418,9 +437,20 @@ export default function ProizvodstvoPage() {
       }
       await refresh();
       const matched = matchDirectorySuppliers(need.materialName, data.suppliers ?? []);
+      const createdId = (boot.data.supplyRequests ?? []).find((item) => !beforeIds.has(item.id))?.id;
       toast.success(matched.length
         ? `Потребность создана: ${need.materialName}. В справочнике ${matched.length} поставщиков.`
-        : `Потребность создана: ${need.materialName}. В справочнике подходящих поставщиков нет.`);
+        : `Потребность создана: ${need.materialName}. В справочнике подходящих поставщиков нет.`, {
+        duration: 10_000,
+        action: createdId ? {
+          label: "Отменить",
+          onClick: () => {
+            void api("/api/supply", { method: "POST", body: JSON.stringify({ action: "deleteSupply", id: createdId }) })
+              .then(() => refresh())
+              .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось отменить"));
+          },
+        } : undefined,
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось создать потребность");
     } finally {
@@ -980,25 +1010,15 @@ export default function ProizvodstvoPage() {
                             </select>
                             {overdue ? <p className="mt-1 text-xs font-medium text-rose-700">Поставка просрочена · требовалась {due}</p> : null}
                           </div>
-                          <label className="text-xs text-[var(--tk-muted)]">
-                            Получено ({supply.unit})
-                            <Input
-                              key={`qty-delivered-${supply.id}:${supply.qtyDelivered}`}
-                              className="mt-1 h-9"
-                              type="number"
-                              min="0"
-                              step="any"
-                              defaultValue={String(roundQuantity(supply.qtyDelivered, 4))}
-                              disabled={supplySavingId === supply.id}
-                              aria-label={`Получено ${supply.materialName}`}
-                              onBlur={(event) => {
-                                const amount = Number(event.currentTarget.value.replace(",", "."));
-                                if (Number.isFinite(amount) && amount >= 0 && !sameRoundedQuantity(supply.qtyDelivered, event.currentTarget.value, 4)) {
-                                  void updateSupplyReceipt(supply.id, { qtyDelivered: amount });
-                                }
-                              }}
-                            />
-                          </label>
+                          <QuantityCommitField
+                            label={`Получено (${supply.unit})`}
+                            value={supply.qtyDelivered}
+                            ariaLabel={`Получено ${supply.materialName}`}
+                            testId={`production-received-${supply.id}`}
+                            onCommit={async (amount) => {
+                              await updateSupplyReceipt(supply.id, { qtyDelivered: amount });
+                            }}
+                          />
                           <div className={`text-sm ${remaining > 0 ? "text-amber-800" : "text-emerald-800"}`}>
                             Осталось: {formatNumber(remaining)} {supply.unit}
                           </div>
@@ -1065,10 +1085,18 @@ export default function ProizvodstvoPage() {
                       return;
                     }
                     const volume = Number(newWorkPlan);
-                    updatePlanFact(plan.id, { entries: [...plan.entries, { id: `pfe-manual-${crypto.randomUUID()}`, workName: name, unit: split.unit, plan: volume, fact: 0, contractRemaining: volume }] });
+                    const entryId = `pfe-manual-${crypto.randomUUID()}`;
+                    const nextEntries = [...plan.entries, { id: entryId, workName: name, unit: split.unit, plan: volume, fact: 0, contractRemaining: volume }];
+                    updatePlanFact(plan.id, { entries: nextEntries });
                     setWorkName(name);
                     setNewWorkName(""); setNewWorkUnit(""); setNewWorkPlan("");
-                    toast.success("Вид работ добавлен в план договора");
+                    toast.success("Вид работ добавлен в план договора", {
+                      duration: 10_000,
+                      action: {
+                        label: "Отменить",
+                        onClick: () => updatePlanFact(plan.id, { entries: nextEntries.filter((entry) => entry.id !== entryId) }),
+                      },
+                    });
                   }}>Добавить работу</Button>
                 </div>
                 <section className="mb-4 rounded-lg border border-primary/20 bg-primary/[0.04] p-3" aria-label="План ГПР на выбранный день" data-testid="daily-gpr-plan">
