@@ -28,7 +28,7 @@ import {
 import { api, downloadUrl } from "@/lib/api";
 import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-panel";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
-import { NORTH_DEFAULTS, northernAdditionLines, northernEconomicsApplied, northernStatusText } from "@/lib/wave23";
+import { NORTH_DEFAULTS, northernAdditionLines, northernEconomicsApplied, northernStatusText, refreshRateAssumption } from "@/lib/wave23";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engine";
 import { parseDecimalRu } from "@/lib/decimal-ru";
@@ -1846,7 +1846,7 @@ export default function RaschetDetailPage() {
               <tr>
                 <td className="py-1 pr-3">{calc.positions.length} строк</td>
                 <td className="py-1 pr-3">{missingRateCount > 0 ? `Итог неполный: нет ставок по ${missingRateCount} позициям` : calc.costSummary?.priceExVat != null ? formatMoney(calc.costSummary.priceExVat) : "нет данных"}</td>
-                <td className="py-1">{calc.assumptions.find((item) => item.startsWith("Источники:"))?.replace(/^Источники:\s*/u, "") ?? "смета заказчика и справочники компании"}</td>
+                <td className="py-1">{refreshRateAssumption(calc.assumptions.find((item) => item.startsWith("Источники:"))?.replace(/^Источники:\s*/u, "") ?? "Ставки людей берутся по должности, техники — по модели, материалов — по наименованию и единице. Если совпадения нет, у строки остаётся «нет ставки».")}</td>
               </tr>
             </tbody>
           </table>
@@ -1860,7 +1860,7 @@ export default function RaschetDetailPage() {
                 const scope = assumptionScope(assumption);
                 return (
                   <div key={`${index}:${assumption}`} className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-[var(--tk-line)] bg-white px-3 py-2.5">
-                    <p className="min-w-0 flex-1 text-sm text-[var(--tk-ink-soft)]">{assumption}</p>
+                    <p className="min-w-0 flex-1 text-sm text-[var(--tk-ink-soft)]">{refreshRateAssumption(assumption)}</p>
                     <span className={`shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium ${scope.className}`}>
                       {scope.label}
                     </span>

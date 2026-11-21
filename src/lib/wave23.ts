@@ -38,6 +38,34 @@ export function composeAnalyticalNote(input: {
   ].join("\n\n");
 }
 
+export const COMPANY_RATE_RULE =
+  "Ставки людей берутся по должности, техники — по модели, материалов — по наименованию и единице. Для строк в чел.-ч без ставки в справочнике берётся ставка персонала из параметров расчёта. Если совпадения нет, у строки остаётся «нет ставки»";
+
+const STALE_RATE_RULE = /ставки взяты только из точного совпадения кода и единицы в справочниках|ставка черновика берётся только из точного совпадения справочника/giu;
+
+/** Saved drafts keep the old code-match sentence until the next import. Show the current rule. */
+export function refreshRateAssumption(text: string): string {
+  return text.replace(STALE_RATE_RULE, COMPANY_RATE_RULE);
+}
+
+export function analyticalNoteBlocks(text: string): Array<{ title: string; body: string }> {
+  return NOTE_BLOCK_TITLES.map((title, index) => {
+    const heading = `${index + 1}. ${title}`;
+    const start = text.indexOf(heading);
+    if (start < 0) return { title, body: "" };
+    const from = start + heading.length;
+    let end = text.length;
+    for (let next = index + 1; next < NOTE_BLOCK_TITLES.length; next += 1) {
+      const at = text.indexOf(`${next + 1}. ${NOTE_BLOCK_TITLES[next]}`, from);
+      if (at >= 0) {
+        end = at;
+        break;
+      }
+    }
+    return { title, body: text.slice(from, end).trim() };
+  });
+}
+
 export function analyticalNoteStructure(text: string): { verdict: number | null; blocks: string[] } {
   const match = text.match(/Вердикт(?:\s+ИИ)?:\s*(\d{1,2})\s*\/\s*10/u);
   const score = match ? Number(match[1]) : null;

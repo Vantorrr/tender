@@ -1,13 +1,18 @@
+import { execFileSync } from "node:child_process";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { supplyCalendarWarnings } from "@/lib/calendar-availability";
 import { clientDirectoryVersions, matchCompanyDirectoryRate } from "@/lib/client-dirs";
 import { customerWorkRate } from "@/lib/economics-from-rates";
 import { calendarDurationDays, datesForStage, periodFromDocumentText, signedQuantityBySection } from "@/lib/estimate-stages";
-import { sameRoundedQuantity } from "@/lib/format";
+import { formatDateRangeShort, sameRoundedQuantity } from "@/lib/format";
+import { visibleDayBounds } from "@/lib/gantt-range";
 import { humanizeIssue } from "@/lib/issue-text";
 import { mergeEstimateLeaves, mergeStageResources } from "@/lib/resource-merge";
 import { resolveResourceDimensions } from "@/lib/resource-dimensions";
-import { analyticalNoteStructure, citationHref, combineEstimateTotals, composeAnalyticalNote } from "@/lib/wave23";
+import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
+import { positionsFromStages } from "@/lib/unified-resource-sync";
+import { analyticalNoteBlocks, analyticalNoteStructure, citationHref, combineEstimateTotals, composeAnalyticalNote, refreshRateAssumption } from "@/lib/wave23";
 import type { SupplyRequest } from "@/lib/types";
 
 const directories = clientDirectoryVersions();
@@ -129,7 +134,11 @@ describe("calendar dates and returns", () => {
     expect(periodFromDocumentText("Начало работ 01.12.2026, окончание 20.12.2026.")).toEqual({ start: "2026-12-01", end: "2026-12-20" });
     expect(periodFromDocumentText("с 01.12.2026 г. по 20.12.2026 г.")).toEqual({ start: "2026-12-01", end: "2026-12-20" });
     expect(periodFromDocumentText("Начало работ 01.12.2026\nокончание 20.12.2026")).toEqual({ start: "2026-12-01", end: "2026-12-20" });
-    expect(calendarDurationDays("Договор: 90 календарных дней.")).toBe(90);
+    expect(calendarDurationDays("Договор: 90 календарных дней.")).toBeNull();
+    expect(calendarDurationDays("Срок выполнения работ — 90 календарных дней.")).toBe(90);
+    expect(calendarDurationDays("Оплата в течение 60 календарных дней после приемки.")).toBeNull();
+    expect(calendarDurationDays("Гарантийный срок — 60 календарных дней.")).toBeNull();
+    expect(calendarDurationDays("Гарантийный срок на работы — 60 месяцев.")).toBeNull();
     expect(periodFromDocumentText("Протокол от 01.01.2020. Срок подачи заявки 15.11.2026.")).toBeNull();
     expect(periodFromDocumentText("2026-01-01\n2026-12-31")).toBeNull();
     expect(datesForStage(1, 3, "2026-11-21", null)).toEqual({ start: "2026-11-22", end: "2026-11-22" });
@@ -140,6 +149,15 @@ describe("calendar dates and returns", () => {
     expect(mixed).toHaveLength(1);
     expect(mixed[0]?.name.startsWith("Возврат:")).toBe(false);
     expect(mixed[0]?.quantity).toBeCloseTo(7);
+    expect(mixed[0]?.amount).toBeCloseTo(140);
+    const prefixed = mergeEstimateLeaves([
+      { id: "use", kind: "material", name: "Вода", unit: "м3", quantity: 10, amount: 200, rate: 20, incomplete: [] },
+      { id: "back", kind: "material", name: "Возврат: Вода", unit: "м3", quantity: 3, amount: -60, rate: 20, incomplete: [] },
+    ]);
+    expect(prefixed).toHaveLength(1);
+    expect(prefixed[0]?.name).toBe("Вода");
+    expect(prefixed[0]?.quantity).toBeCloseTo(7);
+    expect(prefixed[0]?.amount).toBeCloseTo(140);
     const credited = resolveResourceDimensions(
       { id: "lab", kind: "labor", name: "Возврат: Плотник", unit: "чел", quantity: 2, rate: 100, quantityBasis: "count_per_shift", hoursPerShift: 11, shiftsPerDay: 1, days: 1 },
       { id: "s", start: "2026-12-01", end: "2026-12-01" },
@@ -167,6 +185,25 @@ describe("analytical note shape", () => {
       blocks: ["паспорт", "условия", "объёмы", "себестоимость", "риски"],
     });
     expect(note.startsWith("Вердикт ИИ: 6 / 10 — нужна проверка сроков")).toBe(true);
+    expect(analyticalNoteBlocks(note).map((block) => block.body)).toEqual(["паспорт", "условия", "объёмы", "себестоимость", "риски"]);
+    expect(refreshRateAssumption("Ставки взяты только из точного совпадения кода и единицы в справочниках; цена заказчика не копировалась."))
+      .toContain("по должности");
+    expect(refreshRateAssumption("Ставки взяты только из точного совпадения кода и единицы в справочниках"))
+      .not.toContain("точного совпадения кода");
+    expect(formatDateRangeShort("2026-12-01", "2026-12-20")).toBe("01.12–20.12.2026");
+    expect(visibleDayBounds(0, 34 * 20 - 1, 34, 20)?.last).toBe(19);
+    const contractXml = execFileSync("unzip", ["-p", path.join(process.cwd(), "fixtures/docx/contract-terms.docx"), "word/document.xml"], { encoding: "utf8" });
+    const contractText = contractXml.replace(/<[^>]+>/g, " ");
+    expect(contractText).toMatch(/60 месяцев/);
+    expect(calendarDurationDays(contractText)).toBe(90);
+    expect(calendarDurationDays(contractText.replace(/Срок\s+выполнения:\s*90\s+календарных\s+дней/iu, ""))).toBeNull();
+    const adopted = positionsFromStages([
+      { id: "s", name: "Работа", start: "2026-12-01", end: "2026-12-02", sequence: 1, resources: [{ id: "r1", kind: "labor", name: "Кладовщик", unit: "чел.-ч", quantity: 10, rate: 881, quantityBasis: "total_hours" }] },
+    ], [
+      { id: "vor-1", code: "ВОР", name: "Кладовщик", unit: "чел.-ч", quantity: 10, rate: 881 },
+    ], EXCEL_RESOURCE_SCHEDULE_DEFAULTS);
+    expect(adopted.filter((position) => position.code === "ВОР")).toHaveLength(1);
+    expect(adopted.find((position) => position.sourceResourceId)?.code).not.toBe("ВОР");
     expect(analyticalNoteStructure(note).blocks).toEqual([
       "Паспорт закупки и тайминг",
       "Условия участия и требования к заявке",

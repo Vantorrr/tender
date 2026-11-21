@@ -30,7 +30,7 @@ import { modelConfigured } from "@/server/openrouter";
 import { canonicalUploadPath, deleteUpload, readUpload, resolveUploadPath } from "@/server/uploads";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
 import { buildStagesFromEstimatePositions, calendarDurationDays, datesForStage, GPR_DATES_MISSING, periodFromDocumentText } from "@/lib/estimate-stages";
-import { composeAnalyticalNote, dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, scheduleAfterPredecessor, scheduleParamsWithNorthernDefaults } from "@/lib/wave23";
+import { COMPANY_RATE_RULE, composeAnalyticalNote, dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, scheduleAfterPredecessor, scheduleParamsWithNorthernDefaults } from "@/lib/wave23";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
 import {
@@ -793,6 +793,7 @@ export function recalcCalculation(
     );
     return data;
   });
+  recomputeCalculationCost(actorId, id);
   return summary;
 }
 
@@ -1858,6 +1859,10 @@ export function resetDemo(actorId: string): { token: string; actorId: string } {
   return { token, actorId: resolvedActorId };
 }
 
+function modelWroteAnalyticalNote(analytics: { method?: string } | null | undefined): boolean {
+  return analytics?.method === "разбор пакета по цитатам документов" || analytics?.method === "model_note";
+}
+
 export function refreshProcurementAnalytics(
   actorId: string,
   procurementId: string
@@ -1870,6 +1875,21 @@ export function refreshProcurementAnalytics(
     assertOrgAccess(actor, p.orgId, "закупки");
     const docs = data.documents.filter((d) => d.procurementId === p.id);
     const built = buildProjectAnalytics(p, docs);
+    if (p.analytics && modelWroteAnalyticalNote(p.analytics)) {
+      const factsSame = JSON.stringify(p.analytics.missingInputs) === JSON.stringify(built.missingInputs)
+        && JSON.stringify(p.analytics.quality ?? null) === JSON.stringify(built.quality ?? null);
+      if (factsSame) {
+        unchanged = true;
+        return data;
+      }
+      p.analytics = {
+        ...p.analytics,
+        missingInputs: built.missingInputs,
+        quality: built.quality,
+      };
+      audit(data, actorId, "analyze", "procurement", procurementId, "Сводка: обновлены факты, текст записки сохранён");
+      return data;
+    }
     const verdict = built.recommendation === "participate" ? 7 : built.recommendation === "do_not_participate" ? 3 : 4;
     const verdictText = built.recommendation === "participate"
       ? "Участие возможно после проверки документов."
@@ -2585,7 +2605,7 @@ export function sendProcurementToCalculation(
             ? `Черновик заполнен ${seedPositions.length} распознанными строками из ${estimateDocsWithData.length} смет(ы). Исходные сметы сохранены отдельно и неизменны.`
             : "Ресурсный черновик создан пустым: в документах нет распознанных строк сметы",
           seedPositions.length
-            ? "В черновик перенесены только код, наименование, единица и количество. Ставки взяты только из точного совпадения кода и единицы в справочниках; цена заказчика не копировалась."
+            ? `В черновик перенесены только код, наименование, единица и количество. ${COMPANY_RATE_RULE}; цена заказчика не копировалась.`
             : "Загрузите смету XLSX с позициями или добавьте ресурсы из справочников; система не будет угадывать объёмы и тарифы",
           "Проверьте состав ресурсов и каждую ставку до использования итогов",
           "Не является утверждённой нормативной сметой",
@@ -2642,7 +2662,7 @@ export function sendProcurementToCalculation(
             (assumption) => !assumption.startsWith("Ресурсный черновик создан пустым:")
           ),
           `Черновик содержит распознанные строки из ${estimateDocsWithData.length} смет(ы). Исходные сметы сохранены отдельно и неизменны.`,
-          "Для импортированных строк перенесены только код, наименование, единица и количество. Ставки взяты только из точного совпадения кода и единицы в справочниках; цена заказчика не копировалась.",
+          `Для импортированных строк перенесены только код, наименование, единица и количество. ${COMPANY_RATE_RULE}; цена заказчика не копировалась.`,
           "Проверьте состав ресурсов и каждую ставку до использования итогов",
         ];
         linked.dataFlags = [
@@ -3135,15 +3155,35 @@ function applyResourceDraftAdjustments(calc: Calculation) {
   };
 }
 
-function pricedVolumeSum(positions: Calculation["positions"]): number {
+function volumeNameKey(name: string): string {
+  return name.trim().toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
+}
+
+/** Stage resources that already contribute money. A volume line with the same name is not added again. */
+function coveredVolumeNames(stages: GprStage[] | undefined): Set<string> {
+  const names = new Set<string>();
+  for (const stage of stages ?? []) {
+    for (const resource of stage.resources ?? []) {
+      if ((resource.rate ?? 0) > 0 && Math.abs(resource.quantity) > 0) names.add(volumeNameKey(resource.name));
+    }
+  }
+  return names;
+}
+
+function pricedVolumeSum(positions: Calculation["positions"], coveredNames: Set<string>): number {
   return roundMoney(positions
-    .filter((position) => position.code === "ВОР" && !position.isWorkItem && !position.rateMissing && position.rate > 0)
+    .filter((position) => position.code === "ВОР"
+      && !position.isWorkItem
+      && !position.sourceResourceId
+      && !position.rateMissing
+      && position.rate > 0
+      && !coveredNames.has(volumeNameKey(position.name)))
     .reduce((sum, position) => sum + position.quantity * position.rate, 0));
 }
 
 /** Accepted volume lines add exactly quantity × rate. Overhead is not applied again. */
-function addAcceptedVolumes(calc: Calculation) {
-  const amount = pricedVolumeSum(calc.positions);
+function addAcceptedVolumes(calc: Calculation, coveredNames: Set<string> = new Set()) {
+  const amount = pricedVolumeSum(calc.positions, coveredNames);
   if (!amount || !calc.costSummary) return;
   const summary = calc.costSummary;
   summary.C0 = roundMoney(summary.C0 + amount);
@@ -3225,7 +3265,7 @@ export function recomputeCalculationCost(
       applyResourceDraftAdjustments(item);
       const baseSlices = item.costSummary?.resourceSlices;
       applyNorthernFold(item, baseSlices?.labor ?? 0);
-      addAcceptedVolumes(item);
+      addAcceptedVolumes(item, coveredVolumeNames(linkedSchedule.stages));
       const matNeeds = buildMaterialNeeds({
         positions: item.positions,
         stages: linkedSchedule.stages,
@@ -3768,6 +3808,20 @@ function normalizeSupplierTerm(value: string) {
   return value.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 }
 
+function bareMaterialName(name: string) {
+  return name.replace(/^возврат:\s*/iu, "").trim();
+}
+
+/** Same material and unit is one supply line, including a return written as «Возврат:». */
+function manifestMaterialKey(name: string, unit: string) {
+  return `${normalizeSupplierTerm(bareMaterialName(name))}|${normalizeSupplierTerm(unit)}`;
+}
+
+function signedManifestQuantity(name: string, quantity: number) {
+  const value = Math.abs(quantity);
+  return /^возврат:/iu.test(name) ? -value : value;
+}
+
 function supplierIdsForMaterial(data: AppData, orgId: string, materialName: string, region = "") {
   const name = normalizeSupplierTerm(materialName);
   const projectRegion = normalizeSupplierTerm(region);
@@ -3797,7 +3851,7 @@ export function generateProcurementMaterialManifest(actorId: string, procurement
     for (const stage of schedule?.stages ?? []) {
       for (const resource of stage.resources ?? []) {
         if (resource.kind !== "material" || !Number.isFinite(resource.quantity) || resource.quantity <= 0) continue;
-        const key = `${normalizeSupplierTerm(resource.name)}|${normalizeSupplierTerm(resource.unit)}|${normalizeSupplierTerm(stage.name)}`;
+        const key = manifestMaterialKey(resource.name, resource.unit);
         gprKeys.add(key);
         rows.push({ name: resource.name.trim(), unit: resource.unit || "шт", quantity: resource.quantity, workName: stage.name, needBy: stage.end, source: "gpr" });
       }
@@ -3810,26 +3864,29 @@ export function generateProcurementMaterialManifest(actorId: string, procurement
           (position.sectionName && item.sectionName && normalizeSupplierTerm(item.sectionName) === normalizeSupplierTerm(position.sectionName))
         );
         const workName = stage?.name ?? position.workName ?? position.sectionName;
-        const key = `${normalizeSupplierTerm(position.name)}|${normalizeSupplierTerm(position.unit)}|${normalizeSupplierTerm(workName ?? "")}`;
+        const key = manifestMaterialKey(position.name, position.unit);
         if (gprKeys.has(key)) continue;
         rows.push({ name: position.name.trim(), unit: position.unit || "шт", quantity: position.quantity, workName, needBy: stage?.end, source: "estimate", sourceFiles: [doc.fileName] });
       }
     }
     const merged = new Map<string, typeof rows[number]>();
     for (const row of rows) {
-      const key = `${normalizeSupplierTerm(row.name)}|${normalizeSupplierTerm(row.unit)}|${normalizeSupplierTerm(row.workName ?? "")}`;
+      const key = manifestMaterialKey(row.name, row.unit);
+      const signed = signedManifestQuantity(row.name, row.quantity);
       const previous = merged.get(key);
       if (previous) {
-        previous.quantity += row.quantity;
+        previous.quantity += signed;
         previous.sourceFiles = [...new Set([...(previous.sourceFiles ?? []), ...(row.sourceFiles ?? [])])];
         if (row.source === "gpr") previous.source = "gpr";
-      } else merged.set(key, { ...row });
+      } else merged.set(key, { ...row, name: bareMaterialName(row.name), quantity: signed });
     }
     for (const row of merged.values()) {
+      if (Math.abs(row.quantity) < 1e-9) continue;
+      const materialName = row.quantity < 0 ? `Возврат: ${row.name}` : row.name;
+      const qtyNeed = Math.abs(row.quantity);
       const existing = data.supplyRequests.find((item) => item.procurementId === procurementId &&
-        normalizeSupplierTerm(item.materialName) === normalizeSupplierTerm(row.name) &&
-        normalizeSupplierTerm(item.unit) === normalizeSupplierTerm(row.unit) &&
-        normalizeSupplierTerm(item.workName ?? "") === normalizeSupplierTerm(row.workName ?? "") && item.status !== "cancelled");
+        manifestMaterialKey(item.materialName, item.unit) === manifestMaterialKey(materialName, row.unit) &&
+        item.status !== "cancelled");
       if (existing) continue;
       const now = new Date().toISOString();
       const id = `sup-${Date.now()}-${randomBytes(3).toString("hex")}`;
@@ -3838,7 +3895,7 @@ export function generateProcurementMaterialManifest(actorId: string, procurement
       else withoutSupplier += 1;
       data.supplyRequests.unshift({
         id, orgId: procurement.orgId, procurementId, workName: row.workName,
-        materialName: row.name, unit: row.unit, qtyNeed: row.quantity,
+        materialName, unit: row.unit, qtyNeed,
         qtyOrdered: 0, qtyDelivered: 0, needBy: row.needBy ?? procurement.deadline ?? now.slice(0, 10),
         status: "need", source: row.source, sourceFiles: row.sourceFiles,
         quantityNeedsReview: !row.needBy,
@@ -3846,7 +3903,7 @@ export function generateProcurementMaterialManifest(actorId: string, procurement
         createdAt: now, updatedAt: now,
       });
       procurement.supplyRequestIds = [...(procurement.supplyRequestIds ?? []), id];
-      audit(data, actorId, "create", "supply", id, `Ведомость материалов · ${row.name}`);
+      audit(data, actorId, "create", "supply", id, `Ведомость материалов · ${materialName}`);
       created += 1;
     }
     return data;

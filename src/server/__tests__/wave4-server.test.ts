@@ -8,7 +8,9 @@ import type { CalcPosition } from "@/lib/types";
 import { closeDb, ensureReady, mutateAppData, readAppData } from "@/server/db";
 import { buildCalculationXlsx } from "@/server/export";
 import { parseGrandBuffer } from "@/server/grand-smeta";
-import { createManualProcurement, createProcurementSchedule, recalcCalculation, recomputeCalculationCost, refreshProcurementAnalytics, sendProcurementToCalculation, updateCalculation } from "@/server/repo";
+import { diffDays } from "@/lib/cost-engine";
+import { buildProjectAnalytics } from "@/lib/project-analytics";
+import { createManualProcurement, createProcurementSchedule, generateProcurementMaterialManifest, recalcCalculation, recomputeCalculationCost, refreshProcurementAnalytics, sendProcurementToCalculation, updateCalculation } from "@/server/repo";
 import { saveUpload } from "@/server/uploads";
 import { acceptVolumeDraft, draftVolumeSheet } from "@/server/volume-sheet";
 import "./setup";
@@ -204,12 +206,86 @@ describe("wave 4 pricing, volumes and return quantities", () => {
     recomputeCalculationCost("u-ruk", draft.id, { useResourceScheduleEconomics: true, resourceScheduleParams: draft.resourceScheduleParams ?? { ...EXCEL_RESOURCE_SCHEDULE_DEFAULTS } });
     const before = readAppData().calculations.find((item) => item.id === draft.id)!.costSummary?.C0 ?? 0;
     acceptVolumeDraft("u-ruk", draft.id, [{ work: "Кладовщик", unit: "чел.-ч", volume: 10, quote: "Кладовщик 10 чел.-ч", rate: null }]);
-    recomputeCalculationCost("u-ruk", draft.id, { useResourceScheduleEconomics: true });
-    const after = readAppData().calculations.find((item) => item.id === draft.id)!;
-    const line = after.positions.find((position) => position.name === "Кладовщик")!;
+    const accepted = readAppData().calculations.find((item) => item.id === draft.id)!;
+    const line = accepted.positions.find((position) => position.name === "Кладовщик")!;
     expect(line.rate).toBe(881);
     expect(line.rateMissing).toBe(false);
+    expect((accepted.costSummary?.C0 ?? 0) - before).toBeCloseTo(10 * 881, 2);
+    recomputeCalculationCost("u-ruk", draft.id, { useResourceScheduleEconomics: true });
+    const repeated = readAppData().calculations.find((item) => item.id === draft.id)!;
+    expect(repeated.costSummary?.C0 ?? 0).toBeCloseTo(accepted.costSummary?.C0 ?? 0, 2);
+  });
+
+  it("applies a directory refresh to the cost total once", () => {
+    const created = createManualProcurement("u-ruk", { title: "Справочник в итоге", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const draft = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "resource_draft")!;
+    updateCalculation("u-ruk", draft.id, {
+      positions: [{ id: "vor-1", code: "ВОР", name: "Кладовщик", unit: "чел.-ч", quantity: 10, rate: 0, rateMissing: true }],
+      resourceScheduleParams: draft.resourceScheduleParams ?? { ...EXCEL_RESOURCE_SCHEDULE_DEFAULTS },
+    });
+    recomputeCalculationCost("u-ruk", draft.id, { useResourceScheduleEconomics: true });
+    const before = readAppData().calculations.find((item) => item.id === draft.id)!.costSummary?.C0 ?? 0;
+    recalcCalculation("u-ruk", draft.id, "bazovyy");
+    const after = readAppData().calculations.find((item) => item.id === draft.id)!;
+    expect(after.positions.find((position) => position.id === "vor-1")?.rate).toBe(881);
     expect((after.costSummary?.C0 ?? 0) - before).toBeCloseTo(10 * 881, 2);
+    recalcCalculation("u-ruk", draft.id, "bazovyy");
+    expect(readAppData().calculations.find((item) => item.id === draft.id)!.costSummary?.C0 ?? 0).toBeCloseTo(after.costSummary?.C0 ?? 0, 2);
+  });
+
+  it("counts a volume line once when the schedule already prices the same resource", () => {
+    const created = createManualProcurement("u-ruk", { title: "Ведомость и график", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const draft = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "resource_draft")!;
+    updateCalculation("u-ruk", draft.id, { resourceScheduleParams: { ...EXCEL_RESOURCE_SCHEDULE_DEFAULTS }, positions: [] });
+    createProcurementSchedule("u-ruk", created.id);
+    mutateAppData((data) => {
+      const schedule = data.schedules.find((item) => item.procurementId === created.id)!;
+      schedule.calculationId = draft.id;
+      schedule.stages = [{
+        id: "st-klad",
+        name: "Склад",
+        start: "2026-12-01",
+        end: "2026-12-02",
+        sequence: 1,
+        resources: [{ id: "res-klad", kind: "labor", name: "Кладовщик", unit: "чел.-ч", quantity: 10, rate: 881, quantityBasis: "total_hours" }],
+      }];
+      return data;
+    });
+    recomputeCalculationCost("u-ruk", draft.id, { useResourceScheduleEconomics: true });
+    const base = readAppData().calculations.find((item) => item.id === draft.id)!.costSummary?.C0 ?? 0;
+    updateCalculation("u-ruk", draft.id, {
+      positions: [{ id: "vor-same", code: "ВОР", name: "Кладовщик", unit: "чел.-ч", quantity: 10, rate: 881, rateMissing: false }],
+    });
+    recomputeCalculationCost("u-ruk", draft.id, { useResourceScheduleEconomics: true });
+    const withSameName = readAppData().calculations.find((item) => item.id === draft.id)!;
+    expect(withSameName.positions.some((position) => position.code === "ВОР" && position.name === "Кладовщик")).toBe(true);
+    expect(withSameName.costSummary?.C0 ?? 0).toBeCloseTo(base, 2);
+    updateCalculation("u-ruk", draft.id, {
+      positions: [
+        { id: "vor-same", code: "ВОР", name: "Кладовщик", unit: "чел.-ч", quantity: 10, rate: 881, rateMissing: false },
+        { id: "vor-other", code: "ВОР", name: "Контролер", unit: "чел.-ч", quantity: 2, rate: 1157, rateMissing: false },
+      ],
+    });
+    recomputeCalculationCost("u-ruk", draft.id, { useResourceScheduleEconomics: true });
+    const withOther = readAppData().calculations.find((item) => item.id === draft.id)!;
+    expect((withOther.costSummary?.C0 ?? 0) - base).toBeCloseTo(2 * 1157, 2);
+    recomputeCalculationCost("u-ruk", draft.id, { useResourceScheduleEconomics: true });
+    expect(readAppData().calculations.find((item) => item.id === draft.id)!.costSummary?.C0 ?? 0).toBeCloseTo(withOther.costSummary?.C0 ?? 0, 2);
+    updateCalculation("u-ruk", draft.id, {
+      positions: [{ id: "vor-unpriced", code: "ВОР", name: "Кладовщик", unit: "чел.-ч", quantity: 4, rate: 881, rateMissing: false }],
+    });
+    mutateAppData((data) => {
+      const schedule = data.schedules.find((item) => item.procurementId === created.id)!;
+      schedule.stages[0]!.resources = [{ id: "res-klad", kind: "labor", name: "Кладовщик", unit: "чел.-ч", quantity: 10, rate: null, quantityBasis: "total_hours" }];
+      return data;
+    });
+    recomputeCalculationCost("u-ruk", draft.id, { useResourceScheduleEconomics: true });
+    const unpricedBase = readAppData().calculations.find((item) => item.id === draft.id)!.costSummary?.C0 ?? 0;
+    recomputeCalculationCost("u-ruk", draft.id, { useResourceScheduleEconomics: true });
+    expect(readAppData().calculations.find((item) => item.id === draft.id)!.costSummary?.C0 ?? 0).toBeCloseTo(unpricedBase, 2);
+    expect(unpricedBase).toBeGreaterThan(0);
   });
 
   it("spreads stages across a contract duration when the file has no calendar dates", async () => {
@@ -263,5 +339,137 @@ describe("wave 4 pricing, volumes and return quantities", () => {
     expect(note).toContain("Расчёт себестоимости и экономика");
     expect(note).toContain("Риски и подводные камни");
     expect(refreshProcurementAnalytics("u-tender", "p-1").unchanged).toBe(true);
+  });
+
+  it("does not replace a model note on a local refresh", () => {
+    const created = createManualProcurement("u-ruk", { title: "Записка модели", region: "Ямал" });
+    const procurement = readAppData().procurements.find((item) => item.id === created.id)!;
+    const built = buildProjectAnalytics(procurement, []);
+    const summary = "Вердикт ИИ: 8 / 10 — модельная записка, которую нельзя затереть\n\n1. Паспорт закупки и тайминг\nусловия из договора";
+    mutateAppData((data) => {
+      const item = data.procurements.find((row) => row.id === created.id)!;
+      item.analytics = {
+        ...built,
+        recommendation: "participate",
+        summary,
+        method: "разбор пакета по цитатам документов",
+      };
+      return data;
+    });
+    const first = refreshProcurementAnalytics("u-ruk", created.id);
+    const kept = readAppData().procurements.find((item) => item.id === created.id)!.analytics!;
+    expect(first.unchanged).toBe(true);
+    expect(kept.summary).toBe(summary);
+    expect(kept.method).toBe("разбор пакета по цитатам документов");
+    mutateAppData((data) => {
+      const item = data.procurements.find((row) => row.id === created.id)!;
+      item.analytics = { ...item.analytics!, missingInputs: ["устарело"] };
+      return data;
+    });
+    const second = refreshProcurementAnalytics("u-ruk", created.id);
+    const updated = readAppData().procurements.find((item) => item.id === created.id)!.analytics!;
+    expect(second.unchanged).toBe(false);
+    expect(updated.summary).toBe(summary);
+    expect(updated.method).toBe("разбор пакета по цитатам документов");
+    expect(updated.missingInputs).not.toContain("устарело");
+    expect(refreshProcurementAnalytics("u-ruk", created.id).unchanged).toBe(true);
+  });
+
+  it("uses the work duration from the contract and ignores the warranty", async () => {
+    const created = createManualProcurement("u-ruk", { title: "Договор со сроком", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const draft = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "resource_draft")!;
+    updateCalculation("u-ruk", draft.id, {
+      positions: [
+        { id: "a", code: "ФЕР-1", name: "Бурение", unit: "м", quantity: 1, rate: 0, isWorkItem: true, sourceSectionName: "Раздел 1", sourceWorkName: "Бурение" },
+        { id: "b", code: "ФЕР-2", name: "Монтаж", unit: "м", quantity: 1, rate: 0, isWorkItem: true, sourceSectionName: "Раздел 2", sourceWorkName: "Монтаж" },
+      ],
+    });
+    const uploaded = await saveUpload("contract-terms", "contract-terms.docx", fs.readFileSync(path.join(process.cwd(), "fixtures/docx/contract-terms.docx")));
+    const procurement = readAppData().procurements.find((item) => item.id === created.id)!;
+    mutateAppData((data) => {
+      data.documents.unshift({
+        id: "doc-contract-terms",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        title: "Договор",
+        fileName: "contract-terms.docx",
+        fileType: "docx",
+        category: "contract",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: uploaded.storedPath,
+      });
+      return data;
+    });
+    createProcurementSchedule("u-ruk", created.id);
+    const stages = readAppData().schedules.find((item) => item.procurementId === created.id)!.stages;
+    const today = new Date().toISOString().slice(0, 10);
+    expect(stages[0]?.start).toBe(today);
+    expect(diffDays(stages[0]!.start, stages[stages.length - 1]!.end) + 1).toBe(90);
+  });
+
+  it("merges return lines of the same material and unit into one supply", () => {
+    const created = createManualProcurement("u-ruk", { title: "Возврат воды", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    createProcurementSchedule("u-ruk", created.id);
+    mutateAppData((data) => {
+      const schedule = data.schedules.find((item) => item.procurementId === created.id)!;
+      schedule.stages = [
+        {
+          id: "st-a", name: "Раздел 1", start: "2026-12-01", end: "2026-12-10", sequence: 1,
+          resources: [{ id: "w1", kind: "material", name: "Возврат: Вода", unit: "м3", quantity: 2390.64, rate: null, quantityBasis: "material_qty" }],
+        },
+        {
+          id: "st-b", name: "Раздел 2", start: "2026-12-11", end: "2026-12-20", sequence: 2,
+          resources: [{ id: "w2", kind: "material", name: "Возврат: Вода", unit: "м3", quantity: 337.64, rate: null, quantityBasis: "material_qty" }],
+        },
+      ];
+      return data;
+    });
+    expect(generateProcurementMaterialManifest("u-ruk", created.id).created).toBe(1);
+    const supplies = (readAppData().supplyRequests ?? []).filter((item) => item.procurementId === created.id);
+    expect(supplies).toHaveLength(1);
+    expect(supplies[0]?.materialName).toBe("Возврат: Вода");
+    expect(supplies[0]?.unit).toBe("м3");
+    expect(supplies[0]?.qtyNeed).toBeCloseTo(2390.64 + 337.64, 2);
+    expect(generateProcurementMaterialManifest("u-ruk", created.id).created).toBe(0);
+  });
+
+  it("stores the current rate rule on a draft filled from an estimate", async () => {
+    const created = createManualProcurement("u-ruk", { title: "Правило ставок", region: "Ямал" });
+    const uploaded = await saveUpload("rate-rule", "smeta.xlsx", Buffer.from("placeholder"));
+    const procurement = readAppData().procurements.find((item) => item.id === created.id)!;
+    mutateAppData((data) => {
+      data.documents.unshift({
+        id: "doc-rate-rule",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        title: "Смета",
+        fileName: "smeta.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: uploaded.storedPath,
+        estimatePositions: [{ id: "ep-1", code: "ФЕР-1", name: "Бурение", unit: "м", quantity: 1, rate: 0, rateMissing: true }],
+      });
+      return data;
+    });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const draft = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "resource_draft")!;
+    const text = draft.assumptions.join(" ");
+    expect(text).toContain("по должности");
+    expect(text).not.toContain("точного совпадения кода");
   });
 });

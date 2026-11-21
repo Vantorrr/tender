@@ -54,11 +54,23 @@ export function periodFromDocumentText(text: string): { start: string; end: stri
   return null;
 }
 
-/** «90 календарных дней» is a duration, not a pair of dates. */
+/**
+ * Only a duration of the works themselves («срок выполнения работ»).
+ * Warranty, payment, acceptance and bid periods are not the schedule.
+ */
 export function calendarDurationDays(text: string): number | null {
-  const match = normalizeScheduleText(text).match(/(\d+)\s+календарн\p{L}*\s+дн/iu);
-  const days = match ? Number(match[1]) : 0;
-  return Number.isFinite(days) && days > 0 ? days : null;
+  const normalized = normalizeScheduleText(text);
+  const pattern = /(\d{1,4})\s+календарн\p{L}*\s+дн\p{L}*/giu;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(normalized))) {
+    const days = Number(match[1]);
+    if (!Number.isFinite(days) || days <= 0) continue;
+    const window = normalized.slice(Math.max(0, match.index - 36), match.index + match[0].length + 16);
+    if (/гарант|оплат|при[её]мк|аванс|обеспечен|штраф|неустойк|пен[ия]|подач/iu.test(window)) continue;
+    if (!/срок\s+выполнен|выполнен\p{L}*\s+работ|производств\p{L}*\s+работ|срок\s+работ/iu.test(window)) continue;
+    return days;
+  }
+  return null;
 }
 
 function addDays(iso: string, days: number): string {

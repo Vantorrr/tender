@@ -24,7 +24,7 @@ import { DocumentWebPreview } from "@/components/document-web-preview";
 import { cleanLabel } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney, formatNumber, formatQuantity, needByPhrase, roundQuantity, sameRoundedQuantity } from "@/lib/format";
 import { citationTopicLabel, readableCitations, regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
-import { citationHref, matchDirectorySuppliers } from "@/lib/wave23";
+import { analyticalNoteBlocks, citationHref, matchDirectorySuppliers } from "@/lib/wave23";
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_CHECKLIST } from "@/lib/ai-topics";
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
@@ -888,10 +888,26 @@ export default function ZakupkaDetailPage() {
                   Загрузите файл или архив — система сохранит его в карточке, обновит сводку и разберёт доступные источники.
                 </p>
                 {analytics ? (
-                  <div className="mt-3">
+                  <div className="mt-3 space-y-3">
                     <p className="text-sm font-medium">Рекомендация: {PARTICIPATE_LABELS[analytics.recommendation]}</p>
-                    <p className="mt-1 line-clamp-3 text-sm text-[var(--tk-muted)]">{analytics.summary.split(/\n\n/)[0].replace(/\s+/g, " ").slice(0, 420)}</p>
-                    <p className="mt-1 text-xs text-[var(--tk-muted)]">Документов: {analytics.quality?.sourceDocuments ?? docs.length}</p>
+                    <p className="text-sm text-[var(--tk-ink)]">{analytics.summary.split(/\n\n/)[0]}</p>
+                    <div className="space-y-2" data-testid="overview-note-blocks">
+                      {analyticalNoteBlocks(analytics.summary).map((block) => (
+                        <div key={block.title}>
+                          <p className="text-sm font-medium text-[var(--tk-ink)]">{block.title}</p>
+                          <p className="whitespace-pre-line text-sm text-[var(--tk-muted)]">{block.body || "нет данных"}</p>
+                        </div>
+                      ))}
+                    </div>
+                    <button
+                      type="button"
+                      className="text-sm font-medium text-[var(--tk-brand)] underline"
+                      data-testid="open-full-note"
+                      onClick={() => setSelectedTab("analytics")}
+                    >
+                      Открыть записку целиком
+                    </button>
+                    <p className="text-xs text-[var(--tk-muted)]">Документов: {analytics.quality?.sourceDocuments ?? docs.length}</p>
                   </div>
                 ) : (
                   <p className="mt-3 text-sm text-[var(--tk-muted)]">Сводки пока нет. После загрузки документа она появится здесь.</p>

@@ -7,6 +7,7 @@ import type { VolumeDraftRow } from "@/lib/wave23";
 import { matchCompanyDirectoryRate } from "@/lib/client-dirs";
 import { parseVolumeDraft, priceVolumeRows } from "@/lib/wave23";
 import { readAppData, mutateAppData } from "@/server/db";
+import { recomputeCalculationCost } from "@/server/repo";
 import { parseDocxBuffer } from "@/server/docx-parse";
 import { detectLocalOcrTools } from "@/server/ocr";
 import { completeJson, modelConfigured } from "@/server/openrouter";
@@ -110,7 +111,7 @@ export async function draftVolumeSheet(
 }
 
 export function acceptVolumeDraft(actorId: string, calculationId: string, rows: VolumeDraftRow[]) {
-  return mutateAppData((data) => {
+  mutateAppData((data) => {
     const actor = actorOf(data, actorId);
     const calculation = data.calculations.find((item) => item.id === calculationId);
     if (!calculation) throw new Error("Расчёт не найден");
@@ -144,4 +145,6 @@ export function acceptVolumeDraft(actorId: string, calculationId: string, rows: 
     calculation.updatedAt = new Date().toISOString();
     return data;
   });
+  recomputeCalculationCost(actorId, calculationId);
+  return readAppData();
 }
