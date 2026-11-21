@@ -28,6 +28,8 @@ import type {
 import { matchCompanyDirectoryRate, rateFromRow } from "@/lib/client-dirs";
 import { modelConfigured } from "@/server/openrouter";
 import { canonicalUploadPath, deleteUpload, readUpload, resolveUploadPath } from "@/server/uploads";
+import { recentPaymentId } from "@/lib/duplicate-click";
+import { supplyNeedKey } from "@/lib/supply-need";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
 import { buildStagesFromEstimatePositions, calendarDurationDays, datesForStage, GPR_DATES_MISSING, periodFromDocumentText } from "@/lib/estimate-stages";
 import { COMPANY_RATE_RULE, composeAnalyticalNote, dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, scheduleAfterPredecessor, scheduleParamsWithNorthernDefaults } from "@/lib/wave23";
@@ -47,7 +49,7 @@ import {
   type BusRouteInput,
   type NorthernInputs,
 } from "@/lib/cost-engine";
-import { assertGprWrite, assertOrgAccess, assertSection } from "@/server/acl";
+import { assertDeleteAllowed, assertGprWrite, assertOrgAccess, assertSection } from "@/server/acl";
 import {
   overheadsFromWorks,
   roundMoney,
@@ -410,9 +412,26 @@ export function saveCustomerAnswer(actorId: string, procurementId: string, quest
     if (!asked || !text) throw new Error("Нужны вопрос и ответ");
     item.customerAnswers = [
       ...(item.customerAnswers ?? []).filter((row) => row.question !== asked),
-      { question: asked, answer: text, at: new Date().toISOString() },
+      { question: asked, answer: text, at: new Date().toISOString(), authorId: actor.id, authorName: actor.name },
     ];
     audit(data, actorId, "update", "procurement", procurementId, "Ответ на вопрос заказчику");
+    return data;
+  });
+}
+
+export function deleteCustomerAnswer(actorId: string, procurementId: string, question: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.procurements.find((row) => row.id === procurementId);
+    if (!item) throw new Error("Закупка не найдена");
+    assertOrgAccess(actor, item.orgId, "закупки");
+    const asked = question.trim();
+    if (!asked) throw new Error("Нужен вопрос");
+    const saved = (item.customerAnswers ?? []).find((row) => row.question === asked);
+    if (!saved) return data;
+    assertDeleteAllowed(actor, saved.authorId, "zakupki", "ответ");
+    item.customerAnswers = (item.customerAnswers ?? []).filter((row) => row.question !== asked);
+    audit(data, actorId, "update", "procurement", procurementId, "Ответ удалён");
     return data;
   });
 }
@@ -549,12 +568,12 @@ export function deleteProcurement(actorId: string, id: string) {
 export function deleteGprStage(actorId: string, scheduleId: string, stageId: string) {
   return mutateAppData((data) => {
     const actor = actorUser(data, actorId);
-    assertGprWrite(actor);
     const schedule = data.schedules.find((item) => item.id === scheduleId);
     if (!schedule) throw new Error("ГПР не найден");
     assertOrgAccess(actor, schedule.orgId, "ГПР");
     const stage = schedule.stages.find((item) => item.id === stageId);
     if (!stage) throw new Error("Этап не найден");
+    assertDeleteAllowed(actor, stage.createdBy ?? schedule.authorId, "gpr", "этап");
     const removedResourceIds = new Set((stage.resources ?? []).map((resource) => resource.id));
     const removedWorks = new Set(
       [stage.name, stage.workName, ...(stage.workNames ?? [])].map((name) => name?.trim()).filter(Boolean) as string[]
@@ -991,7 +1010,7 @@ export function reanalyzeDocument(
         title: d.title.startsWith("Разбор поставлен") ? prepared.title : d.title,
         status: prepared.status,
         versions: [...d.versions, version],
-        analyticalNote: prepared.analyticalNote,
+        analyticalNote: prepared.analyticalNote.trim() ? prepared.analyticalNote : d.analyticalNote,
         citations: stampCitationSourceVersion(prepared.citations, versionLabel),
         highlights: prepared.highlights,
         analysis: prepared.analysis,
@@ -1193,6 +1212,7 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
             end: start,
             sequence: 1,
             crewSize: 0,
+            createdBy: actorId,
           }),
           ensureStageResources({
             id: stage2,
@@ -1203,6 +1223,7 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
             dependsOn: stage1,
             dependencyType: "FS",
             crewSize: 0,
+            createdBy: actorId,
           }),
         ],
         updatedAt: now,
@@ -1393,8 +1414,17 @@ export function updateSchedule(
     data.schedules = data.schedules.map((s) => {
       if (s.id !== id) return s;
       const calc = data.calculations.find((item) => item.id === s.calculationId);
+      const priorStages = new Map(s.stages.map((stage) => [stage.id, stage]));
       const stages = safe.stages
-        ? linkEstimateWorksToStages(safe.stages, calc?.positions ?? [])
+        ? linkEstimateWorksToStages(safe.stages.map((stage) => {
+            const previous = priorStages.get(stage.id);
+            if (previous) {
+              const { createdBy: _clientAuthor, ...rest } = stage;
+              void _clientAuthor;
+              return previous.createdBy ? { ...rest, createdBy: previous.createdBy } : rest;
+            }
+            return { ...stage, createdBy: stage.createdBy ?? actorId };
+          }), calc?.positions ?? [])
         : s.stages;
       return { ...s, ...safe, stages, updatedAt: new Date().toISOString() };
     });
@@ -1661,6 +1691,47 @@ export function updatePlanFact(
       };
     });
     audit(data, actorId, "update", "planfact", id, "Обновление план/факт");
+    return data;
+  });
+}
+
+/** Removes one work row from the plan as it is now, leaving every other row in place. */
+export function deletePlanFactEntry(actorId: string, planId: string, entryId: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.planFacts.find((plan) => plan.id === planId);
+    if (!item) throw new Error("План/факт не найден");
+    assertOrgAccess(actor, item.orgId, "план/факт");
+    const entry = item.entries.find((row) => row.id === entryId);
+    if (!entry) throw new Error("Вид работ не найден");
+    item.dailyFacts = (item.dailyFacts ?? []).map((fact) => {
+      const linked = fact.entryId
+        ? fact.entryId === entry.id
+        : fact.workName.trim() === entry.workName.trim() && fact.unit.trim() === entry.unit.trim();
+      return linked ? { ...fact, entryId: entry.id, archived: true } : fact;
+    });
+    item.entries = item.entries.filter((row) => row.id !== entryId);
+    item.updatedAt = new Date().toISOString();
+    audit(data, actorId, "delete", "planfact", planId, `Вид работ ${entryId}`);
+    return data;
+  });
+}
+
+/** Puts back a work row and the daily facts that were hidden with it. */
+export function restorePlanFactEntry(actorId: string, planId: string, entry: PlanFactEntry) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.planFacts.find((plan) => plan.id === planId);
+    if (!item) throw new Error("План/факт не найден");
+    assertOrgAccess(actor, item.orgId, "план/факт");
+    if (!item.entries.some((row) => row.id === entry.id)) {
+      item.entries = [...item.entries, entry];
+    }
+    item.dailyFacts = (item.dailyFacts ?? []).map((fact) =>
+      fact.entryId === entry.id ? { ...fact, archived: false } : fact
+    );
+    item.updatedAt = new Date().toISOString();
+    audit(data, actorId, "restore", "planfact", planId, `Вид работ ${entry.id}`);
     return data;
   });
 }
@@ -2048,10 +2119,16 @@ export async function analyzeProcurementPackageWithAI(
     usedAi = false;
     const failure = error instanceof Error ? error.message : "Неизвестная ошибка модели";
     const modelOff = !modelConfigured() && !/пустой ответ|после \d+ попыток/iu.test(failure);
-    warning = modelOff
-      ? "Разбор не выполнен: модель не подключена"
-      : "ИИ-модель не вернула полный ответ. Сохранил расчёт, источники и конкретный список того, что нужно подтвердить.";
-    generated = buildProjectAnalysisFallback(procurement, deterministic, economics, companyContext, modelOff ? "модель не подключена" : failure);
+    const previousAnalytics = prepared.procurements.find((item) => item.id === procurementId)?.analytics;
+    if (previousAnalytics?.summary?.trim()) {
+      warning = "Разбор не удался, записка не менялась — попробуйте позже";
+      generated = previousAnalytics;
+    } else {
+      warning = modelOff
+        ? "Разбор не выполнен: модель не подключена"
+        : "ИИ-модель не вернула полный ответ. Сохранил расчёт, источники и конкретный список того, что нужно подтвердить.";
+      generated = buildProjectAnalysisFallback(procurement, deterministic, economics, companyContext, modelOff ? "модель не подключена" : failure);
+    }
   }
   mutateAppData((data) => {
     const currentActor = actorUser(data, actorId);
@@ -2377,10 +2454,11 @@ export function createProcurementSchedule(actorId: string, procurementId: string
     const now = new Date().toISOString();
     const draft = data.calculations.find((item) => item.id === procurement.calculationId && item.kind !== "customer_original");
     const period = procurementScheduleWindow(data, procurement, now.slice(0, 10));
-    const derived = buildDraftStagesFromEstimate(draft?.positions ?? [], now, period);
+    const stampAuthor = (stages: GprStage[]) => stages.map((stage) => ({ ...stage, createdBy: stage.createdBy ?? actorId }));
+    const derived = stampAuthor(buildDraftStagesFromEstimate(draft?.positions ?? [], now, period));
     const existing = procurement.gprId ? data.schedules.find((item) => item.id === procurement.gprId) : undefined;
     if (existing && isNavigationStub(existing) && derived.length > 0) {
-      existing.stages = derived;
+      existing.stages = stampAuthor(derived);
       existing.calculationId = procurement.calculationId;
       existing.updatedAt = now;
       existing.assumptions = withMissingDatesNote([
@@ -2443,7 +2521,7 @@ export function createProcurementSchedule(actorId: string, procurementId: string
             "Начальные даты и этапы — только навигационная заготовка; замените их по ТЗ, производительности и календарю объекта",
             "Состав и количество ресурсов не подтверждены: заполните строки перед использованием итогов",
           ], Boolean(period)),
-      stages: derived.length ? derived : placeholderStages,
+      stages: stampAuthor(derived.length ? derived : placeholderStages),
       updatedAt: now,
     });
     procurement.gprId = gid;
@@ -3552,6 +3630,7 @@ export function addDailyProductionFact(
       photos,
       authorId: actorId,
       at: new Date().toISOString(),
+      entryId: row?.id ?? existing?.entryId,
     };
     // New submissions are ledger entries, so several updates of one work/day
     // add up. An explicit factId edits that entry without double-counting it.
@@ -3683,6 +3762,7 @@ export function upsertSupplier(
       materialKeywords: [...new Set(input.materialKeywords.map((value) => value.trim()).filter(Boolean))],
       regions: [...new Set(input.regions.map((value) => value.trim()).filter(Boolean))],
       website: input.website?.trim() || undefined, note: input.note?.trim() || undefined,
+      createdBy: actor.id,
       createdAt: now, updatedAt: now,
     };
     data.suppliers.unshift(supplier);
@@ -3706,6 +3786,7 @@ export function deleteSupplier(actorId: string, supplierId: string) {
     const supplier = data.suppliers?.find((item) => item.id === supplierId);
     if (!supplier) throw new Error("Поставщик не найден");
     assertOrgAccess(actor, supplier.orgId, "поставщика");
+    assertDeleteAllowed(actor, supplier.createdBy, "zakupki", "поставщика");
     data.suppliers = (data.suppliers ?? []).filter((item) => item.id !== supplierId);
     data.supplyRequests = (data.supplyRequests ?? []).map((item) => ({
       ...item,
@@ -3757,8 +3838,10 @@ export function upsertSupplyRequest(
     qtyDelivered?: number;
     unitPrice?: number | null;
   }
-) {
-  return mutateAppData((data) => {
+): AppData & { supplyCreated: boolean; supplyId: string } {
+  let supplyCreated = false;
+  let supplyId = "";
+  const data = mutateAppData((data) => {
     const actor = actorUser(data, actorId);
     const p = data.procurements.find((x) => x.id === input.procurementId);
     if (!p) throw new Error("Закупка не найдена");
@@ -3790,6 +3873,24 @@ export function upsertSupplyRequest(
         updatedAt: now,
       });
       audit(data, actorId, "update", "supply", row.id, row.materialName);
+      supplyCreated = false;
+      supplyId = row.id;
+      return data;
+    }
+    const wanted = supplyNeedKey({
+      materialName: input.materialName,
+      unit: input.unit,
+      workName: input.workName,
+      source: input.source ?? "manual",
+    });
+    const duplicate = data.supplyRequests.find((item) =>
+      item.procurementId === p.id
+      && item.status !== "cancelled"
+      && supplyNeedKey(item) === wanted
+    );
+    if (duplicate) {
+      supplyCreated = false;
+      supplyId = duplicate.id;
       return data;
     }
     const id = `sup-${Date.now()}`;
@@ -3814,12 +3915,33 @@ export function upsertSupplyRequest(
       source: input.source ?? "manual",
       sourceFiles: input.sourceFiles,
       quantityNeedsReview: input.quantityNeedsReview,
+      createdBy: actor.id,
       createdAt: now,
       updatedAt: now,
     };
     data.supplyRequests.unshift(row);
     p.supplyRequestIds = [...(p.supplyRequestIds ?? []), id];
     audit(data, actorId, "create", "supply", id, row.materialName);
+    supplyCreated = true;
+    supplyId = id;
+    return data;
+  });
+  return Object.assign(data, { supplyCreated, supplyId });
+}
+
+export function deleteSupplyRequest(actorId: string, supplyId: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const row = (data.supplyRequests ?? []).find((item) => item.id === supplyId);
+    if (!row) throw new Error("Потребность не найдена");
+    assertOrgAccess(actor, row.orgId, "поставок");
+    assertDeleteAllowed(actor, row.createdBy, "zakupki", "потребность");
+    data.supplyRequests = (data.supplyRequests ?? []).filter((item) => item.id !== supplyId);
+    const procurement = data.procurements.find((item) => item.id === row.procurementId);
+    if (procurement) {
+      procurement.supplyRequestIds = (procurement.supplyRequestIds ?? []).filter((id) => id !== supplyId);
+    }
+    audit(data, actorId, "delete", "supply", supplyId, row.materialName);
     return data;
   });
 }
@@ -3923,6 +4045,7 @@ export function generateProcurementMaterialManifest(actorId: string, procurement
         status: "need", source: row.source, sourceFiles: row.sourceFiles,
         quantityNeedsReview: !row.needBy,
         supplierIds,
+        createdBy: actor.id,
         createdAt: now, updatedAt: now,
       });
       procurement.supplyRequestIds = [...(procurement.supplyRequestIds ?? []), id];
@@ -4042,22 +4165,48 @@ export function addMoneyPayment(
   actorId: string,
   moneyId: string,
   payment: Omit<MoneyPayment, "id">
-) {
-  return mutateAppData((data) => {
+): { paymentId: string; created: boolean } {
+  let result = { paymentId: "", created: false };
+  mutateAppData((data) => {
     const actor = actorUser(data, actorId);
     const plan = data.moneyPlans.find((m) => m.id === moneyId);
     if (!plan) throw new Error("Денежный план не найден");
     assertOrgAccess(actor, plan.orgId, "денежного плана");
     const amountError = paymentAmountError(payment.amount);
     if (amountError) throw new Error(amountError);
+    const storedType = paymentTypeForSave(payment);
+    const title = payment.title?.trim() || "Платёж";
+    const existingId = recentPaymentId(plan.payments, { ...payment, type: storedType, title });
+    if (existingId) {
+      result = { paymentId: existingId, created: false };
+      return data;
+    }
     const row: MoneyPayment = {
       ...payment,
-      type: paymentTypeForSave(payment),
+      title,
+      type: storedType,
       id: `pay-${Date.now()}`,
     };
     plan.payments = [...plan.payments, row];
     plan.updatedAt = new Date().toISOString();
     audit(data, actorId, "create", "money_payment", row.id, row.title);
+    result = { paymentId: row.id, created: true };
+    return data;
+  });
+  return result;
+}
+
+export function deleteMoneyPayment(actorId: string, moneyId: string, paymentId: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const plan = data.moneyPlans.find((item) => item.id === moneyId);
+    if (!plan) throw new Error("Денежный план не найден");
+    assertOrgAccess(actor, plan.orgId, "денежного плана");
+    const payment = plan.payments.find((item) => item.id === paymentId);
+    if (!payment) throw new Error("Платёж не найден");
+    plan.payments = plan.payments.filter((item) => item.id !== paymentId);
+    plan.updatedAt = new Date().toISOString();
+    audit(data, actorId, "delete", "money_payment", paymentId, payment.title);
     return data;
   });
 }

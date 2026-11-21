@@ -237,7 +237,7 @@ export class KonturProcurementSource implements ProcurementSource {
     const key = process.env.KONTUR_API_KEY?.trim();
     const page = filters.PageNumber ?? 0;
     if (!key) {
-      return { ok: false, status: "not_configured", detail: "Не задан серверный ключ API Контура.", page, totalCount: 0, items: [] };
+      return { ok: false, status: "not_configured", detail: "Источник закупок не подключён.", page, totalCount: 0, items: [] };
     }
     try {
       const response = await fetch("https://api-zakupki.kontur.ru/external/v1/search", {
@@ -256,7 +256,7 @@ export class KonturProcurementSource implements ProcurementSource {
           ok: false, status: "error", page,
           totalCount: typeof payload.TotalCount === "number" ? payload.TotalCount : 0,
           items: [],
-          detail: "Контур вернул замаскированные поля. По документации так работает тестовый API-ключ; для импорта реальных закупок нужен боевой ключ с правами по тарифу.",
+          detail: "Поиск закупок вернул замаскированные поля. Это тестовый доступ; для реальных закупок нужен рабочий доступ.",
         };
       }
       return {
@@ -284,21 +284,21 @@ export class KonturProcurementSource implements ProcurementSource {
     } catch (error) {
       const http = error instanceof Error ? /^HTTP (\d+)$/.exec(error.message)?.[1] : undefined;
       const detail = http === "401"
-        ? "Контур отклонил API-ключ (401). Проверьте срок действия ключа."
+        ? "Доступ к поиску закупок отклонён (401). Проверьте ключ."
         : http === "403"
-          ? "API-ключ принят, но тариф не разрешает этот метод (403). Проверьте права search в Кабинете Интегратора."
+          ? "Ключ принят, но поиск закупок недоступен по тарифу (403)."
           : http === "429"
-            ? "Достигнут лимит запросов Контура (429). Повторите после обновления лимита."
-            : http ? `HTTP ${http}` : "сетевая ошибка или неверный формат ответа";
-      return { ok: false, status: "error", detail: `Контур API: ${detail}.`, page, totalCount: 0, items: [] };
+            ? "Достигнут лимит запросов (429). Повторите позже."
+            : http ? `код ${http}` : "сетевая ошибка или неверный формат ответа";
+      return { ok: false, status: "error", detail: `Поиск закупок: ${detail}.`, page, totalCount: 0, items: [] };
     }
   }
 
   /** Fetch one selected purchase only; the API counts a base request per purchase. */
   async purchaseDetails(id: string): Promise<KonturPurchaseDetailsResult> {
     const key = process.env.KONTUR_API_KEY?.trim();
-    if (!key) return { ok: false, status: "not_configured", detail: "Не задан серверный ключ API Контура." };
-    if (!id.trim() || id.length > 200) return { ok: false, status: "error", detail: "Некорректный ID закупки Контура." };
+    if (!key) return { ok: false, status: "not_configured", detail: "Источник закупок не подключён." };
+    if (!id.trim() || id.length > 200) return { ok: false, status: "error", detail: "Некорректный номер закупки." };
     try {
       const response = await fetch(`https://api-zakupki.kontur.ru/external/v1/purchases/${encodeURIComponent(id)}`, {
         headers: { "X-Kontur-Apikey": key },
@@ -309,17 +309,17 @@ export class KonturProcurementSource implements ProcurementSource {
       if (!response.ok) {
         const status = response.status;
         const detail = status === 401
-          ? "Контур отклонил API-ключ (401). Проверьте его срок действия."
+          ? "Доступ к поиску закупок отклонён (401). Проверьте ключ."
           : status === 403
-            ? "API-ключ не имеет доступа к подробной карточке закупки. Для этого метода нужна группа purchase по тарифу."
+            ? "Ключ принят, но карточка закупки недоступна по тарифу."
             : status === 429
-              ? "Достигнут лимит запросов Контура (429). Повторите после обновления лимита."
-              : `Контур API вернул HTTP ${status}.`;
+              ? "Достигнут лимит запросов (429). Повторите позже."
+              : `Поиск закупок недоступен (код ${status}).`;
         return { ok: false, status: "error", detail };
       }
       const raw = await response.json() as Record<string, unknown>;
       if (/░/.test(JSON.stringify(raw))) {
-        return { ok: false, status: "error", detail: "Контур вернул замаскированные подробности. По документации это тестовый API-ключ; нужен боевой ключ с группой purchase." };
+        return { ok: false, status: "error", detail: "Поиск закупок вернул замаскированные подробности. Нужен полный доступ к карточке закупки." };
       }
       const organizer = raw.Organizer && typeof raw.Organizer === "object" ? raw.Organizer as Record<string, unknown> : {};
       const sum = raw.InitialSum && typeof raw.InitialSum === "object" ? raw.InitialSum as Record<string, unknown> : {};
@@ -346,13 +346,13 @@ export class KonturProcurementSource implements ProcurementSource {
       };
     } catch (error) {
       const status = error instanceof Error ? /^HTTP (\d+)$/.exec(error.message)?.[1] : undefined;
-      return { ok: false, status: "error", detail: status ? `Контур API вернул HTTP ${status}.` : "Контур API: сетевая ошибка или неверный формат ответа." };
+      return { ok: false, status: "error", detail: status ? `Поиск закупок недоступен (код ${status}).` : "Поиск закупок: сетевая ошибка или неверный формат ответа." };
     }
   }
 
   private async fetchPages(filters?: KonturSearchFilters): Promise<ProcurementFetchResult> {
     const key = process.env.KONTUR_API_KEY?.trim();
-    if (!key) return { ok: false, stub: false, status: "not_configured", notices: [], detail: "Не задан серверный ключ API Контура." };
+    if (!key) return { ok: false, stub: false, status: "not_configured", notices: [], detail: "Источник закупок не подключён." };
     try {
       const now = new Date();
       const items: KonturSearchItem[] = [];
@@ -395,12 +395,12 @@ export class KonturProcurementSource implements ProcurementSource {
         deadline: item.deadline,
         source: "Контур.Закупки API",
         ...(item.link ? { sourceUrl: item.link } : {}),
-        tags: ["Контур API"],
+        tags: ["поиск закупок"],
       }));
-      return { ok: true, stub: false, status: "ok", notices, detail: `Контур API: получено ${notices.length} закупок из ${total || "неизвестного количества"}. ${completed ? "Все страницы получены." : `Выборка неполная: достигнут лимит ${maxPages} страниц за синхронизацию.`}` };
+      return { ok: true, stub: false, status: "ok", notices, detail: `Поиск закупок: получено ${notices.length} закупок из ${total || "неизвестного количества"}. ${completed ? "Все страницы получены." : `Выборка неполная: достигнут лимит ${maxPages} страниц за синхронизацию.`}` };
     } catch (error) {
       const detail = error instanceof Error && /^HTTP \d+$/.test(error.message) ? error.message : "сетевая ошибка или неверный формат ответа";
-      return { ok: false, stub: false, status: "error", notices: [], detail: `Контур API: ${detail}.` };
+      return { ok: false, stub: false, status: "error", notices: [], detail: `Поиск закупок: ${detail}.` };
     }
   }
 }
@@ -412,12 +412,12 @@ export class KonturProcurementSource implements ProcurementSource {
 export class StubProcurementSource implements ProcurementSource {
   readonly id = "stub-not-configured";
 
-  async fetchNotices(orgId: string): Promise<ProcurementFetchResult> {
+  async fetchNotices(_orgId: string): Promise<ProcurementFetchResult> {
     return {
       ok: true,
       stub: true,
       status: "not_configured",
-      detail: `Источник закупок не подключён (org=${orgId}). Реальный API площадки не согласован — лента не пополняется автоматически.`,
+      detail: "Источник закупок не подключён.",
       notices: [],
     };
   }
@@ -430,12 +430,12 @@ export class StubProcurementSource implements ProcurementSource {
 export class DemoProcurementSource implements ProcurementSource {
   readonly id = "demo-synthetic";
 
-  async fetchNotices(orgId: string): Promise<ProcurementFetchResult> {
+  async fetchNotices(_orgId: string): Promise<ProcurementFetchResult> {
     return {
       ok: true,
       stub: true,
       status: "demo",
-      detail: `Демо-режим PROCUREMENT_DEMO для ${orgId}: синтетическая заявка (не вендор).`,
+      detail: "Демонстрационный режим: тестовые заявки.",
       notices: [
         {
           number: "DEMO-STABLE-001",
@@ -460,14 +460,14 @@ export class DemoProcurementSource implements ProcurementSource {
 export class ConfiguredProcurementSource implements ProcurementSource {
   readonly id = "configured-vendor";
 
-  async fetchNotices(orgId: string): Promise<ProcurementFetchResult> {
+  async fetchNotices(_orgId: string): Promise<ProcurementFetchResult> {
     const url = process.env.PROCUREMENT_API_URL?.trim();
     if (!url) {
       return {
         ok: false,
         stub: true,
         status: "not_configured",
-        detail: `PROCUREMENT_API_URL не задан (org=${orgId}).`,
+        detail: "Источник закупок не подключён.",
         notices: [],
       };
     }
@@ -476,7 +476,7 @@ export class ConfiguredProcurementSource implements ProcurementSource {
       ok: false,
       stub: true,
       status: "not_configured",
-      detail: `URL источника задан, но адаптер вендора ещё не согласован/не реализован (org=${orgId}).`,
+      detail: "Источник закупок указан, но подключение ещё не настроено.",
       notices: [],
     };
   }
@@ -745,7 +745,7 @@ export function procurementSourceStatus(): {
     demo,
     configured: livePublic || liveKontur,
     status: demo ? "demo" : liveKontur && source instanceof KonturProcurementSource ? source.lastResult?.status ?? "not_configured" : livePublic ? "ok" : "not_configured",
-    detail: liveKontur && source instanceof KonturProcurementSource ? source.lastResult?.detail ?? "Ключ Контура настроен; первая синхронизация ещё не выполнена" : livePublic
+    detail: liveKontur && source instanceof KonturProcurementSource ? source.lastResult?.detail ?? "Поиск закупок настроен; синхронизация ещё не запускалась." : livePublic
       ? "Подключена открытая публичная лента закупок «Норникеля»"
       : configured
       ? "Адаптер вендора ожидает согласования"

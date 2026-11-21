@@ -1,5 +1,7 @@
 import {
   addMoneyPayment,
+  deleteCustomerAnswer,
+  deleteMoneyPayment,
   analyzeProcurementPackageWithAI,
   attachCustomerEstimate,
   createManualProcurement,
@@ -27,6 +29,7 @@ const MONEY_ACTIONS = new Set([
   "ensureMoney",
   "saveMoney",
   "addMoneyPayment",
+  "deleteMoneyPayment",
 ]);
 
 export async function GET(req: Request) {
@@ -76,12 +79,15 @@ export async function POST(req: Request) {
         | "deleteProcurement"
         | "saveMoney"
         | "addMoneyPayment"
+        | "deleteMoneyPayment"
         | "refreshKonturDetails"
-        | "answerCustomerQuestion";
+        | "answerCustomerQuestion"
+        | "deleteCustomerAnswer";
       question?: string;
       answer?: string;
       id?: string;
       moneyId?: string;
+      paymentId?: string;
       patch?: Partial<MoneyPlan>;
       payment?: Omit<MoneyPayment, "id">;
       fileName?: string;
@@ -123,14 +129,14 @@ export async function POST(req: Request) {
         attachments: details.attachments.map((attachment, index) => ({
           id: `a-kontur-${procurement.externalId}-${index}`,
           name: attachment.name,
-          type: "Документ API",
+          type: "Файл с площадки",
           size: "—",
           sourceUrl: attachment.url,
         })),
       });
       return json({ ...getBootstrap(user), konturDetails: { detail: result.detail, attachmentCount: details.attachments.length } });
     }
-    if (!body.id && body.action !== "saveMoney" && body.action !== "addMoneyPayment") {
+    if (!body.id && body.action !== "saveMoney" && body.action !== "addMoneyPayment" && body.action !== "deleteMoneyPayment") {
       return json({ error: "Не указан id" }, 400);
     }
     if (body.action === "deleteProcurement") {
@@ -145,6 +151,11 @@ export async function POST(req: Request) {
     if (body.action === "answerCustomerQuestion") {
       if (!body.id || !body.question || !body.answer) return json({ error: "Нужны вопрос и ответ" }, 400);
       saveCustomerAnswer(user.id, body.id, body.question, body.answer);
+      return json(getBootstrap(user));
+    }
+    if (body.action === "deleteCustomerAnswer") {
+      if (!body.id || !body.question) return json({ error: "Нужны закупка и вопрос" }, 400);
+      deleteCustomerAnswer(user.id, body.id, body.question);
       return json(getBootstrap(user));
     }
     if (body.action === "createGpr") {
@@ -227,7 +238,14 @@ export async function POST(req: Request) {
       if (!body.moneyId || !body.payment) {
         return json({ error: "Нужны moneyId и payment" }, 400);
       }
-      addMoneyPayment(user.id, body.moneyId, body.payment);
+      const created = addMoneyPayment(user.id, body.moneyId, body.payment);
+      return json({ ...getBootstrap(user), paymentId: created.paymentId, created: created.created });
+    }
+    if (body.action === "deleteMoneyPayment") {
+      if (!body.moneyId || !body.paymentId) {
+        return json({ error: "Нужны moneyId и paymentId" }, 400);
+      }
+      deleteMoneyPayment(user.id, body.moneyId, body.paymentId);
       return json(getBootstrap(user));
     }
     return json({ error: "Некорректный запрос" }, 400);

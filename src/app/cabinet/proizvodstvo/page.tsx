@@ -10,7 +10,9 @@ import { PageHeader } from "@/components/page-header";
 import { ProjectAiChat } from "@/components/project-ai-chat";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { QuantityCommitField } from "@/components/quantity-commit-field";
 import {
   Select,
   SelectContent,
@@ -28,7 +30,6 @@ import {
 } from "@/components/ui/table";
 import { DateInputRu } from "@/components/date-input-ru";
 import { ProductionPlanFactChart } from "@/components/production-plan-fact-chart";
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { api, downloadUrl } from "@/lib/api";
 import { parseDecimalRu } from "@/lib/decimal-ru";
 import { DEFAULT_MAX_UPLOAD_BYTES, uploadTooLargeMessage } from "@/lib/upload-limit";
@@ -48,7 +49,7 @@ import { forecastWorkCompletion } from "@/lib/production-forecast";
 import { paymentBucket } from "@/lib/money-payments";
 import { useStore } from "@/lib/store";
 import type { ProductionVarianceReport } from "@/server/production-variance-ai";
-import type { DailyFactPhoto, SupplyStatus } from "@/lib/types";
+import type { DailyFactPhoto, PlanFactEntry, SupplyStatus } from "@/lib/types";
 
 function QuietNumberInput({
   id,
@@ -67,38 +68,53 @@ function QuietNumberInput({
   const [focused, setFocused] = useState(false);
   const latest = useRef(text);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [error, setError] = useState<string | null>(null);
   function commit(raw: string) {
     if (timer.current) clearTimeout(timer.current);
     const trimmed = raw.trim();
     if (!trimmed) {
+      setError(null);
       onCommit(emptyAsNull ? null : 0);
       return;
     }
     const parsed = parseDecimalRu(trimmed);
-    if (parsed == null) return;
+    if (parsed == null || parsed < 0) {
+      setError("Введите число, например 1 500 или 12,5");
+      return;
+    }
+    setError(null);
     onCommit(parsed);
   }
   return (
-    <Input
-      id={id}
-      data-testid={testId}
-      value={focused ? text : value == null ? "" : String(value)}
-      onFocus={() => {
-        setFocused(true);
-        setText(value == null ? "" : String(value));
-      }}
-      onChange={(event) => {
-        const next = event.target.value;
-        latest.current = next;
-        setText(next);
-        if (timer.current) clearTimeout(timer.current);
-        timer.current = setTimeout(() => commit(next), 400);
-      }}
-      onBlur={() => {
-        setFocused(false);
-        commit(latest.current);
-      }}
-    />
+    <div>
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          id={id}
+          data-testid={testId}
+          value={focused ? text : value == null ? "" : String(value)}
+          onFocus={() => {
+            setFocused(true);
+            setText(value == null ? "" : String(value));
+          }}
+          onChange={(event) => {
+            const next = event.target.value;
+            latest.current = next;
+            setText(next);
+            setError(null);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              setFocused(false);
+              commit(latest.current);
+            }
+          }}
+          onBlur={() => setFocused(false)}
+        />
+        <Button type="button" size="sm" variant="outline" onClick={() => { setFocused(false); commit(latest.current); }}>Сохранить</Button>
+      </div>
+      {error ? <p className="mt-1 text-xs text-rose-700" role="alert">{error}</p> : null}
+    </div>
   );
 }
 
@@ -155,6 +171,7 @@ export default function ProizvodstvoPage() {
   const [date, setDate] = useState(todayIsoInTimeZone());
   const [qty, setQty] = useState("1");
   const [newWorkName, setNewWorkName] = useState("");
+  const [pendingWork, setPendingWork] = useState<PlanFactEntry | null>(null);
   const [newWorkUnit, setNewWorkUnit] = useState("");
   const [newWorkPlan, setNewWorkPlan] = useState("");
   const [savingDaily, setSavingDaily] = useState(false);
@@ -172,6 +189,7 @@ export default function ProizvodstvoPage() {
     report: ProductionVarianceReport;
   } | null>(null);
   const savingDailyRef = useRef(false);
+  const supplyCreateLock = useRef<string | null>(null);
   const pendingFactIdRef = useRef<string | null>(null);
   const photoRef = useRef<HTMLInputElement>(null);
   const [photoFile, setPhotoFile] = useState<File | null>(null);
@@ -231,7 +249,7 @@ export default function ProizvodstvoPage() {
 
   if (!user) return null;
 
-  const daily = plan?.dailyFacts ?? [];
+  const daily = (plan?.dailyFacts ?? []).filter((fact) => !fact.archived);
   const dayFacts = daily.filter((d) => d.date === date);
   const monthKey = date.slice(0, 7);
   const monthFacts = daily.filter((d) => d.date.startsWith(monthKey));
@@ -383,17 +401,20 @@ export default function ProizvodstvoPage() {
       await refresh();
       toast.success("Факт поставки обновлён");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Не удалось обновить поставку");
+      const message = error instanceof Error ? error.message : "Не удалось обновить поставку";
+      toast.error(message);
+      throw error instanceof Error ? error : new Error(message);
     } finally {
       setSupplySavingId(null);
     }
   }
 
   async function createSupplyFromGpr(need: (typeof gprMaterialNeeds)[number]) {
-    if (!procurement) return;
+    if (!procurement || supplyCreateLock.current) return;
+    supplyCreateLock.current = need.key;
     setSupplySavingId(need.key);
     try {
-      const boot = await api<{ data: { supplyRequests?: Array<{ id: string; materialName: string }> } }>("/api/supply", {
+      const boot = await api<{ supplyCreated?: boolean; supplyId?: string; data: { supplyRequests?: Array<{ id: string; materialName: string }> } }>("/api/supply", {
         method: "POST",
         body: JSON.stringify({
           procurementId: procurement.id,
@@ -402,28 +423,42 @@ export default function ProizvodstvoPage() {
           unit: need.unit,
           qtyNeed: need.quantity,
           needBy: need.needBy,
+          source: "gpr",
         }),
       });
-      const created = (boot.data.supplyRequests ?? []).find((item) => item.materialName === need.materialName);
-      if (created) {
-        try {
-          const found = await api<{ candidates: Array<{ name: string; sourceUrl: string }> }>("/api/supply", {
-            method: "POST",
-            body: JSON.stringify({ action: "discoverSuppliers", id: created.id }),
-          });
-          setSupplyHints((current) => ({ ...current, [need.materialName]: found.candidates }));
-        } catch {
-          setSupplyHints((current) => ({ ...current, [need.materialName]: [] }));
-        }
+      if (!boot.supplyCreated || !boot.supplyId) {
+        toast.message("Такая потребность уже есть");
+        return;
+      }
+      const createdId = boot.supplyId;
+      try {
+        const found = await api<{ candidates: Array<{ name: string; sourceUrl: string }> }>("/api/supply", {
+          method: "POST",
+          body: JSON.stringify({ action: "discoverSuppliers", id: createdId }),
+        });
+        setSupplyHints((current) => ({ ...current, [need.materialName]: found.candidates }));
+      } catch {
+        setSupplyHints((current) => ({ ...current, [need.materialName]: [] }));
       }
       await refresh();
       const matched = matchDirectorySuppliers(need.materialName, data.suppliers ?? []);
       toast.success(matched.length
         ? `Потребность создана: ${need.materialName}. В справочнике ${matched.length} поставщиков.`
-        : `Потребность создана: ${need.materialName}. В справочнике подходящих поставщиков нет.`);
+        : `Потребность создана: ${need.materialName}. В справочнике подходящих поставщиков нет.`, {
+        duration: 10_000,
+        action: {
+          label: "Отменить",
+          onClick: () => {
+            void api("/api/supply", { method: "POST", body: JSON.stringify({ action: "deleteSupply", id: createdId }) })
+              .then(() => refresh())
+              .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось отменить"));
+          },
+        },
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось создать потребность");
     } finally {
+      supplyCreateLock.current = null;
       setSupplySavingId(null);
     }
   }
@@ -884,6 +919,8 @@ export default function ProizvodstvoPage() {
                   {canViewProcurement && procurement?.lifecycle === "production" ? (
                     <div className="flex flex-wrap items-center gap-3">
                       <Button size="sm" disabled={supplySavingId === "manifest"} onClick={() => {
+                        if (supplyCreateLock.current) return;
+                        supplyCreateLock.current = "manifest";
                         setSupplySavingId("manifest");
                         void api<{ manifest: { created: number; withSupplier?: number; withoutSupplier?: number } }>("/api/supply", {
                           method: "POST",
@@ -895,7 +932,10 @@ export default function ProizvodstvoPage() {
                             ? `Создано ${manifest.created} потребностей. Поставщики подобраны: ${manifest.withSupplier ?? 0}. Без поставщика: ${manifest.withoutSupplier ?? 0}.`
                             : "Новых потребностей нет — всё уже создано");
                         }).catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось создать потребность"))
-                          .finally(() => setSupplySavingId(null));
+                          .finally(() => {
+                            supplyCreateLock.current = null;
+                            setSupplySavingId(null);
+                          });
                       }}>{supplySavingId === "manifest" ? "Создаю…" : "Создать потребность"}</Button>
                       <Link
                         href={`/cabinet/zakupki/${procurement.id}?tab=supply`}
@@ -980,25 +1020,15 @@ export default function ProizvodstvoPage() {
                             </select>
                             {overdue ? <p className="mt-1 text-xs font-medium text-rose-700">Поставка просрочена · требовалась {due}</p> : null}
                           </div>
-                          <label className="text-xs text-[var(--tk-muted)]">
-                            Получено ({supply.unit})
-                            <Input
-                              key={`qty-delivered-${supply.id}:${supply.qtyDelivered}`}
-                              className="mt-1 h-9"
-                              type="number"
-                              min="0"
-                              step="any"
-                              defaultValue={String(roundQuantity(supply.qtyDelivered, 4))}
-                              disabled={supplySavingId === supply.id}
-                              aria-label={`Получено ${supply.materialName}`}
-                              onBlur={(event) => {
-                                const amount = Number(event.currentTarget.value.replace(",", "."));
-                                if (Number.isFinite(amount) && amount >= 0 && !sameRoundedQuantity(supply.qtyDelivered, event.currentTarget.value, 4)) {
-                                  void updateSupplyReceipt(supply.id, { qtyDelivered: amount });
-                                }
-                              }}
-                            />
-                          </label>
+                          <QuantityCommitField
+                            label={`Получено (${supply.unit})`}
+                            value={supply.qtyDelivered}
+                            ariaLabel={`Получено ${supply.materialName}`}
+                            testId={`production-received-${supply.id}`}
+                            onCommit={async (amount) => {
+                              await updateSupplyReceipt(supply.id, { qtyDelivered: amount });
+                            }}
+                          />
                           <div className={`text-sm ${remaining > 0 ? "text-amber-800" : "text-emerald-800"}`}>
                             Осталось: {formatNumber(remaining)} {supply.unit}
                           </div>
@@ -1065,10 +1095,25 @@ export default function ProizvodstvoPage() {
                       return;
                     }
                     const volume = Number(newWorkPlan);
-                    updatePlanFact(plan.id, { entries: [...plan.entries, { id: `pfe-manual-${crypto.randomUUID()}`, workName: name, unit: split.unit, plan: volume, fact: 0, contractRemaining: volume }] });
+                    const entryId = `pfe-manual-${crypto.randomUUID()}`;
+                    const planId = plan.id;
+                    const entry = { id: entryId, workName: name, unit: split.unit, plan: volume, fact: 0, contractRemaining: volume };
+                    updatePlanFact(planId, { entries: [...plan.entries, entry] });
                     setWorkName(name);
                     setNewWorkName(""); setNewWorkUnit(""); setNewWorkPlan("");
-                    toast.success("Вид работ добавлен в план договора");
+                    toast.success("Вид работ добавлен в план договора", {
+                      id: `work-undo-${entryId}`,
+                      duration: 10_000,
+                      action: {
+                        label: "Отменить",
+                        onClick: () => {
+                          void api("/api/proizvodstvo", {
+                            method: "POST",
+                            body: JSON.stringify({ action: "deleteEntry", planFactId: planId, entryId }),
+                          }).then(() => refresh()).catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось отменить"));
+                        },
+                      },
+                    });
                   }}>Добавить работу</Button>
                 </div>
                 <section className="mb-4 rounded-lg border border-primary/20 bg-primary/[0.04] p-3" aria-label="План ГПР на выбранный день" data-testid="daily-gpr-plan">
@@ -1193,6 +1238,7 @@ export default function ProizvodstvoPage() {
                       <TableHead className="text-right">План ГПР · срез</TableHead>
                       <TableHead className="text-right">Отклонение факта от плана</TableHead>
                       <TableHead title="Оценка по фактическому темпу, только после 3 дней с положительным фактом; выходные берутся из календаря ГПР, праздники не моделируются">Прогноз окончания</TableHead>
+                      <TableHead />
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1304,12 +1350,49 @@ export default function ProizvodstvoPage() {
                               </>
                             )}
                           </TableCell>
+                          <TableCell>
+                            <Button size="sm" variant="ghost" onClick={() => setPendingWork(e)}>Удалить</Button>
+                          </TableCell>
                         </TableRow>
                       );
                     })}
                   </TableBody>
                 </Table>
               </div>
+              <Dialog open={pendingWork != null} onOpenChange={(open) => { if (!open) setPendingWork(null); }}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Удалить вид работ?</DialogTitle>
+                    <DialogDescription>Вид работ «{pendingWork?.workName}» будет удалён из плана вместе с дневными фактами и фото. Остальные работы останутся.</DialogDescription>
+                  </DialogHeader>
+                  <DialogFooter>
+                    <Button variant="outline" onClick={() => setPendingWork(null)}>Отмена</Button>
+                    <Button onClick={() => {
+                      const target = pendingWork;
+                      const planId = plan?.id;
+                      setPendingWork(null);
+                      if (!target || !planId) return;
+                      void api("/api/proizvodstvo", {
+                        method: "POST",
+                        body: JSON.stringify({ action: "deleteEntry", planFactId: planId, entryId: target.id }),
+                      }).then(() => refresh()).then(() => {
+                        toast.success("Вид работ удалён", {
+                          duration: 10_000,
+                          action: {
+                            label: "Отменить",
+                            onClick: () => {
+                              void api("/api/proizvodstvo", {
+                                method: "POST",
+                                body: JSON.stringify({ action: "restoreEntry", planFactId: planId, entry: target }),
+                              }).then(() => refresh()).catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось вернуть вид работ"));
+                            },
+                          },
+                        });
+                      }).catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось удалить вид работ"));
+                    }}>Удалить</Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
 
               <div className="mt-6">
                 <h3 className="mb-2 font-medium">Дневные записи и фотоотчёт</h3>

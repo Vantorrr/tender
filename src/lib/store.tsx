@@ -6,9 +6,11 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
+import { SUMMARY_UNCHANGED, summaryRefreshNotice } from "@/lib/summary-notice";
 import { createSeedData } from "./seed";
 import { api, setClientToken } from "./api";
 import type {
@@ -133,7 +135,7 @@ interface StoreContextValue {
   runSyncJob: () => Promise<void>;
   ensureChain: (procurementId: string) => Promise<BootstrapResponse>;
   sendToCalculation: (procurementId: string) => Promise<CalculationSummary>;
-  refreshAnalytics: (procurementId: string) => Promise<string | undefined>;
+  refreshAnalytics: (procurementId: string) => Promise<string>;
   analyzeProjectWithAI: (procurementId: string) => Promise<string | undefined>;
   markAllNotificationsRead: () => Promise<void>;
   setOrganizationActive: (orgId: string, active: boolean) => Promise<void>;
@@ -169,6 +171,8 @@ function applyBootstrap(
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [data, setData] = useState<AppData>(createSeedData);
+  const dataRef = useRef(data);
+  dataRef.current = data;
   const [user, setUser] = useState<PublicUser | null>(null);
 
   const refresh = useCallback(async () => {
@@ -709,6 +713,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const refreshAnalytics = useCallback(
     async (procurementId: string) => {
+      const before = dataRef.current.procurements.find((item) => item.id === procurementId)?.analytics?.summary ?? "";
       const boot = await api<BootstrapResponse & { analyticsNotice?: string }>("/api/zakupki", {
         method: "POST",
         body: JSON.stringify({
@@ -717,19 +722,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }),
       });
       applyBoot(boot);
-      return boot.analyticsNotice;
+      const after = boot.data.procurements.find((item) => item.id === procurementId)?.analytics?.summary ?? "";
+      return summaryRefreshNotice(before, after);
     },
     [applyBoot]
   );
 
   const analyzeProjectWithAI = useCallback(
     async (procurementId: string) => {
+      const before = dataRef.current.procurements.find((item) => item.id === procurementId)?.analytics?.summary ?? "";
       const boot = await api<BootstrapResponse & { analysisWarning?: string }>("/api/zakupki", {
         method: "POST",
         body: JSON.stringify({ action: "analyzeProject", id: procurementId }),
       });
       applyBoot(boot);
-      return boot.analysisWarning;
+      const after = boot.data.procurements.find((item) => item.id === procurementId)?.analytics?.summary ?? "";
+      if (boot.analysisWarning && boot.analysisWarning !== SUMMARY_UNCHANGED) return boot.analysisWarning;
+      if (summaryRefreshNotice(before, after) === SUMMARY_UNCHANGED) return SUMMARY_UNCHANGED;
+      return undefined;
     },
     [applyBoot]
   );

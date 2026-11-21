@@ -33,6 +33,7 @@ import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engine";
 import { parseDecimalRu } from "@/lib/decimal-ru";
 import { patchMergedPositions, patchMergedResources } from "@/lib/resource-merge";
+import { calculationBreakdownRows } from "@/lib/calculation-breakdown";
 import { formatMoney, formatNumber, plainPositionName, quantityPresentation, splitSignedQuantity, visiblePositionCode } from "@/lib/format";
 import { visibleProcurementNumber } from "@/lib/pipeline";
 import { rowDeleteConfirmed } from "@/lib/row-delete";
@@ -1844,21 +1845,26 @@ export default function RaschetDetailPage() {
         <h2 className="font-[family-name:var(--font-display)] text-lg font-semibold">
           Из чего сложился расчёт
         </h2>
-        <div className="mt-3 overflow-x-auto">
+        <div className="mt-3 overflow-x-auto" data-testid="calculation-breakdown">
           <table className="w-full text-left text-sm">
             <thead>
               <tr className="text-xs text-[var(--tk-muted)]">
-                <th className="py-1 pr-3 font-medium">Что вошло</th>
+                <th className="py-1 pr-3 font-medium">Что</th>
                 <th className="py-1 pr-3 font-medium">Сумма</th>
-                <th className="py-1 font-medium">Откуда</th>
+                <th className="py-1 font-medium">Из какого файла</th>
               </tr>
             </thead>
             <tbody>
-              <tr>
-                <td className="py-1 pr-3">{calc.positions.length} строк</td>
-                <td className="py-1 pr-3">{missingRateCount > 0 ? `Итог неполный: нет ставок по ${missingRateCount} позициям` : calc.costSummary?.priceExVat != null ? formatMoney(calc.costSummary.priceExVat) : "нет данных"}</td>
-                <td className="py-1">{refreshRateAssumption(calc.assumptions.find((item) => item.startsWith("Источники:"))?.replace(/^Источники:\s*/u, "") ?? "Ставки людей берутся по должности, техники — по модели, материалов — по наименованию и единице. Если совпадения нет, у строки остаётся «нет ставки».")}</td>
-              </tr>
+              {calculationBreakdownRows(calc.positions, projectDocuments, calc.scenarioFactor || 1).map((row, index) => (
+                <tr key={`${index}-${row.what}-${row.fileName}`} className="border-t border-[var(--tk-line)]">
+                  <td className="py-1 pr-3">{row.what}</td>
+                  <td className="py-1 pr-3 tabular-nums">{row.amount == null ? "нет ставки" : formatMoney(row.amount)}</td>
+                  <td className="py-1">
+                    {row.href ? <Link className="underline" href={row.href}>{row.fileName}</Link> : row.fileName}
+                    {row.place ? <span className="text-[var(--tk-muted)]"> · {row.place}</span> : null}
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>

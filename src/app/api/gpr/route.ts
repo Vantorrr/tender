@@ -21,7 +21,6 @@ export async function GET(req: Request) {
 
 export async function PATCH(req: Request) {
   return withUser(req, async (user) => {
-    assertGprWrite(user);
     const body = (await req.json()) as {
       id?: string;
       patch?: Partial<GprSchedule>;
@@ -44,14 +43,15 @@ export async function PATCH(req: Request) {
     };
     if (!body.id) return json({ error: "Нужен id" }, 400);
     try {
-      if (body.action === "setPredecessor") {
-        if (!body.stageId) return json({ error: "Нужен stageId" }, 400);
-        setStagePredecessor(user.id, body.id, body.stageId, body.dependsOn ?? null);
-        return json(getBootstrap(user));
-      }
       if (body.action === "deleteStage") {
         if (!body.stageId) return json({ error: "Нужен stageId" }, 400);
         deleteGprStage(user.id, body.id, body.stageId);
+        return json(getBootstrap(user));
+      }
+      assertGprWrite(user);
+      if (body.action === "setPredecessor") {
+        if (!body.stageId) return json({ error: "Нужен stageId" }, 400);
+        setStagePredecessor(user.id, body.id, body.stageId, body.dependsOn ?? null);
         return json(getBootstrap(user));
       }
       if (body.action === "shiftStage") {
@@ -88,7 +88,7 @@ export async function PATCH(req: Request) {
       return json(getBootstrap(user));
     } catch (e) {
       const message = e instanceof Error ? e.message : "Ошибка ГПР";
-      if (message.includes("Недостаточно прав") || message.startsWith("Нет доступа")) throw e;
+      if (message.includes("Недостаточно прав") || message.startsWith("Нет доступа") || message.startsWith("Удалять")) throw e;
       return json({ error: message }, 400);
     }
   });

@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -22,18 +23,26 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { downloadUrl } from "@/lib/api";
+import { api, downloadUrl } from "@/lib/api";
 import { parseDecimalRu } from "@/lib/decimal-ru";
 import { formatMoney } from "@/lib/format";
-import { PAYMENT_AMOUNT_ERROR, PAYMENT_BUCKET_LABELS, paymentBucket, paymentTotals } from "@/lib/money-payments";
+import { PAYMENT_AMOUNT_ERROR, PAYMENT_BUCKET_LABELS, paymentBucket, paymentTotals, type PaymentBucket } from "@/lib/money-payments";
 import { PERIOD_LABELS } from "@/lib/roles";
 import { useStore } from "@/lib/store";
 import { DateInputRu } from "@/components/date-input-ru";
 
 export default function DengiPage() {
-  const { data, user, updateMoney } = useStore();
+  const { data, user, updateMoney, refresh } = useStore();
   const [planId, setPlanId] = useState<string>("");
   const [period, setPeriod] = useState<"all" | "week" | "month">("all");
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; title: string } | null>(null);
+  const [payTitle, setPayTitle] = useState("");
+  const [payType, setPayType] = useState<PaymentBucket>("postuplenie");
+  const [payAmount, setPayAmount] = useState("");
+  const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
+  const [paySaving, setPaySaving] = useState(false);
+  const [payError, setPayError] = useState<string | null>(null);
+  const paySavingRef = useRef(false);
 
   const plans = useMemo(
     () => (user ? data.moneyPlans.filter((m) => m.orgId === user.orgId) : []),
@@ -84,6 +93,71 @@ export default function DengiPage() {
         return next;
       }),
     });
+  }
+
+  async function removePayment(paymentId: string) {
+    if (!plan) return;
+    await api("/api/dengi", {
+      method: "POST",
+      body: JSON.stringify({ action: "deletePayment", moneyId: plan.id, paymentId }),
+    });
+    await refresh();
+  }
+
+  async function addPayment() {
+    if (!plan || paySavingRef.current) return;
+    const amount = parseDecimalRu(payAmount);
+    if (amount == null || amount <= 0) {
+      setPayError(PAYMENT_AMOUNT_ERROR);
+      return;
+    }
+    setPayError(null);
+    paySavingRef.current = true;
+    setPaySaving(true);
+    try {
+      const result = await api<{ paymentId?: string; created?: boolean }>("/api/dengi", {
+        method: "POST",
+        body: JSON.stringify({
+          action: "addPayment",
+          moneyId: plan.id,
+          payment: {
+            type: payType,
+            title: payTitle.trim() || "Платёж",
+            amount,
+            date: payDate,
+            week: 1,
+            month: Number(payDate.slice(5, 7)) || 1,
+          },
+        }),
+      });
+      await refresh();
+      setPayTitle("");
+      setPayAmount("");
+      if (result.created === false) {
+        toast.message("Такой платёж уже есть");
+        return;
+      }
+      const paymentId = result.paymentId;
+      toast.success("Платёж добавлен", {
+        id: paymentId ? `payment-undo-${paymentId}` : undefined,
+        duration: 10_000,
+        action: paymentId
+          ? {
+              label: "Отменить",
+              onClick: () => {
+                void removePayment(paymentId)
+                  .then(() => toast.success("Платёж отменён"))
+                  .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось отменить"));
+              },
+            }
+          : undefined,
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось добавить платёж");
+    } finally {
+      paySavingRef.current = false;
+      setPaySaving(false);
+    }
   }
 
   if (!user) return null;
@@ -184,6 +258,7 @@ export default function DengiPage() {
                     <TableHead>Дата</TableHead>
                     <TableHead className="text-right">Сумма</TableHead>
                     <TableHead>Комментарий</TableHead>
+                    <TableHead />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -229,12 +304,57 @@ export default function DengiPage() {
                           onChange={(e) => patchPayment(p.id, { note: e.target.value })}
                         />
                       </TableCell>
+                      <TableCell>
+                        <Button size="sm" variant="ghost" onClick={() => setPendingDelete({ id: p.id, title: p.title })}>
+                          Удалить
+                        </Button>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
               </Table>
             </div>
           ) : null}
+          {plan ? (
+            <div className="mt-4 flex flex-wrap items-end gap-2">
+              <Input aria-label="Название платежа" placeholder="Название, например 2 этап" value={payTitle} onChange={(event) => setPayTitle(event.target.value)} />
+              <select
+                aria-label="Тип платежа"
+                className="h-9 rounded-lg border border-[var(--tk-line)] bg-white px-2 text-sm"
+                value={payType}
+                onChange={(event) => setPayType(event.target.value as PaymentBucket)}
+              >
+                <option value="avans">Аванс</option>
+                <option value="postuplenie">Поступление</option>
+                <option value="spisanie">Списание</option>
+              </select>
+              <Input className="w-32" aria-label="Сумма нового платежа" inputMode="decimal" value={payAmount} onChange={(event) => { setPayAmount(event.target.value); setPayError(null); }} />
+              {payError ? <p className="w-full text-sm text-rose-700" role="alert">{payError}</p> : null}
+              <DateInputRu value={payDate} onChange={setPayDate} className="w-[140px]" />
+              <Button data-testid="dengi-add-payment" disabled={paySaving} onClick={() => void addPayment()}>
+                {paySaving ? "Сохраняю…" : "Добавить платёж"}
+              </Button>
+            </div>
+          ) : null}
+          <Dialog open={pendingDelete != null} onOpenChange={(open) => { if (!open) setPendingDelete(null); }}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Удалить платёж?</DialogTitle>
+                <DialogDescription>Платёж «{pendingDelete?.title}» будет удалён из плана.</DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setPendingDelete(null)}>Отмена</Button>
+                <Button onClick={() => {
+                  const target = pendingDelete;
+                  setPendingDelete(null);
+                  if (!target) return;
+                  void removePayment(target.id)
+                    .then(() => toast.success("Платёж удалён"))
+                    .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось удалить платёж"));
+                }}>Удалить</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </>
       )}
     </div>

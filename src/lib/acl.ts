@@ -23,6 +23,24 @@ export function assertGprWrite(user: User): void {
   assertSection(user, "gpr");
 }
 
+const DELETE_MANAGER_ROLES = new Set<User["role"]>(["superadmin", "admin", "rukovoditel"]);
+
+/**
+ * A row can be removed by its author, or by a manager role.
+ * Everyone else needs the section and still cannot delete another person's row.
+ */
+export function assertDeleteAllowed(
+  actor: User,
+  authorId: string | undefined,
+  section: SectionKey,
+  label: string,
+): void {
+  if (DELETE_MANAGER_ROLES.has(actor.role)) return;
+  if (authorId && authorId === actor.id) return;
+  assertSection(actor, section);
+  throw new Error(`Удалять ${label} может автор, руководитель или администратор`);
+}
+
 export function assertOrgAccess(
   user: User,
   orgId: string,

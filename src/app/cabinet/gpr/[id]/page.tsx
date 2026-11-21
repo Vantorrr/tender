@@ -2,7 +2,7 @@
 
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ErrorState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
@@ -13,17 +13,18 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { api, downloadUrl } from "@/lib/api";
-import { PlanFactGantt } from "@/components/plan-fact-gantt";
+import { GPR_LINKED_ROW_PX, PlanFactGantt } from "@/components/plan-fact-gantt";
 import { GprResourceTree } from "@/components/gpr-resource-tree";
 import { collectCalendarWarnings } from "@/lib/calendar-availability";
 import { bucketsFromPositions } from "@/lib/cost-engine";
 import { formatMoney } from "@/lib/format";
+import { linkedWorkRows } from "@/lib/gpr-linked-rows";
 import { gprStageLabel } from "@/lib/gpr-stage-label";
 import { visibleProcurementNumber } from "@/lib/pipeline";
 import { humanizeIssues } from "@/lib/issue-text";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { useStore } from "@/lib/store";
-import type { CalcPosition, GprStageResource } from "@/lib/types";
+import type { CalcPosition, GprStage, GprStageResource } from "@/lib/types";
 import { ProjectAiChat } from "@/components/project-ai-chat";
 import { userHasSection } from "@/lib/acl";
 import { canOpenCabinetPath } from "@/components/cabinet/nav";
@@ -47,6 +48,38 @@ export default function GprDetailPage() {
   const [materialsPreview, setMaterialsPreview] = useState<MaterialsPreview | null>(null);
   const [materialsImportBusy, setMaterialsImportBusy] = useState(false);
   const [pendingStageId, setPendingStageId] = useState<string | null>(null);
+  const [visibleIds, setVisibleIds] = useState<string[] | null>(null);
+  const [tableScroll, setTableScroll] = useState<HTMLDivElement | null>(null);
+  const [ganttScroll, setGanttScroll] = useState<HTMLDivElement | null>(null);
+  const addingWork = useRef(false);
+  const onVisibleStages = useCallback((stages: GprStage[]) => {
+    setVisibleIds((current) => {
+      const next = stages.map((stage) => stage.id);
+      if (current && current.length === next.length && current.every((id, index) => id === next[index])) return current;
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    setVisibleIds(null);
+  }, [params.id]);
+  useEffect(() => {
+    if (!tableScroll || !ganttScroll) return;
+    let lock = false;
+    const sync = (source: HTMLElement, target: HTMLElement) => () => {
+      if (lock) return;
+      lock = true;
+      target.scrollTop = source.scrollTop;
+      lock = false;
+    };
+    const fromTable = sync(tableScroll, ganttScroll);
+    const fromGantt = sync(ganttScroll, tableScroll);
+    tableScroll.addEventListener("scroll", fromTable);
+    ganttScroll.addEventListener("scroll", fromGantt);
+    return () => {
+      tableScroll.removeEventListener("scroll", fromTable);
+      ganttScroll.removeEventListener("scroll", fromGantt);
+    };
+  }, [tableScroll, ganttScroll]);
   const { data, user, updateSchedule, updateCalculation, refresh } = useStore();
 
   if (!user) return null;
@@ -339,31 +372,40 @@ export default function GprDetailPage() {
         </div>
       ) : null}
 
-      <div className="mb-6 grid items-start gap-4 xl:grid-cols-[minmax(18rem,26rem)_minmax(0,1fr)]" data-testid="gpr-project-screen">
-        <section className="rounded-xl border border-[var(--tk-line)] bg-white/90 p-3" data-testid="gpr-work-table">
-          <h2 className="mb-2 text-sm font-semibold">Виды работ</h2>
-          <div className="max-h-[70vh] overflow-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="text-[var(--tk-muted)]">
-                  <th className="py-1 pr-2">Название</th>
-                  <th className="py-1 pr-2">Начало</th>
-                  <th className="py-1 pr-2">Конец</th>
-                  <th className="py-1 pr-2">Дней</th>
-                  <th className="py-1">После</th>
+      <div className="mb-6 xl:overflow-x-hidden" data-testid="gpr-project-screen">
+        <div className="grid items-start gap-4 xl:grid-cols-[minmax(22rem,32rem)_minmax(0,1fr)] xl:gap-0 xl:overflow-hidden xl:rounded-xl xl:border xl:border-[var(--tk-line)] xl:bg-white">
+        <section className="min-w-0 rounded-xl border border-[var(--tk-line)] bg-white/90 p-3 xl:rounded-none xl:border-0 xl:border-r" data-testid="gpr-work-table">
+          <h2 className="mb-2 flex h-8 items-center text-sm font-semibold">Виды работ</h2>
+          <div ref={setTableScroll} className="max-h-[70vh] overflow-x-hidden overflow-y-auto" data-testid="gpr-work-scroll">
+            <table className="w-full table-fixed text-left text-xs">
+              <thead className="sticky top-0 z-10 bg-white">
+                <tr className="text-[var(--tk-muted)]" style={{ height: GPR_LINKED_ROW_PX }}>
+                  <th className="w-[34%] py-1 pr-2">Название</th>
+                  <th className="w-[18%] py-1 pr-2">Начало</th>
+                  <th className="w-[18%] py-1 pr-2">Конец</th>
+                  <th className="w-[14%] py-1 pr-2">Дней</th>
+                  <th className="w-[16%] py-1">После</th>
                 </tr>
               </thead>
               <tbody>
-                {schedule.stages.map((stage) => (
-                  <tr key={stage.id} className="border-t border-[var(--tk-line)]">
-                    <td className="py-1 pr-2">{gprStageLabel(stage).text}</td>
-                    <td className="py-1 pr-2">{stage.start}</td>
-                    <td className="py-1 pr-2">{stage.end}</td>
-                    <td className="py-1 pr-2">{inclusiveDays(stage.start, stage.end)}</td>
-                    <td className="py-1">
+                {linkedWorkRows(schedule.stages, visibleIds).map((stage) => (
+                  <tr key={stage.id} className="border-t border-[var(--tk-line)]" style={{ height: GPR_LINKED_ROW_PX }} data-testid={`gpr-work-row-${stage.id}`}>
+                    <td className="overflow-hidden py-1 pr-2 align-middle">
+                      <div className="truncate" title={gprStageLabel(stage).text}>{gprStageLabel(stage).text}</div>
+                    </td>
+                    <td className="py-1 pr-2 align-middle">{stage.start}</td>
+                    <td className="py-1 pr-2 align-middle">{stage.end}</td>
+                    <td className="py-1 pr-2 align-middle">
+                      <div>{inclusiveDays(stage.start, stage.end)}</div>
+                      <div className="mt-0.5 flex gap-1">
+                        <button type="button" className="underline" aria-label={`Сдвинуть раньше: ${stage.name}`} onClick={() => void shiftStage(stage.id, -1)}>−1</button>
+                        <button type="button" className="underline" aria-label={`Сдвинуть позже: ${stage.name}`} onClick={() => void shiftStage(stage.id, 1)}>+1</button>
+                      </div>
+                    </td>
+                    <td className="py-1 align-middle">
                       <select
                         aria-label={`После какой работы: ${stage.name}`}
-                        className="max-w-28 rounded border bg-white px-1 py-0.5"
+                        className="max-w-full rounded border bg-white px-1 py-0.5"
                         value={stage.dependsOn ?? ""}
                         onChange={(event) => {
                           void api("/api/gpr", {
@@ -377,13 +419,7 @@ export default function GprDetailPage() {
                           <option key={item.id} value={item.id}>{gprStageLabel(item).text}</option>
                         ))}
                       </select>
-                    </td>
-                    <td className="py-1 text-right">
-                      <button type="button" className="underline" onClick={() => {
-                        void api("/api/gpr", { method: "PATCH", body: JSON.stringify({ id: schedule.id, action: "deleteStage", stageId: stage.id }) })
-                          .then(() => refresh())
-                          .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось удалить вид работ"));
-                      }}>Удалить</button>
+                      <button type="button" className="mt-0.5 block underline" onClick={() => setPendingStageId(stage.id)}>Удалить</button>
                     </td>
                   </tr>
                 ))}
@@ -392,11 +428,13 @@ export default function GprDetailPage() {
           </div>
           <form className="mt-3 flex flex-wrap gap-2" onSubmit={(event) => {
             event.preventDefault();
+            if (addingWork.current) return;
             const form = event.currentTarget;
             const name = new FormData(form).get("work");
             if (typeof name !== "string" || !name.trim()) return;
+            addingWork.current = true;
             const today = new Date().toISOString().slice(0, 10);
-            const stage = { id: `gs-${crypto.randomUUID()}`, name: name.trim(), start: today, end: today, sequence: schedule.stages.length + 1, crewSize: 0 };
+            const stage = { id: `gs-${crypto.randomUUID()}`, name: name.trim(), start: today, end: today, sequence: schedule.stages.length + 1, crewSize: 0, createdBy: user.id };
             void updateSchedule(schedule.id, { stages: [...schedule.stages, stage] }).then(() => {
               form.reset();
               toast.success("Вид работ добавлен", {
@@ -410,13 +448,15 @@ export default function GprDetailPage() {
                   },
                 },
               });
+            }).finally(() => {
+              addingWork.current = false;
             });
           }}>
             <Input name="work" aria-label="Новый вид работ" placeholder="Новый вид работ" className="h-8" />
             <Button type="submit" size="sm">Добавить</Button>
           </form>
         </section>
-        <div data-testid="gantt-track">
+        <div className="min-w-0 p-3" data-testid="gantt-track">
           <PlanFactGantt
             stages={schedule.stages}
             entries={planFact?.entries}
@@ -424,8 +464,12 @@ export default function GprDetailPage() {
             planFactId={planFact?.id}
             filterScope={schedule.id}
             weekendDays={schedule.calendar?.weekendDays}
+            timelineOnly
+            scrollElementRef={setGanttScroll}
+            onVisibleStages={onVisibleStages}
             onShift={(id, d, resize) => shiftStage(id, d, resize)}
           />
+        </div>
         </div>
       </div>
 

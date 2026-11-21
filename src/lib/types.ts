@@ -52,6 +52,8 @@ export interface SupplierDirectoryEntry {
   regions: string[];
   website?: string;
   note?: string;
+  /** User who added the supplier. Missing on older rows. */
+  createdBy?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -234,7 +236,7 @@ export interface Procurement {
   closedAt?: string;
   wonAt?: string;
   /** Answers kept on the procurement. They are not emailed. */
-  customerAnswers?: Array<{ question: string; answer: string; at: string }>;
+  customerAnswers?: Array<{ question: string; answer: string; at: string; authorId?: string; authorName?: string }>;
   /** Materials / supply cycle (need → quote draft → delivery) — no auto-send. */
   supplyRequestIds?: string[];
 }
@@ -285,6 +287,8 @@ export interface SupplyRequest {
   /** Several supplier offers for comparison; legacy supplier fields mirror the selected quote. */
   quotes?: SupplierQuote[];
   selectedQuoteId?: string;
+  /** User who created the need. Missing on older rows. */
+  createdBy?: string;
   updatedAt: string;
   createdAt: string;
 }
@@ -587,6 +591,8 @@ export interface GprStage {
   workName?: string;
   /** A GPR stage can cover several production work types. */
   workNames?: string[];
+  /** User who added this stage. Older stages fall back to the schedule author. */
+  createdBy?: string;
 }
 
 export interface WorkCalendar {
@@ -701,6 +707,10 @@ export interface DailyFact {
   photos: DailyFactPhoto[];
   authorId: string;
   at: string;
+  /** Plan row this fact belongs to. Name matching is only a fallback for older rows. */
+  entryId?: string;
+  /** Hidden together with its work row. A new row with the same name does not pick these up. */
+  archived?: boolean;
 }
 
 export interface ContractPnl {

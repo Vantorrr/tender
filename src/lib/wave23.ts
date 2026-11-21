@@ -414,6 +414,21 @@ export function quoteRequestOutcome(mailLive: boolean): { sent: boolean; status:
   };
 }
 
+/** User-facing procurement text: no vendor name, no API, no internal ids. */
+export function neutralizeProcurementJargon(detail: string): string {
+  return detail
+    .replace(/ID закупки Контура/giu, "номер закупки")
+    .replace(/Документ API/giu, "файл")
+    .replace(/Контур(?:\.Закупки)?\s*API/giu, "поиск закупок")
+    .replace(/API-ключ\w*/giu, "ключ доступа")
+    .replace(/Ключ Контура/giu, "Поиск закупок")
+    .replace(/Контур(?:а|у|ом|е)?/giu, "источник закупок")
+    .replace(/\bAPI\b[-\s]*/giu, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([.,])/g, "$1")
+    .trim();
+}
+
 export function sanitizeSyncDetail(detail: string): string {
   const clean = detail
     .replace(/(?:api[_-]?key|token|bearer|password|secret)\s*[:=]\s*\S+/giu, "ключ скрыт")
@@ -424,7 +439,7 @@ export function sanitizeSyncDetail(detail: string): string {
   const http = clean.match(/HTTP\s*(\d{3})/iu);
   if (http && http[1].startsWith("5")) return `Источник временно недоступен (код ${http[1]}).`;
   if (http) return `Источник вернул код ${http[1]}.`;
-  return clean.replace(/Контур(?:\.Закупки)?\s*API/giu, "поиск закупок").slice(0, 240);
+  return neutralizeProcurementJargon(clean).slice(0, 240);
 }
 
 export function shouldRetrySync(detail: string, status?: number): boolean {
