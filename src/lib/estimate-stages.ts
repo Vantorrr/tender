@@ -67,16 +67,23 @@ function scheduleSentences(text: string): string[] {
 
 /**
  * Only a duration of the works themselves («срок выполнения работ»).
- * The cue may sit anywhere in that sentence. Warranty, payment, acceptance
- * and bid periods are not the schedule.
+ * The cue may sit anywhere before the number. A warranty, payment, acceptance
+ * or bid phrase that introduces that number is not the schedule, even when it
+ * also says «срок выполнения работ».
  */
 export function calendarDurationDays(text: string): number | null {
+  const pattern = /(\d{1,4})\s+календарн\p{L}*\s+дн\p{L}*/giu;
   for (const sentence of scheduleSentences(text)) {
-    if (!WORK_DURATION_CUE.test(sentence)) continue;
-    if (OTHER_PERIOD_CUE.test(sentence) && !/срок\s+выполнен\p{L}*\s+работ|срок\s+работ/iu.test(sentence)) continue;
-    const match = /(\d{1,4})\s+календарн\p{L}*\s+дн\p{L}*/iu.exec(sentence);
-    const days = match ? Number(match[1]) : 0;
-    if (Number.isFinite(days) && days > 0) return days;
+    let cursor = 0;
+    for (const match of sentence.matchAll(pattern)) {
+      const span = sentence.slice(cursor, match.index);
+      cursor = match.index + match[0].length;
+      const workAt = span.search(WORK_DURATION_CUE);
+      const otherAt = span.search(OTHER_PERIOD_CUE);
+      if (workAt < 0 || (otherAt >= 0 && otherAt < workAt)) continue;
+      const days = Number(match[1]);
+      if (Number.isFinite(days) && days > 0) return days;
+    }
   }
   return null;
 }
