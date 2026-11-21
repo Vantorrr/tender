@@ -10,6 +10,7 @@ import {
   sourceEstimateTotals,
 } from "@/lib/calc-math";
 import { formatNumber, formatQuantity, plainPositionName, positionHeading, splitSignedQuantity, visiblePositionCode } from "@/lib/format";
+import { humanizeIssues } from "@/lib/issue-text";
 import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
 import {
   resolveResourceDimensions,
@@ -884,7 +885,7 @@ export async function buildGprXlsx(gprId: string): Promise<Buffer> {
     ]);
     sumSheet.addRow([
       "Неполнота",
-      (cs.incomplete ?? []).join("; ") || "—",
+      humanizeIssues(cs.incomplete ?? []).join("; ") || "—",
       totalsPartial ? "итоги не подтверждены · PARTIAL" : "",
     ]);
   } else {
@@ -1081,7 +1082,7 @@ export async function buildPlanFactXlsx(id: string): Promise<Buffer> {
   ]);
   pnl.addRow([
     "incomplete",
-    (pf.pnl?.incomplete ?? []).join("; ") || "—",
+    humanizeIssues(pf.pnl?.incomplete ?? []).join("; ") || "—",
     (pf.pnl?.incomplete?.length ?? 0) > 0
       ? "экономика неполная"
       : "",

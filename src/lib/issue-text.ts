@@ -5,6 +5,9 @@
 
 const NAMED: Array<[RegExp, (name: string) => string]> = [
   [/^missing_tariff(?::|$)/u, (name) => (name ? `Нет ставки для: ${name}` : "Нет ставки")],
+  [/^customer_rate:/u, (name) => (name ? `нет расценки заказчика для: ${name}` : "нет расценки заказчика")],
+  [/^customer_estimate_missing$/u, () => "Исходная смета заказчика не загружена"],
+  [/^missing_rate:/u, (name) => (name ? `Нет ставки для: ${name}` : "Нет ставки")],
   [/^rate:/u, (name) => (name ? `Нет ставки для: ${name}` : "Нет ставки")],
   [/^hours_per_shift_unknown(?::|$)/u, (name) => (name ? `Не указаны часы в смене: ${name}` : "Не указаны часы в смене")],
   [/^shifts_per_day_unknown(?::|$)/u, (name) => (name ? `Не указаны смены в сутки: ${name}` : "Не указаны смены в сутки")],

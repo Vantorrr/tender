@@ -8,7 +8,9 @@ import {
   positionHeading,
   roundQuantity,
   splitSignedQuantity,
+  supplyIsOverdue,
 } from "@/lib/format";
+import { humanizeIssue } from "@/lib/issue-text";
 import { DEFAULT_SECTIONS } from "@/lib/roles";
 import type { User } from "@/lib/types";
 import { northernEconomicsApplied, northernStatusText } from "@/lib/wave23";
@@ -30,8 +32,19 @@ describe("quantity formatting", () => {
   it("does not glue a missing deadline to the preposition к", () => {
     expect(needByPhrase("")).toBe("срок не указан");
     expect(needByPhrase(null)).toBe("срок не указан");
+    expect(needByPhrase("не дата")).toBe("срок не указан");
     expect(needByPhrase("2026-12-01")).toBe("к 01.12.2026");
     expect(needByPhrase("")).not.toMatch(/^к /);
+    expect(supplyIsOverdue("", "2026-11-21", 3)).toBe(false);
+    expect(supplyIsOverdue("не указан", "2026-11-21", 3)).toBe(false);
+    expect(supplyIsOverdue("2026-11-01", "2026-11-21", 0)).toBe(false);
+    expect(supplyIsOverdue("2026-11-01", "2026-11-21", 2)).toBe(true);
+  });
+
+  it("turns a customer rate key into a plain sentence", () => {
+    expect(humanizeIssue("customer_rate:Бурение скважин")).toBe("нет расценки заказчика для: Бурение скважин");
+    expect(humanizeIssue("customer_estimate_missing")).toBe("Исходная смета заказчика не загружена");
+    expect(humanizeIssue("customer_rate:Бурение скважин")).not.toMatch(/customer_rate/);
   });
 
   it("spells labour abbreviations and keeps a return as an absolute quantity plus a difference", () => {

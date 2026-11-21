@@ -429,7 +429,7 @@ export default function GprDetailPage() {
               <Alert className="mb-3" data-testid="gpr-incomplete-banner">
                 <AlertTitle>Итоги неполны</AlertTitle>
                 <AlertDescription>
-                  C0 / цена не считаются подтверждёнными:{" "}
+                  Себестоимость и цена не считаются подтверждёнными:{" "}
                   {humanizeIssues(cost.incomplete ?? []).join("; ") ||
                     "есть незаполненные ставки"}
                 </AlertDescription>

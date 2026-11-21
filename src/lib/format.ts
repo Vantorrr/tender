@@ -29,12 +29,24 @@ export function formatQuantity(value: number, unit?: string, digits = 2): string
   return clean ? `${text} ${clean}` : text;
 }
 
+/** A real calendar day, or null when the supply has no usable date. */
+export function parsedNeedBy(iso: string | null | undefined): string | null {
+  if (!iso || !String(iso).trim()) return null;
+  return formatDate(iso) === "не указан" ? null : iso.trim();
+}
+
 /** «к 01.12.2026», or a complete phrase when the date is empty. Never «к не указан». */
 export function needByPhrase(iso: string | null | undefined): string {
-  if (!iso || !String(iso).trim()) return "срок не указан";
-  const formatted = formatDate(iso);
-  if (formatted === "не указан") return "срок не указан";
-  return `к ${formatted}`;
+  const raw = parsedNeedBy(iso);
+  if (!raw) return "срок не указан";
+  return `к ${formatDate(raw)}`;
+}
+
+/** A supply with no date is not late. Comparison uses the stored calendar day. */
+export function supplyIsOverdue(needBy: string | null | undefined, asOf: string, remaining: number): boolean {
+  const raw = parsedNeedBy(needBy);
+  if (!raw || !(remaining > 0)) return false;
+  return raw < asOf;
 }
 
 /** A return or exclusion keeps its sign only as a difference. The quantity itself stays positive. */

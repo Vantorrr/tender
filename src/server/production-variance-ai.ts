@@ -1,3 +1,4 @@
+import { parsedNeedBy } from "@/lib/format";
 import type { DailyFact, PlanFact, SupplyRequest } from "@/lib/types";
 import type { PlanSliceMode } from "@/lib/plan-from-gpr";
 import { numbersAreGrounded } from "@/server/ai-grounding";
@@ -140,7 +141,7 @@ function collectSources(
       text: `Дата: ${fact.date}; работа: ${fact.workName.slice(0, 180)}; комментарий: ${fact.comment!.trim().slice(0, 1200)}`,
     }));
   const delayed: Source[] = supplies
-    .filter((supply) => supply.needBy < asOfDate && !["delivered", "accepted", "cancelled"].includes(supply.status))
+    .filter((supply) => parsedNeedBy(supply.needBy) != null && supply.needBy < asOfDate && !["delivered", "accepted", "cancelled"].includes(supply.status))
     .slice(0, 20)
     .map((supply) => ({
       id: `supply-${supply.id}`,
