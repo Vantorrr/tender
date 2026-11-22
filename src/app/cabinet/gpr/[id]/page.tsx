@@ -28,7 +28,9 @@ import type { CalcPosition, GprStage, GprStageResource } from "@/lib/types";
 import { ProjectAiChat } from "@/components/project-ai-chat";
 import { userHasSection } from "@/lib/acl";
 import { canOpenCabinetPath } from "@/components/cabinet/nav";
-import { inclusiveDays } from "@/lib/wave23";
+import { acceptedStageDates, inclusiveDays, incompleteTotalText } from "@/lib/wave23";
+import { diffDays } from "@/lib/cost-engine";
+import { DateInputRu } from "@/components/date-input-ru";
 
 type MaterialsPreview = {
   file: File;
@@ -94,6 +96,8 @@ export default function GprDetailPage() {
     ? bucketsFromPositions(calc.positions, calc.scenarioFactor || 1)
     : null;
   const cost = calc?.costSummary;
+  const missingRates = calc?.positions.filter((position) => position.rateMissing && !position.isWorkItem).length ?? 0;
+  const costText = (amount: number | null | undefined) => incompleteTotalText(amount, missingRates) ?? (amount == null ? "нет данных" : formatMoney(amount));
   const supplies = (data.supplyRequests ?? []).filter(
     (s) => s.procurementId === schedule.procurementId
   );
@@ -373,17 +377,17 @@ export default function GprDetailPage() {
       ) : null}
 
       <div className="mb-6 xl:overflow-x-hidden" data-testid="gpr-project-screen">
-        <div className="grid items-start gap-4 xl:grid-cols-[minmax(22rem,32rem)_minmax(0,1fr)] xl:gap-0 xl:overflow-hidden xl:rounded-xl xl:border xl:border-[var(--tk-line)] xl:bg-white">
+        <div className="grid items-start gap-4 xl:grid-cols-[minmax(34rem,42rem)_minmax(0,1fr)] xl:gap-0 xl:overflow-hidden xl:rounded-xl xl:border xl:border-[var(--tk-line)] xl:bg-white">
         <section className="min-w-0 rounded-xl border border-[var(--tk-line)] bg-white/90 p-3 xl:rounded-none xl:border-0 xl:border-r" data-testid="gpr-work-table">
           <h2 className="mb-2 flex h-8 items-center text-sm font-semibold">Виды работ</h2>
           <div ref={setTableScroll} className="max-h-[70vh] overflow-x-hidden overflow-y-auto" data-testid="gpr-work-scroll">
             <table className="w-full table-fixed text-left text-xs">
               <thead className="sticky top-0 z-10 bg-white">
                 <tr className="text-[var(--tk-muted)]" style={{ height: GPR_LINKED_ROW_PX }}>
-                  <th className="w-[34%] py-1 pr-2">Название</th>
-                  <th className="w-[18%] py-1 pr-2">Начало</th>
-                  <th className="w-[18%] py-1 pr-2">Конец</th>
-                  <th className="w-[14%] py-1 pr-2">Дней</th>
+                  <th className="w-[28%] py-1 pr-2">Название</th>
+                  <th className="w-[24%] py-1 pr-2">Начало</th>
+                  <th className="w-[24%] py-1 pr-2">Окончание</th>
+                  <th className="w-[8%] py-1 pr-2">Дней</th>
                   <th className="w-[16%] py-1">После</th>
                 </tr>
               </thead>
@@ -393,15 +397,40 @@ export default function GprDetailPage() {
                     <td className="overflow-hidden py-1 pr-2 align-middle">
                       <div className="truncate" title={gprStageLabel(stage).text}>{gprStageLabel(stage).text}</div>
                     </td>
-                    <td className="py-1 pr-2 align-middle">{stage.start}</td>
-                    <td className="py-1 pr-2 align-middle">{stage.end}</td>
                     <td className="py-1 pr-2 align-middle">
-                      <div>{inclusiveDays(stage.start, stage.end)}</div>
-                      <div className="mt-0.5 flex gap-1">
-                        <button type="button" className="underline" aria-label={`Сдвинуть раньше: ${stage.name}`} onClick={() => void shiftStage(stage.id, -1)}>−1</button>
-                        <button type="button" className="underline" aria-label={`Сдвинуть позже: ${stage.name}`} onClick={() => void shiftStage(stage.id, 1)}>+1</button>
-                      </div>
+                      <DateInputRu
+                        id={`gpr-start-${stage.id}`}
+                        data-testid={`gpr-start-${stage.id}`}
+                        className="h-7 w-full min-w-0 px-1 text-[11px]"
+                        value={stage.start}
+                        onChange={(next) => {
+                          const dates = acceptedStageDates(stage, "start", next);
+                          if (!dates.ok) {
+                            toast.error(dates.message);
+                            return;
+                          }
+                          const delta = diffDays(stage.start, dates.start);
+                          if (delta) void shiftStage(stage.id, delta);
+                        }}
+                      />
                     </td>
+                    <td className="py-1 pr-2 align-middle">
+                      <DateInputRu
+                        id={`gpr-end-${stage.id}`}
+                        data-testid={`gpr-end-${stage.id}`}
+                        className="h-7 w-full min-w-0 px-1 text-[11px]"
+                        value={stage.end}
+                        onChange={(next) => {
+                          const dates = acceptedStageDates(stage, "end", next);
+                          if (!dates.ok) {
+                            toast.error(dates.message);
+                            return;
+                          }
+                          void shiftStage(stage.id, 0, inclusiveDays(dates.start, dates.end));
+                        }}
+                      />
+                    </td>
+                    <td className="py-1 pr-2 align-middle">{inclusiveDays(stage.start, stage.end)}</td>
                     <td className="py-1 align-middle">
                       <select
                         aria-label={`После какой работы: ${stage.name}`}
@@ -514,7 +543,7 @@ export default function GprDetailPage() {
                     {cost.totalsIncomplete || cost.resourceSlices.partial
                       ? " · расчёт неполный"
                       : ""}
-                    : {formatMoney(cost.resourceSlices.costWithOh)}
+                    : {costText(cost.resourceSlices.costWithOh)}
                   </div>
                   <div data-testid="gpr-slice-y">
                     Прибыль
@@ -528,7 +557,7 @@ export default function GprDetailPage() {
                     {cost.totalsIncomplete || cost.resourceSlices.partial
                       ? " · расчёт неполный"
                       : ""}
-                    : {formatMoney(cost.resourceSlices.total)}
+                    : {costText(cost.resourceSlices.total)}
                   </div>
                   <div data-testid="gpr-materials-cost">
                     Материалы:{" "}
@@ -564,13 +593,13 @@ export default function GprDetailPage() {
                     </div>
                   ) : null}
                   <div>
-                    Себестоимость без резерва: {formatMoney(cost.C0)}
+                    Себестоимость без резерва: {costText(cost.C0)}
                     {cost.totalsIncomplete ? " · неполно" : ""}
                   </div>
                   <div>Резерв: {formatMoney(cost.reserve)}</div>
                   <div>Себестоимость с резервом: {formatMoney(cost.C)}</div>
                   <div>Прибыль: {formatMoney(cost.profit)}</div>
-                  <div>Цена без НДС: {formatMoney(cost.priceExVat)}</div>
+                  <div>Цена без НДС: {costText(cost.priceExVat)}</div>
                 </>
               )}
               <div>
@@ -602,9 +631,7 @@ export default function GprDetailPage() {
           <h2 className="mb-2 font-medium">Календарь · доступность</h2>
           <ul className="space-y-1 text-amber-950">
             {calWarnings.map((w, i) => (
-              <li key={`${w.kind}-${i}`}>
-                [{w.severity}] {w.message}
-              </li>
+              <li key={`${w.kind}-${i}`}>{w.message}</li>
             ))}
           </ul>
         </div>

@@ -66,10 +66,11 @@ export function resourceOverlapWarnings(
   for (const [key, v] of byDayKind) {
     if (v.qty <= 1) continue;
     const [d, kind] = key.split("|");
+    const kindLabel = kind === "bus" ? "транспорт" : "техника";
     out.push({
       kind: "resource_overlap",
       severity: "info",
-      message: `${d}: ${kind} «${key.split("|")[2]}» занят на ${v.qty} ед. (${v.names.join(", ")})`,
+      message: `${d}: ${kindLabel} «${key.split("|")[2]}» занят на ${v.qty} ед. (${v.names.join(", ")})`,
     });
   }
   return out.slice(0, 12);

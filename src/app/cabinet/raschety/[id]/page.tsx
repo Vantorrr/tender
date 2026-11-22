@@ -28,17 +28,17 @@ import {
 import { api, downloadUrl } from "@/lib/api";
 import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-panel";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
-import { labourLineEconomicsNote, NORTH_DEFAULTS, northernAdditionLines, northernEconomicsApplied, northernStatusText, refreshRateAssumption } from "@/lib/wave23";
+import { labourLineEconomicsNote, NORTH_DEFAULTS, northernAdditionLines, northernEconomicsApplied, northernStatusText, refreshRateAssumption, incompleteTotalText } from "@/lib/wave23";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engine";
 import { parseDecimalRu } from "@/lib/decimal-ru";
-import { patchMergedPositions, patchMergedResources } from "@/lib/resource-merge";
+import { groupCalculationResources, patchMergedPositions, patchMergedResources } from "@/lib/resource-merge";
 import { calculationBreakdownRows } from "@/lib/calculation-breakdown";
 import { formatMoney, formatNumber, plainPositionName, quantityPresentation, splitSignedQuantity, visiblePositionCode } from "@/lib/format";
 import { visibleProcurementNumber } from "@/lib/pipeline";
 import { rowDeleteConfirmed } from "@/lib/row-delete";
 import { humanizeIssues } from "@/lib/issue-text";
-import type { Calculation, GprStageResource, ResourceQuantityBasis } from "@/lib/types";
+import type { CalcPosition, Calculation, GprStageResource, ResourceQuantityBasis } from "@/lib/types";
 import type { EstimateLeaf } from "@/lib/hierarchical-estimate";
 import type { ResourceScheduleParams } from "@/lib/resource-schedule-model";
 import { useStore } from "@/lib/store";
@@ -535,6 +535,29 @@ export default function RaschetDetailPage() {
     (position) => position.code !== "НР" && position.code !== "СП" && !position.isWorkItem,
   );
   const missingRateCount = billablePositions.filter((position) => position.rateMissing).length;
+  const shownPositions = useMemo((): Array<CalcPosition & { memberIds?: string[]; people?: number | null; workLabel?: string }> => {
+    const grouped = groupCalculationResources(calc.positions
+      .filter((position) => !position.isWorkItem && position.code !== "НР" && position.code !== "СП")
+      .map((position) => ({
+        id: position.id,
+        name: position.name,
+        unit: position.unit,
+        quantity: position.quantity,
+        rate: position.rateMissing || !(position.rate > 0) ? null : position.rate,
+        workName: position.sourceWorkName || position.sourceSectionName || "",
+        kind: position.resourceKind,
+      })));
+    const byId = new Map(calc.positions.map((position) => [position.id, position]));
+    const resources = grouped.flatMap((group) => {
+      const base = byId.get(group.id);
+      if (!base) return [];
+      return [{ ...base, name: group.name, unit: group.unit, quantity: group.quantity, memberIds: group.ids, people: group.people, workLabel: group.workName }];
+    });
+    return [
+      ...calc.positions.filter((position) => position.isWorkItem || position.code === "НР" || position.code === "СП"),
+      ...resources,
+    ];
+  }, [calc.positions]);
   const noPricedPositions = billablePositions.length > 0 && missingRateCount === billablePositions.length;
   const bucketStats = billablePositions.reduce(
     (stats, position) => {
@@ -1255,12 +1278,12 @@ export default function RaschetDetailPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {calc.positions.map((p) => (
+              {shownPositions.map((p) => (
                 <TableRow key={p.id}>
                   <TableCell className="text-xs">{visiblePositionCode(p.code)}</TableCell>
                   <TableCell className="min-w-[12rem]">
                     {plainPositionName(p.name)}
-                    {p.sourceSectionName ? <div className="text-xs text-[var(--tk-muted)]">{p.sourceSectionName}</div> : null}
+                    {"workLabel" in p && p.workLabel ? <div className="text-xs text-[var(--tk-muted)]">{p.workLabel}</div> : p.sourceSectionName ? <div className="text-xs text-[var(--tk-muted)]">{p.sourceSectionName}</div> : null}
                     {(() => {
                       const note = labourLineEconomicsNote({
                         bucket: classifyDirectCostBucket(p),
@@ -1273,7 +1296,7 @@ export default function RaschetDetailPage() {
                       return note ? <div className="text-xs text-[var(--tk-muted)]" data-testid={`pos-economics-${p.id}`}>{note}</div> : null;
                     })()}
                   </TableCell>
-                  <TableCell>{p.unit}</TableCell>
+                  <TableCell>{p.unit}{"people" in p && p.people ? ` · ${p.people} чел.` : ""}</TableCell>
                   <TableCell className="text-right" title={quantityPresentation(splitSignedQuantity(p.quantity).quantity, p.unit).title}>
                     {locked ? (
                       quantityPresentation(splitSignedQuantity(p.quantity).quantity, p.unit).text
@@ -1293,11 +1316,11 @@ export default function RaschetDetailPage() {
                             return;
                           }
                           if (e.target.value.trim() === shown) return;
-                          const quantity = p.quantity < 0 ? -Math.abs(parsed) : parsed;
+                          const members = p.memberIds ?? [p.id];
                           updateCalculation(calc.id, {
-                            positions: calc.positions.map((x) =>
-                              x.id === p.id ? { ...x, quantity } : x
-                            ),
+                            positions: members.length > 1
+                              ? patchMergedPositions(calc.positions, { memberIds: members, name: p.name }, parsed)
+                              : calc.positions.map((x) => x.id === p.id ? { ...x, quantity: p.quantity < 0 ? -Math.abs(parsed) : parsed } : x),
                           });
                         }}
                       />
@@ -1327,9 +1350,10 @@ export default function RaschetDetailPage() {
                             e.target.value = p.rateMissing ? "" : String(p.rate);
                             return;
                           }
+                          const members = new Set(p.memberIds ?? [p.id]);
                           updateCalculation(calc.id, {
                             positions: calc.positions.map((x) =>
-                              x.id === p.id
+                              members.has(x.id)
                                 ? { ...x, rate: parsed ?? 0, rateMissing: parsed == null }
                                 : x
                             ),
@@ -1625,17 +1649,17 @@ export default function RaschetDetailPage() {
             Сводка расчёта
           </h2>
           <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
-            <div>Себестоимость без резерва: {formatMoney(calc.costSummary.C0)}</div>
-            <div>Себестоимость с резервом: {formatMoney(calc.costSummary.C)}</div>
+            <div>Себестоимость без резерва: {incompleteTotalText(calc.costSummary.C0, missingRateCount) ?? formatMoney(calc.costSummary.C0)}</div>
+            <div>Себестоимость с резервом: {incompleteTotalText(calc.costSummary.C, missingRateCount) ?? formatMoney(calc.costSummary.C)}</div>
             <div>Прибыль: {formatMoney(calc.costSummary.profit)}</div>
-            <div>Цена без НДС: {formatMoney(calc.costSummary.priceExVat)}</div>
+            <div>Цена без НДС: {incompleteTotalText(calc.costSummary.priceExVat, missingRateCount) ?? formatMoney(calc.costSummary.priceExVat)}</div>
             <div>
               НДС:{" "}
               {calc.costSummary.vatAmount == null
                 ? "нет данных"
                 : formatMoney(calc.costSummary.vatAmount)}
             </div>
-            <div>Цена с НДС: {formatMoney(calc.costSummary.priceIncVat)}</div>
+            <div>Цена с НДС: {incompleteTotalText(calc.costSummary.priceIncVat, missingRateCount) ?? formatMoney(calc.costSummary.priceIncVat)}</div>
             <div>
               Запас до НМЦК:{" "}
               {procurement?.nmck != null && calc.costSummary.priceIncVat != null
@@ -1932,8 +1956,9 @@ export default function RaschetDetailPage() {
               const id = pendingPositionId;
               setPendingPositionId(null);
               if (!id || !rowDeleteConfirmed("confirm")) return;
+              const members = new Set(shownPositions.find((item) => item.id === id)?.memberIds ?? [id]);
               updateCalculation(calc.id, {
-                positions: calc.positions.filter((item) => item.id !== id),
+                positions: calc.positions.filter((item) => !members.has(item.id)),
               });
             }}>Удалить</Button>
           </DialogFooter>

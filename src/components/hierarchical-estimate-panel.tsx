@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { parseDecimalRu } from "@/lib/decimal-ru";
 import { formatMoney, formatNumber, plainPositionName, quantityPresentation, visiblePositionCode } from "@/lib/format";
+import { isLaborHourUnit, laborHeadcount } from "@/lib/resource-merge";
 import { rowCountNominative } from "@/lib/wave23";
 import {
   buildHierarchicalEstimate,
@@ -129,12 +130,13 @@ export function HierarchicalEstimatePanel({
   function resourceBuckets(leaves: EstimateLeaf[]) {
     const buckets = new Map<string, EstimateLeaf[]>();
     for (const leaf of leaves) {
+      const unit = leaf.kind === "labor" && isLaborHourUnit(leaf.unit) ? "чел.-ч" : leaf.unit;
       const key = [
         leaf.kind,
+        leaf.workName ?? "",
         leaf.name.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ").trim(),
-        leaf.unit,
+        unit,
         leaf.rate ?? "missing",
-        leaf.sourceDocumentId ?? "",
       ].join("|");
       buckets.set(key, [...(buckets.get(key) ?? []), leaf]);
     }
@@ -149,7 +151,10 @@ export function HierarchicalEstimatePanel({
         data-testid={`estimate-leaf-${leaf.id}`}
         title={(() => { const code = leaf.sourceCode ? visiblePositionCode(leaf.sourceCode) : ""; return code ? `Код сметы: ${code}` : undefined; })()}
       >
-        <div className="min-w-0 truncate">{plainPositionName(leaf.name)}</div>
+        <div className="min-w-0">
+          <div className="truncate">{plainPositionName(leaf.name)}</div>
+          {leaf.workName ? <div className="truncate text-[11px] text-[var(--tk-muted)]">{leaf.workName}</div> : null}
+        </div>
         <div className="text-right" title={quantityPresentation(leaf.quantity, leaf.unit).title}>
           {locked ? quantityPresentation(leaf.quantity, leaf.unit).text : (
             <Input
@@ -177,7 +182,9 @@ export function HierarchicalEstimatePanel({
           {leaf.difference == null ? "—" : formatNumber(leaf.difference)}
         </div>
         <div className="text-right text-xs" data-testid={`estimate-q-${leaf.id}`}>
-          {leaf.kind === "material" ? "" : leaf.hoursQ == null ? "—" : `${formatNumber(leaf.hoursQ)} ч`}
+          {leaf.kind === "labor" && leaf.hoursQ != null
+            ? `${formatNumber(leaf.hoursQ)} чел.-ч${(() => { const people = laborHeadcount(leaf.hoursQ, leaf.hoursPerShift, leaf.days); return people ? ` · ${people} чел.` : ""; })()}`
+            : leaf.kind === "material" || leaf.hoursQ == null ? (leaf.kind === "material" ? "" : "—") : `${formatNumber(leaf.hoursQ)} ч`}
         </div>
         <div className="text-right">
           {locked ? (leaf.rate == null || leaf.rate === 0 ? <span className="text-amber-800" title="нет ставки">нет ставки</span> : formatMoney(leaf.rate)) : (
@@ -608,7 +615,7 @@ export function HierarchicalEstimatePanel({
                               </span>
                               <span className="text-right">{formatNumber(leaves.reduce((total, leaf) => total + leaf.quantity, 0))}</span>
                               <span className="text-right">{(() => { const difference = leaves.reduce((total, leaf) => total + (leaf.difference ?? 0), 0); return difference < 0 ? formatNumber(difference) : "—"; })()}</span>
-                              <span className="text-right text-xs">{hours == null ? "нет данных" : formatNumber(hours)}</span>
+                              <span className="text-right text-xs">{hours == null ? "нет данных" : `${formatNumber(hours)}${first.kind === "labor" ? " чел.-ч" : " ч"}`}</span>
                               <span className="text-right">{first.rate == null ? "—" : formatNumber(first.rate)}</span>
                               <span className="sticky right-0 bg-inherit text-right">{amount == null ? "—" : formatMoney(amount)}</span>
                             </button>

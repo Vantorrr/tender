@@ -619,28 +619,6 @@ export function PlanFactGantt({
                       </label>
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-7 px-2 text-[11px]"
-                        disabled={isSaving}
-                        data-testid={`gantt-shift-left-${stage.id}`}
-                        onClick={() => void commitShift(stage.id, -1)}
-                      >
-                        −1 дн.
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-7 px-2 text-[11px]"
-                        disabled={isSaving}
-                        data-testid={`gantt-shift-right-${stage.id}`}
-                        onClick={() => void commitShift(stage.id, 1)}
-                      >
-                        +1 дн.
-                      </Button>
                       {factPct == null ? null : (
                         <span className="text-[11px] font-medium text-[var(--tk-brand)]">
                           {`Факт ${Math.round(factPct * 100)}%${stageFact != null ? ` · ${stageFact.toLocaleString("ru-RU")}` : ""}`}

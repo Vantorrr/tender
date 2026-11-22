@@ -1,0 +1,117 @@
+import { describe, expect, it } from "vitest";
+import { clipAtSentence, normalizeOcrText, presentAnalyticalNote } from "@/lib/analytical-note";
+import { collectCalendarWarnings } from "@/lib/calendar-availability";
+import { isShownConfirmation } from "@/lib/citation-display";
+import { classifyDirectCostBucket } from "@/lib/cost-engine";
+import { buildStagesFromEstimatePositions } from "@/lib/estimate-stages";
+import { filledOverviewBlocks, visibleCheckItems } from "@/lib/project-analytics";
+import { groupCalculationResources } from "@/lib/resource-merge";
+import { acceptedStageDates, incompleteTotalText } from "@/lib/wave23";
+import type { CalcPosition, GprStage, SupplyRequest } from "@/lib/types";
+
+describe("wave 6 client pain points", () => {
+  it("cuts a note on a sentence or a word and splits glued OCR", () => {
+    const glued = normalizeOcrText("а такжеВозможность продолжения и за-\nказчик");
+    expect(glued).toBe("а также Возможность продолжения и заказчик");
+    const cut = clipAtSentence("а также возможность продолжения. Дальше ещё одно предложение.", 40);
+    expect(cut.text).toBe("а также возможность продолжения.");
+    expect(cut.text).not.toMatch(/возмо\.\.\.|Заказч/);
+    const repaired = presentAnalyticalNote("Условия: а также возмо... и Заказч... а каж;");
+    expect(repaired.text).not.toMatch(/возмо\.\.\.|Заказч|а каж;/);
+    expect(repaired.text.split(/\s/u).every((word) => !word.endsWith("...") && !/[а-яё];$/iu.test(word))).toBe(true);
+  });
+
+  it("drops a false TZ gap, an inapplicable ministry letter and a duplicate cost", () => {
+    const items = visibleCheckItems([
+      "не найдено ТЗ / извещение — объём и границы работ не подтверждены",
+      "пусты реквизиты письма Минстроя",
+      "Сметная стоимость: 469 269,22 тыс. руб.",
+      "Сметная стоимость: 1 250,00 тыс. руб.",
+    ], [{
+      category: "tz",
+      fileName: "ТЗ.pdf",
+      title: "Техническое задание",
+      analyticalNote: "Техническое задание на бурение.",
+      citations: [],
+    }]);
+    expect(items.join(" ")).not.toMatch(/не найдено ТЗ|Минстроя/);
+    expect(items).toEqual(["Сметная стоимость в документах различается: 469 269,22 и 1 250,00. Сверьте источник."]);
+  });
+
+  it("sums identical resources per work and keeps the drilling totals", () => {
+    const drilling = { C0: 280939759.9, priceExVat: 393315663.86 };
+    const rows = [
+      { id: "1", name: "Плотник 3 разр.", unit: "ч", quantity: 22.13, rate: 500, workName: "Бурение", kind: "labor", hoursPerShift: 8, days: 1 },
+      { id: "2", name: "Плотник 3 разр.", unit: "ч", quantity: 4.34, rate: 500, workName: "Бурение", kind: "labor", hoursPerShift: 8, days: 1 },
+      { id: "3", name: "Плотник 3 разр.", unit: "чел.-ч", quantity: 35.82, rate: 500, workName: "Бурение", kind: "labor", hoursPerShift: 8, days: 1 },
+      { id: "4", name: "Плотник 3 разр.", unit: "ч", quantity: 12.04, rate: 500, workName: "Бурение", kind: "labor", hoursPerShift: 8, days: 1 },
+      { id: "5", name: "Плотник 3 разр.", unit: "ч", quantity: 10, rate: 500, workName: "Монтаж", kind: "labor" },
+      { id: "saw", name: "Пила", unit: "маш.-ч", quantity: 3, rate: 10, workName: "Бурение", kind: "equipment" },
+      { id: "fuel", name: "Бензин", unit: "л", quantity: 8, rate: 60, workName: "Бурение", kind: "material" },
+    ];
+    const before = Math.round(rows.reduce((sum, row) => sum + row.quantity * row.rate, 0) * 100) / 100;
+    const grouped = groupCalculationResources(rows);
+    const drillingCrew = grouped.find((row) => row.name === "Плотник 3 разр." && row.workName === "Бурение");
+    expect(grouped.filter((row) => row.name === "Плотник 3 разр.")).toHaveLength(2);
+    expect(drillingCrew?.unit).toBe("чел.-ч");
+    expect(drillingCrew?.quantity).toBeCloseTo(22.13 + 4.34 + 35.82 + 12.04);
+    expect(drillingCrew?.people).toBeNull();
+    expect(groupCalculationResources([{
+      id: "crew", name: "Плотник 3 разр.", unit: "чел.-ч", quantity: 40, rate: 500, workName: "Бурение", kind: "labor", hoursPerShift: 8, days: 1,
+    }])[0]?.people).toBe(5);
+    expect(Math.round(grouped.reduce((sum, row) => sum + row.quantity * (row.rate ?? 0), 0) * 100) / 100).toBe(before);
+    expect(drilling).toEqual({ C0: 280939759.9, priceExVat: 393315663.86 });
+  });
+
+  it("accepts a finish on or after the start and rejects an earlier finish", () => {
+    expect(acceptedStageDates({ start: "2026-12-01", end: "2026-12-05" }, "end", "2026-12-08")).toEqual({
+      ok: true, start: "2026-12-01", end: "2026-12-08",
+    });
+    expect(acceptedStageDates({ start: "2026-12-01", end: "2026-12-05" }, "end", "2026-11-30").ok).toBe(false);
+    expect(acceptedStageDates({ start: "2026-12-01", end: "2026-12-05" }, "start", "2026-12-06").ok).toBe(false);
+  });
+
+  it("hides log tags and english resource names in the calendar", () => {
+    const warnings = collectCalendarWarnings(
+      [{ id: "a", name: "Бурение", start: "2026-12-01", end: "2026-12-02", sequence: 1, resources: [{ id: "r", kind: "equipment", name: "Долото", unit: "шт", quantity: 2 }] }] as GprStage[],
+      [{ id: "s", orgId: "o", procurementId: "p", materialName: "Долото шарошечное", unit: "шт", qtyNeed: 1, qtyOrdered: 0, qtyDelivered: 0, status: "need", needBy: "" }] as SupplyRequest[],
+    );
+    const text = warnings.map((warning) => warning.message).join("\n");
+    expect(text).not.toMatch(/\[info\]|\[warn\]|missing_|equipment|bus/);
+    expect(text).toContain("Поставка «Долото шарошечное»: срок не указан");
+    expect(text).toContain("техника");
+  });
+
+  it("does not print 0 ₽ when rates are missing", () => {
+    expect(incompleteTotalText(0, 4)).toBe("Себестоимость не рассчитана: нет ставок для 4 строк");
+    expect(incompleteTotalText(0, 4)).not.toMatch(/0 ₽/);
+    expect(incompleteTotalText(280939759.9, 16)).toBeNull();
+  });
+
+  it("puts loading work in its own section and hides a bare basis or an invoice", () => {
+    const position = {
+      id: "load", code: "Р-1", name: "Погрузо-разгрузочные работы", unit: "т", quantity: 10, rate: 100,
+    } as CalcPosition;
+    expect(classifyDirectCostBucket(position)).toBe("labor");
+    const stages = buildStagesFromEstimatePositions([position], "2026-12-01T00:00:00Z");
+    expect(stages[0]?.sectionName).toBe("Погрузо-разгрузочные работы");
+    expect(stages[0]?.sectionName).not.toBe("Прочие позиции");
+    expect(isShownConfirmation({ text: "Основание: дефектная ведомость", sourceFile: "Договор.docx" })).toBe(false);
+    expect(isShownConfirmation({ text: "Срок поставки 10 дней", sourceFile: "InVoice.pdf" })).toBe(false);
+    expect(isShownConfirmation({ text: "Штраф 0,1% за день просрочки", sourceFile: "Договор.docx" })).toBe(true);
+  });
+
+  it("fills overview blocks from excerpts instead of an empty note", () => {
+    const blocks = filledOverviewBlocks({
+      summary: "Проект «Мессояха».",
+      documents: [{ fileName: "ТЗ.pdf", category: "tz", title: "ТЗ", citations: [{ text: "Объём работ: 716 м бурения." }] }],
+      citations: [{ text: "Объём работ: 716 м бурения." }, { text: "Штраф 0,1% за день просрочки." }],
+      missingInputs: ["не найдено ТЗ / извещение — объём и границы работ не подтверждены"],
+      economicsText: null,
+    });
+    expect(blocks.map((block) => block.title)).toEqual(["Паспорт закупки и тайминг", "Объёмы", "Экономика", "Риски", "Что проверить"]);
+    expect(blocks.every((block) => block.body && block.body !== "нет данных")).toBe(true);
+    expect(blocks[1]?.body).toMatch(/716/);
+    expect(blocks[4]?.body).not.toMatch(/не найдено ТЗ/);
+  });
+});

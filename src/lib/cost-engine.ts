@@ -330,6 +330,12 @@ export function runCostEngine(input: CostEngineInput): CostEngineResult {
  */
 export type DirectCostBucket = "labor" | "materials" | "equipment" | "other";
 
+/** A named work, not a leftover resource. Containers and «прочая услуга» stay put. */
+export function isWorkActivityName(name: string): boolean {
+  return /погрузо|разгрузоч|монтажн|демонтаж|бурен|устройств|прокладк|\bработ[аы]\b/iu.test(name)
+    && !/проч(?:ая|ее|ие)|материал/iu.test(name);
+}
+
 export function classifyDirectCostBucket(
   p: Pick<CalcPosition, "code" | "name" | "unit">
 ): DirectCostBucket {
@@ -351,6 +357,7 @@ export function classifyDirectCostBucket(
   if (/маш|техник|jcb|экскав|кран|атс|дсм|автобус|bus/.test(hay)) {
     return "equipment";
   }
+  if (isWorkActivityName(p.name) && !/^(?:MAT|ФССЦ|ТССЦ|ФСБЦ)/iu.test(code)) return "labor";
   return "other";
 }
 

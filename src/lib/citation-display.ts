@@ -24,6 +24,14 @@ export function citationTextForDisplay(citation: Citation): string | null {
   return text || null;
 }
 
+/** Extra confirmations: no bare basis line and no fragment from another file such as an invoice. */
+export function isShownConfirmation(citation: { text: string; sourceFile: string }): boolean {
+  const text = citation.text.replace(/\s+/gu, " ").trim();
+  if (/^основание\s*:/iu.test(text)) return false;
+  if (/invoice|инвойс/iu.test(citation.sourceFile)) return false;
+  return true;
+}
+
 export function citationTopicLabel(text: string): string {
   if (/дефектн\p{L}*\s+ведомост/iu.test(text)) return "Прочее";
   if (/сметн\p{L}*\s+стоимост/iu.test(text)) return "Прочее";

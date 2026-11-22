@@ -3,6 +3,7 @@
  * No invented LLM reasons, no accuracy promises.
  */
 
+import { clipAtSentence, normalizeOcrText } from "@/lib/analytical-note";
 import { visibleProcurementNumber } from "@/lib/pipeline";
 import type {
   Citation,
@@ -133,13 +134,14 @@ export function buildProjectAnalytics(
     summaryParts.push(`Конкретные замечания парсера/документов: ${reviewNotes.slice(0, 8).join("; ")}.`);
   }
   for (const d of analyzed.slice(0, 3)) {
-    summaryParts.push(`«${d.title}»: ${d.analyticalNote.slice(0, 220)}`);
+    const excerpt = clipAtSentence(normalizeOcrText(d.analyticalNote), 220).text;
+    if (excerpt) summaryParts.push(`«${d.title}»: ${excerpt}`);
   }
 
   return {
     recommendation,
     summary: summaryParts.join("\n\n"),
-    missingInputs: missing,
+    missingInputs: visibleCheckItems(missing, sourceDocs),
     citationIds: citations.map((c) => c.id),
     citations,
     generatedAt: new Date().toISOString(),
@@ -157,6 +159,117 @@ export function buildProjectAnalytics(
       citationCount: citations.length,
     },
   };
+}
+
+type CheckDocument = {
+  category?: string;
+  fileName: string;
+  title?: string;
+  analyticalNote?: string;
+  citations?: Array<{ text: string }>;
+};
+
+/** Drop a check that the current files contradict, and keep one cost line. */
+export function visibleCheckItems(items: string[], documents: CheckDocument[]): string[] {
+  const corpus = documents.map((document) => [
+    document.fileName,
+    document.title ?? "",
+    document.analyticalNote ?? "",
+    ...(document.citations ?? []).map((citation) => citation.text),
+  ].join("\n")).join("\n");
+  const hasTz = documents.some((document) =>
+    document.category === "tz"
+    || /(?:^|[^а-яёa-z0-9])(?:tz|тз)(?=$|[^а-яёa-z0-9])|извещ|техническ.{0,12}задан/iu.test(`${document.fileName} ${document.title ?? ""} ${document.analyticalNote ?? ""}`)
+  );
+  let next = items.filter((item) => {
+    if (hasTz && /не найдено ТЗ|нет ТЗ/iu.test(item)) return false;
+    if (/минстро/iu.test(item)) {
+      if (!/минстро/iu.test(corpus)) return false;
+      if (/реквизит\p{L}*\s+письма\s+минстроя[^\n]{0,120}\d/iu.test(corpus)) return false;
+    }
+    return true;
+  });
+  const costs = next.filter((item) => /сметн\p{L}*\s+стоимост/iu.test(item));
+  if (costs.length > 1) {
+    const numbers = [...new Set(costs.flatMap((item) => item.match(/\d[\d\s\u00a0]*(?:[,.]\d+)?/gu) ?? []))];
+    next = next.filter((item) => !/сметн\p{L}*\s+стоимост/iu.test(item));
+    next.push(numbers.length > 1
+      ? `Сметная стоимость в документах различается: ${numbers.join(" и ")}. Сверьте источник.`
+      : costs[0]);
+  }
+  const seen = new Set<string>();
+  return next.filter((item) => {
+    const key = item.toLocaleLowerCase("ru-RU").replace(/\s+/gu, " ").trim();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+const OVERVIEW_TITLES = ["Паспорт закупки и тайминг", "Объёмы", "Экономика", "Риски", "Что проверить"] as const;
+
+function useful(text: string | null | undefined): string {
+  const clean = clipAtSentence(normalizeOcrText(text ?? ""), 500).text.trim();
+  if (!clean || /^нет данных\.?$/iu.test(clean)) return "";
+  return clean;
+}
+
+function sentencesAbout(citations: Array<{ text: string }>, pattern: RegExp, empty: string): string {
+  const hits = citations.map((citation) => useful(citation.text)).filter((text) => pattern.test(text)).slice(0, 3);
+  return hits.length ? hits.join(" ") : empty;
+}
+
+/** Card blocks filled from the note, or from the files and excerpts already on the procurement. */
+export function filledOverviewBlocks(input: {
+  summary: string;
+  documents: Array<CheckDocument & { estimatePositions?: Array<{ name: string; quantity: number; unit: string }> }>;
+  citations: Array<{ text: string }>;
+  missingInputs: string[];
+  economicsText?: string | null;
+}): Array<{ title: string; body: string }> {
+  const parsed = new Map<string, string>();
+  const summary = input.summary;
+  const titles = [
+    "Паспорт закупки и тайминг",
+    "Условия участия и требования к заявке",
+    "Сводная ведомость объёмов",
+    "Расчёт себестоимости и экономика",
+    "Риски и подводные камни",
+  ];
+  titles.forEach((title, index) => {
+    const heading = `${index + 1}. ${title}`;
+    const start = summary.indexOf(heading);
+    if (start < 0) return;
+    const from = start + heading.length;
+    let end = summary.length;
+    for (let next = index + 1; next < titles.length; next += 1) {
+      const at = summary.indexOf(`${next + 1}. ${titles[next]}`, from);
+      if (at >= 0) {
+        end = at;
+        break;
+      }
+    }
+    parsed.set(title, summary.slice(from, end));
+  });
+  const docs = input.documents.length;
+  const excerpts = input.citations.length;
+  const volumes = input.documents.flatMap((document) => document.estimatePositions ?? []);
+  const volumeText = volumes.length
+    ? `Распознано позиций: ${volumes.length}. ${volumes.slice(0, 3).map((row) => `${row.name}: ${row.quantity} ${row.unit}`).join("; ")}.`
+    : sentencesAbout(input.citations, /объ[её]м|количеств/iu, docs ? "Объёмы в загруженных документах не распознаны." : "Объёмы не из чего собрать: документов нет.");
+  const passport = useful(parsed.get("Паспорт закупки и тайминг"))
+    || useful(summary.split(/\n\n/u)[0])
+    || (docs
+      ? `Документов: ${docs}. Фрагментов: ${excerpts}. ${sentencesAbout(input.citations, /срок|регион|заказчик/iu, "Срок и заказчик в выдержках не найдены.")}`
+      : "Паспорт не из чего собрать: документов нет.");
+  const checks = visibleCheckItems(input.missingInputs, input.documents);
+  return [
+    { title: OVERVIEW_TITLES[0], body: passport },
+    { title: OVERVIEW_TITLES[1], body: useful(parsed.get("Сводная ведомость объёмов")) || volumeText },
+    { title: OVERVIEW_TITLES[2], body: useful(input.economicsText) || useful(parsed.get("Расчёт себестоимости и экономика")) || sentencesAbout(input.citations, /сметн\p{L}*\s+стоимост|себестоим/iu, docs ? "Себестоимость по документам не посчитана: ставок в выдержках нет." : "Экономику не из чего собрать: документов нет.") },
+    { title: OVERVIEW_TITLES[3], body: useful(parsed.get("Риски и подводные камни")) || sentencesAbout(input.citations, /штраф|пени|неустойк|риск/iu, docs ? "В выдержках явных штрафов и ограничений не найдено." : "Риски не из чего собрать: документов нет.") },
+    { title: OVERVIEW_TITLES[4], body: checks.length ? checks.join("\n") : "По текущим документам отдельных пробелов не отмечено." },
+  ];
 }
 
 export const PARTICIPATE_LABELS: Record<ParticipateRecommendation, string> = {

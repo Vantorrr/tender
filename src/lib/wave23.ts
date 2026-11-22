@@ -540,6 +540,27 @@ function addIsoDays(iso: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+/** A typed stage date is kept only when the finish is not earlier than the start. */
+export function acceptedStageDates(
+  current: { start: string; end: string },
+  field: "start" | "end",
+  next: string,
+): { ok: true; start: string; end: string } | { ok: false; message: string } {
+  if (!/^\d{4}-\d{2}-\d{2}$/u.test(next)) return { ok: false, message: "Укажите дату в формате ДД.ММ.ГГГГ" };
+  const start = field === "start" ? next : current.start;
+  const end = field === "end" ? next : current.end;
+  if (end < start) return { ok: false, message: "Окончание не может быть раньше начала" };
+  return { ok: true, start, end };
+}
+
+/** Incomplete money is a sentence, never «0 ₽». A real amount stays for the caller to format. */
+export function incompleteTotalText(amount: number | null | undefined, missingRates: number): string | null {
+  const value = amount == null || !Number.isFinite(amount) ? null : amount;
+  const missing = Math.max(0, Math.trunc(missingRates) || 0);
+  if (missing > 0 && (value == null || value === 0)) return draftCostPhrase(value ?? 0, missing);
+  return null;
+}
+
 export function inclusiveDays(start: string, end: string): number {
   const from = Date.parse(`${start}T00:00:00Z`);
   const to = Date.parse(`${end}T00:00:00Z`);

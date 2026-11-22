@@ -1,4 +1,4 @@
-import { classifyDirectCostBucket } from "@/lib/cost-engine";
+import { classifyDirectCostBucket, isWorkActivityName } from "@/lib/cost-engine";
 import { mergeStageResources } from "@/lib/resource-merge";
 import type { CalcPosition, GprStage, GprStageResource } from "@/lib/types";
 
@@ -125,9 +125,10 @@ export function buildStagesFromEstimatePositions(
   for (const position of positions) {
     const section = position.sourceSectionName?.trim();
     const work = position.sourceWorkName?.trim();
-    if (!section && !work) continue;
-    const sectionName = section || work || "Прочие позиции";
-    const workName = work || sectionName;
+    const activity = !section && !work && isWorkActivityName(position.name) ? position.name.trim() : "";
+    if (!section && !work && !activity) continue;
+    const sectionName = section || work || activity || "Прочие позиции";
+    const workName = work || activity || sectionName;
     const key = `${sectionName}\u0000${workName}`;
     const group = sections.get(key) ?? { sectionName, workName, positions: [] };
     group.positions.push(position);
