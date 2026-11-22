@@ -2867,10 +2867,26 @@ export function sendProcurementToCalculation(
       p.reviewStatus = "na_rassmotrenii";
     }
     p.status = "v_rabote";
-    p.analytics = buildProjectAnalytics(
+    const rebuilt = buildProjectAnalytics(
       p,
       data.documents.filter((d) => d.procurementId === p.id)
     );
+    const previous = p.analytics;
+    const keepMemo = Boolean(previous && (
+      modelWroteAnalyticalNote(previous)
+      || previous.answeredByModel
+      || previous.findings?.length
+      || previous.summary.startsWith("Готовность к решению")
+    ));
+    p.analytics = keepMemo && previous
+      ? {
+          ...previous,
+          missingInputs: rebuilt.missingInputs,
+          quality: rebuilt.quality,
+          citations: rebuilt.citations,
+          citationIds: rebuilt.citationIds,
+        }
+      : rebuilt;
 
     audit(
       data,

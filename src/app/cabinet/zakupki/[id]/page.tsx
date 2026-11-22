@@ -25,7 +25,7 @@ import { visibleProcurementSource } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney, formatNumber, formatQuantity, needByPhrase, roundQuantity, sameRoundedQuantity } from "@/lib/format";
 import { citationTopicLabel, readableCitations, regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
 import { SUMMARY_FRESH, SUMMARY_UNCHANGED } from "@/lib/summary-notice";
-import { analyticalNoteBlocks, citationHref, draftCostPhrase, honestReadinessText, matchDirectorySuppliers } from "@/lib/wave23";
+import { analyticalNoteBlocks, citationHref, costIsPartial, costIsUncalculated, draftCostPhrase, honestReadinessText, matchDirectorySuppliers, moneyRu } from "@/lib/wave23";
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_CHECKLIST } from "@/lib/ai-topics";
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
@@ -1490,11 +1490,18 @@ export default function ZakupkaDetailPage() {
                       ] as const).map(([label, value]) => {
                         const filled = Boolean(data.calculations.find((item) => item.id === procurement.calculationId)?.positions.length);
                         const missingRates = analytics.economics?.missingRates ?? 0;
-                        const shown = !filled || value == null
-                          ? "Расчёт не заполнен"
-                          : label === "Себестоимость" && (missingRates > 0 || value === 0)
-                            ? draftCostPhrase(value, missingRates)
-                            : formatMoney(value);
+                        const cost = analytics.economics?.cost ?? null;
+                        const partial = costIsPartial(cost, missingRates);
+                        const uncalculated = costIsUncalculated(cost, missingRates);
+                        const shown = label === "Себестоимость" && (uncalculated || partial || value === 0)
+                          ? draftCostPhrase(cost, missingRates)
+                          : uncalculated
+                            ? "не рассчитана"
+                            : !filled || value == null
+                              ? "Расчёт не заполнен"
+                              : partial && label === "Расчётная прибыль"
+                                ? `Предварительно: ${moneyRu(value)}`
+                                : formatMoney(value);
                         return (
                         <div key={label} className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3">
                           <dt className="text-xs text-[var(--tk-muted)]">{label}</dt>
@@ -1505,8 +1512,13 @@ export default function ZakupkaDetailPage() {
                       <div className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3">
                         <dt className="text-xs text-[var(--tk-muted)]">Рентабельность / маржа</dt>
                         <dd className="mt-1 text-sm font-semibold tabular-nums">
-                          {analytics.economics.profitabilityPercent == null ? "—" : `${analytics.economics.profitabilityPercent}%`}
-                          {analytics.economics.revenueMarginPercent == null ? "" : ` / ${analytics.economics.revenueMarginPercent}%`}
+                          {costIsUncalculated(analytics.economics.cost, analytics.economics.missingRates ?? 0)
+                            ? "не рассчитана"
+                            : <>
+                                {costIsPartial(analytics.economics.cost, analytics.economics.missingRates ?? 0) ? "Предварительно: " : ""}
+                                {analytics.economics.profitabilityPercent == null ? "—" : `${analytics.economics.profitabilityPercent}%`}
+                                {analytics.economics.revenueMarginPercent == null ? "" : ` / ${analytics.economics.revenueMarginPercent}%`}
+                              </>}
                         </dd>
                         <dd className="mt-1 text-[10px] text-[var(--tk-muted)]">к себестоимости / в цене</dd>
                       </div>

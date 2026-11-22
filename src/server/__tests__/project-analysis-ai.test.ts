@@ -18,6 +18,7 @@ import {
   buildProjectAnalysisFallback,
   draftCostPhrase,
   percentOrMissing,
+  profitAndMarginPhrase,
   profitabilitySentence,
 } from "@/server/project-analysis-ai";
 import type { ProjectAnalytics, Procurement } from "@/lib/types";
@@ -110,10 +111,28 @@ describe("grounded project analysis", () => {
     );
     expect(profitabilitySentence(10, null, null)).not.toMatch(/не рассчитана%/);
     expect(draftCostPhrase(0, 4)).toBe("Себестоимость не рассчитана: нет ставок для 4 строк");
-    expect(draftCostPhrase(1500, 2)).toBe("Себестоимость не рассчитана: нет ставок для 2 строк");
+    expect(draftCostPhrase(0, 1)).toBe("Себестоимость не рассчитана: нет ставок для 1 строки");
+    expect(draftCostPhrase(0, 2)).toBe("Себестоимость не рассчитана: нет ставок для 2 строк");
+    expect(draftCostPhrase(0, 5)).toBe("Себестоимость не рассчитана: нет ставок для 5 строк");
+    expect(draftCostPhrase(0, 11)).toBe("Себестоимость не рассчитана: нет ставок для 11 строк");
+    expect(draftCostPhrase(0, 21)).toBe("Себестоимость не рассчитана: нет ставок для 21 строки");
+    expect(draftCostPhrase(280939759.9, 16)).toBe("Себестоимость по найденным ставкам: 280 939 759,90 ₽ (без 16 строк без ставок)");
     expect(draftCostPhrase(1500, 0)).toBe("1500 ₽");
     expect(draftCostPhrase(0, 0)).toBe("Себестоимость 0 ₽: проверьте объёмы и ставки");
     expect(draftCostPhrase(0, 0)).not.toContain("нет ставок");
+    const partial = profitAndMarginPhrase({
+      cost: 280939759.9, missingRates: 16, profit: 112375903.96, priceExVat: 393315663.86,
+      profitabilityPercent: 40, revenueMarginPercent: 28.57,
+    });
+    expect(partial.startsWith("Предварительно, только по найденным ставкам, без 16 строк без ставок.")).toBe(true);
+    expect(partial).toContain("112 375 903,96 ₽");
+    expect(partial).toContain("40%");
+    expect(partial).toContain("28.57%");
+    const hidden = profitAndMarginPhrase({
+      cost: 0, missingRates: 16, profit: 0, priceExVat: 0, profitabilityPercent: 0, revenueMarginPercent: 0,
+    });
+    expect(hidden).toBe("Прибыль и рентабельность не рассчитаны: себестоимость не подтверждена.");
+    expect(hidden).not.toMatch(/0 ₽|%/);
 
     const procurement = {
       id: "p-1", orgId: "org-1", number: "T-1", title: "Ремонт", customer: "Заказчик",
@@ -141,6 +160,15 @@ describe("grounded project analysis", () => {
     expect(zeroWithRates.summary).toContain("Себестоимость 0 ₽: проверьте объёмы и ставки");
     expect(zeroWithRates.summary).not.toContain("нет ставок");
     expect(zeroWithRates.summary).not.toContain("Черновая себестоимость по справочникам компании: Себестоимость");
+
+    const zeroProfit = buildProjectAnalysisFallback(procurement, deterministic, {
+      cost: 0, priceExVat: 0, priceWithVat: 0, profit: 0,
+      profitabilityPercent: 0, revenueMarginPercent: 0, incomplete: true, missingRates: 16,
+    }, undefined, "пустой ответ");
+    expect(zeroProfit.summary).toContain("нет ставок для 16 строк");
+    expect(zeroProfit.summary).toContain("Прибыль и рентабельность не рассчитаны: себестоимость не подтверждена.");
+    expect(zeroProfit.summary).not.toContain("Расчётная прибыль до налога: 0");
+    expect(zeroProfit.summary).not.toMatch(/рентабельность на себестоимость: 0/);
   });
 
   it("accepts only a paraphrase with an exact quote, valid source, and matching numbers", () => {

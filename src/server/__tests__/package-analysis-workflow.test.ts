@@ -8,7 +8,7 @@ vi.mock("@/server/project-analysis-ai", () => ({
 
 import { config } from "@/server/config";
 import { closeDb, ensureReady, mutateAppData, readAppData } from "@/server/db";
-import { analyzeProcurementPackageWithAI, packageAnalysisAlreadyCurrent } from "@/server/repo";
+import { analyzeProcurementPackageWithAI, packageAnalysisAlreadyCurrent, sendProcurementToCalculation } from "@/server/repo";
 import { refreshAndMaybeAnalyzePackage } from "@/server/upload-package-analysis";
 import "./setup";
 
@@ -115,6 +115,42 @@ describe("package analysis workflow", () => {
     } finally {
       config.openRouterOnUpload = false;
     }
+  });
+
+  it("keeps the AI memo when a calculation is formed", () => {
+    const summary = "Готовность к решению: данных недостаточно. Эту записку нельзя стереть расчётом.";
+    mutateAppData((data) => {
+      const procurement = data.procurements.find((item) => item.id === "p-2")!;
+      procurement.analytics = {
+        recommendation: "insufficient_data",
+        summary,
+        missingInputs: ["Нет договора"],
+        citationIds: ["c-kept"],
+        citations: [{ id: "c-kept", text: "Срок 10 дней.", page: 1, sourceFile: "tz.pdf" }],
+        findings: [{
+          topic: "Сроки",
+          importance: "high",
+          text: "Срок 10 дней.",
+          quote: "Срок 10 дней.",
+          citationIds: ["c-kept"],
+          sourceFiles: ["tz.pdf"],
+        }],
+        generatedAt: "2026-11-01T00:00:00.000Z",
+        method: "разбор пакета по цитатам документов",
+        disclaimer: "проверка",
+        answeredByModel: "google/gemini-2.5-flash",
+        sourceDocumentHash: "abc",
+      };
+      return data;
+    });
+    sendProcurementToCalculation("u-tender", "p-2");
+    const analytics = readAppData().procurements.find((item) => item.id === "p-2")!.analytics!;
+    expect(analytics.summary).toBe(summary);
+    expect(analytics.answeredByModel).toBe("google/gemini-2.5-flash");
+    expect(analytics.findings?.[0]?.text).toBe("Срок 10 дней.");
+    expect(analytics.sourceDocumentHash).toBe("abc");
+    expect(analytics.method).toBe("разбор пакета по цитатам документов");
+    expect(analytics.missingInputs).not.toEqual(["Нет договора"]);
   });
 
   it("rejects an unknown procurement before model invocation", async () => {

@@ -1,14 +1,42 @@
 import type { Citation, GprStage } from "@/lib/types";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS, type ResourceScheduleParams } from "@/lib/resource-schedule-model";
 
+/** Genitive after «для» / «без»: 1 строки, 2 строк, 5 строк, 21 строки. */
+export function rowCountGenitive(count: number): string {
+  const n = Math.abs(Math.trunc(count));
+  const word = n % 10 === 1 && n % 100 !== 11 ? "строки" : "строк";
+  return `${n} ${word}`;
+}
+
+export function moneyRu(value: number): string {
+  const formatted = new Intl.NumberFormat("ru-RU", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value).replace(/\u00a0/g, " ");
+  return `${formatted} ₽`;
+}
+
+/** A positive total with some rates still missing is a partial cost, not a blank. */
+export function costIsPartial(cost: number | null, missingRates: number): boolean {
+  return missingRates > 0 && cost != null && cost > 0;
+}
+
+/** No usable cost: every contributing rate is missing, or the total is 0 because rates are missing. */
+export function costIsUncalculated(cost: number | null, missingRates: number): boolean {
+  return missingRates > 0 && !costIsPartial(cost, missingRates);
+}
+
 /**
  * A missing rate is not a confirmed zero. A real zero with every rate found
  * stays a zero and asks for a check, so it never says «нет ставок для 0 строк».
+ * A positive total with gaps keeps the known amount and names the gap.
  */
 export function draftCostPhrase(cost: number | null, missingRates: number): string {
-  if (missingRates > 0) {
-    return `Себестоимость не рассчитана: нет ставок для ${missingRates} строк`;
+  const missing = Math.max(0, Math.trunc(missingRates) || 0);
+  if (costIsPartial(cost, missing)) {
+    return `Себестоимость по найденным ставкам: ${moneyRu(cost ?? 0)} (без ${rowCountGenitive(missing)} без ставок)`;
   }
+  if (missing > 0) return `Себестоимость не рассчитана: нет ставок для ${rowCountGenitive(missing)}`;
   if (cost === 0) return "Себестоимость 0 ₽: проверьте объёмы и ставки";
   if (cost == null) return "нет подтверждённого итога";
   return `${cost} ₽`;

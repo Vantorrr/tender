@@ -4,7 +4,7 @@ import { visibleProcurementNumber } from "@/lib/pipeline";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_LABELS } from "@/lib/ai-topics";
 import { NOT_IN_DOCUMENTS, numbersAreGrounded } from "@/server/ai-grounding";
-import { analysisFailureText, citedQuestion, composeAnalyticalNote, draftCostPhrase, suppressFalseAbsence } from "@/lib/wave23";
+import { analysisFailureText, citedQuestion, composeAnalyticalNote, costIsPartial, costIsUncalculated, draftCostPhrase, moneyRu, rowCountGenitive, suppressFalseAbsence } from "@/lib/wave23";
 import { rollupWorkSections, alignVolumeToSections, isOverheadPosition, stripWorkTypesOutsideSources } from "@/server/estimate-rollup";
 import {
   PROJECT_ANALYSIS_CITATION_CHARS,
@@ -128,15 +128,42 @@ export function percentOrMissing(value: number | null | undefined): string {
 export function profitabilitySentence(
   profit: number,
   profitabilityPercent: number | null | undefined,
-  revenueMarginPercent: number | null | undefined
+  revenueMarginPercent: number | null | undefined,
+  partial = false
 ): string {
-  return `Расчётная прибыль до налога: ${profit} ₽; рентабельность на себестоимость: ${percentOrMissing(profitabilityPercent)}; маржа в цене: ${percentOrMissing(revenueMarginPercent)}.`;
+  const amount = partial ? moneyRu(profit) : `${profit} ₽`;
+  return `Расчётная прибыль до налога: ${amount}; рентабельность на себестоимость: ${percentOrMissing(profitabilityPercent)}; маржа в цене: ${percentOrMissing(revenueMarginPercent)}.`;
+}
+
+/** Hide a zero profit when the cost itself was not calculated. Mark a partial total as preliminary. */
+export function profitAndMarginPhrase(input: {
+  cost: number | null;
+  missingRates: number;
+  profit?: number | null;
+  priceExVat?: number | null;
+  profitabilityPercent?: number | null;
+  revenueMarginPercent?: number | null;
+}): string {
+  if (input.cost == null || costIsUncalculated(input.cost, input.missingRates)) {
+    return "Прибыль и рентабельность не рассчитаны: себестоимость не подтверждена.";
+  }
+  if (input.profit == null || input.priceExVat == null) {
+    return "Прибыль и рентабельность не рассчитаны: нужен полный расчёт без НДС.";
+  }
+  const sentence = profitabilitySentence(
+    input.profit,
+    input.profitabilityPercent,
+    input.revenueMarginPercent,
+    costIsPartial(input.cost, input.missingRates)
+  );
+  if (!costIsPartial(input.cost, input.missingRates)) return sentence;
+  return `Предварительно, только по найденным ставкам, без ${rowCountGenitive(input.missingRates)} без ставок. ${sentence}`;
 }
 
 export function economicMissingInputs(economics?: AnalysisEconomics): string[] {
   if (!economics) return ["Создать черновой ресурсный расчёт по документам проекта."];
   const missing: string[] = [];
-  if (economics.missingRates) missing.push(`Заполнить собственные ставки для ${economics.missingRates} строк${economics.missingRateNames?.length ? `: ${economics.missingRateNames.slice(0, 8).join("; ")}` : ""}.`);
+  if (economics.missingRates) missing.push(`Заполнить собственные ставки для ${rowCountGenitive(economics.missingRates)}${economics.missingRateNames?.length ? `: ${economics.missingRateNames.slice(0, 8).join("; ")}` : ""}.`);
   if (economics.cost == null) missing.push("Рассчитать себестоимость: подтверждённый итог черновика отсутствует.");
   if (economics.priceWithVat == null) missing.push("Подтвердить ставку НДС и получить сопоставимую итоговую цену проекта.");
   if (economics.priceExVat == null) missing.push("Нет цены чернового расчёта без НДС для проверки прибыли и рентабельности.");
@@ -807,11 +834,9 @@ export async function analyzeProjectPackageWithModel(
         costPhrase.startsWith("Себестоимость")
           ? `${costPhrase}.`
           : `Черновая себестоимость по справочникам компании: ${costPhrase}.`,
-        economics.missingRates ? `Не найдены собственные ставки для ${economics.missingRates} строк.` : "Ставки по строкам черновика найдены.",
+        economics.missingRates ? `Не найдены собственные ставки для ${rowCountGenitive(economics.missingRates)}.` : "Ставки по строкам черновика найдены.",
         economics.incomplete ? "Ресурсный расчёт неполный, поэтому решение об участии пока не подтверждено." : null,
-        economics.profit == null || economics.priceExVat == null
-          ? "Прибыль и рентабельность не рассчитаны: нужен полный расчёт без НДС."
-          : profitabilitySentence(economics.profit, economics.profitabilityPercent, economics.revenueMarginPercent),
+        profitAndMarginPhrase(economics),
         economics.priceWithVat == null || procurement.nmck == null
           ? "Рентабельность относительно НМЦК не рассчитана: нет сопоставимого итога с подтверждённым НДС и/или НМЦК."
           : `Предельная разница между НМЦК и расчётной ценой с НДС: ${Math.round((procurement.nmck - economics.priceWithVat) * 100) / 100} ₽. Это запас до предельной цены, а не обещанная прибыль.`
@@ -973,12 +998,17 @@ export function buildProjectAnalysisFallback(
   // A fallback has not reviewed the tender clauses semantically. Without that
   // model pass it must not turn a complete spreadsheet into a bid approval.
   const fallbackCost = economics ? draftCostPhrase(cost, economics.missingRates) : "";
+  const fallbackUncalculated = economics ? cost == null || costIsUncalculated(cost, economics.missingRates) : false;
   const economicText = economics ? [
     fallbackCost.startsWith("Себестоимость")
       ? `${fallbackCost}.`
       : `Себестоимость с учтёнными накладными: ${fallbackCost}.`,
-    `Цена без НДС: ${priceExVat == null ? "не рассчитана" : `${priceExVat} ₽`}; с НДС: ${priceWithVat == null ? "не рассчитана" : `${priceWithVat} ₽`}.`,
-    `Прибыль: ${profit == null ? "не рассчитана" : `${profit} ₽`}; рентабельность на себестоимость: ${percentOrMissing(profitabilityPercent)}; маржа в цене: ${percentOrMissing(revenueMarginPercent)}.`,
+    fallbackUncalculated
+      ? "Цена без НДС: не рассчитана; с НДС: не рассчитана."
+      : `Цена без НДС: ${priceExVat == null ? "не рассчитана" : `${priceExVat} ₽`}; с НДС: ${priceWithVat == null ? "не рассчитана" : `${priceWithVat} ₽`}.`,
+    profitAndMarginPhrase({
+      cost, missingRates: economics.missingRates, profit, priceExVat, profitabilityPercent, revenueMarginPercent,
+    }),
     procurement.nmck != null && priceWithVat != null ? `Сравнение с НМЦК ${procurement.nmck} ₽: ${priceTooHigh ? "расчётная цена выше НМЦК" : "расчётная цена не выше НМЦК"}.` : "Сравнить цену с НМЦК нельзя: нет сопоставимых значений.",
     ...economicMissingInputs(economics),
   ].filter(Boolean).join(" ") : "Собственная ресурсная калькуляция отсутствует.";
