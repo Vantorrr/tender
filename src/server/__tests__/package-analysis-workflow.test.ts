@@ -140,6 +140,14 @@ describe("package analysis workflow", () => {
         disclaimer: "проверка",
         answeredByModel: "google/gemini-2.5-flash",
         sourceDocumentHash: "abc",
+        quality: {
+          status: "needs_review",
+          sourceDocuments: 2,
+          requiredDocumentsFound: 2,
+          citationCount: 4,
+          acceptedClaims: 3,
+          rejectedClaims: 2,
+        },
       };
       return data;
     });
@@ -151,6 +159,8 @@ describe("package analysis workflow", () => {
     expect(analytics.sourceDocumentHash).toBe("abc");
     expect(analytics.method).toBe("разбор пакета по цитатам документов");
     expect(analytics.missingInputs).not.toEqual(["Нет договора"]);
+    expect(analytics.quality).toMatchObject({ status: "needs_review", rejectedClaims: 2, acceptedClaims: 3 });
+    expect(analytics.quality?.status).not.toBe("evidence_backed");
   });
 
   it("rejects an unknown procurement before model invocation", async () => {

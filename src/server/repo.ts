@@ -2878,11 +2878,23 @@ export function sendProcurementToCalculation(
       || previous.findings?.length
       || previous.summary.startsWith("Готовность к решению")
     ));
+    const keptQuality = previous?.quality
+      ? {
+          status: (previous.quality.rejectedClaims ?? 0) > 0 && previous.quality.status === "evidence_backed"
+            ? "needs_review" as const
+            : previous.quality.status,
+          sourceDocuments: rebuilt.quality?.sourceDocuments ?? previous.quality.sourceDocuments,
+          requiredDocumentsFound: rebuilt.quality?.requiredDocumentsFound ?? previous.quality.requiredDocumentsFound,
+          citationCount: rebuilt.quality?.citationCount ?? previous.quality.citationCount,
+          acceptedClaims: previous.quality.acceptedClaims,
+          rejectedClaims: previous.quality.rejectedClaims,
+        }
+      : rebuilt.quality;
     p.analytics = keepMemo && previous
       ? {
           ...previous,
           missingInputs: rebuilt.missingInputs,
-          quality: rebuilt.quality,
+          quality: keptQuality,
           citations: rebuilt.citations,
           citationIds: rebuilt.citationIds,
         }

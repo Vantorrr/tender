@@ -18,6 +18,7 @@ import {
   buildProjectAnalysisFallback,
   draftCostPhrase,
   percentOrMissing,
+  nmckComparisonPhrase,
   profitAndMarginPhrase,
   profitabilitySentence,
 } from "@/server/project-analysis-ai";
@@ -169,6 +170,24 @@ describe("grounded project analysis", () => {
     expect(zeroProfit.summary).toContain("Прибыль и рентабельность не рассчитаны: себестоимость не подтверждена.");
     expect(zeroProfit.summary).not.toContain("Расчётная прибыль до налога: 0");
     expect(zeroProfit.summary).not.toMatch(/рентабельность на себестоимость: 0/);
+
+    const withCeiling = { ...procurement, nmck: 2_000_000 } as Procurement;
+    const unconfirmed = buildProjectAnalysisFallback(withCeiling, deterministic, {
+      cost: 0, priceExVat: 0, priceWithVat: 0, profit: 0,
+      profitabilityPercent: 0, revenueMarginPercent: 0, incomplete: true, missingRates: 16,
+    }, undefined, "пустой ответ");
+    expect(unconfirmed.summary).toContain("Сравнение с НМЦК невозможно, пока себестоимость не рассчитана.");
+    expect(unconfirmed.summary).not.toMatch(/не выше НМЦК|выше НМЦК|запас до предельной/);
+    expect(unconfirmed.recommendation).not.toBe("do_not_participate");
+    expect(nmckComparisonPhrase({
+      cost: 1_500, missingRates: 0, priceWithVat: 0, nmck: 2_000_000, style: "compare",
+    })).toBe("Сравнение с НМЦК невозможно, пока себестоимость не рассчитана.");
+    expect(nmckComparisonPhrase({
+      cost: 1_000, missingRates: 0, priceWithVat: 1_200, nmck: 2_000, style: "headroom",
+    })).toContain("Предельная разница между НМЦК");
+    expect(nmckComparisonPhrase({
+      cost: 1_000, missingRates: 0, priceWithVat: 2_500, nmck: 2_000, style: "compare",
+    })).toContain("расчётная цена выше НМЦК");
   });
 
   it("accepts only a paraphrase with an exact quote, valid source, and matching numbers", () => {

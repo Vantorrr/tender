@@ -135,6 +135,32 @@ export function profitabilitySentence(
   return `Расчётная прибыль до налога: ${amount}; рентабельность на себестоимость: ${percentOrMissing(profitabilityPercent)}; маржа в цене: ${percentOrMissing(revenueMarginPercent)}.`;
 }
 
+/** A zero VAT price or an unconfirmed cost is not a bid that can be placed against the NMCK. */
+export function nmckComparisonBlocked(cost: number | null, missingRates: number, priceWithVat: number | null): boolean {
+  return cost == null || costIsUncalculated(cost, missingRates) || priceWithVat === 0;
+}
+
+export function nmckComparisonPhrase(input: {
+  cost: number | null;
+  missingRates: number;
+  priceWithVat: number | null;
+  nmck: number | null;
+  style: "headroom" | "compare";
+}): string {
+  if (nmckComparisonBlocked(input.cost, input.missingRates, input.priceWithVat)) {
+    return "Сравнение с НМЦК невозможно, пока себестоимость не рассчитана.";
+  }
+  if (input.priceWithVat == null || input.nmck == null) {
+    return input.style === "headroom"
+      ? "Рентабельность относительно НМЦК не рассчитана: нет сопоставимого итога с подтверждённым НДС и/или НМЦК."
+      : "Сравнить цену с НМЦК нельзя: нет сопоставимых значений.";
+  }
+  if (input.priceWithVat > input.nmck) return `Сравнение с НМЦК ${input.nmck} ₽: расчётная цена выше НМЦК.`;
+  if (input.style === "compare") return `Сравнение с НМЦК ${input.nmck} ₽: расчётная цена не выше НМЦК.`;
+  const gap = Math.round((input.nmck - input.priceWithVat) * 100) / 100;
+  return `Предельная разница между НМЦК и расчётной ценой с НДС: ${gap} ₽. Это запас до предельной цены, а не обещанная прибыль.`;
+}
+
 /** Hide a zero profit when the cost itself was not calculated. Mark a partial total as preliminary. */
 export function profitAndMarginPhrase(input: {
   cost: number | null;
@@ -799,7 +825,8 @@ export async function analyzeProjectPackageWithModel(
     risk.severity === "high" && risk.status !== "zakryto" && risk.status !== "prinyato"
   ));
   const positiveProfit = economics?.profit != null && economics.profit > 0;
-  const priceWithinMaximum = economics?.priceWithVat != null && procurement.nmck != null && economics.priceWithVat <= procurement.nmck;
+  const priceComparable = economics != null && !nmckComparisonBlocked(economics.cost, economics.missingRates, economics.priceWithVat);
+  const priceWithinMaximum = priceComparable && economics?.priceWithVat != null && procurement.nmck != null && economics.priceWithVat <= procurement.nmck;
   const decisionReady = hardCoverageGaps.length === 0 && !missingServices && !hasOpenHighRisk && economicsComplete && positiveProfit && priceWithinMaximum;
 
   // Model can only choose once source coverage, company profile and full
@@ -814,7 +841,7 @@ export async function analyzeProjectPackageWithModel(
     hasCriticalEvidence,
     modelNamedGaps
   );
-  const priceStop = economics?.priceWithVat != null && procurement.nmck != null && economics.priceWithVat > procurement.nmck;
+  const priceStop = priceComparable && economics?.priceWithVat != null && procurement.nmck != null && economics.priceWithVat > procurement.nmck;
   const profitStop = Boolean(economics?.profit != null && economics.profit <= 0 && economicsComplete);
   if (priceStop || profitStop) recommendation = "do_not_participate";
   const conflictNotes = sanitizeCustomerQuestions(result.missingInputs, visibleCorpus).filter(describesConflict);
@@ -837,9 +864,13 @@ export async function analyzeProjectPackageWithModel(
         economics.missingRates ? `Не найдены собственные ставки для ${rowCountGenitive(economics.missingRates)}.` : "Ставки по строкам черновика найдены.",
         economics.incomplete ? "Ресурсный расчёт неполный, поэтому решение об участии пока не подтверждено." : null,
         profitAndMarginPhrase(economics),
-        economics.priceWithVat == null || procurement.nmck == null
-          ? "Рентабельность относительно НМЦК не рассчитана: нет сопоставимого итога с подтверждённым НДС и/или НМЦК."
-          : `Предельная разница между НМЦК и расчётной ценой с НДС: ${Math.round((procurement.nmck - economics.priceWithVat) * 100) / 100} ₽. Это запас до предельной цены, а не обещанная прибыль.`
+        nmckComparisonPhrase({
+          cost: economics.cost,
+          missingRates: economics.missingRates,
+          priceWithVat: economics.priceWithVat,
+          nmck: procurement.nmck,
+          style: "headroom",
+        })
       ].filter(Boolean).join(" ");
   const sourceStatus = deterministic.quality?.status === "evidence_backed"
     ? "Есть выводы, подтверждённые цитатами."
@@ -990,7 +1021,8 @@ export function buildProjectAnalysisFallback(
   const revenueMarginPercent = economics?.revenueMarginPercent ?? null;
   const calculationsReady = Boolean(economics && !economics.incomplete && cost != null &&
     priceExVat != null && priceWithVat != null && profit != null && procurement.nmck != null);
-  const priceTooHigh = priceWithVat != null && procurement.nmck != null && priceWithVat > procurement.nmck;
+  const priceTooHigh = !nmckComparisonBlocked(cost, economics?.missingRates ?? 0, priceWithVat)
+    && priceWithVat != null && procurement.nmck != null && priceWithVat > procurement.nmck;
   const noProfit = profit != null && profit <= 0;
   let recommendation: ProjectAnalytics["recommendation"] = "insufficient_data";
   if (priceTooHigh || (calculationsReady && noProfit)) recommendation = "do_not_participate";
@@ -1009,7 +1041,9 @@ export function buildProjectAnalysisFallback(
     profitAndMarginPhrase({
       cost, missingRates: economics.missingRates, profit, priceExVat, profitabilityPercent, revenueMarginPercent,
     }),
-    procurement.nmck != null && priceWithVat != null ? `Сравнение с НМЦК ${procurement.nmck} ₽: ${priceTooHigh ? "расчётная цена выше НМЦК" : "расчётная цена не выше НМЦК"}.` : "Сравнить цену с НМЦК нельзя: нет сопоставимых значений.",
+    nmckComparisonPhrase({
+      cost, missingRates: economics.missingRates, priceWithVat, nmck: procurement.nmck, style: "compare",
+    }),
     ...economicMissingInputs(economics),
   ].filter(Boolean).join(" ") : "Собственная ресурсная калькуляция отсутствует.";
   const riskText = company?.riskRemarks.length
