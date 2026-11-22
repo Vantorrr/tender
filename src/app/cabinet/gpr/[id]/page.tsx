@@ -16,7 +16,7 @@ import { api, downloadUrl } from "@/lib/api";
 import { GPR_LINKED_ROW_PX, PlanFactGantt } from "@/components/plan-fact-gantt";
 import { GprResourceTree } from "@/components/gpr-resource-tree";
 import { collectCalendarWarnings } from "@/lib/calendar-availability";
-import { bucketsFromPositions } from "@/lib/cost-engine";
+import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engine";
 import { formatMoney } from "@/lib/format";
 import { linkedWorkRows } from "@/lib/gpr-linked-rows";
 import { gprStageLabel } from "@/lib/gpr-stage-label";
@@ -96,7 +96,9 @@ export default function GprDetailPage() {
     : null;
   const cost = calc?.costSummary;
   const missingRates = calc?.positions.filter((position) => position.rateMissing && !position.isWorkItem).length ?? 0;
+  const equipmentMissing = calc?.positions.filter((position) => !position.isWorkItem && position.code !== "НР" && position.code !== "СП" && classifyDirectCostBucket(position) === "equipment" && (position.rateMissing || !(position.rate > 0))).length ?? 0;
   const costText = (amount: number | null | undefined) => incompleteTotalText(amount, missingRates) ?? (amount == null ? "нет данных" : formatMoney(amount));
+  const categoryText = (amount: number, missing: number) => (missing > 0 && amount === 0 ? incompleteTotalText(0, missing) : null) ?? formatMoney(amount);
   const supplies = (data.supplyRequests ?? []).filter(
     (s) => s.procurementId === schedule.procurementId
   );
@@ -406,7 +408,7 @@ export default function GprDetailPage() {
                           const edit = stageDateEdit(stage, "start", next);
                           if (!edit.ok) {
                             toast.error(edit.message);
-                            return;
+                            return false;
                           }
                           if (edit.deltaDays === 0) return;
                           void shiftStage(stage.id, edit.deltaDays, edit.resizeDays);
@@ -423,7 +425,7 @@ export default function GprDetailPage() {
                           const edit = stageDateEdit(stage, "end", next);
                           if (!edit.ok) {
                             toast.error(edit.message);
-                            return;
+                            return false;
                           }
                           if (edit.end === stage.end) return;
                           void shiftStage(stage.id, edit.deltaDays, edit.resizeDays);
@@ -566,10 +568,10 @@ export default function GprDetailPage() {
                       : "нет данных"}
                   </div>
                   <div data-testid="gpr-labor-cost">
-                    Люди: {formatMoney(cost.resourceSlices.labor)}
+                    Люди: {categoryText(cost.resourceSlices.labor, 0)}
                   </div>
                   <div data-testid="gpr-equipment-cost">
-                    Техника: {formatMoney(cost.resourceSlices.equipment)}
+                    Техника: {categoryText(cost.resourceSlices.equipment, equipmentMissing)}
                   </div>
                   {buckets && buckets.other > 0 ? (
                     <div data-testid="gpr-other-cost">
@@ -586,7 +588,7 @@ export default function GprDetailPage() {
                       ? "нет данных"
                       : formatMoney(buckets.materials)}
                   </div>
-                  <div>Прямые · техника: {formatMoney(buckets.equipment)}</div>
+                  <div>Прямые · техника: {categoryText(buckets.equipment, equipmentMissing)}</div>
                   {buckets.other > 0 ? (
                     <div data-testid="gpr-other-cost">
                       Прочие: {formatMoney(buckets.other)}
@@ -596,8 +598,8 @@ export default function GprDetailPage() {
                     Себестоимость без резерва: {costText(cost.C0)}
                     {cost.totalsIncomplete ? " · неполно" : ""}
                   </div>
-                  <div>Резерв: {formatMoney(cost.reserve)}</div>
-                  <div>Себестоимость с резервом: {formatMoney(cost.C)}</div>
+                  <div>Резерв: {costText(cost.reserve)}</div>
+                  <div>Себестоимость с резервом: {costText(cost.C)}</div>
                   <div>Прибыль: {formatMoney(cost.profit)}</div>
                   <div>Цена без НДС: {costText(cost.priceExVat)}</div>
                 </>

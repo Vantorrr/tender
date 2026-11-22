@@ -3,8 +3,8 @@
  * Amounts use shared resolveResourceDimensions (same Q/R as cost-engine / export).
  */
 import { roundMoney } from "@/lib/calc-math";
-import { mergeEstimateLeaves, mergeLeavesByWork } from "@/lib/resource-merge";
-import { classifyDirectCostBucket } from "@/lib/cost-engine";
+import { mergeEstimateLeaves } from "@/lib/resource-merge";
+import { classifyDirectCostBucket, isWorkActivityName } from "@/lib/cost-engine";
 import {
   resolveResourceDimensions,
   type ResolvedResourceDims,
@@ -20,7 +20,7 @@ import type {
   ResourceQuantityBasis,
 } from "@/lib/types";
 
-export type EstimateKind = "labor" | "equipment" | "material" | "bus" | "other";
+export type EstimateKind = "labor" | "equipment" | "material" | "bus" | "work" | "other";
 
 export type EstimateLeaf = {
   id: string;
@@ -86,10 +86,12 @@ const KIND_LABEL: Record<EstimateKind, string> = {
   equipment: "Техника",
   material: "Материалы",
   bus: "Автобусы",
+  work: "Работы",
   other: "Прочее",
 };
 
 const KIND_ORDER: EstimateKind[] = [
+  "work",
   "labor",
   "equipment",
   "bus",
@@ -136,6 +138,7 @@ function hourUnit(unit: string): boolean {
 }
 
 function resourceKind(r: GprStageResource): EstimateKind {
+  if (isWorkActivityName(r.name) && (r.kind === "other" || r.kind == null)) return "work";
   if (r.kind === "labor") return "labor";
   if (r.kind === "material") return "material";
   if (r.kind === "equipment") return "equipment";
@@ -144,6 +147,7 @@ function resourceKind(r: GprStageResource): EstimateKind {
 }
 
 function estimateKindFromPosition(p: CalcPosition): EstimateKind {
+  if (isWorkActivityName(p.name) && (p.resourceKind == null || p.resourceKind === "other")) return "work";
   if (p.resourceKind === "labor") return "labor";
   if (p.resourceKind === "equipment") return "equipment";
   if (p.resourceKind === "bus") return "bus";
@@ -315,7 +319,7 @@ export function buildHierarchicalEstimate(opts: {
       linkedSourceKeys.add(p.id);
     }
     if (leaves.length === 0 && q && !match(st.name)) continue;
-    const stageLeaves = mergeLeavesByWork(leaves);
+    const stageLeaves = mergeEstimateLeaves(leaves);
     const groups = groupLeaves(stageLeaves);
     const { subtotal, incomplete } = stageSubtotal(groups);
     const leavesByWork = new Map<string, EstimateLeaf[]>();

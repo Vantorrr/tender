@@ -28,7 +28,7 @@ import { SUMMARY_FRESH, SUMMARY_UNCHANGED } from "@/lib/summary-notice";
 import { calcMemoState, citationHref, costIsPartial, costIsUncalculated, draftCostPhrase, honestReadinessText, matchDirectorySuppliers, moneyRu, rowCountNominative } from "@/lib/wave23";
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_CHECKLIST } from "@/lib/ai-topics";
-import { filledOverviewBlocks, PARTICIPATE_LABELS, visibleCheckItems } from "@/lib/project-analytics";
+import { buildProjectAnalytics, filledOverviewBlocks, PARTICIPATE_LABELS, visibleCheckItems } from "@/lib/project-analytics";
 import { parseDecimalRu } from "@/lib/decimal-ru";
 import { PAYMENT_AMOUNT_ERROR, PAYMENT_BUCKET_LABELS, paymentBucket, paymentTotals, type PaymentBucket } from "@/lib/money-payments";
 import { userHasSection } from "@/lib/acl";
@@ -386,6 +386,11 @@ export default function ZakupkaDetailPage() {
         : [],
     [data.documents, procurement]
   );
+  const documentGaps = useMemo(() => {
+    if (!procurement || docs.length === 0) return [] as string[];
+    if (procurement.analytics) return procurement.analytics.missingInputs;
+    return buildProjectAnalytics(procurement, docs).missingInputs;
+  }, [procurement, docs]);
   const estimateRows = useMemo(
     () => docs
       .filter((document) =>
@@ -509,7 +514,15 @@ export default function ZakupkaDetailPage() {
   const analytics = procurement.analytics;
   const memoState = calcMemoState(calc);
   const shownSummary = analytics ? honestReadinessText(analytics.summary, memoState) : "";
-  const checkItems = analytics ? visibleCheckItems(analytics.missingInputs, docs) : [];
+  const checkItems = visibleCheckItems(documentGaps, docs);
+  const overviewCitations = analytics?.citations?.length ? analytics.citations : docs.flatMap((document) => document.citations ?? []);
+  const overviewBlocks = analytics || docs.length > 0 ? filledOverviewBlocks({
+    summary: shownSummary,
+    documents: docs,
+    citations: overviewCitations,
+    missingInputs: documentGaps,
+    economicsText: memoState ? draftCostPhrase(memoState.cost, memoState.missingRates) : null,
+  }) : [];
   const displayCitations = analytics ? readableCitations(analytics.citations) : [];
   const renderableCitations = displayCitations.map(({ displayText, ...citation }) => ({ ...citation, text: displayText }));
   const keyCitations = keyAnalyticsCitations(renderableCitations);
@@ -973,34 +986,30 @@ export default function ZakupkaDetailPage() {
                 <p className="mt-1 text-xs text-[var(--tk-muted)]">
                   Загрузите файл или архив — система сохранит его в карточке, обновит сводку и разберёт доступные источники.
                 </p>
-                {analytics ? (
+                {overviewBlocks.length ? (
                   <div className="mt-3 space-y-3">
-                    <p className="text-sm text-[var(--tk-ink)]">{shownSummary.split(/\n\n/)[0]}</p>
+                    {shownSummary ? <p className="text-sm text-[var(--tk-ink)]">{shownSummary.split(/\n\n/)[0]}</p> : null}
                     <div className="space-y-2" data-testid="overview-note-blocks">
-                      {filledOverviewBlocks({
-                        summary: shownSummary,
-                        documents: docs,
-                        citations: analytics.citations,
-                        missingInputs: analytics.missingInputs,
-                        economicsText: memoState ? draftCostPhrase(memoState.cost, memoState.missingRates) : null,
-                      }).map((block) => (
+                      {overviewBlocks.map((block) => (
                         <div key={block.title}>
                           <p className="text-sm font-medium text-[var(--tk-ink)]">{block.title}</p>
                           <p className="whitespace-pre-line text-sm text-[var(--tk-muted)]">{block.body}</p>
                         </div>
                       ))}
                     </div>
-                    <button
-                      type="button"
-                      className="text-sm font-medium text-[var(--tk-brand)] underline"
-                      data-testid="open-full-note"
-                      onClick={() => setSelectedTab("analytics")}
-                    >
-                      Открыть записку целиком
-                    </button>
-                    <p className="text-xs text-[var(--tk-muted)]">Документов: {analytics.quality?.sourceDocuments ?? docs.length}</p>
-                    <p className="text-xs text-[var(--tk-muted)]">Оценка по документам: {PARTICIPATE_LABELS[analytics.recommendation]}</p>
-                    {analytics.answeredByModel ? (
+                    {analytics ? (
+                      <button
+                        type="button"
+                        className="text-sm font-medium text-[var(--tk-brand)] underline"
+                        data-testid="open-full-note"
+                        onClick={() => setSelectedTab("analytics")}
+                      >
+                        Открыть записку целиком
+                      </button>
+                    ) : null}
+                    <p className="text-xs text-[var(--tk-muted)]">Документов: {analytics?.quality?.sourceDocuments ?? docs.length}. Фрагментов: {overviewCitations.length}</p>
+                    {analytics ? <p className="text-xs text-[var(--tk-muted)]">Оценка по документам: {PARTICIPATE_LABELS[analytics.recommendation]}</p> : null}
+                    {analytics?.answeredByModel ? (
                       <p className="text-xs text-[var(--tk-muted)]">Модель ответа: {analytics.answeredByModel}</p>
                     ) : null}
                   </div>

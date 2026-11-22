@@ -2,7 +2,7 @@
  * Resource + supply availability checks against GPR calendar (UX warnings, not a solver).
  */
 import type { GprStage, SupplyRequest, WorkCalendar } from "@/lib/types";
-import { parsedNeedBy, supplyIsOverdue, todayIsoInTimeZone } from "@/lib/format";
+import { formatDate, parsedNeedBy, supplyIsOverdue, todayIsoInTimeZone } from "@/lib/format";
 import { stageDayList } from "@/lib/plan-from-gpr";
 
 export type CalendarWarning = {
@@ -36,7 +36,7 @@ export function crewPeakWarnings(
       out.push({
         kind: "crew_peak",
         severity: "warn",
-        message: `${d}: суммарная численность ${v.crew} чел. > доступности ${capacityPerDay}`,
+        message: `${formatDate(d)}: суммарная численность ${v.crew} чел. > доступности ${capacityPerDay}`,
         stageIds: [...new Set(v.stages)],
       });
     }
@@ -70,7 +70,7 @@ export function resourceOverlapWarnings(
     out.push({
       kind: "resource_overlap",
       severity: "info",
-      message: `${d}: ${kindLabel} «${key.split("|")[2]}» занят на ${v.qty} ед. (${v.names.join(", ")})`,
+      message: `${formatDate(d)}: ${kindLabel} «${key.split("|")[2]}» занят на ${v.qty} ед. (${v.names.join(", ")})`,
     });
   }
   return out.slice(0, 12);
@@ -116,14 +116,14 @@ export function supplyCalendarWarnings(
       out.push({
         kind: "supply_late",
         severity: "warn",
-        message: `Поставка «${s.materialName}»: срок ${due} позже окончания графика ${maxEnd}`,
+        message: `Поставка «${s.materialName}»: срок ${formatDate(due)} позже окончания графика ${formatDate(maxEnd)}`,
         supplyId: s.id,
       });
     } else if (due < minStart) {
       out.push({
         kind: "supply_late",
         severity: "info",
-        message: `Поставка «${s.materialName}»: срок ${due} раньше начала графика ${minStart}`,
+        message: `Поставка «${s.materialName}»: срок ${formatDate(due)} раньше начала графика ${formatDate(minStart)}`,
         supplyId: s.id,
       });
     }

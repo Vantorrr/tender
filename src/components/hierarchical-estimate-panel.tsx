@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { parseDecimalRu } from "@/lib/decimal-ru";
 import { formatMoney, formatNumber, plainPositionName, quantityPresentation, visiblePositionCode } from "@/lib/format";
 import { isLaborHourUnit, laborHeadcount } from "@/lib/resource-merge";
-import { rowCountNominative } from "@/lib/wave23";
+import { incompleteTotalText, rowCountNominative } from "@/lib/wave23";
 import {
   buildHierarchicalEstimate,
   estimateBudgetCards,
@@ -117,6 +117,10 @@ export function HierarchicalEstimatePanel({
   const materialsShown =
     slices != null ? slices.materials : cards.materials;
   const reserveShown = costSummary?.reserve ?? 0;
+  const missingRates = positions.filter((position) => position.rateMissing && !position.isWorkItem && position.code !== "НР" && position.code !== "СП").length;
+  const reserveText = incomplete && reserveShown === 0
+    ? (incompleteTotalText(0, missingRates) ?? "не рассчитан")
+    : formatMoney(reserveShown);
   const byWorkTypes =
     laborShown != null || materialsShown != null
       ? (laborShown ?? 0) + (materialsShown ?? 0)
@@ -302,7 +306,7 @@ export function HierarchicalEstimatePanel({
         >
           <p className="text-xs text-[var(--tk-muted)]">Резерв</p>
           <p className="mt-1 font-[family-name:var(--font-display)] text-2xl">
-            {formatMoney(reserveShown)}
+            {reserveText}
           </p>
           <p className="mt-1 text-[11px] text-[var(--tk-muted)]">
             Непредвиденные расходы
@@ -353,7 +357,7 @@ export function HierarchicalEstimatePanel({
         </div>
         <div>
           <span className="text-xs text-[var(--tk-muted)]">Резерв</span>
-          <p className="text-xl font-semibold">{formatMoney(reserveShown)}</p>
+          <p className="text-xl font-semibold">{reserveText}</p>
         </div>
       </div>
 

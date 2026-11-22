@@ -3,6 +3,7 @@ import { clipAtSentence, normalizeOcrText, presentAnalyticalNote } from "@/lib/a
 import { collectCalendarWarnings } from "@/lib/calendar-availability";
 import { isShownConfirmation } from "@/lib/citation-display";
 import { classifyDirectCostBucket } from "@/lib/cost-engine";
+import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
 import { buildStagesFromEstimatePositions } from "@/lib/estimate-stages";
 import { filledOverviewBlocks, visibleCheckItems } from "@/lib/project-analytics";
 import { groupCalculationResources } from "@/lib/resource-merge";
@@ -51,10 +52,25 @@ describe("wave 6 client pain points", () => {
     ];
     const before = Math.round(rows.reduce((sum, row) => sum + row.quantity * row.rate, 0) * 100) / 100;
     const grouped = groupCalculationResources(rows);
-    const drillingCrew = grouped.find((row) => row.name === "Плотник 3 разр." && row.workName === "Бурение");
-    expect(grouped.filter((row) => row.name === "Плотник 3 разр.")).toHaveLength(2);
+    const drillingCrew = grouped.find((row) => row.name === "Плотник 3 разр.");
+    expect(grouped.filter((row) => row.name === "Плотник 3 разр.")).toHaveLength(1);
     expect(drillingCrew?.unit).toBe("чел.-ч");
-    expect(drillingCrew?.quantity).toBeCloseTo(22.13 + 4.34 + 35.82 + 12.04);
+    expect(drillingCrew?.quantity).toBeCloseTo(22.13 + 4.34 + 35.82 + 12.04 + 10);
+    const close = groupCalculationResources([
+      { id: "a", name: "Плотник 3 разр.", unit: "чел.-ч", quantity: 10, rate: 756.1, workName: "Бурение", kind: "labor" },
+      { id: "b", name: "Плотник 3 разр.", unit: "чел.-ч", quantity: 10, rate: 756.42, workName: "Монтаж", kind: "labor" },
+      { id: "saw-1", name: "Пила", unit: "маш.-ч", quantity: 2, rate: 10, workName: "Бурение", kind: "equipment" },
+      { id: "saw-2", name: "Пила", unit: "маш.-ч", quantity: 3, rate: 10, workName: "Монтаж", kind: "equipment" },
+      { id: "fuel-1", name: "Бензин", unit: "л", quantity: 4, rate: 60, workName: "Бурение", kind: "material" },
+      { id: "fuel-2", name: "Бензин", unit: "л", quantity: 5, rate: 60, workName: "Монтаж", kind: "material" },
+    ]);
+    const crew = close.find((row) => row.name === "Плотник 3 разр.");
+    expect(crew?.quantity).toBe(20);
+    expect(crew?.rate).toBeCloseTo((10 * 756.1 + 10 * 756.42) / 20);
+    expect(close.find((row) => row.name === "Пила")?.quantity).toBe(5);
+    expect(close.find((row) => row.name === "Бензин")?.quantity).toBe(9);
+    const closeBefore = 10 * 756.1 + 10 * 756.42 + 5 * 10 + 9 * 60;
+    expect(close.reduce((sum, row) => sum + row.quantity * (row.rate ?? 0), 0)).toBeCloseTo(closeBefore);
     expect(drillingCrew?.people).toBeNull();
     expect(groupCalculationResources([{
       id: "crew", name: "Плотник 3 разр.", unit: "чел.-ч", quantity: 40, rate: 500, workName: "Бурение", kind: "labor", hoursPerShift: 8, days: 1,
@@ -83,6 +99,8 @@ describe("wave 6 client pain points", () => {
     expect(text).not.toMatch(/\[info\]|\[warn\]|missing_|equipment|bus/);
     expect(text).toContain("Поставка «Долото шарошечное»: срок не указан");
     expect(text).toContain("техника");
+    expect(text).toContain("01.12.2026");
+    expect(text).not.toMatch(/\d{4}-\d{2}-\d{2}/);
   });
 
   it("does not print 0 ₽ when rates are missing", () => {
@@ -99,6 +117,12 @@ describe("wave 6 client pain points", () => {
     const stages = buildStagesFromEstimatePositions([position], "2026-12-01T00:00:00Z");
     expect(stages[0]?.sectionName).toBe("Погрузо-разгрузочные работы");
     expect(stages[0]?.sectionName).not.toBe("Прочие позиции");
+    const tree = buildHierarchicalEstimate({
+      stages: [],
+      positions: [{ ...position, resourceKind: "other" }],
+    });
+    expect(tree[0]?.groups.map((group) => group.label)).toContain("Работы");
+    expect(tree[0]?.groups.map((group) => group.label)).not.toContain("Прочее");
     expect(isShownConfirmation({ text: "Основание: дефектная ведомость", sourceFile: "Договор.docx" })).toBe(false);
     expect(isShownConfirmation({ text: "Срок поставки 10 дней", sourceFile: "InVoice.pdf" })).toBe(false);
     expect(isShownConfirmation({ text: "Штраф 0,1% за день просрочки", sourceFile: "Договор.docx" })).toBe(true);
@@ -116,5 +140,15 @@ describe("wave 6 client pain points", () => {
     expect(blocks.every((block) => block.body && block.body !== "нет данных")).toBe(true);
     expect(blocks[1]?.body).toMatch(/716/);
     expect(blocks[4]?.body).not.toMatch(/не найдено ТЗ/);
+    const fromDocuments = filledOverviewBlocks({
+      summary: "",
+      documents: [{ fileName: "ТЗ.pdf", category: "tz", title: "ТЗ", citations: [{ text: "Объём работ: 716 м бурения." }] }],
+      citations: [{ text: "Объём работ: 716 м бурения." }],
+      missingInputs: ["Проверить срок в извещении"],
+      economicsText: null,
+    });
+    expect(fromDocuments).toHaveLength(5);
+    expect(fromDocuments[0]?.body).toMatch(/Документов: 1/);
+    expect(fromDocuments[4]?.body).toMatch(/Проверить срок/);
   });
 });

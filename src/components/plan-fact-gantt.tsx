@@ -611,9 +611,8 @@ export function PlanFactGantt({
                           value={stage.end}
                           disabled={isSaving}
                           onChange={(next) => {
-                            if (next && next >= stage.start) {
-                              void commitShift(stage.id, 0, daysBetween(stage.start, next));
-                            }
+                            if (!next || next < stage.start) return false;
+                            void commitShift(stage.id, 0, daysBetween(stage.start, next));
                           }}
                         />
                       </label>

@@ -44,8 +44,31 @@ export function laborHeadcount(hours: number, hoursPerShift?: number | null, day
   return rounded;
 }
 
-function mergeKey(kind: string, name: string, unit: string, rate: number | null | undefined) {
-  return `${kind}|${norm(name)}|${norm(laborDisplayUnit(kind, unit))}|${rate == null ? "none" : String(rate)}`;
+function resourceIdentity(kind: string, name: string, unit: string) {
+  return `${kind}|${norm(name)}|${norm(laborDisplayUnit(kind, unit))}`;
+}
+
+/** Rates within 1% are the same tariff for display. A missing rate only matches a missing rate. */
+export function ratesWithinOnePercent(left: number | null | undefined, right: number | null | undefined): boolean {
+  const leftMissing = left == null || !Number.isFinite(left);
+  const rightMissing = right == null || !Number.isFinite(right);
+  if (leftMissing || rightMissing) return leftMissing && rightMissing;
+  const scale = Math.max(Math.abs(left), Math.abs(right));
+  if (scale === 0) return true;
+  return Math.abs(left - right) / scale < 0.01;
+}
+
+export function weightedRate(rows: Array<{ quantity: number; rate: number | null | undefined }>): number | null {
+  let quantity = 0;
+  let money = 0;
+  for (const row of rows) {
+    if (row.rate == null || !Number.isFinite(row.rate)) continue;
+    const qty = Number(row.quantity) || 0;
+    quantity += qty;
+    money += qty * row.rate;
+  }
+  if (quantity === 0) return rows.find((row) => row.rate != null && Number.isFinite(row.rate))?.rate ?? null;
+  return money / quantity;
 }
 
 /**
@@ -57,13 +80,14 @@ export function mergeEstimateLeaves<T extends MergeableLeaf>(leaves: T[]): T[] {
   const order: string[] = [];
   const groups = new Map<string, T[]>();
   for (const leaf of leaves) {
-    const key = mergeKey(leaf.kind, leaf.name, leaf.unit, leaf.rate);
-    const list = groups.get(key);
-    if (!list) {
+    const identity = resourceIdentity(leaf.kind, leaf.name, leaf.unit);
+    const existing = [...groups.entries()].find(([key, list]) => key.startsWith(`${identity}|`) && ratesWithinOnePercent(list[0]?.rate, leaf.rate));
+    if (!existing) {
+      const key = `${identity}|${order.length}`;
       groups.set(key, [leaf]);
       order.push(key);
     } else {
-      list.push(leaf);
+      existing[1].push(leaf);
     }
   }
 
@@ -91,7 +115,6 @@ export function mergeEstimateLeaves<T extends MergeableLeaf>(leaves: T[]): T[] {
             ? null
             : roundMoney(amounts.reduce((sum, value) => sum + value, 0));
     if (Math.abs(quantity) < 1e-9 && (amount == null || Math.abs(amount) < 0.005)) continue;
-    const rates = [...new Set(list.map((leaf) => leaf.rate).filter((rate): rate is number => rate != null))];
     const isReturn = quantity < 0 || (Math.abs(quantity) < 1e-9 && (amount ?? 0) < 0);
     const incomplete = [...new Set(list.flatMap((leaf) => leaf.incomplete))];
     merged.push({
@@ -102,7 +125,7 @@ export function mergeEstimateLeaves<T extends MergeableLeaf>(leaves: T[]): T[] {
       difference: isReturn ? -Math.abs(quantity) : null,
       hoursQ: hours == null ? null : Math.abs(hours),
       amount,
-      rate: rates.length === 1 ? rates[0] : list[0].rate,
+      rate: weightedRate(list.map((leaf) => ({ quantity: Math.abs(Number(leaf.quantity) || 0), rate: leaf.rate }))),
       incomplete,
       memberIds: list.flatMap((leaf) => leaf.memberIds?.length ? leaf.memberIds : [leaf.id]),
     });
@@ -188,7 +211,7 @@ export function mergeStageResources(resources: GprStageResource[]): GprStageReso
   const order: string[] = [];
   const groups = new Map<string, GprStageResource[]>();
   for (const resource of resources) {
-    const key = mergeKey(resource.kind, resource.name, resource.unit, resource.rate);
+    const key = `${resourceIdentity(resource.kind, resource.name, resource.unit)}|${resource.rate == null ? "none" : String(resource.rate)}`;
     const list = groups.get(key);
     if (!list) {
       groups.set(key, [resource]);
@@ -258,12 +281,13 @@ export function groupCalculationResources(rows: Array<{
   const groups = new Map<string, typeof rows>();
   for (const row of rows) {
     const kind = row.kind ?? (isLaborHourUnit(row.unit) ? "labor" : "other");
-    const key = `${norm(row.workName ?? "")}|${mergeKey(kind, row.name, row.unit, row.rate)}`;
-    const list = groups.get(key);
-    if (!list) {
+    const identity = resourceIdentity(kind, row.name, row.unit);
+    const existing = [...groups.entries()].find(([key, list]) => key.startsWith(`${identity}|`) && ratesWithinOnePercent(list[0]?.rate, row.rate));
+    if (!existing) {
+      const key = `${identity}|${order.length}`;
       groups.set(key, [row]);
       order.push(key);
-    } else list.push(row);
+    } else existing[1].push(row);
   }
   return order.map((key) => {
     const list = groups.get(key)!;
@@ -271,14 +295,15 @@ export function groupCalculationResources(rows: Array<{
     const kind = list[0].kind ?? (isLaborHourUnit(list[0].unit) ? "labor" : "other");
     const shifts = [...new Set(list.map((row) => row.hoursPerShift ?? null))];
     const days = [...new Set(list.map((row) => row.days ?? null))];
+    const works = [...new Set(list.map((row) => row.workName?.trim()).filter(Boolean))];
     return {
       id: list[0].id,
       ids: list.map((row) => row.id),
       name: list[0].name.replace(/^возврат:\s*/iu, "").trim(),
       unit: laborDisplayUnit(kind, list[0].unit),
       quantity,
-      rate: list[0].rate,
-      workName: list[0].workName?.trim() ?? "",
+      rate: weightedRate(list),
+      workName: works.length === 1 ? works[0]! : "",
       people: laborHeadcount(quantity, shifts.length === 1 ? shifts[0] : null, days.length === 1 ? days[0] : null),
     };
   });
