@@ -62,6 +62,97 @@ export function draftCostPhrase(cost: number | null, missingRates: number): stri
   return `${cost} ₽`;
 }
 
+/** Current draft used only to phrase a stored memo. Numbers stay on the calculation. */
+export type MemoCalcState = {
+  cost: number | null;
+  missingRates: number;
+};
+
+/**
+ * Missing rates and the cost the memo should describe, from the procurement's
+ * current draft. Work lines are not rates. An empty shell is not a calc.
+ */
+export function calcMemoState(calc: {
+  positions?: Array<{ rateMissing?: boolean; isWorkItem?: boolean }>;
+  costSummary?: {
+    C0?: number | null;
+    resourceSlices?: { costWithOh?: number | null } | null;
+  } | null;
+} | null | undefined): MemoCalcState | null {
+  if (!calc) return null;
+  const positions = calc.positions ?? [];
+  if (!positions.length && calc.costSummary == null) return null;
+  const missingRates = positions.filter((position) => position.rateMissing && !position.isWorkItem).length;
+  const withOverhead = calc.costSummary?.resourceSlices?.costWithOh;
+  const direct = calc.costSummary?.C0;
+  const picked = withOverhead ?? direct ?? null;
+  return {
+    cost: picked == null || !Number.isFinite(picked) ? null : picked,
+    missingRates,
+  };
+}
+
+const LEGACY_COST_PHRASE =
+  /(?:Черновая себестоимость по справочникам компании|Себестоимость с учтёнными накладными):\s*(?:нет подтверждённого итога|не рассчитана|\d[\d\s\u00a0.,]*?₽)/gu;
+
+const LEGACY_SHORT_COST = /Черновая себестоимость не рассчитана/gu;
+
+const LEGACY_PROFIT_PHRASE =
+  /(?:Расчётная прибыль до налога|Прибыль):\s*(?:не рассчитана\s*%?|\d[\d\s\u00a0.,]*?₽);\s*рентабельность на себестоимость:\s*(?:не рассчитана\s*%?|\d[\d\s\u00a0.,]*?%);\s*маржа в цене:\s*(?:не рассчитана\s*%?|\d[\d\s\u00a0.,]*?%)\.?/gu;
+
+const LEGACY_UNCONFIRMED_PROFIT =
+  /Прибыль и рентабельность не рассчитаны: нужен полный расчёт без НДС\.?/gu;
+
+const LEGACY_NMCK =
+  /Предельная разница между НМЦК и расчётной ценой с НДС:[^.]*\.\s*Это запас до предельной цены, а не обещанная прибыль\.|Сравнение с НМЦК \d[\d\s\u00a0.,]*?₽:\s*расчётная цена (?:не )?выше НМЦК\./gu;
+
+const GLUED_MISSING_PERCENT = /не рассчитана\s*%/gu;
+
+function tidyDisplayedPunctuation(text: string): string {
+  let next = text;
+  let previous = "";
+  while (next !== previous) {
+    previous = next;
+    next = next.replace(/\.\s+\./g, ".");
+  }
+  return next;
+}
+
+/** Rewrite only the old deterministic economics sentences. Findings and citations stay. */
+function rewriteLegacyEconomics(text: string, state: MemoCalcState): string {
+  for (const pattern of [
+    LEGACY_COST_PHRASE, LEGACY_SHORT_COST, LEGACY_PROFIT_PHRASE,
+    LEGACY_UNCONFIRMED_PROFIT, LEGACY_NMCK, GLUED_MISSING_PERCENT,
+  ]) pattern.lastIndex = 0;
+  const missing = Math.max(0, Math.trunc(state.missingRates) || 0);
+  const cost = state.cost;
+  const uncalculated = costIsUncalculated(cost, missing) || (cost == null && missing > 0);
+  const partial = costIsPartial(cost, missing);
+  const genuineZero = cost === 0 && missing === 0;
+  if (!uncalculated && !partial && !genuineZero) {
+    return text.replace(GLUED_MISSING_PERCENT, "не рассчитана");
+  }
+  const honestCost = draftCostPhrase(cost, missing);
+  let next = text.replace(LEGACY_COST_PHRASE, honestCost);
+  if (missing > 0 && uncalculated) next = next.replace(LEGACY_SHORT_COST, honestCost);
+  if (uncalculated) {
+    const hidden = "Прибыль и рентабельность не рассчитаны: себестоимость не подтверждена.";
+    next = next.replace(LEGACY_PROFIT_PHRASE, hidden);
+    next = next.replace(LEGACY_UNCONFIRMED_PROFIT, hidden);
+    next = next.replace(LEGACY_NMCK, "Сравнение с НМЦК невозможно, пока себестоимость не рассчитана.");
+  } else if (partial) {
+    const prefix = `Предварительно, только по найденным ставкам, без ${rowCountGenitive(missing)} без ставок. `;
+    next = next.replace(LEGACY_PROFIT_PHRASE, (sentence: string, offset: number) => {
+      const before = next.slice(Math.max(0, offset - 120), offset);
+      const cleaned = sentence.replace(/не рассчитана\s*%/gu, "не рассчитана");
+      if (before.includes("Предварительно, только по найденным ставкам")) return cleaned;
+      return `${prefix}${cleaned}`;
+    });
+  }
+  GLUED_MISSING_PERCENT.lastIndex = 0;
+  return next.replace(GLUED_MISSING_PERCENT, "не рассчитана");
+}
+
 export function rateIsMissing(rate: number | null | undefined): boolean {
   return rate == null || !Number.isFinite(rate) || rate <= 0;
 }
@@ -107,11 +198,19 @@ export function composeAnalyticalNote(input: {
   ].join("\n\n");
 }
 
-/** Stored notes may still start with the old score line. Show the gate label instead. */
-export function honestReadinessText(text: string): string {
-  return text.replace(/Вердикт(?:\s+ИИ)?:\s*(\d{1,2})\s*\/\s*10(?:\s*[—–-]\s*)?/gu, (_all, score: string) => {
+/**
+ * Stored notes may still start with the old score line and the old economics
+ * sentences. Show the gate label and the current draft's wording. The stored
+ * text is not changed.
+ */
+export function honestReadinessText(text: string, economics?: MemoCalcState | null): string {
+  const readiness = text.replace(/Вердикт(?:\s+ИИ)?:\s*(\d{1,2})\s*\/\s*10(?:\s*[—–-]\s*)?/gu, (_all, score: string) => {
     return `Готовность к решению: ${readinessFromScore(Number(score))}. `;
   });
+  const withEconomics = economics
+    ? rewriteLegacyEconomics(readiness, economics)
+    : readiness.replace(/не рассчитана\s*%/gu, "не рассчитана");
+  return tidyDisplayedPunctuation(withEconomics);
 }
 
 export const COMPANY_RATE_RULE =
