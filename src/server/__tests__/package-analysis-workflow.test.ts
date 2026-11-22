@@ -6,9 +6,10 @@ vi.mock("@/server/project-analysis-ai", () => ({
   buildProjectAnalysisFallback: model.fallback,
 }));
 
+import { documentSetHash } from "@/server/document-set-hash";
 import { config } from "@/server/config";
 import { closeDb, ensureReady, mutateAppData, readAppData } from "@/server/db";
-import { analyzeProcurementPackageWithAI, packageAnalysisAlreadyCurrent, refreshProcurementAnalytics, sendProcurementToCalculation } from "@/server/repo";
+import { analyzeProcurementPackageWithAI, createManualProcurement, packageAnalysisAlreadyCurrent, refreshProcurementAnalytics, sendProcurementToCalculation } from "@/server/repo";
 import { refreshAndMaybeAnalyzePackage } from "@/server/upload-package-analysis";
 import "./setup";
 
@@ -139,7 +140,8 @@ describe("package analysis workflow", () => {
         method: "разбор пакета по цитатам документов",
         disclaimer: "проверка",
         answeredByModel: "google/gemini-2.5-flash",
-        sourceDocumentHash: "abc",
+        memoSource: "model",
+        sourceDocumentHash: documentSetHash(data.documents.filter((document) => document.procurementId === "p-2" && document.storedPath)),
         quality: {
           status: "needs_review",
           sourceDocuments: 2,
@@ -160,11 +162,134 @@ describe("package analysis workflow", () => {
     expect(analytics.summary).toBe(summary);
     expect(analytics.answeredByModel).toBe("google/gemini-2.5-flash");
     expect(analytics.findings?.[0]?.text).toBe("Срок 10 дней.");
-    expect(analytics.sourceDocumentHash).toBe("abc");
+    expect(analytics.sourceDocumentHash).toBe(documentSetHash(readAppData().documents.filter((document) => document.procurementId === "p-2" && document.storedPath)));
     expect(analytics.method).toBe("разбор пакета по цитатам документов");
     expect(analytics.missingInputs).not.toEqual(["Нет договора"]);
     expect(analytics.quality).toMatchObject({ status: "needs_review", acceptedClaims: 1, rejectedClaims: 0 });
     expect(analytics.quality?.status).not.toBe("evidence_backed");
+  });
+
+  it("rebuilds a local readiness note when the documents change", () => {
+    const created = createManualProcurement("u-ruk", { title: "Локальная сводка", region: "Ямал" });
+    refreshProcurementAnalytics("u-ruk", created.id);
+    const before = readAppData().procurements.find((item) => item.id === created.id)!.analytics!;
+    expect(before.summary.startsWith("Готовность к решению")).toBe(true);
+    expect(before.answeredByModel).toBeUndefined();
+    expect(before.memoSource).not.toBe("model");
+    mutateAppData((data) => {
+      const procurement = data.procurements.find((item) => item.id === created.id)!;
+      data.documents.push({
+        id: "doc-local-change",
+        orgId: procurement.orgId,
+        procurementId: procurement.id,
+        title: "Новая смета",
+        fileName: "new-estimate.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-tender",
+        uploadedAt: "2026-11-22T00:00:00.000Z",
+        storedPath: "uploads/new-estimate.xlsx",
+        estimatePositions: [{ id: "e1", code: "ФЕР", name: "Бурение", unit: "м", quantity: 10, rate: 1 }],
+      });
+      return data;
+    });
+    refreshProcurementAnalytics("u-ruk", created.id);
+    const after = readAppData().procurements.find((item) => item.id === created.id)!.analytics!;
+    expect(after.summary).not.toBe(before.summary);
+    expect(after.summary.startsWith("Готовность к решению")).toBe(true);
+    expect(after.summary).toContain("распознано");
+    expect(after.summary).not.toContain("Документы изменились, обновите разбор");
+    expect(after.answeredByModel).toBeUndefined();
+  });
+
+  it("keeps a model memo while the document set is unchanged", () => {
+    const summary = "Готовность к решению: данных недостаточно. Модельная записка того же набора.";
+    mutateAppData((data) => {
+      const procurement = data.procurements.find((item) => item.id === "p-2")!;
+      procurement.analytics = {
+        recommendation: "insufficient_data",
+        summary,
+        missingInputs: [],
+        citationIds: [],
+        citations: [],
+        findings: [],
+        generatedAt: "2026-11-01T00:00:00.000Z",
+        method: "разбор пакета по цитатам документов",
+        disclaimer: "проверка",
+        memoSource: "model",
+        answeredByModel: "google/gemini-2.5-flash",
+        sourceDocumentHash: documentSetHash(data.documents.filter((document) => document.procurementId === "p-2" && document.storedPath)),
+        quality: { status: "needs_review", sourceDocuments: 1, requiredDocumentsFound: 1, citationCount: 1, acceptedClaims: 1, rejectedClaims: 0 },
+      };
+      return data;
+    });
+    refreshProcurementAnalytics("u-tender", "p-2");
+    const kept = readAppData().procurements.find((item) => item.id === "p-2")!.analytics!;
+    expect(kept.summary).toBe(summary);
+    expect(kept.answeredByModel).toBe("google/gemini-2.5-flash");
+    expect(kept.memoSource).toBe("model");
+    expect(kept.quality).toMatchObject({ acceptedClaims: 1, rejectedClaims: 0, status: "needs_review" });
+  });
+
+  it("does not present a model memo as current after the document set changes", () => {
+    const summary = "Готовность к решению: данных недостаточно. Старая модельная записка.";
+    mutateAppData((data) => {
+      const procurement = data.procurements.find((item) => item.id === "p-2")!;
+      procurement.analytics = {
+        recommendation: "participate",
+        summary,
+        missingInputs: [],
+        citationIds: [],
+        citations: [],
+        findings: [{
+          topic: "Сроки",
+          importance: "high",
+          text: "Старый вывод модели.",
+          quote: "цитата",
+          citationIds: [],
+          sourceFiles: [],
+        }],
+        generatedAt: "2026-11-01T00:00:00.000Z",
+        method: "разбор пакета по цитатам документов",
+        disclaimer: "проверка",
+        memoSource: "model",
+        answeredByModel: "google/gemini-2.5-flash",
+        sourceDocumentHash: documentSetHash(data.documents.filter((document) => document.procurementId === "p-2" && document.storedPath)),
+        quality: { status: "evidence_backed", sourceDocuments: 1, requiredDocumentsFound: 1, citationCount: 1, acceptedClaims: 1, rejectedClaims: 0 },
+      };
+      data.documents.push({
+        id: "doc-model-stale",
+        orgId: procurement.orgId,
+        procurementId: procurement.id,
+        title: "Ещё один файл",
+        fileName: "extra.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-tender",
+        uploadedAt: "2026-11-22T01:00:00.000Z",
+        storedPath: "uploads/extra.xlsx",
+        estimatePositions: [{ id: "e2", code: "ФЕР", name: "Монтаж", unit: "м", quantity: 3, rate: 2 }],
+      });
+      return data;
+    });
+    refreshProcurementAnalytics("u-tender", "p-2");
+    const stale = readAppData().procurements.find((item) => item.id === "p-2")!.analytics!;
+    expect(stale.summary.startsWith("Документы изменились, обновите разбор")).toBe(true);
+    expect(stale.summary).not.toBe(summary);
+    expect(stale.summary).not.toContain("Старая модельная записка");
+    expect(stale.answeredByModel).toBeUndefined();
+    expect(stale.memoSource).toBe("local");
+    expect(stale.findings).toBeUndefined();
   });
 
   it("rejects an unknown procurement before model invocation", async () => {

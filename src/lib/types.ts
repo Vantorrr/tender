@@ -167,6 +167,8 @@ export interface ProjectAnalytics {
   aiFailure?: string;
   /** Model id that answered this memo. Readiness is a rule gate, not this model's score. */
   answeredByModel?: string;
+  /** Who wrote the current memo. A local сводка is not a model memo. */
+  memoSource?: "model" | "local";
   /** Document-set hash of the last successful package analysis. */
   sourceDocumentHash?: string;
   /** Source coverage and evidence validation; this is not an accuracy percentage. */

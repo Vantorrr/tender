@@ -11,6 +11,7 @@ import { buildCalculationXlsx } from "@/server/export";
 import { parseGrandBuffer } from "@/server/grand-smeta";
 import { diffDays } from "@/lib/cost-engine";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
+import { documentSetHash } from "@/server/document-set-hash";
 import { createManualProcurement, createProcurementSchedule, generateProcurementMaterialManifest, recalcCalculation, recomputeCalculationCost, refreshProcurementAnalytics, sendProcurementToCalculation, updateCalculation } from "@/server/repo";
 import { saveUpload } from "@/server/uploads";
 import { acceptVolumeDraft, draftVolumeSheet } from "@/server/volume-sheet";
@@ -417,6 +418,9 @@ describe("wave 4 pricing, volumes and return quantities", () => {
         recommendation: "participate",
         summary,
         method: "разбор пакета по цитатам документов",
+        memoSource: "model",
+        answeredByModel: "google/gemini-2.5-flash",
+        sourceDocumentHash: documentSetHash(data.documents.filter((document) => document.procurementId === created.id && document.storedPath)),
       };
       return data;
     });

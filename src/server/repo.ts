@@ -1947,16 +1947,27 @@ export function resetDemo(actorId: string): { token: string; actorId: string } {
   return { token, actorId: resolvedActorId };
 }
 
-function modelWroteAnalyticalNote(analytics: { method?: string } | null | undefined): boolean {
-  return analytics?.method === "разбор пакета по цитатам документов" || analytics?.method === "model_note";
+function modelWroteAnalyticalNote(analytics: { method?: string; memoSource?: string; answeredByModel?: string } | null | undefined): boolean {
+  return analytics?.memoSource === "model"
+    || Boolean(analytics?.answeredByModel)
+    || analytics?.method === "разбор пакета по цитатам документов"
+    || analytics?.method === "model_note";
 }
 
-function keepsAnalyticalMemo(analytics: ProjectAnalytics | undefined): boolean {
-  if (!analytics) return false;
-  return modelWroteAnalyticalNote(analytics)
-    || Boolean(analytics.answeredByModel)
-    || Boolean(analytics.findings?.length)
-    || analytics.summary.startsWith("Готовность к решению");
+const MODEL_MEMO_STALE = "Документы изменились, обновите разбор";
+
+function documentsForHash(documents: Array<{ id: string; fileName: string; fileSize?: number | null; storedPath?: string | null; uploadedAt?: string | null }>) {
+  return documents.filter((document) => document.storedPath);
+}
+
+/** A model memo stays current only for the document set it was written on. */
+function modelMemoIsCurrent(
+  analytics: ProjectAnalytics | undefined,
+  documents: Array<{ id: string; fileName: string; fileSize?: number | null; storedPath?: string | null; uploadedAt?: string | null }>,
+): boolean {
+  if (!analytics?.sourceDocumentHash || !modelWroteAnalyticalNote(analytics)) return false;
+  if (!analytics.answeredByModel && analytics.memoSource !== "model") return false;
+  return analytics.sourceDocumentHash === documentSetHash(documentsForHash(documents));
 }
 
 /** Document coverage can move. The model's review status and claim counts stay. */
@@ -1986,6 +1997,30 @@ function withDeterministicCoverage(previous: ProjectAnalytics, rebuilt: ProjectA
   };
 }
 
+function localAnalyticalSummary(built: ProjectAnalytics, docs: Array<{ category?: string; fileName: string; estimatePositions?: unknown[] }>): string {
+  const verdict = built.recommendation === "participate" ? 7 : built.recommendation === "do_not_participate" ? 3 : 4;
+  const verdictText = built.recommendation === "participate"
+    ? "Участие возможно после проверки документов."
+    : built.recommendation === "do_not_participate"
+      ? "Участие не рекомендуется по найденным условиям."
+      : "Данных недостаточно для уверенного решения.";
+  return composeAnalyticalNote({
+    verdict,
+    verdictText,
+    blocks: [
+      built.summary.split("\n\n")[0] || "нет данных",
+      docs.some((document) => document.category === "contract" || /договор|контракт/iu.test(document.fileName))
+        ? "Условия участия смотрите в договоре и цитатах карточки."
+        : "нет данных",
+      docs.some((document) => (document.estimatePositions?.length ?? 0) > 0)
+        ? `В сметах распознано ${docs.reduce((sum, document) => sum + (document.estimatePositions?.length ?? 0), 0)} строк.`
+        : "нет данных",
+      "нет данных",
+      built.missingInputs.slice(0, 5).join("\n") || "нет данных",
+    ],
+  });
+}
+
 export function refreshProcurementAnalytics(
   actorId: string,
   procurementId: string
@@ -1998,11 +2033,12 @@ export function refreshProcurementAnalytics(
     assertOrgAccess(actor, p.orgId, "закупки");
     const docs = data.documents.filter((d) => d.procurementId === p.id);
     const built = buildProjectAnalytics(p, docs);
-    if (p.analytics && keepsAnalyticalMemo(p.analytics)) {
-      const next = withDeterministicCoverage(p.analytics, built);
-      const factsSame = JSON.stringify(p.analytics.missingInputs) === JSON.stringify(next.missingInputs)
-        && JSON.stringify(p.analytics.quality ?? null) === JSON.stringify(next.quality ?? null)
-        && JSON.stringify(p.analytics.citationIds) === JSON.stringify(next.citationIds);
+    const currentMemo = p.analytics;
+    if (currentMemo && modelMemoIsCurrent(currentMemo, docs)) {
+      const next = withDeterministicCoverage(currentMemo, built);
+      const factsSame = JSON.stringify(currentMemo.missingInputs) === JSON.stringify(next.missingInputs)
+        && JSON.stringify(currentMemo.quality ?? null) === JSON.stringify(next.quality ?? null)
+        && JSON.stringify(currentMemo.citationIds) === JSON.stringify(next.citationIds);
       if (factsSame) {
         unchanged = true;
         return data;
@@ -2011,32 +2047,20 @@ export function refreshProcurementAnalytics(
       audit(data, actorId, "analyze", "procurement", procurementId, "Сводка: обновлены факты, текст записки сохранён");
       return data;
     }
-    const verdict = built.recommendation === "participate" ? 7 : built.recommendation === "do_not_participate" ? 3 : 4;
-    const verdictText = built.recommendation === "participate"
-      ? "Участие возможно после проверки документов."
-      : built.recommendation === "do_not_participate"
-        ? "Участие не рекомендуется по найденным условиям."
-        : "Данных недостаточно для уверенного решения.";
-    const summary = composeAnalyticalNote({
-      verdict,
-      verdictText,
-      blocks: [
-        built.summary.split("\n\n")[0] || "нет данных",
-        docs.some((document) => document.category === "contract" || /договор|контракт/iu.test(document.fileName))
-          ? "Условия участия смотрите в договоре и цитатах карточки."
-          : "нет данных",
-        docs.some((document) => (document.estimatePositions?.length ?? 0) > 0)
-          ? `В сметах распознано ${docs.reduce((sum, document) => sum + (document.estimatePositions?.length ?? 0), 0)} строк.`
-          : "нет данных",
-        "нет данных",
-        built.missingInputs.slice(0, 5).join("\n") || "нет данных",
-      ],
-    });
-    if (p.analytics?.summary === summary) {
+    const staleModel = Boolean(p.analytics && modelWroteAnalyticalNote(p.analytics) && (p.analytics.answeredByModel || p.analytics.memoSource === "model"));
+    const summary = localAnalyticalSummary(built, docs);
+    const nextSummary = staleModel ? `${MODEL_MEMO_STALE}\n\n${summary}` : summary;
+    if (!staleModel && p.analytics?.summary === nextSummary) {
       unchanged = true;
       return data;
     }
-    p.analytics = { ...built, summary };
+    p.analytics = {
+      ...built,
+      summary: nextSummary,
+      memoSource: "local",
+      answeredByModel: undefined,
+      sourceDocumentHash: undefined,
+    };
     audit(data, actorId, "analyze", "procurement", procurementId, `Сводка: ${p.analytics.recommendation}`);
     return data;
   });
@@ -2168,6 +2192,7 @@ export async function analyzeProcurementPackageWithAI(
     generated = {
       ...generated,
       sourceDocumentHash: documentSetHash(documents),
+      memoSource: "model" as const,
     };
   }
   mutateAppData((data) => {
@@ -2905,9 +2930,20 @@ export function sendProcurementToCalculation(
       data.documents.filter((d) => d.procurementId === p.id)
     );
     const previous = p.analytics;
-    p.analytics = previous && keepsAnalyticalMemo(previous)
-      ? withDeterministicCoverage(previous, rebuilt)
-      : rebuilt;
+    const scheduleDocs = data.documents.filter((document) => document.procurementId === p.id);
+    if (previous && modelMemoIsCurrent(previous, scheduleDocs)) {
+      p.analytics = withDeterministicCoverage(previous, rebuilt);
+    } else if (previous && (previous.answeredByModel || previous.memoSource === "model")) {
+      p.analytics = {
+        ...rebuilt,
+        summary: `${MODEL_MEMO_STALE}\n\n${localAnalyticalSummary(rebuilt, scheduleDocs)}`,
+        memoSource: "local",
+        answeredByModel: undefined,
+        sourceDocumentHash: undefined,
+      };
+    } else {
+      p.analytics = rebuilt;
+    }
 
     audit(
       data,
