@@ -568,6 +568,28 @@ export function inclusiveDays(start: string, end: string): number {
   return Math.max(1, Math.round((to - from) / 86400000) + 1);
 }
 
+/**
+ * A typed start keeps the current finish. A typed finish keeps the current start.
+ * The day delta and the new length are what the schedule shift expects.
+ */
+export function stageDateEdit(
+  current: { start: string; end: string },
+  field: "start" | "end",
+  next: string,
+): { ok: true; start: string; end: string; deltaDays: number; resizeDays: number } | { ok: false; message: string } {
+  const dates = acceptedStageDates(current, field, next);
+  if (!dates.ok) return dates;
+  const from = Date.parse(`${current.start}T00:00:00Z`);
+  const to = Date.parse(`${dates.start}T00:00:00Z`);
+  return {
+    ok: true,
+    start: dates.start,
+    end: dates.end,
+    deltaDays: Math.round((to - from) / 86400000),
+    resizeDays: inclusiveDays(dates.start, dates.end),
+  };
+}
+
 /** Finish-to-start: the next work begins the day after the previous one ends. */
 export function scheduleAfterPredecessor(predecessorEnd: string, durationDays: number): { start: string; end: string } {
   const start = addIsoDays(predecessorEnd, 1);

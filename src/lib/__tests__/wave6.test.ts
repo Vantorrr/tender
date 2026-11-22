@@ -6,7 +6,7 @@ import { classifyDirectCostBucket } from "@/lib/cost-engine";
 import { buildStagesFromEstimatePositions } from "@/lib/estimate-stages";
 import { filledOverviewBlocks, visibleCheckItems } from "@/lib/project-analytics";
 import { groupCalculationResources } from "@/lib/resource-merge";
-import { acceptedStageDates, incompleteTotalText } from "@/lib/wave23";
+import { acceptedStageDates, incompleteTotalText, stageDateEdit } from "@/lib/wave23";
 import type { CalcPosition, GprStage, SupplyRequest } from "@/lib/types";
 
 describe("wave 6 client pain points", () => {
@@ -66,6 +66,9 @@ describe("wave 6 client pain points", () => {
   it("accepts a finish on or after the start and rejects an earlier finish", () => {
     expect(acceptedStageDates({ start: "2026-12-01", end: "2026-12-05" }, "end", "2026-12-08")).toEqual({
       ok: true, start: "2026-12-01", end: "2026-12-08",
+    });
+    expect(stageDateEdit({ start: "2026-12-01", end: "2026-12-05" }, "start", "2026-12-03")).toEqual({
+      ok: true, start: "2026-12-03", end: "2026-12-05", deltaDays: 2, resizeDays: 3,
     });
     expect(acceptedStageDates({ start: "2026-12-01", end: "2026-12-05" }, "end", "2026-11-30").ok).toBe(false);
     expect(acceptedStageDates({ start: "2026-12-01", end: "2026-12-05" }, "start", "2026-12-06").ok).toBe(false);

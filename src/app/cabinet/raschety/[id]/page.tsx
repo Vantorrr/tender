@@ -467,6 +467,30 @@ export default function RaschetDetailPage() {
       )
       .slice(0, 40);
   }, [currentDir, filter]);
+  const shownPositions = useMemo((): Array<CalcPosition & { memberIds?: string[]; people?: number | null; workLabel?: string }> => {
+    const positions = calc?.positions ?? [];
+    const grouped = groupCalculationResources(positions
+      .filter((position) => !position.isWorkItem && position.code !== "НР" && position.code !== "СП")
+      .map((position) => ({
+        id: position.id,
+        name: position.name,
+        unit: position.unit,
+        quantity: position.quantity,
+        rate: position.rateMissing || !(position.rate > 0) ? null : position.rate,
+        workName: position.sourceWorkName || position.sourceSectionName || "",
+        kind: position.resourceKind,
+      })));
+    const byId = new Map(positions.map((position) => [position.id, position]));
+    const resources = grouped.flatMap((group) => {
+      const base = byId.get(group.id);
+      if (!base) return [];
+      return [{ ...base, name: group.name, unit: group.unit, quantity: group.quantity, memberIds: group.ids, people: group.people, workLabel: group.workName }];
+    });
+    return [
+      ...positions.filter((position) => position.isWorkItem || position.code === "НР" || position.code === "СП"),
+      ...resources,
+    ];
+  }, [calc]);
 
   if (!user) return null;
   if (!calc) {
@@ -535,29 +559,6 @@ export default function RaschetDetailPage() {
     (position) => position.code !== "НР" && position.code !== "СП" && !position.isWorkItem,
   );
   const missingRateCount = billablePositions.filter((position) => position.rateMissing).length;
-  const shownPositions = useMemo((): Array<CalcPosition & { memberIds?: string[]; people?: number | null; workLabel?: string }> => {
-    const grouped = groupCalculationResources(calc.positions
-      .filter((position) => !position.isWorkItem && position.code !== "НР" && position.code !== "СП")
-      .map((position) => ({
-        id: position.id,
-        name: position.name,
-        unit: position.unit,
-        quantity: position.quantity,
-        rate: position.rateMissing || !(position.rate > 0) ? null : position.rate,
-        workName: position.sourceWorkName || position.sourceSectionName || "",
-        kind: position.resourceKind,
-      })));
-    const byId = new Map(calc.positions.map((position) => [position.id, position]));
-    const resources = grouped.flatMap((group) => {
-      const base = byId.get(group.id);
-      if (!base) return [];
-      return [{ ...base, name: group.name, unit: group.unit, quantity: group.quantity, memberIds: group.ids, people: group.people, workLabel: group.workName }];
-    });
-    return [
-      ...calc.positions.filter((position) => position.isWorkItem || position.code === "НР" || position.code === "СП"),
-      ...resources,
-    ];
-  }, [calc.positions]);
   const noPricedPositions = billablePositions.length > 0 && missingRateCount === billablePositions.length;
   const bucketStats = billablePositions.reduce(
     (stats, position) => {

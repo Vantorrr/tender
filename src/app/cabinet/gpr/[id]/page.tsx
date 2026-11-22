@@ -28,8 +28,7 @@ import type { CalcPosition, GprStage, GprStageResource } from "@/lib/types";
 import { ProjectAiChat } from "@/components/project-ai-chat";
 import { userHasSection } from "@/lib/acl";
 import { canOpenCabinetPath } from "@/components/cabinet/nav";
-import { acceptedStageDates, inclusiveDays, incompleteTotalText } from "@/lib/wave23";
-import { diffDays } from "@/lib/cost-engine";
+import { inclusiveDays, incompleteTotalText, stageDateEdit } from "@/lib/wave23";
 import { DateInputRu } from "@/components/date-input-ru";
 
 type MaterialsPreview = {
@@ -404,13 +403,13 @@ export default function GprDetailPage() {
                         className="h-7 w-full min-w-0 px-1 text-[11px]"
                         value={stage.start}
                         onChange={(next) => {
-                          const dates = acceptedStageDates(stage, "start", next);
-                          if (!dates.ok) {
-                            toast.error(dates.message);
+                          const edit = stageDateEdit(stage, "start", next);
+                          if (!edit.ok) {
+                            toast.error(edit.message);
                             return;
                           }
-                          const delta = diffDays(stage.start, dates.start);
-                          if (delta) void shiftStage(stage.id, delta);
+                          if (edit.deltaDays === 0) return;
+                          void shiftStage(stage.id, edit.deltaDays, edit.resizeDays);
                         }}
                       />
                     </td>
@@ -421,12 +420,13 @@ export default function GprDetailPage() {
                         className="h-7 w-full min-w-0 px-1 text-[11px]"
                         value={stage.end}
                         onChange={(next) => {
-                          const dates = acceptedStageDates(stage, "end", next);
-                          if (!dates.ok) {
-                            toast.error(dates.message);
+                          const edit = stageDateEdit(stage, "end", next);
+                          if (!edit.ok) {
+                            toast.error(edit.message);
                             return;
                           }
-                          void shiftStage(stage.id, 0, inclusiveDays(dates.start, dates.end));
+                          if (edit.end === stage.end) return;
+                          void shiftStage(stage.id, edit.deltaDays, edit.resizeDays);
                         }}
                       />
                     </td>
