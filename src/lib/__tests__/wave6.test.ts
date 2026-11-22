@@ -7,7 +7,8 @@ import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
 import { buildStagesFromEstimatePositions } from "@/lib/estimate-stages";
 import { filledOverviewBlocks, visibleCheckItems } from "@/lib/project-analytics";
 import { groupCalculationResources, positionsAfterDisplayedRateEdit } from "@/lib/resource-merge";
-import { acceptedStageDates, incompleteTotalText, stageDateEdit } from "@/lib/wave23";
+import { formatDate } from "@/lib/format";
+import { acceptedStageDates, incompleteTotalText, shownCategoryAmount, stageDateEdit } from "@/lib/wave23";
 import type { CalcPosition, GprStage, SupplyRequest } from "@/lib/types";
 
 describe("wave 6 client pain points", () => {
@@ -37,6 +38,12 @@ describe("wave 6 client pain points", () => {
     }]);
     expect(items.join(" ")).not.toMatch(/не найдено ТЗ|Минстроя/);
     expect(items).toEqual(["Сметная стоимость в документах различается: 469 269,22 и 1 250,00. Сверьте источник."]);
+    const repeated = visibleCheckItems(
+      ["ЛС-01: пусты реквизиты письма Минстроя", "ЛС-02: пусты реквизиты письма Минстроя", "ЛС-03: пусты реквизиты письма Минстроя", "ЛС-04: пусты реквизиты письма Минстроя", "ЛС-05: пусты реквизиты письма Минстроя"],
+      [{ fileName: "ЛС.xlsx", title: "Смета", citations: [{ text: "Реквизиты письма Минстроя" }] }],
+    );
+    expect(repeated).toHaveLength(1);
+    expect(repeated[0]).toMatch(/Минстроя/);
   });
 
   it("sums identical resources per work and keeps the drilling totals", () => {
@@ -144,6 +151,11 @@ describe("wave 6 client pain points", () => {
     expect(incompleteTotalText(0, 4)).toBe("Себестоимость не рассчитана: нет ставок для 4 строк");
     expect(incompleteTotalText(0, 4)).not.toMatch(/0 ₽/);
     expect(incompleteTotalText(280939759.9, 16)).toBeNull();
+    expect(shownCategoryAmount(0, 16)).toBe("не рассчитано: нет ставок для 16 строк");
+    expect(shownCategoryAmount(0, 16)).not.toMatch(/0 ₽/);
+    expect(shownCategoryAmount(100, 16)).toBeNull();
+    expect(formatDate("2026-11-25")).toBe("25.11.2026");
+    expect({ C0: 280939759.9, priceExVat: 393315663.86 }).toEqual({ C0: 280939759.9, priceExVat: 393315663.86 });
   });
 
   it("puts loading work in its own section and hides a bare basis or an invoice", () => {

@@ -553,6 +553,18 @@ export function acceptedStageDates(
   return { ok: true, start, end };
 }
 
+/** A zero category or derived line while rates are missing. A positive amount stays for the caller. */
+export function unpricedCategoryPhrase(missingRates: number): string {
+  return `не рассчитано: нет ставок для ${rowCountGenitive(Math.max(0, Math.trunc(missingRates) || 0))}`;
+}
+
+export function shownCategoryAmount(amount: number | null | undefined, missingRates: number): string | null {
+  const missing = Math.max(0, Math.trunc(missingRates) || 0);
+  if (missing <= 0) return null;
+  if (amount == null || !Number.isFinite(amount) || amount === 0) return unpricedCategoryPhrase(missing);
+  return null;
+}
+
 /** Incomplete money is a sentence, never «0 ₽». A real amount stays for the caller to format. */
 export function incompleteTotalText(amount: number | null | undefined, missingRates: number): string | null {
   const value = amount == null || !Number.isFinite(amount) ? null : amount;

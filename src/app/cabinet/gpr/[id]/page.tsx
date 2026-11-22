@@ -16,7 +16,7 @@ import { api, downloadUrl } from "@/lib/api";
 import { GPR_LINKED_ROW_PX, PlanFactGantt } from "@/components/plan-fact-gantt";
 import { GprResourceTree } from "@/components/gpr-resource-tree";
 import { collectCalendarWarnings } from "@/lib/calendar-availability";
-import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engine";
+import { bucketsFromPositions } from "@/lib/cost-engine";
 import { formatMoney } from "@/lib/format";
 import { linkedWorkRows } from "@/lib/gpr-linked-rows";
 import { gprStageLabel } from "@/lib/gpr-stage-label";
@@ -28,7 +28,7 @@ import type { CalcPosition, GprStage, GprStageResource } from "@/lib/types";
 import { ProjectAiChat } from "@/components/project-ai-chat";
 import { userHasSection } from "@/lib/acl";
 import { canOpenCabinetPath } from "@/components/cabinet/nav";
-import { inclusiveDays, incompleteTotalText, stageDateEdit } from "@/lib/wave23";
+import { inclusiveDays, incompleteTotalText, shownCategoryAmount, stageDateEdit } from "@/lib/wave23";
 import { DateInputRu } from "@/components/date-input-ru";
 
 type MaterialsPreview = {
@@ -96,9 +96,8 @@ export default function GprDetailPage() {
     : null;
   const cost = calc?.costSummary;
   const missingRates = calc?.positions.filter((position) => position.rateMissing && !position.isWorkItem).length ?? 0;
-  const equipmentMissing = calc?.positions.filter((position) => !position.isWorkItem && position.code !== "НР" && position.code !== "СП" && classifyDirectCostBucket(position) === "equipment" && (position.rateMissing || !(position.rate > 0))).length ?? 0;
   const costText = (amount: number | null | undefined) => incompleteTotalText(amount, missingRates) ?? (amount == null ? "нет данных" : formatMoney(amount));
-  const categoryText = (amount: number, missing: number) => (missing > 0 && amount === 0 ? incompleteTotalText(0, missing) : null) ?? formatMoney(amount);
+  const categoryText = (amount: number | null | undefined) => shownCategoryAmount(amount, missingRates) ?? (amount == null ? "нет данных" : formatMoney(amount));
   const supplies = (data.supplyRequests ?? []).filter(
     (s) => s.procurementId === schedule.procurementId
   );
@@ -531,14 +530,14 @@ export default function GprDetailPage() {
                     {cost.totalsIncomplete || cost.resourceSlices.partial
                       ? " · расчёт неполный"
                       : ""}
-                    : {formatMoney(cost.resourceSlices.direct)}
+                    : {categoryText(cost.resourceSlices.direct)}
                   </div>
                   <div data-testid="gpr-slice-w">
                     Накладные 43%
                     {cost.totalsIncomplete || cost.resourceSlices.partial
                       ? " · расчёт неполный"
                       : ""}
-                    : {formatMoney(cost.resourceSlices.overhead)}
+                    : {categoryText(cost.resourceSlices.overhead)}
                   </div>
                   <div data-testid="gpr-slice-x">
                     Себестоимость с накладными
@@ -552,7 +551,7 @@ export default function GprDetailPage() {
                     {cost.totalsIncomplete || cost.resourceSlices.partial
                       ? " · расчёт неполный"
                       : ""}
-                    : {formatMoney(cost.resourceSlices.profit)}
+                    : {categoryText(cost.resourceSlices.profit)}
                   </div>
                   <div data-testid="gpr-slice-z">
                     Итого
@@ -568,10 +567,10 @@ export default function GprDetailPage() {
                       : "нет данных"}
                   </div>
                   <div data-testid="gpr-labor-cost">
-                    Люди: {categoryText(cost.resourceSlices.labor, 0)}
+                    Люди: {categoryText(cost.resourceSlices.labor)}
                   </div>
                   <div data-testid="gpr-equipment-cost">
-                    Техника: {categoryText(cost.resourceSlices.equipment, equipmentMissing)}
+                    Техника: {categoryText(cost.resourceSlices.equipment)}
                   </div>
                   {buckets && buckets.other > 0 ? (
                     <div data-testid="gpr-other-cost">
@@ -581,14 +580,14 @@ export default function GprDetailPage() {
                 </>
               ) : (
                 <>
-                  <div>Прямые · труд: {formatMoney(buckets.labor)}</div>
+                  <div>Прямые · труд: {categoryText(buckets.labor)}</div>
                   <div data-testid="gpr-materials-cost">
                     Прямые · материалы:{" "}
                     {buckets.materialsUnpriced
                       ? "нет данных"
                       : formatMoney(buckets.materials)}
                   </div>
-                  <div>Прямые · техника: {categoryText(buckets.equipment, equipmentMissing)}</div>
+                  <div>Прямые · техника: {categoryText(buckets.equipment)}</div>
                   {buckets.other > 0 ? (
                     <div data-testid="gpr-other-cost">
                       Прочие: {formatMoney(buckets.other)}
@@ -600,7 +599,7 @@ export default function GprDetailPage() {
                   </div>
                   <div>Резерв: {costText(cost.reserve)}</div>
                   <div>Себестоимость с резервом: {costText(cost.C)}</div>
-                  <div>Прибыль: {formatMoney(cost.profit)}</div>
+                  <div>Прибыль: {categoryText(cost.profit)}</div>
                   <div>Цена без НДС: {costText(cost.priceExVat)}</div>
                 </>
               )}

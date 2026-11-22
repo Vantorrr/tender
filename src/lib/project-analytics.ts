@@ -199,7 +199,8 @@ export function visibleCheckItems(items: string[], documents: CheckDocument[]): 
   }
   const seen = new Set<string>();
   return next.filter((item) => {
-    const key = item.toLocaleLowerCase("ru-RU").replace(/\s+/gu, " ").trim();
+    const text = item.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ").trim();
+    const key = /минстро/u.test(text) && /реквизит|пуст|письм/u.test(text) ? "minstroy-letter" : text;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
