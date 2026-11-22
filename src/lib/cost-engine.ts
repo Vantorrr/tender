@@ -361,6 +361,20 @@ export function classifyDirectCostBucket(
   return "other";
 }
 
+/** Unpriced rows of one category. Overhead and profit rows are not a category. */
+export function missingRatesInBucket(
+  positions: Array<Pick<CalcPosition, "code" | "name" | "unit"> & { rateMissing?: boolean; isWorkItem?: boolean }>,
+  bucket: DirectCostBucket,
+): number {
+  return positions.filter((position) =>
+    !position.isWorkItem
+    && position.code !== "НР"
+    && position.code !== "СП"
+    && position.rateMissing
+    && classifyDirectCostBucket(position) === bucket
+  ).length;
+}
+
 /** Split calc positions into cost buckets without double-counting НР/СП rows. */
 export function bucketsFromPositions(
   positions: CalcPosition[],

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { clipAtSentence, normalizeOcrText, presentAnalyticalNote } from "@/lib/analytical-note";
 import { collectCalendarWarnings } from "@/lib/calendar-availability";
 import { isShownConfirmation } from "@/lib/citation-display";
-import { classifyDirectCostBucket } from "@/lib/cost-engine";
+import { classifyDirectCostBucket, missingRatesInBucket } from "@/lib/cost-engine";
 import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
 import { buildStagesFromEstimatePositions } from "@/lib/estimate-stages";
 import { filledOverviewBlocks, visibleCheckItems } from "@/lib/project-analytics";
@@ -154,6 +154,16 @@ describe("wave 6 client pain points", () => {
     expect(shownCategoryAmount(0, 16)).toBe("не рассчитано: нет ставок для 16 строк");
     expect(shownCategoryAmount(0, 16)).not.toMatch(/0 ₽/);
     expect(shownCategoryAmount(100, 16)).toBeNull();
+    const categoryRows = [
+      { code: "LAB-1", name: "Плотник", unit: "чел.-ч", rateMissing: true, isWorkItem: false },
+      { code: "EQ-1", name: "Пила", unit: "маш.-ч", rateMissing: true, isWorkItem: false },
+      { code: "EQ-2", name: "Кран", unit: "маш.-ч", rateMissing: true, isWorkItem: false },
+    ];
+    expect(missingRatesInBucket(categoryRows, "labor")).toBe(1);
+    expect(missingRatesInBucket(categoryRows, "equipment")).toBe(2);
+    expect(missingRatesInBucket(categoryRows, "materials")).toBe(0);
+    expect(shownCategoryAmount(0, missingRatesInBucket(categoryRows, "materials"))).toBeNull();
+    expect(shownCategoryAmount(0, missingRatesInBucket(categoryRows, "equipment"))).toBe("не рассчитано: нет ставок для 2 строк");
     expect(formatDate("2026-11-25")).toBe("25.11.2026");
     expect({ C0: 280939759.9, priceExVat: 393315663.86 }).toEqual({ C0: 280939759.9, priceExVat: 393315663.86 });
   });
