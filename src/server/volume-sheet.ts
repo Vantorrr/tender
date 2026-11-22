@@ -121,31 +121,34 @@ export function acceptVolumeDraft(actorId: string, calculationId: string, rows: 
       throw new Error("Этот расчёт нельзя изменять");
     }
     const accepted = rows.filter((row) => row.work.trim() && row.unit.trim() && Number.isFinite(row.volume));
-    calculation.positions = [
-      ...calculation.positions,
-      ...accepted.map((row) => {
-        const hit = matchCompanyDirectoryRate(data.directories, { code: "ВОР", name: row.work, unit: row.unit });
-        const rate = hit?.rate ?? 0;
-        const bucket = classifyDirectCostBucket({ code: "ВОР", name: row.work, unit: row.unit });
-        const resourceKind = bucket === "labor" ? "labor" as const : bucket === "materials" ? "material" as const : bucket === "equipment" ? "equipment" as const : undefined;
-        return {
-          id: `vor-${crypto.randomUUID()}`,
-          code: "ВОР",
-          name: row.work.trim(),
-          unit: row.unit.trim(),
-          quantity: row.volume,
-          rate,
-          rateMissing: !(rate > 0),
-          ...(resourceKind ? { resourceKind } : {}),
-          ...(hit?.basis === "person_hour" ? { rateBasis: "person_hour" as const } : hit ? { rateBasis: "directory" as const, rateSourceDirectoryId: hit.dirId } : {}),
-          sourceWorkName: row.work.trim(),
-        };
-      }),
-    ];
-    calculation.assumptions = [
-      ...calculation.assumptions,
-      ...accepted.map((row) => `Цитата · ${row.work.trim()}: ${row.quote.trim()}`),
-    ];
+    const volumeKey = (name: string, unit: string) =>
+      `${name.trim().toLocaleLowerCase("ru-RU").replace(/ё/g, "е")}|${unit.trim().toLocaleLowerCase("ru-RU").replace(/ё/g, "е")}`;
+    for (const row of accepted) {
+      const hit = matchCompanyDirectoryRate(data.directories, { code: "ВОР", name: row.work, unit: row.unit });
+      const rate = hit?.rate ?? 0;
+      const bucket = classifyDirectCostBucket({ code: "ВОР", name: row.work, unit: row.unit });
+      const resourceKind = bucket === "labor" ? "labor" as const : bucket === "materials" ? "material" as const : bucket === "equipment" ? "equipment" as const : undefined;
+      const priced = {
+        name: row.work.trim(),
+        unit: row.unit.trim(),
+        quantity: row.volume,
+        rate,
+        rateMissing: !(rate > 0),
+        ...(resourceKind ? { resourceKind } : {}),
+        ...(hit?.basis === "person_hour" ? { rateBasis: "person_hour" as const } : hit ? { rateBasis: "directory" as const, rateSourceDirectoryId: hit.dirId } : {}),
+        sourceWorkName: row.work.trim(),
+      };
+      const existing = calculation.positions.find((position) =>
+        position.code === "ВОР" && volumeKey(position.name, position.unit) === volumeKey(row.work, row.unit)
+      );
+      if (existing) {
+        Object.assign(existing, priced);
+      } else {
+        calculation.positions.push({ id: `vor-${crypto.randomUUID()}`, code: "ВОР", ...priced });
+      }
+      const assumption = `Цитата · ${row.work.trim()}: ${row.quote.trim()}`;
+      if (!calculation.assumptions.includes(assumption)) calculation.assumptions.push(assumption);
+    }
     calculation.updatedAt = new Date().toISOString();
     return data;
   });

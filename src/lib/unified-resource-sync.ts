@@ -204,7 +204,11 @@ export function positionsFromStages(
       const resolved = resolveResourceDimensions(r, st, params);
       // A volume line with the same name is this resource, not a second row.
       const candidates = prevByName.get(resourceNameKey(r.name)) ?? [];
+      const linkedBySource = r.sourceKey
+        ? previous.find((position) => position.id === r.sourceKey && !usedPreviousIds.has(position.id))
+        : undefined;
       const prev =
+        linkedBySource ??
         candidates.find(
           (p) => p.sourceResourceId === r.id && !usedPreviousIds.has(p.id)
         ) ??
@@ -212,7 +216,9 @@ export function positionsFromStages(
           (p) => !p.sourceResourceId && !usedPreviousIds.has(p.id)
         );
       if (prev) usedPreviousIds.add(prev.id);
-      const rateMissing = resolved.rate == null;
+      const stageRate = resolved.rate != null && resolved.rate > 0 ? resolved.rate : null;
+      const keptRate = stageRate ?? (prev && prev.rate > 0 && !prev.rateMissing ? prev.rate : null);
+      const rateMissing = keptRate == null;
 
       let quantity = resolved.sourceQty;
       let unit = r.unit || (r.kind === "labor" ? "чел" : "ед.");
@@ -233,7 +239,7 @@ export function positionsFromStages(
         name: r.name,
         unit,
         quantity,
-        rate: rateMissing ? 0 : (resolved.rate as number),
+        rate: rateMissing ? 0 : keptRate,
         rateMissing,
         sourceDocumentId: prev?.sourceDocumentId,
         sourcePositionId: prev?.sourcePositionId,

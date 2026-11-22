@@ -1951,6 +1951,41 @@ function modelWroteAnalyticalNote(analytics: { method?: string } | null | undefi
   return analytics?.method === "разбор пакета по цитатам документов" || analytics?.method === "model_note";
 }
 
+function keepsAnalyticalMemo(analytics: ProjectAnalytics | undefined): boolean {
+  if (!analytics) return false;
+  return modelWroteAnalyticalNote(analytics)
+    || Boolean(analytics.answeredByModel)
+    || Boolean(analytics.findings?.length)
+    || analytics.summary.startsWith("Готовность к решению");
+}
+
+/** Document coverage can move. The model's review status and claim counts stay. */
+function mergedAnalyticsQuality(
+  previous: ProjectAnalytics["quality"] | undefined,
+  rebuilt: ProjectAnalytics["quality"] | undefined,
+): ProjectAnalytics["quality"] | undefined {
+  if (!previous) return rebuilt;
+  const rejected = previous.rejectedClaims ?? 0;
+  return {
+    status: rejected > 0 && previous.status === "evidence_backed" ? "needs_review" : previous.status,
+    sourceDocuments: rebuilt?.sourceDocuments ?? previous.sourceDocuments,
+    requiredDocumentsFound: rebuilt?.requiredDocumentsFound ?? previous.requiredDocumentsFound,
+    citationCount: rebuilt?.citationCount ?? previous.citationCount,
+    acceptedClaims: previous.acceptedClaims,
+    rejectedClaims: previous.rejectedClaims,
+  };
+}
+
+function withDeterministicCoverage(previous: ProjectAnalytics, rebuilt: ProjectAnalytics): ProjectAnalytics {
+  return {
+    ...previous,
+    missingInputs: rebuilt.missingInputs,
+    quality: mergedAnalyticsQuality(previous.quality, rebuilt.quality),
+    citations: rebuilt.citations,
+    citationIds: rebuilt.citationIds,
+  };
+}
+
 export function refreshProcurementAnalytics(
   actorId: string,
   procurementId: string
@@ -1963,18 +1998,16 @@ export function refreshProcurementAnalytics(
     assertOrgAccess(actor, p.orgId, "закупки");
     const docs = data.documents.filter((d) => d.procurementId === p.id);
     const built = buildProjectAnalytics(p, docs);
-    if (p.analytics && modelWroteAnalyticalNote(p.analytics)) {
-      const factsSame = JSON.stringify(p.analytics.missingInputs) === JSON.stringify(built.missingInputs)
-        && JSON.stringify(p.analytics.quality ?? null) === JSON.stringify(built.quality ?? null);
+    if (p.analytics && keepsAnalyticalMemo(p.analytics)) {
+      const next = withDeterministicCoverage(p.analytics, built);
+      const factsSame = JSON.stringify(p.analytics.missingInputs) === JSON.stringify(next.missingInputs)
+        && JSON.stringify(p.analytics.quality ?? null) === JSON.stringify(next.quality ?? null)
+        && JSON.stringify(p.analytics.citationIds) === JSON.stringify(next.citationIds);
       if (factsSame) {
         unchanged = true;
         return data;
       }
-      p.analytics = {
-        ...p.analytics,
-        missingInputs: built.missingInputs,
-        quality: built.quality,
-      };
+      p.analytics = next;
       audit(data, actorId, "analyze", "procurement", procurementId, "Сводка: обновлены факты, текст записки сохранён");
       return data;
     }
@@ -2872,32 +2905,8 @@ export function sendProcurementToCalculation(
       data.documents.filter((d) => d.procurementId === p.id)
     );
     const previous = p.analytics;
-    const keepMemo = Boolean(previous && (
-      modelWroteAnalyticalNote(previous)
-      || previous.answeredByModel
-      || previous.findings?.length
-      || previous.summary.startsWith("Готовность к решению")
-    ));
-    const keptQuality = previous?.quality
-      ? {
-          status: (previous.quality.rejectedClaims ?? 0) > 0 && previous.quality.status === "evidence_backed"
-            ? "needs_review" as const
-            : previous.quality.status,
-          sourceDocuments: rebuilt.quality?.sourceDocuments ?? previous.quality.sourceDocuments,
-          requiredDocumentsFound: rebuilt.quality?.requiredDocumentsFound ?? previous.quality.requiredDocumentsFound,
-          citationCount: rebuilt.quality?.citationCount ?? previous.quality.citationCount,
-          acceptedClaims: previous.quality.acceptedClaims,
-          rejectedClaims: previous.quality.rejectedClaims,
-        }
-      : rebuilt.quality;
-    p.analytics = keepMemo && previous
-      ? {
-          ...previous,
-          missingInputs: rebuilt.missingInputs,
-          quality: keptQuality,
-          citations: rebuilt.citations,
-          citationIds: rebuilt.citationIds,
-        }
+    p.analytics = previous && keepsAnalyticalMemo(previous)
+      ? withDeterministicCoverage(previous, rebuilt)
       : rebuilt;
 
     audit(
@@ -3319,9 +3328,11 @@ function foldUnlinkedVolumes(calc: Calculation): number {
   if (!direct) return extra.labor;
   const overhead = roundMoney(direct * (params.overheadRate ?? 0));
   const added = roundMoney(direct + overhead);
+  const extraProfit = roundMoney(added * (params.profitMarkupOnCostWithOh ?? 0));
   summary.C0 = roundMoney(summary.C0 + added);
   summary.C = roundMoney(summary.C + added);
-  summary.priceExVat = roundMoney((summary.priceExVat ?? 0) + added);
+  summary.profit = roundMoney((summary.profit ?? 0) + extraProfit);
+  summary.priceExVat = roundMoney((summary.priceExVat ?? 0) + added + extraProfit);
   if (summary.resourceSlices) {
     summary.resourceSlices = {
       ...summary.resourceSlices,
@@ -3331,7 +3342,8 @@ function foldUnlinkedVolumes(calc: Calculation): number {
       direct: roundMoney((summary.resourceSlices.direct ?? 0) + direct),
       overhead: roundMoney((summary.resourceSlices.overhead ?? 0) + overhead),
       costWithOh: roundMoney((summary.resourceSlices.costWithOh ?? 0) + added),
-      total: roundMoney((summary.resourceSlices.total ?? 0) + added),
+      profit: roundMoney((summary.resourceSlices.profit ?? 0) + extraProfit),
+      total: roundMoney((summary.resourceSlices.total ?? 0) + added + extraProfit),
     };
   }
   return extra.labor;

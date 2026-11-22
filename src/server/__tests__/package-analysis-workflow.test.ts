@@ -8,7 +8,7 @@ vi.mock("@/server/project-analysis-ai", () => ({
 
 import { config } from "@/server/config";
 import { closeDb, ensureReady, mutateAppData, readAppData } from "@/server/db";
-import { analyzeProcurementPackageWithAI, packageAnalysisAlreadyCurrent, sendProcurementToCalculation } from "@/server/repo";
+import { analyzeProcurementPackageWithAI, packageAnalysisAlreadyCurrent, refreshProcurementAnalytics, sendProcurementToCalculation } from "@/server/repo";
 import { refreshAndMaybeAnalyzePackage } from "@/server/upload-package-analysis";
 import "./setup";
 
@@ -145,12 +145,16 @@ describe("package analysis workflow", () => {
           sourceDocuments: 2,
           requiredDocumentsFound: 2,
           citationCount: 4,
-          acceptedClaims: 3,
-          rejectedClaims: 2,
+          acceptedClaims: 1,
+          rejectedClaims: 0,
         },
       };
       return data;
     });
+    refreshProcurementAnalytics("u-tender", "p-2");
+    const refreshed = readAppData().procurements.find((item) => item.id === "p-2")!.analytics!;
+    expect(refreshed.quality).toMatchObject({ status: "needs_review", acceptedClaims: 1, rejectedClaims: 0 });
+    expect(refreshed.summary).toBe(summary);
     sendProcurementToCalculation("u-tender", "p-2");
     const analytics = readAppData().procurements.find((item) => item.id === "p-2")!.analytics!;
     expect(analytics.summary).toBe(summary);
@@ -159,7 +163,7 @@ describe("package analysis workflow", () => {
     expect(analytics.sourceDocumentHash).toBe("abc");
     expect(analytics.method).toBe("разбор пакета по цитатам документов");
     expect(analytics.missingInputs).not.toEqual(["Нет договора"]);
-    expect(analytics.quality).toMatchObject({ status: "needs_review", rejectedClaims: 2, acceptedClaims: 3 });
+    expect(analytics.quality).toMatchObject({ status: "needs_review", acceptedClaims: 1, rejectedClaims: 0 });
     expect(analytics.quality?.status).not.toBe("evidence_backed");
   });
 
