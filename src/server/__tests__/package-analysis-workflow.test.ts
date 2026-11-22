@@ -202,7 +202,7 @@ describe("package analysis workflow", () => {
     const after = readAppData().procurements.find((item) => item.id === created.id)!.analytics!;
     expect(after.summary).not.toBe(before.summary);
     expect(after.summary.startsWith("Готовность к решению")).toBe(true);
-    expect(after.summary).toContain("распознано");
+    expect(after.summary).toContain("распознана 1 строка");
     expect(after.summary).not.toContain("Документы изменились, обновите разбор");
     expect(after.answeredByModel).toBeUndefined();
   });
@@ -311,16 +311,34 @@ describe("package analysis workflow", () => {
     };
     mutateAppData((data) => {
       const procurement = data.procurements.find((item) => item.id === created.id)!;
+      data.documents.push({
+        id: "doc-legacy-before",
+        orgId: procurement.orgId,
+        procurementId: procurement.id,
+        title: "Смета до разбора",
+        fileName: "before-memo.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [{ id: "cit-before", text: "цитата", page: 1, sourceFile: "before-memo.xlsx" }],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: "2026-10-01T00:00:00.000Z",
+        storedPath: "uploads/before-memo.xlsx",
+      });
       procurement.analytics = {
         recommendation: "participate",
         summary,
         missingInputs: [],
-        citationIds: [],
-        citations: [],
-        findings: [finding],
+        citationIds: ["cit-before"],
+        citations: [{ id: "cit-before", text: "цитата", page: 1, sourceFile: "before-memo.xlsx" }],
+        findings: [{ ...finding, citationIds: ["cit-before"], sourceFiles: ["before-memo.xlsx"] }],
         generatedAt: "2026-11-01T00:00:00.000Z",
         method: "разбор пакета по цитатам документов",
         disclaimer: "проверка",
+        quality: { status: "needs_review", sourceDocuments: 1, requiredDocumentsFound: 1, citationCount: 1, acceptedClaims: 1, rejectedClaims: 0 },
       };
       return data;
     });
@@ -337,6 +355,7 @@ describe("package analysis workflow", () => {
     expect(refreshed.summary).toBe(summary);
     expect(refreshed.findings?.[0]?.text).toBe("Старый вывод модели.");
     expect(refreshed.memoSource).toBe("model");
+    expect(refreshed.memoStale).toBeUndefined();
     expect(refreshed.sourceDocumentHash).toBe(currentHash);
     expect(refreshed.answeredByModel).toBeUndefined();
     sendProcurementToCalculation("u-ruk", created.id);
@@ -373,6 +392,58 @@ describe("package analysis workflow", () => {
     expect(stale.summary).not.toContain("Оплаченный разбор без хеша");
     expect(stale.memoStale).toBe(true);
     expect(stale.memoSource).toBe("local");
+    expect(stale.findings).toBeUndefined();
+  });
+
+  it("marks a legacy model memo stale when a document was added after it", () => {
+    const created = createManualProcurement("u-ruk", { title: "Разбор и новый файл", region: "Ямал" });
+    const summary = "Готовность к решению: данных недостаточно. Разбор до нового файла.";
+    mutateAppData((data) => {
+      const procurement = data.procurements.find((item) => item.id === created.id)!;
+      data.documents.push({
+        id: "doc-legacy-after",
+        orgId: procurement.orgId,
+        procurementId: procurement.id,
+        title: "Файл после разбора",
+        fileName: "after-memo.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: "2026-11-22T02:00:00.000Z",
+        storedPath: "uploads/after-memo.xlsx",
+      });
+      procurement.analytics = {
+        recommendation: "participate",
+        summary,
+        missingInputs: [],
+        citationIds: [],
+        citations: [],
+        findings: [{
+          topic: "Сроки",
+          importance: "high",
+          text: "Старый вывод модели.",
+          quote: "цитата",
+          citationIds: [],
+          sourceFiles: [],
+        }],
+        generatedAt: "2026-11-01T00:00:00.000Z",
+        method: "разбор пакета по цитатам документов",
+        disclaimer: "проверка",
+      };
+      return data;
+    });
+    refreshProcurementAnalytics("u-ruk", created.id);
+    const stale = readAppData().procurements.find((item) => item.id === created.id)!.analytics!;
+    expect(stale.summary.startsWith("Документы изменились, обновите разбор")).toBe(true);
+    expect(stale.summary).not.toContain("Разбор до нового файла");
+    expect(stale.memoStale).toBe(true);
+    expect(stale.memoSource).toBe("local");
+    expect(stale.sourceDocumentHash).toBeUndefined();
     expect(stale.findings).toBeUndefined();
   });
 

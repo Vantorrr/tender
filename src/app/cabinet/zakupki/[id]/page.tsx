@@ -25,7 +25,7 @@ import { visibleProcurementSource } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney, formatNumber, formatQuantity, needByPhrase, roundQuantity, sameRoundedQuantity } from "@/lib/format";
 import { citationTopicLabel, readableCitations, regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
 import { SUMMARY_FRESH, SUMMARY_UNCHANGED } from "@/lib/summary-notice";
-import { analyticalNoteBlocks, citationHref, costIsPartial, costIsUncalculated, draftCostPhrase, honestReadinessText, matchDirectorySuppliers, moneyRu } from "@/lib/wave23";
+import { analyticalNoteBlocks, citationHref, costIsPartial, costIsUncalculated, draftCostPhrase, honestReadinessText, matchDirectorySuppliers, moneyRu, rowCountNominative } from "@/lib/wave23";
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_CHECKLIST } from "@/lib/ai-topics";
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
@@ -839,11 +839,11 @@ export default function ZakupkaDetailPage() {
                     const summary = await sendToCalculation(procurement.id);
                     if (summary.sourceRows > 0 && summary.missingRates > 0) {
                       toast.warning(
-                        `Черновик создан из «${summary.sourceFile}»: ${summary.sourceRows} строк, ставок найдено ${summary.matchedRates}, без ставки ${summary.missingRates}. Проверьте неполные позиции.`
+                        `Черновик создан из «${summary.sourceFile}»: ${rowCountNominative(summary.sourceRows)}, ставок найдено ${summary.matchedRates}, без ставки ${summary.missingRates}. Проверьте неполные позиции.`
                       );
                     } else if (summary.sourceRows > 0) {
                       toast.success(
-                        `Черновик создан из «${summary.sourceFile}»: ${summary.sourceRows} строк, ставки сопоставлены по коду и единице.`
+                        `Черновик создан из «${summary.sourceFile}»: ${rowCountNominative(summary.sourceRows)}, ставки сопоставлены по коду и единице.`
                       );
                     } else {
                       toast.warning(

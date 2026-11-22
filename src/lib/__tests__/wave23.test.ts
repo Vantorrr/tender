@@ -29,6 +29,9 @@ import {
   priceVolumeRows,
   quoteRequestOutcome,
   rateIsMissing,
+  recognizedRowsPhrase,
+  rowCountGenitive,
+  rowCountNominative,
   sanitizeSyncDetail,
   scheduleAfterPredecessor,
   shouldRetrySync,
@@ -69,6 +72,19 @@ describe("wave 2–3 decisions", () => {
     const shown = node.groups.flatMap((group) => group.leaves).find((leaf) => leaf.name.includes("Вода"))!;
     expect(shown.name.startsWith("Возврат:")).toBe(true);
     expect(shown.amount).toBeLessThan(0);
+  });
+
+  it("counts rows in the nominative and keeps the genitive after для", () => {
+    expect(recognizedRowsPhrase(1)).toBe("распознана 1 строка");
+    expect(recognizedRowsPhrase(21)).toBe("распознана 21 строка");
+    expect(recognizedRowsPhrase(24)).toBe("распознано 24 строки");
+    expect(recognizedRowsPhrase(22)).toBe("распознано 22 строки");
+    expect(recognizedRowsPhrase(25)).toBe("распознано 25 строк");
+    expect(recognizedRowsPhrase(11)).toBe("распознано 11 строк");
+    expect(rowCountNominative(0)).toBe("0 строк");
+    expect(rowCountGenitive(1)).toBe("1 строки");
+    expect(rowCountGenitive(24)).toBe("24 строк");
+    expect(rowCountGenitive(21)).toBe("21 строки");
   });
 
   it("labels a missing rate and a return amount", () => {

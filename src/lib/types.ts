@@ -161,6 +161,8 @@ export interface ProjectAnalytics {
   /** Questions for the customer. Numbers are kept only when they appear in a source. */
   customerQuestions?: string[];
   generatedAt: string;
+  /** Older cards may store the memo clock here instead of generatedAt. */
+  updatedAt?: string;
   method: string;
   disclaimer: string;
   /** Set when the model call failed. Exact prefix: «ИИ-анализ не выполнен:». */

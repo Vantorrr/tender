@@ -3,6 +3,7 @@
 import { Fragment, useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { formatMoney, formatNumber } from "@/lib/format";
+import { rowCountNominative } from "@/lib/wave23";
 import { gprStageLabel } from "@/lib/gpr-stage-label";
 import {
   buildHierarchicalEstimate,
@@ -211,7 +212,7 @@ function ResourceGroups({
               <tr className="border-t border-[var(--tk-line)]/50 bg-amber-50/40" data-testid={`gpr-resource-summary-${prefix}-${group.kind}-${sameResource[0].id}`}>
                 <td className="py-1.5 pl-16 pr-3">
                   <button type="button" aria-expanded={expanded} onClick={() => onExpandDuplicate((current) => ({ ...current, [key]: !expanded }))} className="rounded-sm text-left font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--tk-copper)]">
-                    {expanded ? "▾" : "▸"} {leaf.name} <span className="font-normal text-[var(--tk-muted)]">· {sameResource.length} строки</span>
+                    {expanded ? "▾" : "▸"} {leaf.name} <span className="font-normal text-[var(--tk-muted)]">· {rowCountNominative(sameResource.length)}</span>
                   </button>
                 </td>
                 <td className="px-3 py-1.5">{leaf.unit || "—"}</td>

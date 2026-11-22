@@ -33,7 +33,7 @@ import { recentPaymentId } from "@/lib/duplicate-click";
 import { supplyNeedKey } from "@/lib/supply-need";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
 import { buildStagesFromEstimatePositions, calendarDurationDays, datesForStage, GPR_DATES_MISSING, periodFromDocumentText } from "@/lib/estimate-stages";
-import { COMPANY_RATE_RULE, composeAnalyticalNote, dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, scheduleAfterPredecessor, scheduleParamsWithNorthernDefaults } from "@/lib/wave23";
+import { COMPANY_RATE_RULE, composeAnalyticalNote, dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, recognizedRowsPhrase, rowCountGenitive, rowCountNominative, scheduleAfterPredecessor, scheduleParamsWithNorthernDefaults } from "@/lib/wave23";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
 import {
@@ -1973,12 +1973,102 @@ function documentsForHash(documents: Array<{ id: string; fileName: string; fileS
   return documents.filter((document) => document.storedPath);
 }
 
-/** Stamp the files this legacy memo is being read against. A later file change can then mark it stale. */
+type LegacyMemoDocument = {
+  id: string;
+  fileName: string;
+  fileSize?: number | null;
+  storedPath?: string | null;
+  uploadedAt?: string | null;
+  citations?: Array<{ id: string }>;
+  versions?: Array<{ at: string }>;
+};
+
+function parsedTime(value: string | undefined | null): number | undefined {
+  if (!value?.trim()) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/** generatedAt, or the older analytics updatedAt when the memo has no generation clock. */
+function legacyMemoClock(analytics: ProjectAnalytics): number | undefined {
+  return parsedTime(analytics.generatedAt) ?? parsedTime(analytics.updatedAt);
+}
+
+function citedSourceIds(analytics: ProjectAnalytics): string[] {
+  const ids = [
+    ...analytics.citationIds,
+    ...analytics.citations.map((citation) => citation.id),
+    ...(analytics.findings ?? []).flatMap((finding) => finding.citationIds),
+  ];
+  return [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+}
+
+function citedDocumentKeys(analytics: ProjectAnalytics): Set<string> {
+  const keys = new Set(citedSourceIds(analytics));
+  for (const citation of analytics.citations) {
+    if (citation.sourceFile.trim()) keys.add(citation.sourceFile);
+  }
+  for (const finding of analytics.findings ?? []) {
+    for (const file of finding.sourceFiles) {
+      if (file.trim()) keys.add(file);
+    }
+  }
+  return keys;
+}
+
+function documentInCitedSet(document: LegacyMemoDocument, cited: Set<string>): boolean {
+  if (cited.has(document.id) || cited.has(document.fileName)) return true;
+  return (document.citations ?? []).some((citation) => cited.has(citation.id));
+}
+
+function coverageCountsDiffer(analytics: ProjectAnalytics, rebuilt: ProjectAnalytics | undefined): boolean {
+  if (!analytics.quality || !rebuilt?.quality) return false;
+  return analytics.quality.sourceDocuments !== rebuilt.quality.sourceDocuments
+    || analytics.quality.requiredDocumentsFound !== rebuilt.quality.requiredDocumentsFound
+    || analytics.quality.citationCount !== rebuilt.quality.citationCount;
+}
+
+/** True only when the files or citations show the legacy memo does not cover this set. */
+function legacyMemoConflictsWithDocuments(
+  analytics: ProjectAnalytics,
+  documents: LegacyMemoDocument[],
+  rebuilt: ProjectAnalytics | undefined,
+): boolean {
+  const stored = documents.filter((document) => document.storedPath);
+  const clock = legacyMemoClock(analytics);
+  if (clock != null) {
+    const changedAfterMemo = stored.some((document) => {
+      const marks = [document.uploadedAt, ...(document.versions ?? []).map((version) => version.at)];
+      return marks.some((mark) => {
+        const at = parsedTime(mark);
+        return at != null && at > clock;
+      });
+    });
+    if (changedAfterMemo) return true;
+  }
+  const citedIds = citedSourceIds(analytics);
+  if (citedIds.length) {
+    const live = new Set<string>();
+    for (const document of stored) {
+      live.add(document.id);
+      for (const citation of document.citations ?? []) live.add(citation.id);
+    }
+    if (citedIds.some((id) => !live.has(id))) return true;
+  }
+  const cited = citedDocumentKeys(analytics);
+  const missingFromCitedSet = cited.size > 0 && stored.some((document) => !documentInCitedSet(document, cited));
+  if (missingFromCitedSet && coverageCountsDiffer(analytics, rebuilt)) return true;
+  return false;
+}
+
+/** Stamp the current files only when nothing shows they changed after this memo. */
 function backfillLegacyModelMemo(
   analytics: ProjectAnalytics | undefined,
-  documents: Array<{ id: string; fileName: string; fileSize?: number | null; storedPath?: string | null; uploadedAt?: string | null }>,
+  documents: LegacyMemoDocument[],
+  rebuilt: ProjectAnalytics | undefined,
 ): ProjectAnalytics | undefined {
   if (!isLegacyModelMemo(analytics)) return analytics;
+  if (legacyMemoConflictsWithDocuments(analytics!, documents, rebuilt)) return analytics;
   return {
     ...analytics!,
     memoSource: "model",
@@ -2056,7 +2146,7 @@ function localAnalyticalSummary(built: ProjectAnalytics, docs: Array<{ category?
         ? "Условия участия смотрите в договоре и цитатах карточки."
         : "нет данных",
       docs.some((document) => (document.estimatePositions?.length ?? 0) > 0)
-        ? `В сметах распознано ${docs.reduce((sum, document) => sum + (document.estimatePositions?.length ?? 0), 0)} строк.`
+        ? `В сметах ${recognizedRowsPhrase(docs.reduce((sum, document) => sum + (document.estimatePositions?.length ?? 0), 0))}.`
         : "нет данных",
       "нет данных",
       built.missingInputs.slice(0, 5).join("\n") || "нет данных",
@@ -2077,7 +2167,7 @@ export function refreshProcurementAnalytics(
     const docs = data.documents.filter((d) => d.procurementId === p.id);
     const built = buildProjectAnalytics(p, docs);
     const original = p.analytics;
-    const currentMemo = backfillLegacyModelMemo(original, docs);
+    const currentMemo = backfillLegacyModelMemo(original, docs, built);
     if (currentMemo && modelMemoIsCurrent(currentMemo, docs)) {
       const next = withDeterministicCoverage(currentMemo, built);
       const factsSame = original?.summary === next.summary
@@ -2429,7 +2519,7 @@ export function attachCustomerEstimate(
     if (attachedOriginal) {
       attachedOriginal.pairedCalculationId = p.calculationId;
       attachedOriginal.assumptions = [
-        `Неизменяемый снимок смет заказчика: ${positions.length} строк итогов и позиций`,
+        `Неизменяемый снимок смет заказчика: ${rowCountNominative(positions.length)} итогов и позиций`,
         `Источники: ${sourceNames.join("; ")}`,
         `Распознано строк смет: ${recognizedCount}`,
         "Собственные ресурсы сюда не добавляются",
@@ -2737,7 +2827,7 @@ export function sendProcurementToCalculation(
           : [{ id: `cp-orig-${Date.now()}`, code: "CUST-TOTAL", name: "Итог сметы заказчика", unit: "компл", quantity: 1, rate: 0, rateMissing: true }],
         assumptions: [
           rowsWithoutSourceRates
-            ? `Распознано ${allEstimatePositions.length} строк по ${estimateDocsWithData.length} сметам; для ${rowsWithoutSourceRates} строк исходная ставка не извлечена надёжно, поэтому оригинал показывает подтверждённый итог каждой сметы без подмены ставок нулями.`
+            ? `${recognizedRowsPhrase(allEstimatePositions.length).replace(/^./u, (letter) => letter.toUpperCase())} по ${estimateDocsWithData.length} сметам; для ${rowCountGenitive(rowsWithoutSourceRates)} исходная ставка не извлечена надёжно, поэтому оригинал показывает подтверждённый итог каждой сметы без подмены ставок нулями.`
             : `Неизменяемый снимок сметы заказчика: ${allEstimatePositions.length} распознанных позиций.`,
           `Источники: ${sourceFileNames.join("; ")}`,
           "Собственные ресурсы сюда не добавляются",
@@ -2863,7 +2953,7 @@ export function sendProcurementToCalculation(
         if (addedCount > 0 && previousCount > 0) {
           linked.assumptions = [
             ...(linked.assumptions ?? []),
-            `Добавлено ${addedCount} распознанных строк сметы заказчика; существующие ручные позиции сохранены.`,
+            `Добавлено ${rowCountNominative(addedCount)} сметы заказчика; существующие ручные позиции сохранены.`,
           ];
         }
       }
@@ -2972,7 +3062,7 @@ export function sendProcurementToCalculation(
       data.documents.filter((d) => d.procurementId === p.id)
     );
     const scheduleDocs = data.documents.filter((document) => document.procurementId === p.id);
-    const previous = backfillLegacyModelMemo(p.analytics, scheduleDocs);
+    const previous = backfillLegacyModelMemo(p.analytics, scheduleDocs, rebuilt);
     if (previous && modelMemoIsCurrent(previous, scheduleDocs)) {
       p.analytics = withDeterministicCoverage(previous, rebuilt);
     } else {

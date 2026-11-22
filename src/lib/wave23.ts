@@ -8,6 +8,26 @@ export function rowCountGenitive(count: number): string {
   return `${n} ${word}`;
 }
 
+/** Counted «строка»: 1 строка, 24 строки, 25 строк, 11 строк, 21 строка. */
+export function rowCountNominative(count: number): string {
+  const n = Math.abs(Math.trunc(count));
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  const word = mod10 === 1 && mod100 !== 11
+    ? "строка"
+    : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)
+      ? "строки"
+      : "строк";
+  return `${n} ${word}`;
+}
+
+/** «распознана 1 строка» / «распознано 24 строки» / «распознано 25 строк». */
+export function recognizedRowsPhrase(count: number): string {
+  const n = Math.abs(Math.trunc(count));
+  const singular = n % 10 === 1 && n % 100 !== 11;
+  return `${singular ? "распознана" : "распознано"} ${rowCountNominative(n)}`;
+}
+
 export function moneyRu(value: number): string {
   const formatted = new Intl.NumberFormat("ru-RU", {
     minimumFractionDigits: 2,
