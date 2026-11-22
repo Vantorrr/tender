@@ -25,7 +25,7 @@ import { visibleProcurementSource } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney, formatNumber, formatQuantity, needByPhrase, roundQuantity, sameRoundedQuantity } from "@/lib/format";
 import { citationTopicLabel, readableCitations, regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
 import { SUMMARY_FRESH, SUMMARY_UNCHANGED } from "@/lib/summary-notice";
-import { analyticalNoteBlocks, citationHref, matchDirectorySuppliers } from "@/lib/wave23";
+import { analyticalNoteBlocks, citationHref, honestReadinessText, matchDirectorySuppliers } from "@/lib/wave23";
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_CHECKLIST } from "@/lib/ai-topics";
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
@@ -972,9 +972,9 @@ export default function ZakupkaDetailPage() {
                 </p>
                 {analytics ? (
                   <div className="mt-3 space-y-3">
-                    <p className="text-sm text-[var(--tk-ink)]">{analytics.summary.split(/\n\n/)[0]}</p>
+                    <p className="text-sm text-[var(--tk-ink)]">{honestReadinessText(analytics.summary).split(/\n\n/)[0]}</p>
                     <div className="space-y-2" data-testid="overview-note-blocks">
-                      {analyticalNoteBlocks(analytics.summary).map((block) => (
+                      {analyticalNoteBlocks(honestReadinessText(analytics.summary)).map((block) => (
                         <div key={block.title}>
                           <p className="text-sm font-medium text-[var(--tk-ink)]">{block.title}</p>
                           <p className="whitespace-pre-line text-sm text-[var(--tk-muted)]">{block.body || "нет данных"}</p>
@@ -991,6 +991,9 @@ export default function ZakupkaDetailPage() {
                     </button>
                     <p className="text-xs text-[var(--tk-muted)]">Документов: {analytics.quality?.sourceDocuments ?? docs.length}</p>
                     <p className="text-xs text-[var(--tk-muted)]">Оценка по документам: {PARTICIPATE_LABELS[analytics.recommendation]}</p>
+                    {analytics.answeredByModel ? (
+                      <p className="text-xs text-[var(--tk-muted)]">Модель ответа: {analytics.answeredByModel}</p>
+                    ) : null}
                   </div>
                 ) : (
                   <p className="mt-3 text-sm text-[var(--tk-muted)]">Сводки пока нет. После загрузки документа она появится здесь.</p>
@@ -1012,6 +1015,14 @@ export default function ZakupkaDetailPage() {
                 </select>
                 <Button disabled={busy} onClick={() => fileRef.current?.click()}>
                   {busy ? "Загрузка…" : "Добавить файлы"}
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={aiAnalyzing || docs.length === 0}
+                  title={docs.length === 0 ? "Сначала загрузите документы" : "Повторить разбор пакета, даже если файлы не менялись"}
+                  onClick={() => void analyzeProjectPackage()}
+                >
+                  {aiAnalyzing ? "Обновляю разбор…" : "Обновить разбор"}
                 </Button>
                 <Button
                   variant="outline"
@@ -1369,7 +1380,7 @@ export default function ZakupkaDetailPage() {
                   title={docs.length === 0 ? "Сначала загрузите документы" : "Разбор пакета по загруженным документам"}
                   onClick={() => void analyzeProjectPackage()}
                 >
-                  {aiAnalyzing ? "ИИ анализирует пакет…" : "Полный анализ ИИ"}
+                  {aiAnalyzing ? "Обновляю разбор…" : "Обновить разбор"}
                 </Button>
                 {docs.length === 0 ? (
                   <span className="self-center text-xs text-[var(--tk-muted)]">Сначала загрузите документы</span>
@@ -1391,8 +1402,11 @@ export default function ZakupkaDetailPage() {
                   <p className="text-xs text-[var(--tk-muted)]">
                     Оценка по документам: {PARTICIPATE_LABELS[analytics.recommendation]}
                   </p>
+                  {analytics.answeredByModel ? (
+                    <p className="mt-1 text-xs text-[var(--tk-muted)]">Модель ответа: {analytics.answeredByModel}</p>
+                  ) : null}
                   <div className="mt-2 space-y-1 text-sm leading-relaxed text-[var(--tk-foreground)]">
-                    {analytics.summary.split("\n").filter((line) => line.trim()).map((line, index) => (
+                    {honestReadinessText(analytics.summary).split("\n").filter((line) => line.trim()).map((line, index) => (
                       <p key={`${index}-${line}`} className={index === 0 ? "font-medium" : "text-[var(--tk-muted)]"}>{line}</p>
                     ))}
                   </div>
@@ -1473,12 +1487,21 @@ export default function ZakupkaDetailPage() {
                         ["Цена без НДС", analytics.economics.priceExVat],
                         ["Цена с НДС", analytics.economics.priceWithVat],
                         ["Расчётная прибыль", analytics.economics.profit],
-                      ] as const).map(([label, value]) => (
+                      ] as const).map(([label, value]) => {
+                        const filled = Boolean(data.calculations.find((item) => item.id === procurement.calculationId)?.positions.length);
+                        const missingRates = analytics.economics?.missingRates ?? 0;
+                        const shown = !filled || value == null
+                          ? "Расчёт не заполнен"
+                          : label === "Себестоимость" && (value === 0 || missingRates > 0)
+                            ? `Себестоимость не рассчитана: нет ставок для ${missingRates} строк`
+                            : formatMoney(value);
+                        return (
                         <div key={label} className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3">
                           <dt className="text-xs text-[var(--tk-muted)]">{label}</dt>
-                          <dd className="mt-1 text-sm font-semibold tabular-nums">{value == null || !(data.calculations.find((item) => item.id === procurement.calculationId)?.positions.length) ? "Расчёт не заполнен" : formatMoney(value)}</dd>
+                          <dd className="mt-1 text-sm font-semibold tabular-nums">{shown}</dd>
                         </div>
-                      ))}
+                        );
+                      })}
                       <div className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3">
                         <dt className="text-xs text-[var(--tk-muted)]">Рентабельность / маржа</dt>
                         <dd className="mt-1 text-sm font-semibold tabular-nums">

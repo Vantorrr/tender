@@ -24,7 +24,10 @@ export const config = {
   appName: "истройка",
   contract: "TMA361",
   openRouterKey: process.env.OPENROUTER_API_KEY ?? "",
-  openRouterModel: process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini",
+  /** Stable non-preview default. Set OPENROUTER_MODEL to override. */
+  openRouterModel: process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash",
+  /** Second model after primary timeout, 5xx, empty or invalid JSON. Empty skips fallback. */
+  openRouterFallbackModel: (process.env.OPENROUTER_FALLBACK_MODEL ?? "").trim(),
   /** Paid full-package LLM analysis after an upload — off by default. */
   openRouterOnUpload:
     process.env.OPENROUTER_ON_UPLOAD === "1" ||

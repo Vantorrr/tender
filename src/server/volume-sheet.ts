@@ -103,7 +103,7 @@ export async function draftVolumeSheet(
   if (!ask && !modelConfigured()) {
     return { configured: false, message: VOLUME_MODEL_MISSING, rows: [] };
   }
-  const raw = await (ask ?? completeJson)(VOLUME_SYSTEM, corpus.prompt.slice(0, 14_000));
+  const raw = await (ask ?? ((system: string, prompt: string) => completeJson(system, prompt, 0, { purpose: "volume-sheet" })))(VOLUME_SYSTEM, corpus.prompt.slice(0, 14_000));
   const grounded = parseVolumeDraft(raw).filter((row) => quoteIsFromText(corpus.quoteSource, row.quote));
   return {
     configured: true,

@@ -16,6 +16,9 @@ import {
   economicMissingInputs,
   companyAnalysisMissingInputs,
   buildProjectAnalysisFallback,
+  draftCostPhrase,
+  percentOrMissing,
+  profitabilitySentence,
 } from "@/server/project-analysis-ai";
 import type { ProjectAnalytics, Procurement } from "@/lib/types";
 
@@ -97,6 +100,37 @@ describe("grounded project analysis", () => {
     expect(fallback.summary).toContain("ИИ-анализ не завершился");
     expect(fallback.aiFailure).toBe("ИИ-анализ не выполнен: пустой ответ");
     expect(fallback.missingInputs.join(" ")).toContain("календарь занятости");
+  });
+
+  it("does not print a percent sign on a missing margin or a zero cost as 0 ₽", () => {
+    expect(percentOrMissing(null)).toBe("не рассчитана");
+    expect(percentOrMissing(12.5)).toBe("12.5%");
+    expect(profitabilitySentence(10, null, null)).toBe(
+      "Расчётная прибыль до налога: 10 ₽; рентабельность на себестоимость: не рассчитана; маржа в цене: не рассчитана."
+    );
+    expect(profitabilitySentence(10, null, null)).not.toMatch(/не рассчитана%/);
+    expect(draftCostPhrase(0, 4)).toBe("Себестоимость не рассчитана: нет ставок для 4 строк");
+    expect(draftCostPhrase(1500, 2)).toBe("Себестоимость не рассчитана: нет ставок для 2 строк");
+    expect(draftCostPhrase(1500, 0)).toBe("1500 ₽");
+
+    const procurement = {
+      id: "p-1", orgId: "org-1", number: "T-1", title: "Ремонт", customer: "Заказчик",
+      region: "ЯНАО", nmck: null, deadline: "", source: "test", status: "zagruzheno",
+      reviewStatus: "novaya", syncStatus: "aktualno", syncAt: "", attachments: [],
+      documentIds: [], tags: [], createdAt: "",
+    } as unknown as Procurement;
+    const deterministic: ProjectAnalytics = {
+      recommendation: "insufficient_data", summary: "Покрытие документов проверено.", missingInputs: [],
+      citationIds: [], citations, generatedAt: "", method: "test", disclaimer: "",
+    };
+    const fallback = buildProjectAnalysisFallback(procurement, deterministic, {
+      cost: 0, priceExVat: null, priceWithVat: null, profit: null,
+      profitabilityPercent: null, revenueMarginPercent: null, incomplete: true, missingRates: 4,
+    }, undefined, "пустой ответ");
+    expect(fallback.summary).toContain("Себестоимость не рассчитана: нет ставок для 4 строк");
+    expect(fallback.summary).not.toMatch(/не рассчитана%/);
+    expect(fallback.summary).not.toMatch(/(^|[^\d])0 ₽/);
+    expect(fallback.economics?.missingRates).toBe(4);
   });
 
   it("accepts only a paraphrase with an exact quote, valid source, and matching numbers", () => {

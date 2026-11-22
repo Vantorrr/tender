@@ -172,7 +172,7 @@ export default function DocumentDetailPage() {
                 const content = [
                   `Аналитическая записка: ${doc.title}`,
                   "",
-                  doc.analyticalNote,
+                  note.text,
                   "",
                   "Цитаты:",
                   ...doc.citations.map((c) => {

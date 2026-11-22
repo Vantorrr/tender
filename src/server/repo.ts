@@ -26,6 +26,7 @@ import type {
   User,
 } from "@/lib/types";
 import { matchCompanyDirectoryRate, rateFromRow } from "@/lib/client-dirs";
+import { documentSetHash } from "@/server/document-set-hash";
 import { modelConfigured } from "@/server/openrouter";
 import { canonicalUploadPath, deleteUpload, readUpload, resolveUploadPath } from "@/server/uploads";
 import { recentPaymentId } from "@/lib/duplicate-click";
@@ -2130,6 +2131,12 @@ export async function analyzeProcurementPackageWithAI(
       generated = buildProjectAnalysisFallback(procurement, deterministic, economics, companyContext, modelOff ? "модель не подключена" : failure);
     }
   }
+  if (usedAi) {
+    generated = {
+      ...generated,
+      sourceDocumentHash: documentSetHash(documents),
+    };
+  }
   mutateAppData((data) => {
     const currentActor = actorUser(data, actorId);
     const current = data.procurements.find((item) => item.id === procurementId);
@@ -2144,6 +2151,16 @@ export async function analyzeProcurementPackageWithAI(
     warning = "Новых данных нет — записка уже актуальна";
   }
   return { warning, usedAi };
+}
+
+/** True when the last successful package analysis already covered these files. */
+export function packageAnalysisAlreadyCurrent(procurementId: string): boolean {
+  const data = readAppData();
+  const procurement = data.procurements.find((item) => item.id === procurementId);
+  const saved = procurement?.analytics?.sourceDocumentHash;
+  if (!saved) return false;
+  const documents = data.documents.filter((document) => document.procurementId === procurementId && document.storedPath);
+  return documentSetHash(documents) === saved;
 }
 
 function estimateDocumentsForProcurement(data: AppData, procurementId: string) {

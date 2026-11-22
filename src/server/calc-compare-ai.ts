@@ -331,7 +331,7 @@ export async function analyzeCalculationComparisonWithAI(
   const validated = rowsTotal === 0
     ? { summary: "Нет строк для анализа.", findings: [] }
     : validateCalcCompareAiResult(
-      await completeJson(prepared.system, prepared.user, 0, { maxTokens: COMPARE_MAX_TOKENS }),
+      await completeJson(prepared.system, prepared.user, 0, { maxTokens: COMPARE_MAX_TOKENS, purpose: "calc-compare" }),
       prepared.batch,
       prepared.context
     );

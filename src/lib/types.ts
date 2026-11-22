@@ -165,6 +165,10 @@ export interface ProjectAnalytics {
   disclaimer: string;
   /** Set when the model call failed. Exact prefix: «ИИ-анализ не выполнен:». */
   aiFailure?: string;
+  /** Model id that answered this memo. Readiness is a rule gate, not this model's score. */
+  answeredByModel?: string;
+  /** Document-set hash of the last successful package analysis. */
+  sourceDocumentHash?: string;
   /** Source coverage and evidence validation; this is not an accuracy percentage. */
   quality?: {
     status: "insufficient_sources" | "needs_review" | "evidence_backed";
@@ -183,6 +187,8 @@ export interface ProjectAnalytics {
     profitabilityPercent: number | null;
     revenueMarginPercent: number | null;
     complete: boolean;
+    /** Draft rows without a company rate. Zero cost with a positive count is not 0 ₽. */
+    missingRates?: number;
     missingInputs: string[];
   };
 }

@@ -395,7 +395,8 @@ describe("wave 4 pricing, volumes and return quantities", () => {
     const first = refreshProcurementAnalytics("u-tender", "p-1");
     const note = readAppData().procurements.find((item) => item.id === "p-1")!.analytics!.summary;
     expect(first.unchanged).toBe(false);
-    expect(note.startsWith("Вердикт ИИ:")).toBe(true);
+    expect(note.startsWith("Готовность к решению:")).toBe(true);
+    expect(note).not.toMatch(/Вердикт ИИ/);
     expect(note).toContain("Паспорт закупки и тайминг");
     expect(note).toContain("Условия участия и требования к заявке");
     expect(note).toContain("Сводная ведомость объёмов");

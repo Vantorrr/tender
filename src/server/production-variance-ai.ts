@@ -269,7 +269,7 @@ export async function analyzeProductionVarianceWithAI(input: {
     planQuantity: input.planQuantity,
     factQuantity: input.factQuantity,
     sources,
-  }));
+  }), 0, { purpose: "production-variance" });
   const validated = validateProductionVarianceResult(response, sources, numericContext);
   const filled = withRequiredDeviation({
     ...validated,

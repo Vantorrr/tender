@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   refreshProcurementAnalytics: vi.fn(),
   analyzeProcurementPackageWithAI: vi.fn(),
   recordProcurementAiFailure: vi.fn(),
+  packageAnalysisAlreadyCurrent: vi.fn(() => false),
   config: { openRouterOnUpload: false },
 }));
 
@@ -11,6 +12,7 @@ vi.mock("@/server/repo", () => ({
   refreshProcurementAnalytics: mocks.refreshProcurementAnalytics,
   analyzeProcurementPackageWithAI: mocks.analyzeProcurementPackageWithAI,
   recordProcurementAiFailure: mocks.recordProcurementAiFailure,
+  packageAnalysisAlreadyCurrent: mocks.packageAnalysisAlreadyCurrent,
 }));
 vi.mock("@/server/config", () => ({ config: mocks.config }));
 
@@ -42,5 +44,31 @@ describe("refreshAndMaybeAnalyzePackage", () => {
     expect(errorLog).toHaveBeenCalledWith("[documents] automatic package analysis failed: provider unavailable");
     expect(mocks.recordProcurementAiFailure).toHaveBeenCalledWith("user-1", "proc-1", "provider unavailable");
     errorLog.mockRestore();
+  });
+
+  it("does not call the model again when the document set is unchanged", async () => {
+    mocks.config.openRouterOnUpload = true;
+    mocks.packageAnalysisAlreadyCurrent.mockReturnValue(true);
+    await refreshAndMaybeAnalyzePackage("user-1", "proc-1");
+    expect(mocks.refreshProcurementAnalytics).toHaveBeenCalledOnce();
+    expect(mocks.analyzeProcurementPackageWithAI).not.toHaveBeenCalled();
+  });
+
+  it("lets a second automatic run wait and then skip when the first one covers the same files", async () => {
+    mocks.config.openRouterOnUpload = true;
+    mocks.packageAnalysisAlreadyCurrent.mockReturnValue(false);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    mocks.analyzeProcurementPackageWithAI.mockImplementationOnce(() => gate.then(() => {
+      mocks.packageAnalysisAlreadyCurrent.mockReturnValue(true);
+    }));
+
+    const first = refreshAndMaybeAnalyzePackage("user-1", "proc-1");
+    const second = refreshAndMaybeAnalyzePackage("user-1", "proc-1");
+    release();
+    await Promise.all([first, second]);
+    expect(mocks.analyzeProcurementPackageWithAI).toHaveBeenCalledTimes(1);
   });
 });

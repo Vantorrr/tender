@@ -26,16 +26,31 @@ export const NOTE_BLOCK_TITLES = [
   "Риски и подводные камни",
 ] as const;
 
+/** Rule gate 7 / 4 / 3. This is not a model score. */
+export function readinessFromScore(verdict: number): "достаточно данных" | "данных недостаточно" | "не участвовать" {
+  const score = Math.max(0, Math.min(10, Math.round(verdict)));
+  if (score >= 7) return "достаточно данных";
+  if (score <= 3) return "не участвовать";
+  return "данных недостаточно";
+}
+
 export function composeAnalyticalNote(input: {
   verdict: number;
   verdictText: string;
   blocks: readonly [string, string, string, string, string];
 }): string {
-  const score = Math.max(0, Math.min(10, Math.round(input.verdict)));
+  const label = readinessFromScore(input.verdict);
   return [
-    `Вердикт ИИ: ${score} / 10 — ${input.verdictText.trim()}`,
+    `Готовность к решению: ${label}. ${input.verdictText.trim()}`,
     ...NOTE_BLOCK_TITLES.map((title, index) => `${index + 1}. ${title}\n${input.blocks[index].trim() || "нет данных"}`),
   ].join("\n\n");
+}
+
+/** Stored notes may still start with the old score line. Show the gate label instead. */
+export function honestReadinessText(text: string): string {
+  return text.replace(/Вердикт(?:\s+ИИ)?:\s*(\d{1,2})\s*\/\s*10(?:\s*[—–-]\s*)?/gu, (_all, score: string) => {
+    return `Готовность к решению: ${readinessFromScore(Number(score))}. `;
+  });
 }
 
 export const COMPANY_RATE_RULE =
@@ -67,10 +82,17 @@ export function analyticalNoteBlocks(text: string): Array<{ title: string; body:
 }
 
 export function analyticalNoteStructure(text: string): { verdict: number | null; blocks: string[] } {
-  const match = text.match(/Вердикт(?:\s+ИИ)?:\s*(\d{1,2})\s*\/\s*10/u);
-  const score = match ? Number(match[1]) : null;
+  let score: number | null = null;
+  if (/Готовность к решению:\s*достаточно данных/u.test(text)) score = 7;
+  else if (/Готовность к решению:\s*не участвовать/u.test(text)) score = 3;
+  else if (/Готовность к решению:\s*данных недостаточно/u.test(text)) score = 4;
+  else {
+    const match = text.match(/Вердикт(?:\s+ИИ)?:\s*(\d{1,2})\s*\/\s*10/u);
+    const legacy = match ? Number(match[1]) : null;
+    score = legacy != null && legacy >= 0 && legacy <= 10 ? legacy : null;
+  }
   return {
-    verdict: score != null && score >= 0 && score <= 10 ? score : null,
+    verdict: score,
     blocks: NOTE_BLOCK_TITLES.filter((title) => text.includes(title)),
   };
 }

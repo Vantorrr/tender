@@ -20,7 +20,7 @@ import {
   getOcrProvider,
   ocrConfigured,
 } from "@/server/ocr";
-import { modelConfigured } from "@/server/openrouter";
+import { modelConfigured, setLlmTelemetrySink, type LlmCallTelemetry } from "@/server/openrouter";
 import { hashPassword } from "@/server/passwords";
 import { procurementSourceStatus } from "@/server/procurement-source";
 import { sanitizeSyncDetail } from "@/lib/wave23";
@@ -603,6 +603,105 @@ export function procurementStatusSnapshot() {
   return { ...source, status: lastSync.status, detail: lastSync.detail };
 }
 
+const LLM_TELEMETRY_KEY = "llm_telemetry";
+const LLM_TELEMETRY_CALLS = 40;
+const LLM_TELEMETRY_DAYS = 14;
+
+type LlmDayTotal = {
+  calls: number;
+  promptTokens: number;
+  completionTokens: number;
+  cost: number;
+  costReports: number;
+  failures: number;
+};
+
+type LlmTelemetryState = {
+  calls: LlmCallTelemetry[];
+  days: Record<string, LlmDayTotal>;
+  lastSuccessAt: string | null;
+  lastError: { at: string; errorClass: string; purpose: string; model: string } | null;
+};
+
+export type LlmTelemetryView = {
+  lastSuccessAt: string | null;
+  lastError: LlmTelemetryState["lastError"];
+  today: { calls: number; promptTokens: number; completionTokens: number; cost: number | null };
+};
+
+function moscowDay(iso: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Moscow",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(iso));
+}
+
+function emptyLlmTelemetry(): LlmTelemetryState {
+  return { calls: [], days: {}, lastSuccessAt: null, lastError: null };
+}
+
+function readLlmTelemetryState(): LlmTelemetryState {
+  const value = metaGet(getDb(), LLM_TELEMETRY_KEY);
+  if (!value) return emptyLlmTelemetry();
+  try {
+    const parsed = JSON.parse(value) as Partial<LlmTelemetryState>;
+    if (!parsed || !Array.isArray(parsed.calls) || typeof parsed.days !== "object" || !parsed.days) return emptyLlmTelemetry();
+    return {
+      calls: parsed.calls.slice(-LLM_TELEMETRY_CALLS),
+      days: parsed.days,
+      lastSuccessAt: typeof parsed.lastSuccessAt === "string" ? parsed.lastSuccessAt : null,
+      lastError: parsed.lastError && typeof parsed.lastError.at === "string" && typeof parsed.lastError.errorClass === "string"
+        ? parsed.lastError
+        : null,
+    };
+  } catch {
+    return emptyLlmTelemetry();
+  }
+}
+
+function persistLlmCall(entry: LlmCallTelemetry) {
+  const state = readLlmTelemetryState();
+  const day = moscowDay(entry.at);
+  const previous = state.days[day] ?? { calls: 0, promptTokens: 0, completionTokens: 0, cost: 0, costReports: 0, failures: 0 };
+  state.days[day] = {
+    calls: previous.calls + 1,
+    promptTokens: previous.promptTokens + (entry.promptTokens ?? 0),
+    completionTokens: previous.completionTokens + (entry.completionTokens ?? 0),
+    cost: previous.cost + (entry.cost ?? 0),
+    costReports: previous.costReports + (entry.cost == null ? 0 : 1),
+    failures: previous.failures + (entry.ok ? 0 : 1),
+  };
+  const cutoff = new Date();
+  cutoff.setUTCDate(cutoff.getUTCDate() - LLM_TELEMETRY_DAYS);
+  const oldest = moscowDay(cutoff.toISOString());
+  for (const key of Object.keys(state.days)) {
+    if (key < oldest) delete state.days[key];
+  }
+  state.calls = [...state.calls, entry].slice(-LLM_TELEMETRY_CALLS);
+  if (entry.ok) state.lastSuccessAt = entry.at;
+  else state.lastError = { at: entry.at, errorClass: entry.errorClass ?? "other", purpose: entry.purpose, model: entry.model };
+  metaSet(getDb(), LLM_TELEMETRY_KEY, JSON.stringify(state));
+}
+
+setLlmTelemetrySink(persistLlmCall);
+
+export function llmTelemetryView(now = new Date()): LlmTelemetryView {
+  const state = readLlmTelemetryState();
+  const today = state.days[moscowDay(now.toISOString())];
+  return {
+    lastSuccessAt: state.lastSuccessAt,
+    lastError: state.lastError,
+    today: {
+      calls: today?.calls ?? 0,
+      promptTokens: today?.promptTokens ?? 0,
+      completionTokens: today?.completionTokens ?? 0,
+      cost: today && today.costReports > 0 ? today.cost : null,
+    },
+  };
+}
+
 export function healthSnapshot() {
   const db = getDb();
   const blob = db
@@ -646,6 +745,7 @@ export function healthSnapshot() {
       configured: ocrConfigured(),
     },
     llm: {
+      configured: modelConfigured(),
       onUpload: config.openRouterOnUpload,
     },
   };
@@ -676,6 +776,8 @@ export function integrationSnapshot() {
       configured: modelConfigured(),
       onUpload: config.openRouterOnUpload,
       model: config.openRouterModel,
+      fallbackModel: config.openRouterFallbackModel || null,
+      ...llmTelemetryView(),
     },
   };
 }

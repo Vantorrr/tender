@@ -291,8 +291,10 @@ describe("recovery / mail honesty", () => {
     expect(mail.live).toBeDefined();
     expect(mail.missing).toBeUndefined();
     expect(mail.transport).toBeUndefined();
-    expect(llm.configured).toBeUndefined();
+    expect(llm.configured).toBe(false);
     expect(llm.model).toBeUndefined();
+    expect(llm.fallbackModel).toBeUndefined();
+    expect(llm.lastSuccessAt).toBeUndefined();
     void closeDb;
   });
 });

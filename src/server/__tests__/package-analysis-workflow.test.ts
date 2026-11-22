@@ -6,8 +6,10 @@ vi.mock("@/server/project-analysis-ai", () => ({
   buildProjectAnalysisFallback: model.fallback,
 }));
 
+import { config } from "@/server/config";
 import { closeDb, ensureReady, mutateAppData, readAppData } from "@/server/db";
-import { analyzeProcurementPackageWithAI } from "@/server/repo";
+import { analyzeProcurementPackageWithAI, packageAnalysisAlreadyCurrent } from "@/server/repo";
+import { refreshAndMaybeAnalyzePackage } from "@/server/upload-package-analysis";
 import "./setup";
 
 describe("package analysis workflow", () => {
@@ -92,6 +94,27 @@ describe("package analysis workflow", () => {
     expect(result.warning).toBe("Разбор не удался, записка не менялась — попробуйте позже");
     expect(procurement.analytics?.summary).toBe(kept);
     expect(model.fallback).not.toHaveBeenCalled();
+  });
+
+  it("skips a second automatic package analysis until the document set changes, and a direct call still runs", async () => {
+    config.openRouterOnUpload = true;
+    model.analyze.mockImplementation(async (_procurement, _documents, deterministic) => ({
+      ...deterministic,
+      method: "разбор пакета по цитатам документов",
+      summary: "Готовность к решению: данных недостаточно. проверка",
+    }));
+    try {
+      await analyzeProcurementPackageWithAI("u-tender", "p-2");
+      expect(packageAnalysisAlreadyCurrent("p-2")).toBe(true);
+      expect(readAppData().procurements.find((item) => item.id === "p-2")?.analytics?.sourceDocumentHash).toMatch(/^[a-f0-9]{64}$/);
+      model.analyze.mockClear();
+      await refreshAndMaybeAnalyzePackage("u-tender", "p-2");
+      expect(model.analyze).not.toHaveBeenCalled();
+      await analyzeProcurementPackageWithAI("u-tender", "p-2");
+      expect(model.analyze).toHaveBeenCalledOnce();
+    } finally {
+      config.openRouterOnUpload = false;
+    }
   });
 
   it("rejects an unknown procurement before model invocation", async () => {

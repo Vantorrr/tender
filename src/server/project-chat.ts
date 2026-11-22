@@ -402,7 +402,11 @@ export async function sendProjectChatMessage(
             text: sourceText.slice(0, MAX_PROMPT_SOURCE_LENGTH),
           })),
         });
-        const parsed = parseProjectChatResult(await completeJson(SYSTEM, userPrompt));
+        const parsed = parseProjectChatResult(await completeJson(SYSTEM, userPrompt, 0, {
+          purpose: "project-chat",
+          // Chat wording only. Facts stay bound to the cited sources; memos stay at temperature 0.
+          temperature: 0.2,
+        }));
         const validated = validateProjectChatResult(parsed, allSources, question);
         answer = validated.answer;
         citations = validated.sources;

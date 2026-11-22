@@ -11,6 +11,7 @@ import {
   combineEstimateTotals,
   completedWorkCost,
   composeAnalyticalNote,
+  honestReadinessText,
   foldNorthernEconomics,
   matchDirectorySuppliers,
   migratePlanEntries,
@@ -94,7 +95,11 @@ describe("wave 2–3 decisions", () => {
       blocks: ["Паспорт", "Условия", "Объёмы", "Себестоимость 10", "Штраф"],
     });
     const shape = analyticalNoteStructure(note);
+    expect(note.startsWith("Готовность к решению: достаточно данных.")).toBe(true);
+    expect(note).not.toMatch(/Вердикт ИИ/);
     expect(shape.verdict).toBe(7);
+    expect(honestReadinessText("Вердикт ИИ: 3 / 10 — не выходить")).toBe("Готовность к решению: не участвовать. не выходить");
+    expect(analyticalNoteStructure("Вердикт ИИ: 4 / 10 — мало данных").verdict).toBe(4);
     expect(shape.blocks).toHaveLength(5);
     expect(analysisFailureText("OCR (tesseract): пусто")).toBe("Разбор не выполнен: пусто");
     expect(ocrFailureMessage("tesseract failed: missing rus")).toBe("Не удалось распознать скан: missing rus");

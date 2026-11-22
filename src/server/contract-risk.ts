@@ -97,7 +97,7 @@ export async function reviewContractText(
       remarks: parseContractRisks(contractText),
     };
   }
-  const raw = await (options?.ask ?? completeJson)(CONTRACT_REVIEW_SYSTEM, contractText.slice(0, 14_000));
+  const raw = await (options?.ask ?? ((system: string, prompt: string) => completeJson(system, prompt, 0, { purpose: "contract-review" })))(CONTRACT_REVIEW_SYSTEM, contractText.slice(0, 14_000));
   const parsed = parseContractChecklist(raw, contractText);
   if (parsed.error) throw new Error(parsed.error);
   return {

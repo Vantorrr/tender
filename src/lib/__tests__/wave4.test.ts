@@ -195,7 +195,8 @@ describe("analytical note shape", () => {
       verdictText: "нужна проверка сроков",
       blocks: ["паспорт", "условия", "объёмы", "себестоимость", "риски"],
     });
-    expect(note.startsWith("Вердикт ИИ: 6 / 10 — нужна проверка сроков")).toBe(true);
+    expect(note.startsWith("Готовность к решению: данных недостаточно. нужна проверка сроков")).toBe(true);
+    expect(note).not.toMatch(/Вердикт ИИ|\d \/ 10/);
     expect(analyticalNoteBlocks(note).map((block) => block.body)).toEqual(["паспорт", "условия", "объёмы", "себестоимость", "риски"]);
     expect(refreshRateAssumption("Ставки взяты только из точного совпадения кода и единицы в справочниках; цена заказчика не копировалась."))
       .toContain("по должности");
