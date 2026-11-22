@@ -1,6 +1,19 @@
 import type { Citation, GprStage } from "@/lib/types";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS, type ResourceScheduleParams } from "@/lib/resource-schedule-model";
 
+/**
+ * A missing rate is not a confirmed zero. A real zero with every rate found
+ * stays a zero and asks for a check, so it never says «нет ставок для 0 строк».
+ */
+export function draftCostPhrase(cost: number | null, missingRates: number): string {
+  if (missingRates > 0) {
+    return `Себестоимость не рассчитана: нет ставок для ${missingRates} строк`;
+  }
+  if (cost === 0) return "Себестоимость 0 ₽: проверьте объёмы и ставки";
+  if (cost == null) return "нет подтверждённого итога";
+  return `${cost} ₽`;
+}
+
 export function rateIsMissing(rate: number | null | undefined): boolean {
   return rate == null || !Number.isFinite(rate) || rate <= 0;
 }

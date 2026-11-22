@@ -4,7 +4,7 @@ import { visibleProcurementNumber } from "@/lib/pipeline";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_LABELS } from "@/lib/ai-topics";
 import { NOT_IN_DOCUMENTS, numbersAreGrounded } from "@/server/ai-grounding";
-import { analysisFailureText, citedQuestion, composeAnalyticalNote, suppressFalseAbsence } from "@/lib/wave23";
+import { analysisFailureText, citedQuestion, composeAnalyticalNote, draftCostPhrase, suppressFalseAbsence } from "@/lib/wave23";
 import { rollupWorkSections, alignVolumeToSections, isOverheadPosition, stripWorkTypesOutsideSources } from "@/server/estimate-rollup";
 import {
   PROJECT_ANALYSIS_CITATION_CHARS,
@@ -118,14 +118,7 @@ export function selectAnalysisCitations(citations: Citation[], limit = 40): Cita
   return [...selected];
 }
 
-/** Missing company rates or a zero total are not a confirmed cost of 0 ₽. */
-export function draftCostPhrase(cost: number | null, missingRates: number): string {
-  if (cost === 0 || missingRates > 0) {
-    return `Себестоимость не рассчитана: нет ставок для ${missingRates} строк`;
-  }
-  if (cost == null) return "нет подтверждённого итога";
-  return `${cost} ₽`;
-}
+export { draftCostPhrase };
 
 /** Percent sign stays on a number. A missing percent is the words alone, never «не рассчитана%». */
 export function percentOrMissing(value: number | null | undefined): string {
@@ -811,7 +804,7 @@ export async function analyzeProjectPackageWithModel(
   const economicSummary = !economics
     ? "Черновая себестоимость не рассчитана."
     : [
-        costPhrase.startsWith("Себестоимость не рассчитана")
+        costPhrase.startsWith("Себестоимость")
           ? `${costPhrase}.`
           : `Черновая себестоимость по справочникам компании: ${costPhrase}.`,
         economics.missingRates ? `Не найдены собственные ставки для ${economics.missingRates} строк.` : "Ставки по строкам черновика найдены.",
@@ -981,7 +974,7 @@ export function buildProjectAnalysisFallback(
   // model pass it must not turn a complete spreadsheet into a bid approval.
   const fallbackCost = economics ? draftCostPhrase(cost, economics.missingRates) : "";
   const economicText = economics ? [
-    fallbackCost.startsWith("Себестоимость не рассчитана")
+    fallbackCost.startsWith("Себестоимость")
       ? `${fallbackCost}.`
       : `Себестоимость с учтёнными накладными: ${fallbackCost}.`,
     `Цена без НДС: ${priceExVat == null ? "не рассчитана" : `${priceExVat} ₽`}; с НДС: ${priceWithVat == null ? "не рассчитана" : `${priceWithVat} ₽`}.`,

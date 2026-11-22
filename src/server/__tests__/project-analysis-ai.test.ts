@@ -112,6 +112,8 @@ describe("grounded project analysis", () => {
     expect(draftCostPhrase(0, 4)).toBe("Себестоимость не рассчитана: нет ставок для 4 строк");
     expect(draftCostPhrase(1500, 2)).toBe("Себестоимость не рассчитана: нет ставок для 2 строк");
     expect(draftCostPhrase(1500, 0)).toBe("1500 ₽");
+    expect(draftCostPhrase(0, 0)).toBe("Себестоимость 0 ₽: проверьте объёмы и ставки");
+    expect(draftCostPhrase(0, 0)).not.toContain("нет ставок");
 
     const procurement = {
       id: "p-1", orgId: "org-1", number: "T-1", title: "Ремонт", customer: "Заказчик",
@@ -131,6 +133,14 @@ describe("grounded project analysis", () => {
     expect(fallback.summary).not.toMatch(/не рассчитана%/);
     expect(fallback.summary).not.toMatch(/(^|[^\d])0 ₽/);
     expect(fallback.economics?.missingRates).toBe(4);
+
+    const zeroWithRates = buildProjectAnalysisFallback(procurement, deterministic, {
+      cost: 0, priceExVat: null, priceWithVat: null, profit: null,
+      profitabilityPercent: null, revenueMarginPercent: null, incomplete: true, missingRates: 0,
+    }, undefined, "пустой ответ");
+    expect(zeroWithRates.summary).toContain("Себестоимость 0 ₽: проверьте объёмы и ставки");
+    expect(zeroWithRates.summary).not.toContain("нет ставок");
+    expect(zeroWithRates.summary).not.toContain("Черновая себестоимость по справочникам компании: Себестоимость");
   });
 
   it("accepts only a paraphrase with an exact quote, valid source, and matching numbers", () => {

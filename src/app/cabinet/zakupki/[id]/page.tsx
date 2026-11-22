@@ -25,7 +25,7 @@ import { visibleProcurementSource } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney, formatNumber, formatQuantity, needByPhrase, roundQuantity, sameRoundedQuantity } from "@/lib/format";
 import { citationTopicLabel, readableCitations, regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
 import { SUMMARY_FRESH, SUMMARY_UNCHANGED } from "@/lib/summary-notice";
-import { analyticalNoteBlocks, citationHref, honestReadinessText, matchDirectorySuppliers } from "@/lib/wave23";
+import { analyticalNoteBlocks, citationHref, draftCostPhrase, honestReadinessText, matchDirectorySuppliers } from "@/lib/wave23";
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_CHECKLIST } from "@/lib/ai-topics";
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
@@ -1492,8 +1492,8 @@ export default function ZakupkaDetailPage() {
                         const missingRates = analytics.economics?.missingRates ?? 0;
                         const shown = !filled || value == null
                           ? "Расчёт не заполнен"
-                          : label === "Себестоимость" && (value === 0 || missingRates > 0)
-                            ? `Себестоимость не рассчитана: нет ставок для ${missingRates} строк`
+                          : label === "Себестоимость" && (missingRates > 0 || value === 0)
+                            ? draftCostPhrase(value, missingRates)
                             : formatMoney(value);
                         return (
                         <div key={label} className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3">
