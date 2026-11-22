@@ -3,7 +3,7 @@ import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { MODEL_NOTE_SYSTEM, formatSourceLocation } from "@/server/ai-prompts";
 import type { WorkSectionRollup } from "@/server/estimate-rollup";
 import { config } from "@/server/config";
-import { completeJson, modelConfigured } from "@/server/openrouter";
+import { completeJsonWithUsage, modelConfigured } from "@/server/openrouter";
 
 export const ANALYSIS_SYSTEM_PROMPT = MODEL_NOTE_SYSTEM;
 
@@ -202,12 +202,15 @@ async function writeNote(
   checks: Array<string | null>,
   highlights: Highlight[],
   citations: Citation[]
-): Promise<{ note: string } | { failure: string }> {
+): Promise<{ note: string; model: string } | { failure: string }> {
   if (!modelConfigured()) return { failure: "ключ модели не задан" };
   const userContent = buildModelNoteUserContent(facts, highlights, citations);
   let raw: string;
+  let answeredBy = "";
   try {
-    raw = await completeJson(ANALYSIS_SYSTEM_PROMPT, userContent);
+    const completion = await completeJsonWithUsage(ANALYSIS_SYSTEM_PROMPT, userContent, 0, { purpose: "model-note" });
+    raw = completion.content;
+    answeredBy = completion.model;
   } catch (error) {
     const reason = error instanceof Error ? error.message : "ошибка модели";
     console.error("model note skipped:", reason);
@@ -232,7 +235,7 @@ async function writeNote(
     console.error("model note rejected:", reason);
     return { failure: reason };
   }
-  return { note };
+  return { note, model: answeredBy };
 }
 
 export function noteRejectionReason(
@@ -319,7 +322,7 @@ export async function refineNote<T extends Noted>(
       analyticalNote: written.note,
       noteByModel: true,
       aiFailure: undefined,
-      analysis: { ...analysis.analysis, narrator: config.openRouterModel },
+      analysis: { ...analysis.analysis, narrator: written.model || config.openRouterModel },
     };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "ошибка модели";

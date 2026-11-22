@@ -161,10 +161,20 @@ export interface ProjectAnalytics {
   /** Questions for the customer. Numbers are kept only when they appear in a source. */
   customerQuestions?: string[];
   generatedAt: string;
+  /** Older cards may store the memo clock here instead of generatedAt. */
+  updatedAt?: string;
   method: string;
   disclaimer: string;
   /** Set when the model call failed. Exact prefix: «ИИ-анализ не выполнен:». */
   aiFailure?: string;
+  /** Model id that answered this memo. Readiness is a rule gate, not this model's score. */
+  answeredByModel?: string;
+  /** Who wrote the current memo. A local сводка is not a model memo. */
+  memoSource?: "model" | "local";
+  /** Document-set hash of the last successful package analysis. */
+  sourceDocumentHash?: string;
+  /** The model memo no longer matches the files. Stays until a new model analysis. */
+  memoStale?: boolean;
   /** Source coverage and evidence validation; this is not an accuracy percentage. */
   quality?: {
     status: "insufficient_sources" | "needs_review" | "evidence_backed";
@@ -183,6 +193,8 @@ export interface ProjectAnalytics {
     profitabilityPercent: number | null;
     revenueMarginPercent: number | null;
     complete: boolean;
+    /** Draft rows without a company rate. Zero cost with a positive count is not 0 ₽. */
+    missingRates?: number;
     missingInputs: string[];
   };
 }

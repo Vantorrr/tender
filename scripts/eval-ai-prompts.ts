@@ -36,7 +36,7 @@ import type { Calculation, Citation } from "../src/lib/types";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = path.join(root, "eval-output");
 const mock = process.argv.includes("--mock") || process.env.EVAL_AI_MOCK === "1";
-const evalModel = process.env.OPENROUTER_MODEL || "google/gemini-3-flash-preview";
+const evalModel = process.env.OPENROUTER_MODEL || "google/gemini-2.5-flash";
 
 type EvalCase = {
   id: string;
@@ -374,6 +374,7 @@ async function runCase(evalCase: EvalCase): Promise<{ score: PromptScore; raw: s
       webSearch: evalCase.webSearch,
       maxTokens: evalCase.maxTokens,
       model: evalModel,
+      purpose: "prompt-eval",
     });
     const resolvedSources = evalCase.webSearch ? await resolveSearchSources(completion.sourceUrls) : completion.sourceUrls;
     const raw = evalCase.webSearch

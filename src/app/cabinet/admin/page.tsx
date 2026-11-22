@@ -60,6 +60,10 @@ type IntegrationSnapshot = {
     configured: boolean;
     onUpload: boolean;
     model: string;
+    fallbackModel: string | null;
+    lastSuccessAt: string | null;
+    lastError: { at: string; errorClass: string; purpose: string; model: string } | null;
+    today: { calls: number; promptTokens: number; completionTokens: number; cost: number | null };
   };
 };
 
@@ -111,6 +115,7 @@ function IntegrationPanel() {
           next: integrations.procurement.status === "ok"
             ? "Открытая лента «Норникеля» подключена. Закрытые площадки настраиваются отдельно."
             : "Для реальной синхронизации укажите поддерживаемый источник и доступы площадки.",
+          lines: [] as string[],
         },
         {
           title: "Распознавание документов",
@@ -120,12 +125,23 @@ function IntegrationPanel() {
           next: integrations.ocr.configured
             ? "Текстовые PDF и сканы доступны для распознавания."
             : "Установите tesseract-ocr и poppler-utils; в Docker-образе они уже включены.",
+          lines: [] as string[],
         },
         {
           title: "ИИ-анализ пакета",
           ready: integrations.llm.configured,
-          status: integrations.llm.configured ? "Ключ настроен" : "Нужен ключ модели",
-          detail: `Модель: ${integrations.llm.model}. Автоанализ при загрузке ${integrations.llm.onUpload ? "включён" : "выключен"}.`,
+          status: integrations.llm.configured ? "Ключ задан" : "Ключ не задан",
+          detail: `Автоанализ при загрузке ${integrations.llm.onUpload ? "включён" : "выключен"}.`,
+          lines: [
+            `Ключ: ${integrations.llm.configured ? "задан" : "не задан"}`,
+            `Основная модель: ${integrations.llm.model}`,
+            `Запасная модель: ${integrations.llm.fallbackModel || "не задана"}`,
+            `Последний успешный ответ: ${integrations.llm.lastSuccessAt ? formatDateTime(integrations.llm.lastSuccessAt) : "ещё не было"}`,
+            integrations.llm.lastError
+              ? `Последняя ошибка: ${integrations.llm.lastError.errorClass} · ${formatDateTime(integrations.llm.lastError.at)}`
+              : "Последней ошибки нет",
+            `Сегодня: ${integrations.llm.today.calls} вызовов, токены запроса ${integrations.llm.today.promptTokens}, ответа ${integrations.llm.today.completionTokens}, ${integrations.llm.today.cost == null ? "стоимость не передана провайдером" : `стоимость ${integrations.llm.today.cost.toLocaleString("ru-RU", { maximumFractionDigits: 6 })} USD`}`,
+          ],
           next: integrations.llm.configured
             ? "Ключ ИИ настроен. Анализ пакета доступен в карточке закупки."
             : "Ключ ИИ не настроен. Анализ в карточке закупки заработает после настройки на сервере.",
@@ -138,6 +154,7 @@ function IntegrationPanel() {
           next: integrations.mail.live
             ? "Письма восстановления пароля отправляются через настроенный SMTP."
             : `Для доставки писем настройте MAIL_TRANSPORT=smtp и SMTP_*${integrations.mail.missing.length ? `: ${integrations.mail.missing.join(", ")}` : ""}.`,
+          lines: [] as string[],
         },
       ]
     : [];
@@ -163,6 +180,11 @@ function IntegrationPanel() {
                 <Badge variant={card.ready ? "secondary" : "outline"}>{card.status}</Badge>
               </div>
               <p className="mt-3 text-xs leading-relaxed text-[var(--tk-muted)]">{card.detail}</p>
+              {card.lines?.length ? (
+                <ul className="mt-2 space-y-1 text-xs leading-relaxed">
+                  {card.lines.map((line) => <li key={line}>{line}</li>)}
+                </ul>
+              ) : null}
               <p className="mt-2 text-xs leading-relaxed">{card.next}</p>
             </article>
           ))}

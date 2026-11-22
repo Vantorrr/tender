@@ -404,7 +404,7 @@ export async function discoverMaterialSuppliers(input: { material: string; regio
   const region = input.region.trim().slice(0, 120);
   if (!material || !region) throw new Error("Укажите материал и регион для поиска");
   const query = buildSupplierQuery(input);
-  const completion = await completeJsonDetailed(SYSTEM, query, 0, { webSearch: true });
+  const completion = await completeJsonDetailed(SYSTEM, query, 0, { webSearch: true, purpose: "supplier-discovery" });
   const resolved = await resolveSearchSources(completion.sourceUrls);
   return groundSupplierRegions(await applyLiveSupplierLinks(filterSupplierCandidates(completion.content, resolved), resolved));
 }

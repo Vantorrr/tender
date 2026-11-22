@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  completeJson: vi.fn(),
+  completeJsonWithUsage: vi.fn(),
   modelConfigured: vi.fn(() => true),
 }));
 
 vi.mock("@/server/openrouter", () => ({
-  completeJson: mocks.completeJson,
+  completeJsonWithUsage: mocks.completeJsonWithUsage,
   modelConfigured: mocks.modelConfigured,
 }));
 vi.mock("@/server/config", () => ({
@@ -54,7 +54,7 @@ const analysis: {
 describe("refineNote failures", () => {
   it("keeps the local note and persists the model error instead of hiding it", async () => {
     mocks.modelConfigured.mockReturnValue(true);
-    mocks.completeJson.mockRejectedValueOnce(new Error("Пустой ответ модели"));
+    mocks.completeJsonWithUsage.mockRejectedValueOnce(new Error("Пустой ответ модели"));
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
 
     const refined = await refineNote(analysis, { fileName: "smeta.xlsx" }, []);
@@ -67,10 +67,10 @@ describe("refineNote failures", () => {
   });
 
   it("does not mark a failure when the model key is absent", async () => {
-    mocks.completeJson.mockClear();
+    mocks.completeJsonWithUsage.mockClear();
     mocks.modelConfigured.mockReturnValue(false);
     const refined = await refineNote(analysis, { fileName: "smeta.xlsx" }, []);
     expect(refined.aiFailure).toBeUndefined();
-    expect(mocks.completeJson).not.toHaveBeenCalled();
+    expect(mocks.completeJsonWithUsage).not.toHaveBeenCalled();
   });
 });

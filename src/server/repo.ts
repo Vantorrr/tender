@@ -26,13 +26,14 @@ import type {
   User,
 } from "@/lib/types";
 import { matchCompanyDirectoryRate, rateFromRow } from "@/lib/client-dirs";
+import { documentSetHash } from "@/server/document-set-hash";
 import { modelConfigured } from "@/server/openrouter";
 import { canonicalUploadPath, deleteUpload, readUpload, resolveUploadPath } from "@/server/uploads";
 import { recentPaymentId } from "@/lib/duplicate-click";
 import { supplyNeedKey } from "@/lib/supply-need";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
 import { buildStagesFromEstimatePositions, calendarDurationDays, datesForStage, GPR_DATES_MISSING, periodFromDocumentText } from "@/lib/estimate-stages";
-import { COMPANY_RATE_RULE, composeAnalyticalNote, dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, scheduleAfterPredecessor, scheduleParamsWithNorthernDefaults } from "@/lib/wave23";
+import { COMPANY_RATE_RULE, composeAnalyticalNote, dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, recognizedRowsPhrase, rowCountGenitive, rowCountNominative, scheduleAfterPredecessor, scheduleParamsWithNorthernDefaults } from "@/lib/wave23";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
 import {
@@ -1946,8 +1947,211 @@ export function resetDemo(actorId: string): { token: string; actorId: string } {
   return { token, actorId: resolvedActorId };
 }
 
-function modelWroteAnalyticalNote(analytics: { method?: string } | null | undefined): boolean {
-  return analytics?.method === "разбор пакета по цитатам документов" || analytics?.method === "model_note";
+function hasModelFindings(analytics: { findings?: Array<{ text?: string }> } | null | undefined): boolean {
+  return Boolean(analytics?.findings?.some((finding) => finding.text?.trim()));
+}
+
+function modelWroteAnalyticalNote(analytics: { method?: string; memoSource?: string; answeredByModel?: string; findings?: Array<{ text?: string }> } | null | undefined): boolean {
+  return analytics?.memoSource === "model"
+    || Boolean(analytics?.answeredByModel)
+    || analytics?.method === "разбор пакета по цитатам документов"
+    || analytics?.method === "model_note"
+    || hasModelFindings(analytics);
+}
+
+/** Prod cards written before memoSource/hash existed. Findings alone are enough when the method was not stored. */
+function isLegacyModelMemo(analytics: ProjectAnalytics | null | undefined): boolean {
+  if (!analytics || analytics.memoSource || analytics.answeredByModel || analytics.sourceDocumentHash || analytics.memoStale) return false;
+  return analytics.method === "разбор пакета по цитатам документов"
+    || analytics.method === "model_note"
+    || hasModelFindings(analytics);
+}
+
+const MODEL_MEMO_STALE = "Документы изменились, обновите разбор";
+
+function documentsForHash(documents: Array<{ id: string; fileName: string; fileSize?: number | null; storedPath?: string | null; uploadedAt?: string | null }>) {
+  return documents.filter((document) => document.storedPath);
+}
+
+type LegacyMemoDocument = {
+  id: string;
+  fileName: string;
+  fileSize?: number | null;
+  storedPath?: string | null;
+  uploadedAt?: string | null;
+  citations?: Array<{ id: string }>;
+  versions?: Array<{ at: string }>;
+};
+
+function parsedTime(value: string | undefined | null): number | undefined {
+  if (!value?.trim()) return undefined;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/** generatedAt, or the older analytics updatedAt when the memo has no generation clock. */
+function legacyMemoClock(analytics: ProjectAnalytics): number | undefined {
+  return parsedTime(analytics.generatedAt) ?? parsedTime(analytics.updatedAt);
+}
+
+function citedSourceIds(analytics: ProjectAnalytics): string[] {
+  const ids = [
+    ...analytics.citationIds,
+    ...analytics.citations.map((citation) => citation.id),
+    ...(analytics.findings ?? []).flatMap((finding) => finding.citationIds),
+  ];
+  return [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+}
+
+function citedDocumentKeys(analytics: ProjectAnalytics): Set<string> {
+  const keys = new Set(citedSourceIds(analytics));
+  for (const citation of analytics.citations) {
+    if (citation.sourceFile.trim()) keys.add(citation.sourceFile);
+  }
+  for (const finding of analytics.findings ?? []) {
+    for (const file of finding.sourceFiles) {
+      if (file.trim()) keys.add(file);
+    }
+  }
+  return keys;
+}
+
+function documentInCitedSet(document: LegacyMemoDocument, cited: Set<string>): boolean {
+  if (cited.has(document.id) || cited.has(document.fileName)) return true;
+  return (document.citations ?? []).some((citation) => cited.has(citation.id));
+}
+
+function coverageCountsDiffer(analytics: ProjectAnalytics, rebuilt: ProjectAnalytics | undefined): boolean {
+  if (!analytics.quality || !rebuilt?.quality) return false;
+  return analytics.quality.sourceDocuments !== rebuilt.quality.sourceDocuments
+    || analytics.quality.requiredDocumentsFound !== rebuilt.quality.requiredDocumentsFound
+    || analytics.quality.citationCount !== rebuilt.quality.citationCount;
+}
+
+/** True only when the files or citations show the legacy memo does not cover this set. */
+function legacyMemoConflictsWithDocuments(
+  analytics: ProjectAnalytics,
+  documents: LegacyMemoDocument[],
+  rebuilt: ProjectAnalytics | undefined,
+): boolean {
+  const stored = documents.filter((document) => document.storedPath);
+  const clock = legacyMemoClock(analytics);
+  if (clock != null) {
+    const changedAfterMemo = stored.some((document) => {
+      const marks = [document.uploadedAt, ...(document.versions ?? []).map((version) => version.at)];
+      return marks.some((mark) => {
+        const at = parsedTime(mark);
+        return at != null && at > clock;
+      });
+    });
+    if (changedAfterMemo) return true;
+  }
+  const citedIds = citedSourceIds(analytics);
+  if (citedIds.length) {
+    const live = new Set<string>();
+    for (const document of stored) {
+      live.add(document.id);
+      for (const citation of document.citations ?? []) live.add(citation.id);
+    }
+    if (citedIds.some((id) => !live.has(id))) return true;
+  }
+  const cited = citedDocumentKeys(analytics);
+  const missingFromCitedSet = cited.size > 0 && stored.some((document) => !documentInCitedSet(document, cited));
+  if (missingFromCitedSet && coverageCountsDiffer(analytics, rebuilt)) return true;
+  return false;
+}
+
+/** Stamp the current files only when nothing shows they changed after this memo. */
+function backfillLegacyModelMemo(
+  analytics: ProjectAnalytics | undefined,
+  documents: LegacyMemoDocument[],
+  rebuilt: ProjectAnalytics | undefined,
+): ProjectAnalytics | undefined {
+  if (!isLegacyModelMemo(analytics)) return analytics;
+  if (legacyMemoConflictsWithDocuments(analytics!, documents, rebuilt)) return analytics;
+  return {
+    ...analytics!,
+    memoSource: "model",
+    sourceDocumentHash: documentSetHash(documentsForHash(documents)),
+  };
+}
+
+/** A model memo stays current only for the document set it was written on. */
+function modelMemoIsCurrent(
+  analytics: ProjectAnalytics | undefined,
+  documents: Array<{ id: string; fileName: string; fileSize?: number | null; storedPath?: string | null; uploadedAt?: string | null }>,
+): boolean {
+  if (!analytics?.sourceDocumentHash || !modelWroteAnalyticalNote(analytics)) return false;
+  return analytics.sourceDocumentHash === documentSetHash(documentsForHash(documents));
+}
+
+/** Document coverage can move. The model's review status and claim counts stay. */
+function mergedAnalyticsQuality(
+  previous: ProjectAnalytics["quality"] | undefined,
+  rebuilt: ProjectAnalytics["quality"] | undefined,
+): ProjectAnalytics["quality"] | undefined {
+  if (!previous) return rebuilt;
+  const rejected = previous.rejectedClaims ?? 0;
+  return {
+    status: rejected > 0 && previous.status === "evidence_backed" ? "needs_review" : previous.status,
+    sourceDocuments: rebuilt?.sourceDocuments ?? previous.sourceDocuments,
+    requiredDocumentsFound: rebuilt?.requiredDocumentsFound ?? previous.requiredDocumentsFound,
+    citationCount: rebuilt?.citationCount ?? previous.citationCount,
+    acceptedClaims: previous.acceptedClaims,
+    rejectedClaims: previous.rejectedClaims,
+  };
+}
+
+function withDeterministicCoverage(previous: ProjectAnalytics, rebuilt: ProjectAnalytics): ProjectAnalytics {
+  return {
+    ...previous,
+    missingInputs: rebuilt.missingInputs,
+    quality: mergedAnalyticsQuality(previous.quality, rebuilt.quality),
+    citations: rebuilt.citations,
+    citationIds: rebuilt.citationIds,
+  };
+}
+
+function localNoteAnalytics(
+  built: ProjectAnalytics,
+  docs: Array<{ category?: string; fileName: string; estimatePositions?: unknown[] }>,
+  stale: boolean,
+): ProjectAnalytics {
+  const summary = localAnalyticalSummary(built, docs);
+  return {
+    ...built,
+    summary: stale ? `${MODEL_MEMO_STALE}\n\n${summary}` : summary,
+    memoSource: "local",
+    answeredByModel: undefined,
+    sourceDocumentHash: undefined,
+    memoStale: stale ? true : undefined,
+    findings: undefined,
+    customerQuestions: undefined,
+  };
+}
+
+function localAnalyticalSummary(built: ProjectAnalytics, docs: Array<{ category?: string; fileName: string; estimatePositions?: unknown[] }>): string {
+  const verdict = built.recommendation === "participate" ? 7 : built.recommendation === "do_not_participate" ? 3 : 4;
+  const verdictText = built.recommendation === "participate"
+    ? "Участие возможно после проверки документов."
+    : built.recommendation === "do_not_participate"
+      ? "Участие не рекомендуется по найденным условиям."
+      : "Данных недостаточно для уверенного решения.";
+  return composeAnalyticalNote({
+    verdict,
+    verdictText,
+    blocks: [
+      built.summary.split("\n\n")[0] || "нет данных",
+      docs.some((document) => document.category === "contract" || /договор|контракт/iu.test(document.fileName))
+        ? "Условия участия смотрите в договоре и цитатах карточки."
+        : "нет данных",
+      docs.some((document) => (document.estimatePositions?.length ?? 0) > 0)
+        ? `В сметах ${recognizedRowsPhrase(docs.reduce((sum, document) => sum + (document.estimatePositions?.length ?? 0), 0))}.`
+        : "нет данных",
+      "нет данных",
+      built.missingInputs.slice(0, 5).join("\n") || "нет данных",
+    ],
+  });
 }
 
 export function refreshProcurementAnalytics(
@@ -1962,47 +2166,32 @@ export function refreshProcurementAnalytics(
     assertOrgAccess(actor, p.orgId, "закупки");
     const docs = data.documents.filter((d) => d.procurementId === p.id);
     const built = buildProjectAnalytics(p, docs);
-    if (p.analytics && modelWroteAnalyticalNote(p.analytics)) {
-      const factsSame = JSON.stringify(p.analytics.missingInputs) === JSON.stringify(built.missingInputs)
-        && JSON.stringify(p.analytics.quality ?? null) === JSON.stringify(built.quality ?? null);
+    const original = p.analytics;
+    const currentMemo = backfillLegacyModelMemo(original, docs, built);
+    if (currentMemo && modelMemoIsCurrent(currentMemo, docs)) {
+      const next = withDeterministicCoverage(currentMemo, built);
+      const factsSame = original?.summary === next.summary
+        && original?.memoSource === next.memoSource
+        && original?.sourceDocumentHash === next.sourceDocumentHash
+        && JSON.stringify(original?.missingInputs) === JSON.stringify(next.missingInputs)
+        && JSON.stringify(original?.quality ?? null) === JSON.stringify(next.quality ?? null)
+        && JSON.stringify(original?.citationIds) === JSON.stringify(next.citationIds)
+        && JSON.stringify(original?.findings ?? null) === JSON.stringify(next.findings ?? null);
       if (factsSame) {
         unchanged = true;
         return data;
       }
-      p.analytics = {
-        ...p.analytics,
-        missingInputs: built.missingInputs,
-        quality: built.quality,
-      };
+      p.analytics = next;
       audit(data, actorId, "analyze", "procurement", procurementId, "Сводка: обновлены факты, текст записки сохранён");
       return data;
     }
-    const verdict = built.recommendation === "participate" ? 7 : built.recommendation === "do_not_participate" ? 3 : 4;
-    const verdictText = built.recommendation === "participate"
-      ? "Участие возможно после проверки документов."
-      : built.recommendation === "do_not_participate"
-        ? "Участие не рекомендуется по найденным условиям."
-        : "Данных недостаточно для уверенного решения.";
-    const summary = composeAnalyticalNote({
-      verdict,
-      verdictText,
-      blocks: [
-        built.summary.split("\n\n")[0] || "нет данных",
-        docs.some((document) => document.category === "contract" || /договор|контракт/iu.test(document.fileName))
-          ? "Условия участия смотрите в договоре и цитатах карточки."
-          : "нет данных",
-        docs.some((document) => (document.estimatePositions?.length ?? 0) > 0)
-          ? `В сметах распознано ${docs.reduce((sum, document) => sum + (document.estimatePositions?.length ?? 0), 0)} строк.`
-          : "нет данных",
-        "нет данных",
-        built.missingInputs.slice(0, 5).join("\n") || "нет данных",
-      ],
-    });
-    if (p.analytics?.summary === summary) {
+    const staleModel = Boolean(currentMemo && (modelWroteAnalyticalNote(currentMemo) || currentMemo.memoStale));
+    const next = localNoteAnalytics(built, docs, staleModel);
+    if (original?.summary === next.summary && Boolean(original.memoStale) === Boolean(next.memoStale) && original.memoSource === next.memoSource) {
       unchanged = true;
       return data;
     }
-    p.analytics = { ...built, summary };
+    p.analytics = next;
     audit(data, actorId, "analyze", "procurement", procurementId, `Сводка: ${p.analytics.recommendation}`);
     return data;
   });
@@ -2130,6 +2319,14 @@ export async function analyzeProcurementPackageWithAI(
       generated = buildProjectAnalysisFallback(procurement, deterministic, economics, companyContext, modelOff ? "модель не подключена" : failure);
     }
   }
+  if (usedAi) {
+    generated = {
+      ...generated,
+      sourceDocumentHash: documentSetHash(documents),
+      memoSource: "model" as const,
+      memoStale: undefined,
+    };
+  }
   mutateAppData((data) => {
     const currentActor = actorUser(data, actorId);
     const current = data.procurements.find((item) => item.id === procurementId);
@@ -2144,6 +2341,16 @@ export async function analyzeProcurementPackageWithAI(
     warning = "Новых данных нет — записка уже актуальна";
   }
   return { warning, usedAi };
+}
+
+/** True when the last successful package analysis already covered these files. */
+export function packageAnalysisAlreadyCurrent(procurementId: string): boolean {
+  const data = readAppData();
+  const procurement = data.procurements.find((item) => item.id === procurementId);
+  const saved = procurement?.analytics?.sourceDocumentHash;
+  if (!saved) return false;
+  const documents = data.documents.filter((document) => document.procurementId === procurementId && document.storedPath);
+  return documentSetHash(documents) === saved;
 }
 
 function estimateDocumentsForProcurement(data: AppData, procurementId: string) {
@@ -2312,7 +2519,7 @@ export function attachCustomerEstimate(
     if (attachedOriginal) {
       attachedOriginal.pairedCalculationId = p.calculationId;
       attachedOriginal.assumptions = [
-        `Неизменяемый снимок смет заказчика: ${positions.length} строк итогов и позиций`,
+        `Неизменяемый снимок смет заказчика: ${rowCountNominative(positions.length)} итогов и позиций`,
         `Источники: ${sourceNames.join("; ")}`,
         `Распознано строк смет: ${recognizedCount}`,
         "Собственные ресурсы сюда не добавляются",
@@ -2620,7 +2827,7 @@ export function sendProcurementToCalculation(
           : [{ id: `cp-orig-${Date.now()}`, code: "CUST-TOTAL", name: "Итог сметы заказчика", unit: "компл", quantity: 1, rate: 0, rateMissing: true }],
         assumptions: [
           rowsWithoutSourceRates
-            ? `Распознано ${allEstimatePositions.length} строк по ${estimateDocsWithData.length} сметам; для ${rowsWithoutSourceRates} строк исходная ставка не извлечена надёжно, поэтому оригинал показывает подтверждённый итог каждой сметы без подмены ставок нулями.`
+            ? `${recognizedRowsPhrase(allEstimatePositions.length).replace(/^./u, (letter) => letter.toUpperCase())} по ${estimateDocsWithData.length} сметам; для ${rowCountGenitive(rowsWithoutSourceRates)} исходная ставка не извлечена надёжно, поэтому оригинал показывает подтверждённый итог каждой сметы без подмены ставок нулями.`
             : `Неизменяемый снимок сметы заказчика: ${allEstimatePositions.length} распознанных позиций.`,
           `Источники: ${sourceFileNames.join("; ")}`,
           "Собственные ресурсы сюда не добавляются",
@@ -2746,7 +2953,7 @@ export function sendProcurementToCalculation(
         if (addedCount > 0 && previousCount > 0) {
           linked.assumptions = [
             ...(linked.assumptions ?? []),
-            `Добавлено ${addedCount} распознанных строк сметы заказчика; существующие ручные позиции сохранены.`,
+            `Добавлено ${rowCountNominative(addedCount)} сметы заказчика; существующие ручные позиции сохранены.`,
           ];
         }
       }
@@ -2850,10 +3057,18 @@ export function sendProcurementToCalculation(
       p.reviewStatus = "na_rassmotrenii";
     }
     p.status = "v_rabote";
-    p.analytics = buildProjectAnalytics(
+    const rebuilt = buildProjectAnalytics(
       p,
       data.documents.filter((d) => d.procurementId === p.id)
     );
+    const scheduleDocs = data.documents.filter((document) => document.procurementId === p.id);
+    const previous = backfillLegacyModelMemo(p.analytics, scheduleDocs, rebuilt);
+    if (previous && modelMemoIsCurrent(previous, scheduleDocs)) {
+      p.analytics = withDeterministicCoverage(previous, rebuilt);
+    } else {
+      const staleModel = Boolean(previous && (modelWroteAnalyticalNote(previous) || previous.memoStale));
+      p.analytics = localNoteAnalytics(rebuilt, scheduleDocs, staleModel);
+    }
 
     audit(
       data,
@@ -3274,9 +3489,11 @@ function foldUnlinkedVolumes(calc: Calculation): number {
   if (!direct) return extra.labor;
   const overhead = roundMoney(direct * (params.overheadRate ?? 0));
   const added = roundMoney(direct + overhead);
+  const extraProfit = roundMoney(added * (params.profitMarkupOnCostWithOh ?? 0));
   summary.C0 = roundMoney(summary.C0 + added);
   summary.C = roundMoney(summary.C + added);
-  summary.priceExVat = roundMoney((summary.priceExVat ?? 0) + added);
+  summary.profit = roundMoney((summary.profit ?? 0) + extraProfit);
+  summary.priceExVat = roundMoney((summary.priceExVat ?? 0) + added + extraProfit);
   if (summary.resourceSlices) {
     summary.resourceSlices = {
       ...summary.resourceSlices,
@@ -3286,7 +3503,8 @@ function foldUnlinkedVolumes(calc: Calculation): number {
       direct: roundMoney((summary.resourceSlices.direct ?? 0) + direct),
       overhead: roundMoney((summary.resourceSlices.overhead ?? 0) + overhead),
       costWithOh: roundMoney((summary.resourceSlices.costWithOh ?? 0) + added),
-      total: roundMoney((summary.resourceSlices.total ?? 0) + added),
+      profit: roundMoney((summary.resourceSlices.profit ?? 0) + extraProfit),
+      total: roundMoney((summary.resourceSlices.total ?? 0) + added + extraProfit),
     };
   }
   return extra.labor;

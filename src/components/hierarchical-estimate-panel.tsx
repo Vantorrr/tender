@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { parseDecimalRu } from "@/lib/decimal-ru";
 import { formatMoney, formatNumber, plainPositionName, quantityPresentation, visiblePositionCode } from "@/lib/format";
+import { rowCountNominative } from "@/lib/wave23";
 import {
   buildHierarchicalEstimate,
   estimateBudgetCards,
@@ -603,7 +604,7 @@ export function HierarchicalEstimatePanel({
                               <span className="min-w-0 truncate">
                                 <span className="mr-2 text-[var(--tk-muted)]">{expanded ? "▾" : "▸"}</span>
                                 {plainPositionName(first.name)}
-                                <span className="ml-2 text-xs font-normal text-muted-foreground">{leaves.length} строк сметы</span>
+                                <span className="ml-2 text-xs font-normal text-muted-foreground">{rowCountNominative(leaves.length)} сметы</span>
                               </span>
                               <span className="text-right">{formatNumber(leaves.reduce((total, leaf) => total + leaf.quantity, 0))}</span>
                               <span className="text-right">{(() => { const difference = leaves.reduce((total, leaf) => total + (leaf.difference ?? 0), 0); return difference < 0 ? formatNumber(difference) : "—"; })()}</span>

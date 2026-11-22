@@ -16,6 +16,11 @@ import {
   economicMissingInputs,
   companyAnalysisMissingInputs,
   buildProjectAnalysisFallback,
+  draftCostPhrase,
+  percentOrMissing,
+  nmckComparisonPhrase,
+  profitAndMarginPhrase,
+  profitabilitySentence,
 } from "@/server/project-analysis-ai";
 import type { ProjectAnalytics, Procurement } from "@/lib/types";
 
@@ -97,6 +102,92 @@ describe("grounded project analysis", () => {
     expect(fallback.summary).toContain("ИИ-анализ не завершился");
     expect(fallback.aiFailure).toBe("ИИ-анализ не выполнен: пустой ответ");
     expect(fallback.missingInputs.join(" ")).toContain("календарь занятости");
+  });
+
+  it("does not print a percent sign on a missing margin or a zero cost as 0 ₽", () => {
+    expect(percentOrMissing(null)).toBe("не рассчитана");
+    expect(percentOrMissing(12.5)).toBe("12.5%");
+    expect(profitabilitySentence(10, null, null)).toBe(
+      "Расчётная прибыль до налога: 10 ₽; рентабельность на себестоимость: не рассчитана; маржа в цене: не рассчитана."
+    );
+    expect(profitabilitySentence(10, null, null)).not.toMatch(/не рассчитана%/);
+    expect(draftCostPhrase(0, 4)).toBe("Себестоимость не рассчитана: нет ставок для 4 строк");
+    expect(draftCostPhrase(0, 1)).toBe("Себестоимость не рассчитана: нет ставок для 1 строки");
+    expect(draftCostPhrase(0, 2)).toBe("Себестоимость не рассчитана: нет ставок для 2 строк");
+    expect(draftCostPhrase(0, 5)).toBe("Себестоимость не рассчитана: нет ставок для 5 строк");
+    expect(draftCostPhrase(0, 11)).toBe("Себестоимость не рассчитана: нет ставок для 11 строк");
+    expect(draftCostPhrase(0, 21)).toBe("Себестоимость не рассчитана: нет ставок для 21 строки");
+    expect(draftCostPhrase(280939759.9, 16)).toBe("Себестоимость по найденным ставкам: 280 939 759,90 ₽ (без 16 строк без ставок)");
+    expect(draftCostPhrase(1500, 0)).toBe("1500 ₽");
+    expect(draftCostPhrase(0, 0)).toBe("Себестоимость 0 ₽: проверьте объёмы и ставки");
+    expect(draftCostPhrase(0, 0)).not.toContain("нет ставок");
+    const partial = profitAndMarginPhrase({
+      cost: 280939759.9, missingRates: 16, profit: 112375903.96, priceExVat: 393315663.86,
+      profitabilityPercent: 40, revenueMarginPercent: 28.57,
+    });
+    expect(partial.startsWith("Предварительно, только по найденным ставкам, без 16 строк без ставок.")).toBe(true);
+    expect(partial).toContain("112 375 903,96 ₽");
+    expect(partial).toContain("40%");
+    expect(partial).toContain("28.57%");
+    const hidden = profitAndMarginPhrase({
+      cost: 0, missingRates: 16, profit: 0, priceExVat: 0, profitabilityPercent: 0, revenueMarginPercent: 0,
+    });
+    expect(hidden).toBe("Прибыль и рентабельность не рассчитаны: себестоимость не подтверждена.");
+    expect(hidden).not.toMatch(/0 ₽|%/);
+
+    const procurement = {
+      id: "p-1", orgId: "org-1", number: "T-1", title: "Ремонт", customer: "Заказчик",
+      region: "ЯНАО", nmck: null, deadline: "", source: "test", status: "zagruzheno",
+      reviewStatus: "novaya", syncStatus: "aktualno", syncAt: "", attachments: [],
+      documentIds: [], tags: [], createdAt: "",
+    } as unknown as Procurement;
+    const deterministic: ProjectAnalytics = {
+      recommendation: "insufficient_data", summary: "Покрытие документов проверено.", missingInputs: [],
+      citationIds: [], citations, generatedAt: "", method: "test", disclaimer: "",
+    };
+    const fallback = buildProjectAnalysisFallback(procurement, deterministic, {
+      cost: 0, priceExVat: null, priceWithVat: null, profit: null,
+      profitabilityPercent: null, revenueMarginPercent: null, incomplete: true, missingRates: 4,
+    }, undefined, "пустой ответ");
+    expect(fallback.summary).toContain("Себестоимость не рассчитана: нет ставок для 4 строк");
+    expect(fallback.summary).not.toMatch(/не рассчитана%/);
+    expect(fallback.summary).not.toMatch(/(^|[^\d])0 ₽/);
+    expect(fallback.economics?.missingRates).toBe(4);
+
+    const zeroWithRates = buildProjectAnalysisFallback(procurement, deterministic, {
+      cost: 0, priceExVat: null, priceWithVat: null, profit: null,
+      profitabilityPercent: null, revenueMarginPercent: null, incomplete: true, missingRates: 0,
+    }, undefined, "пустой ответ");
+    expect(zeroWithRates.summary).toContain("Себестоимость 0 ₽: проверьте объёмы и ставки");
+    expect(zeroWithRates.summary).not.toContain("нет ставок");
+    expect(zeroWithRates.summary).not.toContain("Черновая себестоимость по справочникам компании: Себестоимость");
+
+    const zeroProfit = buildProjectAnalysisFallback(procurement, deterministic, {
+      cost: 0, priceExVat: 0, priceWithVat: 0, profit: 0,
+      profitabilityPercent: 0, revenueMarginPercent: 0, incomplete: true, missingRates: 16,
+    }, undefined, "пустой ответ");
+    expect(zeroProfit.summary).toContain("нет ставок для 16 строк");
+    expect(zeroProfit.summary).toContain("Прибыль и рентабельность не рассчитаны: себестоимость не подтверждена.");
+    expect(zeroProfit.summary).not.toContain("Расчётная прибыль до налога: 0");
+    expect(zeroProfit.summary).not.toMatch(/рентабельность на себестоимость: 0/);
+
+    const withCeiling = { ...procurement, nmck: 2_000_000 } as Procurement;
+    const unconfirmed = buildProjectAnalysisFallback(withCeiling, deterministic, {
+      cost: 0, priceExVat: 0, priceWithVat: 0, profit: 0,
+      profitabilityPercent: 0, revenueMarginPercent: 0, incomplete: true, missingRates: 16,
+    }, undefined, "пустой ответ");
+    expect(unconfirmed.summary).toContain("Сравнение с НМЦК невозможно, пока себестоимость не рассчитана.");
+    expect(unconfirmed.summary).not.toMatch(/не выше НМЦК|выше НМЦК|запас до предельной/);
+    expect(unconfirmed.recommendation).not.toBe("do_not_participate");
+    expect(nmckComparisonPhrase({
+      cost: 1_500, missingRates: 0, priceWithVat: 0, nmck: 2_000_000, style: "compare",
+    })).toBe("Сравнение с НМЦК невозможно, пока себестоимость не рассчитана.");
+    expect(nmckComparisonPhrase({
+      cost: 1_000, missingRates: 0, priceWithVat: 1_200, nmck: 2_000, style: "headroom",
+    })).toContain("Предельная разница между НМЦК");
+    expect(nmckComparisonPhrase({
+      cost: 1_000, missingRates: 0, priceWithVat: 2_500, nmck: 2_000, style: "compare",
+    })).toContain("расчётная цена выше НМЦК");
   });
 
   it("accepts only a paraphrase with an exact quote, valid source, and matching numbers", () => {

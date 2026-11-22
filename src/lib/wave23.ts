@@ -1,6 +1,67 @@
 import type { Citation, GprStage } from "@/lib/types";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS, type ResourceScheduleParams } from "@/lib/resource-schedule-model";
 
+/** Genitive after «для» / «без»: 1 строки, 2 строк, 5 строк, 21 строки. */
+export function rowCountGenitive(count: number): string {
+  const n = Math.abs(Math.trunc(count));
+  const word = n % 10 === 1 && n % 100 !== 11 ? "строки" : "строк";
+  return `${n} ${word}`;
+}
+
+/** Counted «строка»: 1 строка, 24 строки, 25 строк, 11 строк, 21 строка. */
+export function rowCountNominative(count: number): string {
+  const n = Math.abs(Math.trunc(count));
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  const word = mod10 === 1 && mod100 !== 11
+    ? "строка"
+    : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)
+      ? "строки"
+      : "строк";
+  return `${n} ${word}`;
+}
+
+/** «распознана 1 строка» / «распознано 24 строки» / «распознано 25 строк». */
+export function recognizedRowsPhrase(count: number): string {
+  const n = Math.abs(Math.trunc(count));
+  const singular = n % 10 === 1 && n % 100 !== 11;
+  return `${singular ? "распознана" : "распознано"} ${rowCountNominative(n)}`;
+}
+
+export function moneyRu(value: number): string {
+  const formatted = new Intl.NumberFormat("ru-RU", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value).replace(/\u00a0/g, " ");
+  return `${formatted} ₽`;
+}
+
+/** A positive total with some rates still missing is a partial cost, not a blank. */
+export function costIsPartial(cost: number | null, missingRates: number): boolean {
+  return missingRates > 0 && cost != null && cost > 0;
+}
+
+/** No usable cost: every contributing rate is missing, or the total is 0 because rates are missing. */
+export function costIsUncalculated(cost: number | null, missingRates: number): boolean {
+  return missingRates > 0 && !costIsPartial(cost, missingRates);
+}
+
+/**
+ * A missing rate is not a confirmed zero. A real zero with every rate found
+ * stays a zero and asks for a check, so it never says «нет ставок для 0 строк».
+ * A positive total with gaps keeps the known amount and names the gap.
+ */
+export function draftCostPhrase(cost: number | null, missingRates: number): string {
+  const missing = Math.max(0, Math.trunc(missingRates) || 0);
+  if (costIsPartial(cost, missing)) {
+    return `Себестоимость по найденным ставкам: ${moneyRu(cost ?? 0)} (без ${rowCountGenitive(missing)} без ставок)`;
+  }
+  if (missing > 0) return `Себестоимость не рассчитана: нет ставок для ${rowCountGenitive(missing)}`;
+  if (cost === 0) return "Себестоимость 0 ₽: проверьте объёмы и ставки";
+  if (cost == null) return "нет подтверждённого итога";
+  return `${cost} ₽`;
+}
+
 export function rateIsMissing(rate: number | null | undefined): boolean {
   return rate == null || !Number.isFinite(rate) || rate <= 0;
 }
@@ -26,16 +87,31 @@ export const NOTE_BLOCK_TITLES = [
   "Риски и подводные камни",
 ] as const;
 
+/** Rule gate 7 / 4 / 3. This is not a model score. */
+export function readinessFromScore(verdict: number): "достаточно данных" | "данных недостаточно" | "не участвовать" {
+  const score = Math.max(0, Math.min(10, Math.round(verdict)));
+  if (score >= 7) return "достаточно данных";
+  if (score <= 3) return "не участвовать";
+  return "данных недостаточно";
+}
+
 export function composeAnalyticalNote(input: {
   verdict: number;
   verdictText: string;
   blocks: readonly [string, string, string, string, string];
 }): string {
-  const score = Math.max(0, Math.min(10, Math.round(input.verdict)));
+  const label = readinessFromScore(input.verdict);
   return [
-    `Вердикт ИИ: ${score} / 10 — ${input.verdictText.trim()}`,
+    `Готовность к решению: ${label}. ${input.verdictText.trim()}`,
     ...NOTE_BLOCK_TITLES.map((title, index) => `${index + 1}. ${title}\n${input.blocks[index].trim() || "нет данных"}`),
   ].join("\n\n");
+}
+
+/** Stored notes may still start with the old score line. Show the gate label instead. */
+export function honestReadinessText(text: string): string {
+  return text.replace(/Вердикт(?:\s+ИИ)?:\s*(\d{1,2})\s*\/\s*10(?:\s*[—–-]\s*)?/gu, (_all, score: string) => {
+    return `Готовность к решению: ${readinessFromScore(Number(score))}. `;
+  });
 }
 
 export const COMPANY_RATE_RULE =
@@ -67,10 +143,17 @@ export function analyticalNoteBlocks(text: string): Array<{ title: string; body:
 }
 
 export function analyticalNoteStructure(text: string): { verdict: number | null; blocks: string[] } {
-  const match = text.match(/Вердикт(?:\s+ИИ)?:\s*(\d{1,2})\s*\/\s*10/u);
-  const score = match ? Number(match[1]) : null;
+  let score: number | null = null;
+  if (/Готовность к решению:\s*достаточно данных/u.test(text)) score = 7;
+  else if (/Готовность к решению:\s*не участвовать/u.test(text)) score = 3;
+  else if (/Готовность к решению:\s*данных недостаточно/u.test(text)) score = 4;
+  else {
+    const match = text.match(/Вердикт(?:\s+ИИ)?:\s*(\d{1,2})\s*\/\s*10/u);
+    const legacy = match ? Number(match[1]) : null;
+    score = legacy != null && legacy >= 0 && legacy <= 10 ? legacy : null;
+  }
   return {
-    verdict: score != null && score >= 0 && score <= 10 ? score : null,
+    verdict: score,
     blocks: NOTE_BLOCK_TITLES.filter((title) => text.includes(title)),
   };
 }

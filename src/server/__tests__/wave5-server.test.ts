@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { documentSetHash } from "@/server/document-set-hash";
 import { createSession } from "@/server/auth";
 import { closeDb, ensureReady, mutateAppData, readAppData } from "@/server/db";
 import {
@@ -92,6 +93,9 @@ describe("wave 5 money, answers and supplies", () => {
         citations: [],
         generatedAt: new Date().toISOString(),
         method: "разбор пакета по цитатам документов",
+        memoSource: "model",
+        answeredByModel: "google/gemini-2.5-flash",
+        sourceDocumentHash: documentSetHash(data.documents.filter((document) => document.procurementId === procurement.id && document.storedPath)),
         disclaimer: "проверка",
       };
       return data;

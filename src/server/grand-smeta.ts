@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import { GRAND_PROFILE } from "@/lib/grand-profile";
+import { rowCountNominative } from "@/lib/wave23";
 import { OCR_CHUNK_CHARS, OCR_CHUNKS_PER_PAGE } from "@/server/ai-prompts";
 import { rollupWorkSections } from "@/server/estimate-rollup";
 import { refineNote } from "@/server/model-note";
@@ -209,7 +210,7 @@ function firstOther(cells: { col: number; text: string }[], label: string) {
 
 function formatSectionRollup(rollup: ReturnType<typeof rollupWorkSections>): string {
   if (!rollup.sections.length) return "";
-  const lines = rollup.sections.map((section) => `${section.section}: ${section.quantity} ${section.unit} (${section.rows} строк)`);
+  const lines = rollup.sections.map((section) => `${section.section}: ${section.quantity} ${section.unit} (${rowCountNominative(section.rows)})`);
   const totals = rollup.totalsByUnit.map((item) => `${item.quantity} ${item.unit}`).join(", ");
   const titled = rollup.titledCounts.map((item) => `${item.quantity} ${item.unit}`).join(", ");
   return [

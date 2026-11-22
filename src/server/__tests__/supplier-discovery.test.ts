@@ -25,7 +25,12 @@ describe("open-source supplier discovery", () => {
     await expect(discoverMaterialSuppliers({ material: "Труба стальная", region: "Норильск", work: "Монтаж" })).resolves.toEqual([
       expect.objectContaining({ name: "СеверСнаб", email: "sales@vendor.example", sourceUrl: "https://vendor.example/materials" }),
     ]);
-    expect(complete).toHaveBeenCalledWith(expect.stringContaining("web search"), expect.stringContaining("Норильск"), 0, { webSearch: true });
+    expect(complete).toHaveBeenCalledWith(
+      expect.stringContaining("web search"),
+      expect.stringContaining("Норильск"),
+      0,
+      { webSearch: true, purpose: "supplier-discovery" }
+    );
   });
 
   it("returns an empty list when the search produced no pages", () => {
