@@ -3,7 +3,7 @@
  * Amounts use shared resolveResourceDimensions (same Q/R as cost-engine / export).
  */
 import { roundMoney } from "@/lib/calc-math";
-import { mergeEstimateLeaves } from "@/lib/resource-merge";
+import { mergeEstimateLeaves, mergeLeavesByWork } from "@/lib/resource-merge";
 import { classifyDirectCostBucket, isWorkActivityName } from "@/lib/cost-engine";
 import {
   resolveResourceDimensions,
@@ -319,7 +319,7 @@ export function buildHierarchicalEstimate(opts: {
       linkedSourceKeys.add(p.id);
     }
     if (leaves.length === 0 && q && !match(st.name)) continue;
-    const stageLeaves = mergeEstimateLeaves(leaves);
+    const stageLeaves = mergeLeavesByWork(leaves);
     const groups = groupLeaves(stageLeaves);
     const { subtotal, incomplete } = stageSubtotal(groups);
     const leavesByWork = new Map<string, EstimateLeaf[]>();

@@ -32,7 +32,7 @@ import { labourLineEconomicsNote, NORTH_DEFAULTS, northernAdditionLines, norther
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engine";
 import { parseDecimalRu } from "@/lib/decimal-ru";
-import { groupCalculationResources, patchMergedPositions, patchMergedResources } from "@/lib/resource-merge";
+import { groupCalculationResources, patchMergedPositions, patchMergedResources, positionsAfterDisplayedRateEdit } from "@/lib/resource-merge";
 import { calculationBreakdownRows } from "@/lib/calculation-breakdown";
 import { formatMoney, formatNumber, plainPositionName, quantityPresentation, splitSignedQuantity, visiblePositionCode } from "@/lib/format";
 import { visibleProcurementNumber } from "@/lib/pipeline";
@@ -419,6 +419,7 @@ export default function RaschetDetailPage() {
   const [aiCompareLoading, setAiCompareLoading] = useState(false);
   const [attachEstimateLoading, setAttachEstimateLoading] = useState(false);
   const [pendingPositionId, setPendingPositionId] = useState<string | null>(null);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const [volumeRows, setVolumeRows] = useState<Array<{ work: string; unit: string; volume: number; quote: string; rate: number | null }>>([]);
   const [volumeMessage, setVolumeMessage] = useState("");
   const [volumeBusy, setVolumeBusy] = useState(false);
@@ -484,7 +485,17 @@ export default function RaschetDetailPage() {
     const resources = grouped.flatMap((group) => {
       const base = byId.get(group.id);
       if (!base) return [];
-      return [{ ...base, name: group.name, unit: group.unit, quantity: group.quantity, memberIds: group.ids, people: group.people, workLabel: group.workName }];
+      return [{
+        ...base,
+        name: group.name,
+        unit: group.unit,
+        quantity: group.quantity,
+        rate: group.rate ?? base.rate,
+        rateMissing: group.rate == null,
+        memberIds: group.ids,
+        people: group.people,
+        workLabel: group.workName,
+      }];
     });
     return [
       ...positions.filter((position) => position.isWorkItem || position.code === "НР" || position.code === "СП"),
@@ -1279,7 +1290,7 @@ export default function RaschetDetailPage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {shownPositions.map((p) => (
+              {shownPositions.flatMap((p) => { const groupedRate = (p.memberIds?.length ?? 0) > 1; return [
                 <TableRow key={p.id}>
                   <TableCell className="text-xs">{visiblePositionCode(p.code)}</TableCell>
                   <TableCell className="min-w-[12rem]">
@@ -1335,6 +1346,13 @@ export default function RaschetDetailPage() {
                       <span className="text-xs text-[var(--tk-muted)]">не применяется к объёму работы</span>
                     ) : locked ? (
                       p.rateMissing || !(p.rate > 0) ? "нет ставки" : formatMoney(p.rate)
+                    ) : groupedRate ? (
+                      <div className="text-right">
+                        <div>{p.rateMissing || !(p.rate > 0) ? "нет ставки" : formatMoney(p.rate)}</div>
+                        <button type="button" className="text-xs underline" onClick={() => setOpenGroups((current) => ({ ...current, [p.id]: !current[p.id] }))}>
+                          {openGroups[p.id] ? "Скрыть строки" : "Показать строки"}
+                        </button>
+                      </div>
                     ) : (
                       <Input
                         key={`rate-${p.id}:${p.rateMissing ? "missing" : p.rate}`}
@@ -1351,13 +1369,8 @@ export default function RaschetDetailPage() {
                             e.target.value = p.rateMissing ? "" : String(p.rate);
                             return;
                           }
-                          const members = new Set(p.memberIds ?? [p.id]);
                           updateCalculation(calc.id, {
-                            positions: calc.positions.map((x) =>
-                              members.has(x.id)
-                                ? { ...x, rate: parsed ?? 0, rateMissing: parsed == null }
-                                : x
-                            ),
+                            positions: positionsAfterDisplayedRateEdit(calc.positions, p.memberIds ?? [p.id], parsed),
                           });
                         }}
                       />
@@ -1384,8 +1397,45 @@ export default function RaschetDetailPage() {
                       )}
                     </TableCell>
                   ) : null}
-                </TableRow>
-              ))}
+                </TableRow>,
+                ...(groupedRate && openGroups[p.id] ? (p.memberIds ?? []).flatMap((memberId) => {
+                  const member = calc.positions.find((item) => item.id === memberId);
+                  if (!member) return [];
+                  return [(
+                    <TableRow key={`${p.id}:${member.id}`}>
+                      <TableCell />
+                      <TableCell className="pl-6 text-sm">{plainPositionName(member.name)}{member.sourceWorkName ? <div className="text-xs text-[var(--tk-muted)]">{member.sourceWorkName}</div> : null}</TableCell>
+                      <TableCell>{member.unit}</TableCell>
+                      <TableCell className="text-right">{formatNumber(member.quantity)}</TableCell>
+                      <TableCell />
+                      <TableCell className="text-right">
+                        {locked ? (member.rateMissing || !(member.rate > 0) ? "нет ставки" : formatMoney(member.rate)) : (
+                          <Input
+                            key={`member-rate-${member.id}:${member.rate}`}
+                            className="ml-auto w-32 text-right"
+                            aria-label={`Ставка · ${member.name}`}
+                            defaultValue={member.rateMissing || !(member.rate > 0) ? "" : String(member.rate)}
+                            onBlur={(event) => {
+                              const raw = event.target.value.trim();
+                              const parsed = raw === "" ? null : parseDecimalRu(raw);
+                              if (raw !== "" && parsed == null) {
+                                toast.error("Введите ставку, например 756,41");
+                                event.target.value = member.rateMissing ? "" : String(member.rate);
+                                return;
+                              }
+                              updateCalculation(calc.id, {
+                                positions: positionsAfterDisplayedRateEdit(calc.positions, [member.id], parsed),
+                              });
+                            }}
+                          />
+                        )}
+                      </TableCell>
+                      <TableCell className="text-right">{member.rateMissing || !(member.rate > 0) ? "нет ставки" : formatMoney(positionLineSum(member, calc.scenarioFactor || 1))}</TableCell>
+                      {locked ? null : <TableCell />}
+                    </TableRow>
+                  )];
+                }) : []),
+              ]; })}
             </TableBody>
           </Table>
         </div>

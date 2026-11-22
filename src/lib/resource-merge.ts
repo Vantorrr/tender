@@ -308,3 +308,19 @@ export function groupCalculationResources(rows: Array<{
     };
   });
 }
+
+/**
+ * A grouped display row does not write one rate onto every member.
+ * A single row still takes an explicit rate.
+ */
+export function positionsAfterDisplayedRateEdit<T extends { id: string; rate: number; rateMissing?: boolean }>(
+  positions: T[],
+  memberIds: string[],
+  nextRate: number | null,
+): T[] {
+  if (memberIds.length !== 1) return positions;
+  const id = memberIds[0];
+  return positions.map((position) => position.id === id
+    ? { ...position, rate: nextRate ?? 0, rateMissing: nextRate == null }
+    : position);
+}

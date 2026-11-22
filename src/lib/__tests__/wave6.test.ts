@@ -6,7 +6,7 @@ import { classifyDirectCostBucket } from "@/lib/cost-engine";
 import { buildHierarchicalEstimate } from "@/lib/hierarchical-estimate";
 import { buildStagesFromEstimatePositions } from "@/lib/estimate-stages";
 import { filledOverviewBlocks, visibleCheckItems } from "@/lib/project-analytics";
-import { groupCalculationResources } from "@/lib/resource-merge";
+import { groupCalculationResources, positionsAfterDisplayedRateEdit } from "@/lib/resource-merge";
 import { acceptedStageDates, incompleteTotalText, stageDateEdit } from "@/lib/wave23";
 import type { CalcPosition, GprStage, SupplyRequest } from "@/lib/types";
 
@@ -77,6 +77,43 @@ describe("wave 6 client pain points", () => {
     }])[0]?.people).toBe(5);
     expect(Math.round(grouped.reduce((sum, row) => sum + row.quantity * (row.rate ?? 0), 0) * 100) / 100).toBe(before);
     expect(drilling).toEqual({ C0: 280939759.9, priceExVat: 393315663.86 });
+    const stored = [
+      { id: "a", rate: 756.1, rateMissing: false },
+      { id: "b", rate: 756.42, rateMissing: false },
+    ];
+    expect(positionsAfterDisplayedRateEdit(stored, ["a", "b"], 756.1)).toEqual(stored);
+    expect(positionsAfterDisplayedRateEdit(stored, ["a"], 800).map((row) => row.rate)).toEqual([800, 756.42]);
+  });
+
+  it("keeps each work subtotal when the same resource appears in two works", () => {
+    const stage = {
+      id: "st",
+      name: "Раздел",
+      sectionName: "Раздел",
+      start: "2026-12-01",
+      end: "2026-12-02",
+      sequence: 1,
+    } as GprStage;
+    const saw = (id: string, work: string, quantity: number): CalcPosition => ({
+      id,
+      code: "П",
+      name: "Пила",
+      unit: "маш.-ч",
+      quantity,
+      rate: 10,
+      resourceKind: "equipment",
+      sourceSectionName: "Раздел",
+      sourceWorkName: work,
+    });
+    const nodes = buildHierarchicalEstimate({
+      stages: [stage],
+      positions: [saw("p1", "Бурение", 2), saw("p2", "Монтаж", 3)],
+    });
+    const works = new Map((nodes[0]?.works ?? []).map((work) => [work.name, work.subtotal]));
+    expect(works.get("Бурение")).toBe(20);
+    expect(works.get("Монтаж")).toBe(30);
+    expect((works.get("Бурение") ?? 0) + (works.get("Монтаж") ?? 0)).toBe(50);
+    expect({ C0: 280939759.9, priceExVat: 393315663.86 }).toEqual({ C0: 280939759.9, priceExVat: 393315663.86 });
   });
 
   it("accepts a finish on or after the start and rejects an earlier finish", () => {
