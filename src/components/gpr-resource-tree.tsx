@@ -2,7 +2,7 @@
 
 import { Fragment, useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
-import { formatMoney, formatNumber } from "@/lib/format";
+import { formatDate, formatMoney, formatNumber } from "@/lib/format";
 import { rowCountNominative } from "@/lib/wave23";
 import { gprStageLabel } from "@/lib/gpr-stage-label";
 import {
@@ -133,7 +133,7 @@ function FragmentRows({
         <td className="px-3 py-2 text-right">{stage?.planVolume == null ? "—" : formatNumber(stage.planVolume)}</td>
         <td className="px-3 py-2 text-right text-[var(--tk-muted)]">—</td>
         <td className="px-3 py-2 text-right">{node.subtotal == null ? "неполно" : formatMoney(node.subtotal)}</td>
-        <td className="px-3 py-2 text-xs text-[var(--tk-muted)]">{stage ? `${stage.start} — ${stage.end}` : "не распределено"}</td>
+        <td className="px-3 py-2 text-xs text-[var(--tk-muted)]">{stage ? `${formatDate(stage.start)} — ${formatDate(stage.end)}` : "не распределено"}</td>
       </tr>
       {!collapsed && node.works.map((work, workIndex) => {
         const isWorkCollapsed = collapsedWorks[work.id] ?? workIndex > 0;
@@ -149,7 +149,7 @@ function FragmentRows({
               <td className="px-3 py-2 text-right">{work.planVolume == null ? "—" : formatNumber(work.planVolume)}</td>
               <td className="px-3 py-2 text-right text-[var(--tk-muted)]">—</td>
               <td className="px-3 py-2 text-right">{work.subtotal == null ? "неполно" : formatMoney(work.subtotal)}</td>
-              <td className="px-3 py-2 text-xs text-[var(--tk-muted)]">{stage ? `${stage.start} — ${stage.end}` : "не распределено"}</td>
+              <td className="px-3 py-2 text-xs text-[var(--tk-muted)]">{stage ? `${formatDate(stage.start)} — ${formatDate(stage.end)}` : "не распределено"}</td>
             </tr>
             {!isWorkCollapsed && <ResourceGroups groups={work.groups} prefix={work.id} stage={stage} onPatch={onPatch} onExpandDuplicate={setExpandedDuplicates} expandedDuplicates={expandedDuplicates} indent="pl-12" />}
           </Fragment>
@@ -219,7 +219,7 @@ function ResourceGroups({
                 <td className="px-3 py-1.5 text-right font-medium">{formatNumber(totalQuantity)}</td>
                 <td className="px-3 py-1.5 text-right text-[var(--tk-muted)]">{rateSummary != null ? formatMoney(rateSummary) : rates.size > 1 ? "разные ставки" : "—"}</td>
                 <td className={`px-3 py-1.5 text-right font-medium ${totalAmount == null ? "text-amber-800" : ""}`}>{totalAmount == null ? "частично" : formatMoney(totalAmount)}</td>
-                <td className="px-3 py-1.5 text-xs text-[var(--tk-muted)]">{stage ? `${stage.start} — ${stage.end}` : "—"}</td>
+                <td className="px-3 py-1.5 text-xs text-[var(--tk-muted)]">{stage ? `${formatDate(stage.start)} — ${formatDate(stage.end)}` : "—"}</td>
               </tr>
               {expanded ? sameResource.map((item) => <ResourceLeafRow key={`${item.source}-${item.id}`} leaf={item} onPatch={onPatch} stage={stage} />) : null}
             </Fragment>;
@@ -255,7 +255,7 @@ function ResourceLeafRow({
       }} />
     </td>
     <td className={`px-3 py-1.5 text-right ${leaf.amount == null ? "text-amber-800" : ""}`} title={leaf.amount == null ? "нет данных" : undefined}>{leaf.amount == null ? "—" : formatMoney(leaf.amount)}</td>
-    <td className="px-3 py-1.5 text-xs text-[var(--tk-muted)]">{stage ? `${stage.start} — ${stage.end}` : "—"}</td>
+    <td className="px-3 py-1.5 text-xs text-[var(--tk-muted)]">{stage ? `${formatDate(stage.start)} — ${formatDate(stage.end)}` : "—"}</td>
   </tr>;
 }
 

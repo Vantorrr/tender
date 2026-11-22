@@ -23,12 +23,12 @@ import { api, downloadUrl, getClientToken } from "@/lib/api";
 import { DocumentWebPreview } from "@/components/document-web-preview";
 import { visibleProcurementSource } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney, formatNumber, formatQuantity, needByPhrase, roundQuantity, sameRoundedQuantity } from "@/lib/format";
-import { citationTopicLabel, readableCitations, regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
+import { citationTopicLabel, isShownConfirmation, readableCitations, regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
 import { SUMMARY_FRESH, SUMMARY_UNCHANGED } from "@/lib/summary-notice";
-import { analyticalNoteBlocks, calcMemoState, citationHref, costIsPartial, costIsUncalculated, draftCostPhrase, honestReadinessText, matchDirectorySuppliers, moneyRu, rowCountNominative } from "@/lib/wave23";
+import { calcMemoState, citationHref, costIsPartial, costIsUncalculated, draftCostPhrase, honestReadinessText, matchDirectorySuppliers, moneyRu, rowCountNominative } from "@/lib/wave23";
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_CHECKLIST } from "@/lib/ai-topics";
-import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
+import { buildProjectAnalytics, filledOverviewBlocks, PARTICIPATE_LABELS, visibleCheckItems } from "@/lib/project-analytics";
 import { parseDecimalRu } from "@/lib/decimal-ru";
 import { PAYMENT_AMOUNT_ERROR, PAYMENT_BUCKET_LABELS, paymentBucket, paymentTotals, type PaymentBucket } from "@/lib/money-payments";
 import { userHasSection } from "@/lib/acl";
@@ -386,6 +386,11 @@ export default function ZakupkaDetailPage() {
         : [],
     [data.documents, procurement]
   );
+  const documentGaps = useMemo(() => {
+    if (!procurement || docs.length === 0) return [] as string[];
+    if (procurement.analytics) return procurement.analytics.missingInputs;
+    return buildProjectAnalytics(procurement, docs).missingInputs;
+  }, [procurement, docs]);
   const estimateRows = useMemo(
     () => docs
       .filter((document) =>
@@ -509,6 +514,15 @@ export default function ZakupkaDetailPage() {
   const analytics = procurement.analytics;
   const memoState = calcMemoState(calc);
   const shownSummary = analytics ? honestReadinessText(analytics.summary, memoState) : "";
+  const checkItems = visibleCheckItems(documentGaps, docs);
+  const overviewCitations = analytics?.citations?.length ? analytics.citations : docs.flatMap((document) => document.citations ?? []);
+  const overviewBlocks = analytics || docs.length > 0 ? filledOverviewBlocks({
+    summary: shownSummary,
+    documents: docs,
+    citations: overviewCitations,
+    missingInputs: documentGaps,
+    economicsText: memoState ? draftCostPhrase(memoState.cost, memoState.missingRates) : null,
+  }) : [];
   const displayCitations = analytics ? readableCitations(analytics.citations) : [];
   const renderableCitations = displayCitations.map(({ displayText, ...citation }) => ({ ...citation, text: displayText }));
   const keyCitations = keyAnalyticsCitations(renderableCitations);
@@ -519,7 +533,7 @@ export default function ZakupkaDetailPage() {
   const paymentCitations = hasFindingTopic("Оплата") ? [] : distinctCitations(allPaymentCitations).slice(0, 2);
   const liabilityCitations = hasFindingTopic("Ответственность") ? [] : distinctCitations(allLiabilityCitations).slice(0, 2);
   const conditionCitationIds = new Set([...allPaymentCitations, ...allLiabilityCitations].map((citation) => citation.id));
-  const remainingKeyCitations = keyCitations.filter((citation) => !conditionCitationIds.has(citation.id) && !findingCitationIds.has(citation.id));
+  const remainingKeyCitations = keyCitations.filter((citation) => !conditionCitationIds.has(citation.id) && !findingCitationIds.has(citation.id) && isShownConfirmation(citation));
   const primaryCitationTexts = new Set([
     ...[...findingCitationIds].map((id) => displayCitations.find((citation) => citation.id === id)?.displayText),
     ...paymentCitations.map((citation) => citation.text),
@@ -532,7 +546,7 @@ export default function ZakupkaDetailPage() {
   ]);
   const remainingCitations = displayCitations.filter((citation) => {
     const key = citation.displayText.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ").replace(/[.!?]+$/g, "").trim();
-    return !primaryCitationIds.has(citation.id) && !primaryCitationTexts.has(key);
+    return !primaryCitationIds.has(citation.id) && !primaryCitationTexts.has(key) && isShownConfirmation(citation);
   });
   const conditionGroups = [
     { label: "Оплата и аванс", citations: paymentCitations },
@@ -972,28 +986,30 @@ export default function ZakupkaDetailPage() {
                 <p className="mt-1 text-xs text-[var(--tk-muted)]">
                   Загрузите файл или архив — система сохранит его в карточке, обновит сводку и разберёт доступные источники.
                 </p>
-                {analytics ? (
+                {overviewBlocks.length ? (
                   <div className="mt-3 space-y-3">
-                    <p className="text-sm text-[var(--tk-ink)]">{shownSummary.split(/\n\n/)[0]}</p>
+                    {shownSummary ? <p className="text-sm text-[var(--tk-ink)]">{shownSummary.split(/\n\n/)[0]}</p> : null}
                     <div className="space-y-2" data-testid="overview-note-blocks">
-                      {analyticalNoteBlocks(shownSummary).map((block) => (
+                      {overviewBlocks.map((block) => (
                         <div key={block.title}>
                           <p className="text-sm font-medium text-[var(--tk-ink)]">{block.title}</p>
-                          <p className="whitespace-pre-line text-sm text-[var(--tk-muted)]">{block.body || "нет данных"}</p>
+                          <p className="whitespace-pre-line text-sm text-[var(--tk-muted)]">{block.body}</p>
                         </div>
                       ))}
                     </div>
-                    <button
-                      type="button"
-                      className="text-sm font-medium text-[var(--tk-brand)] underline"
-                      data-testid="open-full-note"
-                      onClick={() => setSelectedTab("analytics")}
-                    >
-                      Открыть записку целиком
-                    </button>
-                    <p className="text-xs text-[var(--tk-muted)]">Документов: {analytics.quality?.sourceDocuments ?? docs.length}</p>
-                    <p className="text-xs text-[var(--tk-muted)]">Оценка по документам: {PARTICIPATE_LABELS[analytics.recommendation]}</p>
-                    {analytics.answeredByModel ? (
+                    {analytics ? (
+                      <button
+                        type="button"
+                        className="text-sm font-medium text-[var(--tk-brand)] underline"
+                        data-testid="open-full-note"
+                        onClick={() => setSelectedTab("analytics")}
+                      >
+                        Открыть записку целиком
+                      </button>
+                    ) : null}
+                    <p className="text-xs text-[var(--tk-muted)]">Документов: {analytics?.quality?.sourceDocuments ?? docs.length}. Фрагментов: {overviewCitations.length}</p>
+                    {analytics ? <p className="text-xs text-[var(--tk-muted)]">Оценка по документам: {PARTICIPATE_LABELS[analytics.recommendation]}</p> : null}
+                    {analytics?.answeredByModel ? (
                       <p className="text-xs text-[var(--tk-muted)]">Модель ответа: {analytics.answeredByModel}</p>
                     ) : null}
                   </div>
@@ -1607,17 +1623,16 @@ export default function ZakupkaDetailPage() {
                     {analytics.quality.rejectedClaims ? <span>Есть неподтверждённые формулировки</span> : null}
                   </div>
                 ) : null}
-                {analytics.missingInputs.length ? (
+                {checkItems.length ? (
                   <section className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4" data-testid="analytics-action-items">
                     <h3 className="text-sm font-semibold text-amber-950">Что именно проверить или подтвердить</h3>
                     <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-amber-950">
-                      {analytics.missingInputs.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}
+                      {checkItems.map((item, index) => <li key={`${index}-${item}`}>{item}</li>)}
                     </ul>
                   </section>
                 ) : null}
                 <p className="mt-3 text-xs text-[var(--tk-muted)]">
-                  {analytics.disclaimer} Метод: {analytics.method}. Без обещания
-                  точности.
+                  {analytics.disclaimer} Без обещания точности.
                 </p>
                 {remainingKeyCitations.length || remainingCitations.length ? (
                   <section className="mt-4" aria-label="Дополнительные подтверждения из документов">
@@ -1630,7 +1645,7 @@ export default function ZakupkaDetailPage() {
                           <span className="inline-flex rounded-full bg-stone-100 px-2 py-0.5 text-[11px] font-medium text-[var(--tk-muted)]">{citationTopicLabel(c.text)}</span>
                           <p className="mt-2 line-clamp-4 break-words leading-relaxed [overflow-wrap:anywhere]">{source?.displayText ?? c.text}</p>
                           <p className="mt-2 break-words text-xs text-[var(--tk-muted)] [overflow-wrap:anywhere]">
-                            {c.sourceFile}{c.sheet ? ` · лист ${c.sheet}` : c.page ? ` · стр. ${c.page}` : ""}{c.paragraph ? ` · абз. ${c.paragraph}` : ""}{c.cell ? ` · ${c.cell}` : ""}
+                            {c.sourceFile}{c.sheet ? ` · лист ${c.sheet}` : ` · стр. ${c.page || "не указана"}`}{c.paragraph ? ` · абз. ${c.paragraph}` : ""}{c.cell ? ` · ${c.cell}` : ""}
                           </p>
                         </li>
                       );
@@ -1646,7 +1661,7 @@ export default function ZakupkaDetailPage() {
                             <li key={c.id} className="min-w-0 rounded-lg border border-[var(--tk-line)] bg-white px-3 py-2 text-sm">
                               <p className="flex flex-wrap items-center gap-2 text-xs font-medium text-[var(--tk-muted)]">
                                 <span className="rounded-full bg-stone-100 px-2 py-0.5">{c.topicLabel}</span>
-                                <span className="break-all">{c.sourceFile}{c.sheet ? ` · лист ${c.sheet}` : c.page != null ? ` · стр. ${c.page}` : ""}{c.paragraph ? ` · абз. ${c.paragraph}` : ""}{c.cell ? ` · ${c.cell}` : ""}</span>
+                                <span className="break-all">{c.sourceFile}{c.sheet ? ` · лист ${c.sheet}` : ` · стр. ${c.page || "не указана"}`}{c.paragraph ? ` · абз. ${c.paragraph}` : ""}{c.cell ? ` · ${c.cell}` : ""}</span>
                               </p>
                               <p className="mt-1 break-words leading-relaxed [overflow-wrap:anywhere]">{c.displayText}</p>
                             </li>

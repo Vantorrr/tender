@@ -3,6 +3,7 @@
  * Citations use 1-based paragraph indexes into the document body.
  */
 
+import { clipAtSentence } from "@/lib/analytical-note";
 import JSZip from "jszip";
 import WordExtractor from "word-extractor";
 import type {
@@ -271,9 +272,12 @@ export function analysisFromDocx(
   if (cost != null) noteParts.push(`Стоимость: ${cost} (из текста).`);
   const keyClauses = [...clauseParagraphs.values()].slice(0, 5);
   if (keyClauses.length) {
-    noteParts.push(`Сроки и условия: ${keyClauses.map((text) => text.slice(0, 180)).join("; ")}.`);
+    noteParts.push(`Сроки и условия: ${keyClauses.map((text) => {
+      const piece = clipAtSentence(text, 180).text.replace(/[;,\s]+$/u, "");
+      return /[.!?]$/u.test(piece) ? piece : `${piece}.`;
+    }).join(" ")}`);
   } else if (termPara) {
-    noteParts.push(`Условия (абз. ${termPara.index}): ${termPara.text.slice(0, 200)}`);
+    noteParts.push(`Условия (абз. ${termPara.index}): ${clipAtSentence(termPara.text, 200).text}`);
   }
   if (risks.remarks.length) {
     noteParts.push(`Риски (эвристика, не юрэкспертиза): ${risks.remarks.map((r) => r.text).join("; ")}.`);

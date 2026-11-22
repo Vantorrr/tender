@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import { GRAND_PROFILE } from "@/lib/grand-profile";
+import { clipAtSentence } from "@/lib/analytical-note";
 import { rowCountNominative } from "@/lib/wave23";
 import { OCR_CHUNK_CHARS, OCR_CHUNKS_PER_PAGE } from "@/server/ai-prompts";
 import { rollupWorkSections } from "@/server/estimate-rollup";
@@ -108,6 +109,7 @@ export type GrandParse = {
   normatives: string;
   orders: string;
   indexes: string;
+  indexesSeen: boolean;
   wages: string;
   region: string;
   zone: string;
@@ -249,6 +251,7 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
     normatives: "",
     orders: "",
     indexes: "",
+    indexesSeen: false,
     wages: "",
     region: "",
     zone: "",
@@ -327,6 +330,7 @@ export async function parseGrandBuffer(buf: Buffer): Promise<GrandParse | null> 
         parsed.orders = firstOther(cells, label);
         mark("orders", rowNumber, cells.find((c) => c.col > 1)?.col ?? 7);
       } else if (label.startsWith("Реквизиты письма Минстроя")) {
+        parsed.indexesSeen = true;
         const value = cells.find((cell) => cell.col > 1 && cell.text !== label && !cell.text.startsWith("("));
         parsed.indexes = value?.text ?? "";
         if (value) mark("indexes", rowNumber, value.col);
@@ -500,7 +504,7 @@ export function analysisFromGrand(parsed: GrandParse, fileName: string): UploadA
       page: 1,
     });
   }
-  if (!parsed.indexes) {
+  if (parsed.indexesSeen && !parsed.indexes.trim()) {
     highlights.push({
       id: "h-index",
       text: "Индексы изменения сметной стоимости не заполнены",
@@ -635,7 +639,7 @@ export function analysisFromGrand(parsed: GrandParse, fileName: string): UploadA
       ? `Разделы: ${parsed.sections.slice(0, 6).join("; ")}${parsed.sections.length > 6 ? "…" : ""}.`
       : "",
     parsed.coefficientNotes.length
-      ? `Коэффициенты: ${parsed.coefficientNotes.slice(0, 2).join(" | ")}.`
+      ? `Коэффициенты: ${parsed.coefficientNotes.slice(0, 2).map((note) => clipAtSentence(note, 280).text).join(" | ")}.`
       : "",
   ]
     .filter(Boolean)

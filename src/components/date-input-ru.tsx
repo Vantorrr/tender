@@ -24,7 +24,7 @@ export function DateInputRu({
   disabled,
 }: {
   value: string;
-  onChange: (iso: string) => void;
+  onChange: (iso: string) => void | false;
   id?: string;
   "data-testid"?: string;
   className?: string;
@@ -52,11 +52,13 @@ export function DateInputRu({
     }
     const iso = parseDateRu(trimmed);
     if (iso) {
+      if (iso !== value && onChange(iso) === false) {
+        setText(value ? formatDate(value) : "");
+        setInvalid(false);
+        return;
+      }
       setText(formatDate(iso));
       setInvalid(false);
-      // Compare to the controlled prop only — so a rejected parent update
-      // (e.g. Gantt end < start) can be retried with the same ISO.
-      if (iso !== value) onChange(iso);
       return;
     }
     // Keep the invalid text visible with an error (do not silently revert mid-feedback).

@@ -94,6 +94,7 @@ export default function DocumentDetailPage() {
   const [summaryNotice, setSummaryNotice] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(Boolean(anchorLabel));
   const [askModel, setAskModel] = useState(false);
+  const [noteExpanded, setNoteExpanded] = useState(false);
   const doc = orgDocuments.find((d) => d.id === params.id);
 
   if (!doc) {
@@ -259,6 +260,14 @@ export default function DocumentDetailPage() {
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="space-y-4 lg:col-span-2">
+          {note.clipped ? (
+            <section className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
+              <p className="whitespace-pre-line text-sm leading-relaxed">{noteExpanded ? note.text : note.preview}</p>
+              <button type="button" className="mt-2 text-sm font-medium text-[var(--tk-brand)] underline" onClick={() => setNoteExpanded((open) => !open)}>
+                {noteExpanded ? "Свернуть" : "Показать полностью"}
+              </button>
+            </section>
+          ) : null}
           {note.text ? (
             <NoteEditor
               key={`${doc.id}:${doc.versions.length}:${note.text.slice(0, 24)}`}
