@@ -289,7 +289,142 @@ describe("package analysis workflow", () => {
     expect(stale.summary).not.toContain("Старая модельная записка");
     expect(stale.answeredByModel).toBeUndefined();
     expect(stale.memoSource).toBe("local");
+    expect(stale.memoStale).toBe(true);
     expect(stale.findings).toBeUndefined();
+    refreshProcurementAnalytics("u-tender", "p-2");
+    const still = readAppData().procurements.find((item) => item.id === "p-2")!.analytics!;
+    expect(still.summary.startsWith("Документы изменились, обновите разбор")).toBe(true);
+    expect(still.memoStale).toBe(true);
+    expect(still.summary).not.toContain("Старая модельная записка");
+  });
+
+  it("keeps a legacy model memo and backfills its hash until the files change", async () => {
+    const created = createManualProcurement("u-ruk", { title: "Старый разбор", region: "Ямал" });
+    const summary = "Готовность к решению: данных недостаточно. Оплаченный разбор без хеша.";
+    const finding = {
+      topic: "Сроки",
+      importance: "high" as const,
+      text: "Старый вывод модели.",
+      quote: "цитата",
+      citationIds: [] as string[],
+      sourceFiles: [] as string[],
+    };
+    mutateAppData((data) => {
+      const procurement = data.procurements.find((item) => item.id === created.id)!;
+      procurement.analytics = {
+        recommendation: "participate",
+        summary,
+        missingInputs: [],
+        citationIds: [],
+        citations: [],
+        findings: [finding],
+        generatedAt: "2026-11-01T00:00:00.000Z",
+        method: "разбор пакета по цитатам документов",
+        disclaimer: "проверка",
+      };
+      return data;
+    });
+    const onUpload = config.openRouterOnUpload;
+    config.openRouterOnUpload = true;
+    try {
+      await refreshAndMaybeAnalyzePackage("u-ruk", created.id);
+    } finally {
+      config.openRouterOnUpload = onUpload;
+    }
+    expect(model.analyze).not.toHaveBeenCalled();
+    const refreshed = readAppData().procurements.find((item) => item.id === created.id)!.analytics!;
+    const currentHash = documentSetHash(readAppData().documents.filter((document) => document.procurementId === created.id && document.storedPath));
+    expect(refreshed.summary).toBe(summary);
+    expect(refreshed.findings?.[0]?.text).toBe("Старый вывод модели.");
+    expect(refreshed.memoSource).toBe("model");
+    expect(refreshed.sourceDocumentHash).toBe(currentHash);
+    expect(refreshed.answeredByModel).toBeUndefined();
+    sendProcurementToCalculation("u-ruk", created.id);
+    const sent = readAppData().procurements.find((item) => item.id === created.id)!.analytics!;
+    expect(sent.summary).toBe(summary);
+    expect(sent.findings?.[0]?.text).toBe("Старый вывод модели.");
+    expect(sent.memoSource).toBe("model");
+
+    mutateAppData((data) => {
+      const procurement = data.procurements.find((item) => item.id === created.id)!;
+      data.documents.push({
+        id: "doc-legacy-change",
+        orgId: procurement.orgId,
+        procurementId: procurement.id,
+        title: "Новый файл",
+        fileName: "after-backfill.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: "2026-11-22T02:00:00.000Z",
+        storedPath: "uploads/after-backfill.xlsx",
+      });
+      return data;
+    });
+    refreshProcurementAnalytics("u-ruk", created.id);
+    refreshProcurementAnalytics("u-ruk", created.id);
+    const stale = readAppData().procurements.find((item) => item.id === created.id)!.analytics!;
+    expect(stale.summary.startsWith("Документы изменились, обновите разбор")).toBe(true);
+    expect(stale.summary).not.toContain("Оплаченный разбор без хеша");
+    expect(stale.memoStale).toBe(true);
+    expect(stale.memoSource).toBe("local");
+    expect(stale.findings).toBeUndefined();
+  });
+
+  it("keeps a legacy memo that has model findings but no method marker", () => {
+    const created = createManualProcurement("u-ruk", { title: "Разбор по выводам", region: "Ямал" });
+    const summary = "Выводы модели без поля method.";
+    mutateAppData((data) => {
+      const procurement = data.procurements.find((item) => item.id === created.id)!;
+      procurement.analytics = {
+        recommendation: "insufficient_data",
+        summary,
+        missingInputs: [],
+        citationIds: [],
+        citations: [],
+        findings: [{
+          topic: "Оплата",
+          importance: "medium",
+          text: "Аванс 30 процентов.",
+          quote: "аванс 30%",
+          citationIds: [],
+          sourceFiles: [],
+        }],
+        generatedAt: "2026-11-01T00:00:00.000Z",
+        method: "черновик карточки",
+        disclaimer: "проверка",
+      };
+      return data;
+    });
+    refreshProcurementAnalytics("u-ruk", created.id);
+    const kept = readAppData().procurements.find((item) => item.id === created.id)!.analytics!;
+    expect(kept.summary).toBe(summary);
+    expect(kept.findings?.[0]?.text).toBe("Аванс 30 процентов.");
+    expect(kept.memoSource).toBe("model");
+    expect(kept.sourceDocumentHash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("keeps the five-block local note when a calculation is formed", () => {
+    const created = createManualProcurement("u-ruk", { title: "Локальная сводка в расчёт", region: "Ямал" });
+    refreshProcurementAnalytics("u-ruk", created.id);
+    const note = readAppData().procurements.find((item) => item.id === created.id)!.analytics!;
+    expect(note.summary.startsWith("Готовность к решению")).toBe(true);
+    sendProcurementToCalculation("u-ruk", created.id);
+    const sent = readAppData().procurements.find((item) => item.id === created.id)!.analytics!;
+    expect(sent.summary.startsWith("Готовность к решению")).toBe(true);
+    expect(sent.summary).toContain("1. Паспорт закупки и тайминг");
+    expect(sent.summary).toContain("2. Условия участия и требования к заявке");
+    expect(sent.summary).toContain("3. Сводная ведомость объёмов");
+    expect(sent.summary).toContain("4. Расчёт себестоимости и экономика");
+    expect(sent.summary).toContain("5. Риски и подводные камни");
+    expect(sent.summary.startsWith("Проект «")).toBe(false);
+    expect(sent.memoSource).toBe("local");
+    expect(sent.memoStale).toBeUndefined();
   });
 
   it("rejects an unknown procurement before model invocation", async () => {

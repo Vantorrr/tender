@@ -171,6 +171,8 @@ export interface ProjectAnalytics {
   memoSource?: "model" | "local";
   /** Document-set hash of the last successful package analysis. */
   sourceDocumentHash?: string;
+  /** The model memo no longer matches the files. Stays until a new model analysis. */
+  memoStale?: boolean;
   /** Source coverage and evidence validation; this is not an accuracy percentage. */
   quality?: {
     status: "insufficient_sources" | "needs_review" | "evidence_backed";

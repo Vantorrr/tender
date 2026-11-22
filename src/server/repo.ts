@@ -1947,11 +1947,24 @@ export function resetDemo(actorId: string): { token: string; actorId: string } {
   return { token, actorId: resolvedActorId };
 }
 
-function modelWroteAnalyticalNote(analytics: { method?: string; memoSource?: string; answeredByModel?: string } | null | undefined): boolean {
+function hasModelFindings(analytics: { findings?: Array<{ text?: string }> } | null | undefined): boolean {
+  return Boolean(analytics?.findings?.some((finding) => finding.text?.trim()));
+}
+
+function modelWroteAnalyticalNote(analytics: { method?: string; memoSource?: string; answeredByModel?: string; findings?: Array<{ text?: string }> } | null | undefined): boolean {
   return analytics?.memoSource === "model"
     || Boolean(analytics?.answeredByModel)
     || analytics?.method === "разбор пакета по цитатам документов"
-    || analytics?.method === "model_note";
+    || analytics?.method === "model_note"
+    || hasModelFindings(analytics);
+}
+
+/** Prod cards written before memoSource/hash existed. Findings alone are enough when the method was not stored. */
+function isLegacyModelMemo(analytics: ProjectAnalytics | null | undefined): boolean {
+  if (!analytics || analytics.memoSource || analytics.answeredByModel || analytics.sourceDocumentHash || analytics.memoStale) return false;
+  return analytics.method === "разбор пакета по цитатам документов"
+    || analytics.method === "model_note"
+    || hasModelFindings(analytics);
 }
 
 const MODEL_MEMO_STALE = "Документы изменились, обновите разбор";
@@ -1960,13 +1973,25 @@ function documentsForHash(documents: Array<{ id: string; fileName: string; fileS
   return documents.filter((document) => document.storedPath);
 }
 
+/** Stamp the files this legacy memo is being read against. A later file change can then mark it stale. */
+function backfillLegacyModelMemo(
+  analytics: ProjectAnalytics | undefined,
+  documents: Array<{ id: string; fileName: string; fileSize?: number | null; storedPath?: string | null; uploadedAt?: string | null }>,
+): ProjectAnalytics | undefined {
+  if (!isLegacyModelMemo(analytics)) return analytics;
+  return {
+    ...analytics!,
+    memoSource: "model",
+    sourceDocumentHash: documentSetHash(documentsForHash(documents)),
+  };
+}
+
 /** A model memo stays current only for the document set it was written on. */
 function modelMemoIsCurrent(
   analytics: ProjectAnalytics | undefined,
   documents: Array<{ id: string; fileName: string; fileSize?: number | null; storedPath?: string | null; uploadedAt?: string | null }>,
 ): boolean {
   if (!analytics?.sourceDocumentHash || !modelWroteAnalyticalNote(analytics)) return false;
-  if (!analytics.answeredByModel && analytics.memoSource !== "model") return false;
   return analytics.sourceDocumentHash === documentSetHash(documentsForHash(documents));
 }
 
@@ -1994,6 +2019,24 @@ function withDeterministicCoverage(previous: ProjectAnalytics, rebuilt: ProjectA
     quality: mergedAnalyticsQuality(previous.quality, rebuilt.quality),
     citations: rebuilt.citations,
     citationIds: rebuilt.citationIds,
+  };
+}
+
+function localNoteAnalytics(
+  built: ProjectAnalytics,
+  docs: Array<{ category?: string; fileName: string; estimatePositions?: unknown[] }>,
+  stale: boolean,
+): ProjectAnalytics {
+  const summary = localAnalyticalSummary(built, docs);
+  return {
+    ...built,
+    summary: stale ? `${MODEL_MEMO_STALE}\n\n${summary}` : summary,
+    memoSource: "local",
+    answeredByModel: undefined,
+    sourceDocumentHash: undefined,
+    memoStale: stale ? true : undefined,
+    findings: undefined,
+    customerQuestions: undefined,
   };
 }
 
@@ -2033,12 +2076,17 @@ export function refreshProcurementAnalytics(
     assertOrgAccess(actor, p.orgId, "закупки");
     const docs = data.documents.filter((d) => d.procurementId === p.id);
     const built = buildProjectAnalytics(p, docs);
-    const currentMemo = p.analytics;
+    const original = p.analytics;
+    const currentMemo = backfillLegacyModelMemo(original, docs);
     if (currentMemo && modelMemoIsCurrent(currentMemo, docs)) {
       const next = withDeterministicCoverage(currentMemo, built);
-      const factsSame = JSON.stringify(currentMemo.missingInputs) === JSON.stringify(next.missingInputs)
-        && JSON.stringify(currentMemo.quality ?? null) === JSON.stringify(next.quality ?? null)
-        && JSON.stringify(currentMemo.citationIds) === JSON.stringify(next.citationIds);
+      const factsSame = original?.summary === next.summary
+        && original?.memoSource === next.memoSource
+        && original?.sourceDocumentHash === next.sourceDocumentHash
+        && JSON.stringify(original?.missingInputs) === JSON.stringify(next.missingInputs)
+        && JSON.stringify(original?.quality ?? null) === JSON.stringify(next.quality ?? null)
+        && JSON.stringify(original?.citationIds) === JSON.stringify(next.citationIds)
+        && JSON.stringify(original?.findings ?? null) === JSON.stringify(next.findings ?? null);
       if (factsSame) {
         unchanged = true;
         return data;
@@ -2047,20 +2095,13 @@ export function refreshProcurementAnalytics(
       audit(data, actorId, "analyze", "procurement", procurementId, "Сводка: обновлены факты, текст записки сохранён");
       return data;
     }
-    const staleModel = Boolean(p.analytics && modelWroteAnalyticalNote(p.analytics) && (p.analytics.answeredByModel || p.analytics.memoSource === "model"));
-    const summary = localAnalyticalSummary(built, docs);
-    const nextSummary = staleModel ? `${MODEL_MEMO_STALE}\n\n${summary}` : summary;
-    if (!staleModel && p.analytics?.summary === nextSummary) {
+    const staleModel = Boolean(currentMemo && (modelWroteAnalyticalNote(currentMemo) || currentMemo.memoStale));
+    const next = localNoteAnalytics(built, docs, staleModel);
+    if (original?.summary === next.summary && Boolean(original.memoStale) === Boolean(next.memoStale) && original.memoSource === next.memoSource) {
       unchanged = true;
       return data;
     }
-    p.analytics = {
-      ...built,
-      summary: nextSummary,
-      memoSource: "local",
-      answeredByModel: undefined,
-      sourceDocumentHash: undefined,
-    };
+    p.analytics = next;
     audit(data, actorId, "analyze", "procurement", procurementId, `Сводка: ${p.analytics.recommendation}`);
     return data;
   });
@@ -2193,6 +2234,7 @@ export async function analyzeProcurementPackageWithAI(
       ...generated,
       sourceDocumentHash: documentSetHash(documents),
       memoSource: "model" as const,
+      memoStale: undefined,
     };
   }
   mutateAppData((data) => {
@@ -2929,20 +2971,13 @@ export function sendProcurementToCalculation(
       p,
       data.documents.filter((d) => d.procurementId === p.id)
     );
-    const previous = p.analytics;
     const scheduleDocs = data.documents.filter((document) => document.procurementId === p.id);
+    const previous = backfillLegacyModelMemo(p.analytics, scheduleDocs);
     if (previous && modelMemoIsCurrent(previous, scheduleDocs)) {
       p.analytics = withDeterministicCoverage(previous, rebuilt);
-    } else if (previous && (previous.answeredByModel || previous.memoSource === "model")) {
-      p.analytics = {
-        ...rebuilt,
-        summary: `${MODEL_MEMO_STALE}\n\n${localAnalyticalSummary(rebuilt, scheduleDocs)}`,
-        memoSource: "local",
-        answeredByModel: undefined,
-        sourceDocumentHash: undefined,
-      };
     } else {
-      p.analytics = rebuilt;
+      const staleModel = Boolean(previous && (modelWroteAnalyticalNote(previous) || previous.memoStale));
+      p.analytics = localNoteAnalytics(rebuilt, scheduleDocs, staleModel);
     }
 
     audit(
