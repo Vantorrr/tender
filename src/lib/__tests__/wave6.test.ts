@@ -162,6 +162,10 @@ describe("wave 6 client pain points", () => {
     expect(missingRatesInBucket(categoryRows, "labor")).toBe(1);
     expect(missingRatesInBucket(categoryRows, "equipment")).toBe(2);
     expect(missingRatesInBucket(categoryRows, "materials")).toBe(0);
+    const carpenter = { code: "ЗТ", name: "Плотник 3 разр.", unit: "ч", rateMissing: true, isWorkItem: false, resourceKind: "labor" as const };
+    expect(classifyDirectCostBucket(carpenter)).toBe("other");
+    expect(missingRatesInBucket([carpenter], "labor")).toBe(1);
+    expect(missingRatesInBucket([{ ...carpenter, resourceKind: undefined }], "labor")).toBe(0);
     expect(shownCategoryAmount(0, missingRatesInBucket(categoryRows, "materials"))).toBeNull();
     expect(shownCategoryAmount(0, missingRatesInBucket(categoryRows, "equipment"))).toBe("не рассчитано: нет ставок для 2 строк");
     expect(formatDate("2026-11-25")).toBe("25.11.2026");

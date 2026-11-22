@@ -361,9 +361,20 @@ export function classifyDirectCostBucket(
   return "other";
 }
 
+/** Same bucket as the cost totals: an explicit kind wins, otherwise the name and unit. */
+export function positionCostBucket(
+  position: Pick<CalcPosition, "code" | "name" | "unit"> & { resourceKind?: CalcPosition["resourceKind"] },
+): DirectCostBucket {
+  if (position.resourceKind === "labor") return "labor";
+  if (position.resourceKind === "material") return "materials";
+  if (position.resourceKind === "equipment" || position.resourceKind === "bus") return "equipment";
+  if (position.resourceKind === "other") return "other";
+  return classifyDirectCostBucket(position);
+}
+
 /** Unpriced rows of one category. Overhead and profit rows are not a category. */
 export function missingRatesInBucket(
-  positions: Array<Pick<CalcPosition, "code" | "name" | "unit"> & { rateMissing?: boolean; isWorkItem?: boolean }>,
+  positions: Array<Pick<CalcPosition, "code" | "name" | "unit"> & { rateMissing?: boolean; isWorkItem?: boolean; resourceKind?: CalcPosition["resourceKind"] }>,
   bucket: DirectCostBucket,
 ): number {
   return positions.filter((position) =>
@@ -371,7 +382,7 @@ export function missingRatesInBucket(
     && position.code !== "НР"
     && position.code !== "СП"
     && position.rateMissing
-    && classifyDirectCostBucket(position) === bucket
+    && positionCostBucket(position) === bucket
   ).length;
 }
 
@@ -396,7 +407,7 @@ export function bucketsFromPositions(
   let hasMaterialPositions = false;
   for (const p of positions) {
     if (p.code === "НР" || p.code === "СП" || p.isWorkItem) continue;
-    const bucket = classifyDirectCostBucket(p);
+    const bucket = positionCostBucket(p);
     if (bucket === "materials") hasMaterialPositions = true;
     // Missing rate must not become a confirmed 0 ₽ contribution.
     if (p.rateMissing) continue;
