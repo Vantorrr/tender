@@ -25,7 +25,7 @@ import { visibleProcurementSource } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney, formatNumber, formatQuantity, needByPhrase, roundQuantity, sameRoundedQuantity } from "@/lib/format";
 import { citationTopicLabel, readableCitations, regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
 import { SUMMARY_FRESH, SUMMARY_UNCHANGED } from "@/lib/summary-notice";
-import { analyticalNoteBlocks, citationHref, costIsPartial, costIsUncalculated, draftCostPhrase, honestReadinessText, matchDirectorySuppliers, moneyRu, rowCountNominative } from "@/lib/wave23";
+import { analyticalNoteBlocks, calcMemoState, citationHref, costIsPartial, costIsUncalculated, draftCostPhrase, honestReadinessText, matchDirectorySuppliers, moneyRu, rowCountNominative } from "@/lib/wave23";
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_CHECKLIST } from "@/lib/ai-topics";
 import { PARTICIPATE_LABELS } from "@/lib/project-analytics";
@@ -507,6 +507,8 @@ export default function ZakupkaDetailPage() {
   }
 
   const analytics = procurement.analytics;
+  const memoState = calcMemoState(calc);
+  const shownSummary = analytics ? honestReadinessText(analytics.summary, memoState) : "";
   const displayCitations = analytics ? readableCitations(analytics.citations) : [];
   const renderableCitations = displayCitations.map(({ displayText, ...citation }) => ({ ...citation, text: displayText }));
   const keyCitations = keyAnalyticsCitations(renderableCitations);
@@ -972,9 +974,9 @@ export default function ZakupkaDetailPage() {
                 </p>
                 {analytics ? (
                   <div className="mt-3 space-y-3">
-                    <p className="text-sm text-[var(--tk-ink)]">{honestReadinessText(analytics.summary).split(/\n\n/)[0]}</p>
+                    <p className="text-sm text-[var(--tk-ink)]">{shownSummary.split(/\n\n/)[0]}</p>
                     <div className="space-y-2" data-testid="overview-note-blocks">
-                      {analyticalNoteBlocks(honestReadinessText(analytics.summary)).map((block) => (
+                      {analyticalNoteBlocks(shownSummary).map((block) => (
                         <div key={block.title}>
                           <p className="text-sm font-medium text-[var(--tk-ink)]">{block.title}</p>
                           <p className="whitespace-pre-line text-sm text-[var(--tk-muted)]">{block.body || "нет данных"}</p>
@@ -1406,7 +1408,7 @@ export default function ZakupkaDetailPage() {
                     <p className="mt-1 text-xs text-[var(--tk-muted)]">Модель ответа: {analytics.answeredByModel}</p>
                   ) : null}
                   <div className="mt-2 space-y-1 text-sm leading-relaxed text-[var(--tk-foreground)]">
-                    {honestReadinessText(analytics.summary).split("\n").filter((line) => line.trim()).map((line, index) => (
+                    {shownSummary.split("\n").filter((line) => line.trim()).map((line, index) => (
                       <p key={`${index}-${line}`} className={index === 0 ? "font-medium" : "text-[var(--tk-muted)]"}>{line}</p>
                     ))}
                   </div>
@@ -1488,12 +1490,12 @@ export default function ZakupkaDetailPage() {
                         ["Цена с НДС", analytics.economics.priceWithVat],
                         ["Расчётная прибыль", analytics.economics.profit],
                       ] as const).map(([label, value]) => {
-                        const filled = Boolean(data.calculations.find((item) => item.id === procurement.calculationId)?.positions.length);
-                        const missingRates = analytics.economics?.missingRates ?? 0;
-                        const cost = analytics.economics?.cost ?? null;
+                        const filled = Boolean(calc?.positions.length);
+                        const missingRates = memoState ? memoState.missingRates : (analytics.economics?.missingRates ?? 0);
+                        const cost = memoState ? memoState.cost : (analytics.economics?.cost ?? null);
                         const partial = costIsPartial(cost, missingRates);
                         const uncalculated = costIsUncalculated(cost, missingRates);
-                        const shown = label === "Себестоимость" && (uncalculated || partial || value === 0)
+                        const shown = label === "Себестоимость" && (uncalculated || partial || cost === 0)
                           ? draftCostPhrase(cost, missingRates)
                           : uncalculated
                             ? "не рассчитана"
@@ -1512,10 +1514,10 @@ export default function ZakupkaDetailPage() {
                       <div className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3">
                         <dt className="text-xs text-[var(--tk-muted)]">Рентабельность / маржа</dt>
                         <dd className="mt-1 text-sm font-semibold tabular-nums">
-                          {costIsUncalculated(analytics.economics.cost, analytics.economics.missingRates ?? 0)
+                          {costIsUncalculated(memoState ? memoState.cost : analytics.economics.cost, memoState ? memoState.missingRates : (analytics.economics.missingRates ?? 0))
                             ? "не рассчитана"
                             : <>
-                                {costIsPartial(analytics.economics.cost, analytics.economics.missingRates ?? 0) ? "Предварительно: " : ""}
+                                {costIsPartial(memoState ? memoState.cost : analytics.economics.cost, memoState ? memoState.missingRates : (analytics.economics.missingRates ?? 0)) ? "Предварительно: " : ""}
                                 {analytics.economics.profitabilityPercent == null ? "—" : `${analytics.economics.profitabilityPercent}%`}
                                 {analytics.economics.revenueMarginPercent == null ? "" : ` / ${analytics.economics.revenueMarginPercent}%`}
                               </>}

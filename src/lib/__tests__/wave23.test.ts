@@ -4,8 +4,10 @@ import { buildStagesFromEstimatePositions, signedQuantityBySection } from "@/lib
 import { numbersAreGrounded } from "@/server/ai-grounding";
 import { citationTopicLabel } from "@/lib/citation-display";
 import {
+  analyticalNoteBlocks,
   analyticalNoteStructure,
   analysisFailureText,
+  calcMemoState,
   citationHref,
   citedQuestion,
   combineEstimateTotals,
@@ -225,5 +227,127 @@ describe("wave 2–3 decisions", () => {
     expect(sanitizeSyncDetail("таймаут соединения")).toMatch(/Таймаут/);
     expect(shouldRetrySync("HTTP 503", 503)).toBe(true);
     expect(shouldRetrySync("некорректный фильтр", 400)).toBe(false);
+  });
+});
+
+describe("legacy memo economics on display", () => {
+  const citation = "Штраф 0 ₽ по цитате «удержать пени».";
+
+  function legacyRecord(economics: string, calc: {
+    positions: Array<{ rateMissing?: boolean; isWorkItem?: boolean }>;
+    costSummary: { C0: number; resourceSlices?: { costWithOh: number } };
+  }) {
+    return {
+      id: "p-manual-e31309bf-b800-431f-b1dc-1ebf05b90e54",
+      summary: [
+        "Вердикт ИИ: 4 / 10 — . Данных недостаточно для решения.",
+        "",
+        "1. Паспорт закупки и тайминг",
+        "Закупка на бурение.",
+        "",
+        "4. Расчёт себестоимости и экономика",
+        economics,
+        "",
+        "5. Риски и подводные камни",
+        citation,
+      ].join("\n"),
+      calc,
+    };
+  }
+
+  function shownEconomics(summary: string) {
+    return analyticalNoteBlocks(summary).find((block) => block.title === "Расчёт себестоимости и экономика")?.body ?? "";
+  }
+
+  it("rewrites an uncalculated zero and the leftover double period without storing the change", () => {
+    const record = legacyRecord(
+      "Черновая себестоимость по справочникам компании: 0 ₽. Не найдены собственные ставки для 20 строк. Расчётная прибыль до налога: 0 ₽; рентабельность на себестоимость: не рассчитана%; маржа в цене: не рассчитана%. Предельная разница между НМЦК и расчётной ценой с НДС: 1000 ₽. Это запас до предельной цены, а не обещанная прибыль.",
+      {
+        positions: [
+          ...Array.from({ length: 20 }, () => ({ rateMissing: true, isWorkItem: false })),
+          { rateMissing: true, isWorkItem: true },
+        ],
+        costSummary: { C0: 0 },
+      },
+    );
+    const stored = record.summary;
+    const state = calcMemoState(record.calc);
+    const shown = honestReadinessText(record.summary, state);
+
+    expect(state).toEqual({ cost: 0, missingRates: 20 });
+    expect(record.summary).toBe(stored);
+    expect(record.summary).toContain("Вердикт ИИ");
+    expect(record.summary).toContain("не рассчитана%");
+    expect(shown.startsWith("Готовность к решению: данных недостаточно. Данных недостаточно для решения.")).toBe(true);
+    expect(shown).not.toMatch(/\.\s+\./);
+    const economics = shownEconomics(shown);
+    expect(economics).toContain("Себестоимость не рассчитана: нет ставок для 20 строк");
+    expect(economics).toContain("Прибыль и рентабельность не рассчитаны: себестоимость не подтверждена.");
+    expect(economics).toContain("Сравнение с НМЦК невозможно, пока себестоимость не рассчитана.");
+    expect(economics).not.toMatch(/не рассчитана%/);
+    expect(economics).not.toMatch(/0 ₽/);
+    expect(shown).toContain("Закупка на бурение.");
+    expect(shown).toContain(citation);
+
+    const fallback = honestReadinessText(
+      "Себестоимость с учтёнными накладными: 0 ₽. Прибыль: не рассчитана; рентабельность на себестоимость: не рассчитана%; маржа в цене: не рассчитана%.",
+      state,
+    );
+    expect(fallback).toContain("Себестоимость не рассчитана: нет ставок для 20 строк");
+    expect(fallback).toContain("Прибыль и рентабельность не рассчитаны: себестоимость не подтверждена.");
+    expect(fallback).not.toMatch(/не рассчитана%/);
+  });
+
+  it("shows a partial cost from the current draft and keeps the profit figure", () => {
+    const record = legacyRecord(
+      "Черновая себестоимость по справочникам компании: 1500 ₽. Не найдены собственные ставки для 2 строк. Расчётная прибыль до налога: 100 ₽; рентабельность на себестоимость: не рассчитана%; маржа в цене: 10%.",
+      {
+        positions: [{ rateMissing: false }, { rateMissing: true }, { rateMissing: true }],
+        costSummary: { C0: 100, resourceSlices: { costWithOh: 1500 } },
+      },
+    );
+    const shown = honestReadinessText(record.summary, calcMemoState(record.calc));
+    const economics = shownEconomics(shown);
+    expect(economics).toContain("Себестоимость по найденным ставкам: 1 500,00 ₽ (без 2 строк без ставок)");
+    expect(economics).toContain("Предварительно, только по найденным ставкам, без 2 строк без ставок.");
+    expect(economics).toContain("Расчётная прибыль до налога: 100 ₽");
+    expect(economics).toContain("маржа в цене: 10%");
+    expect(economics).toContain("рентабельность на себестоимость: не рассчитана;");
+    expect(economics).not.toMatch(/не рассчитана%/);
+    expect(shown).toContain(citation);
+    expect(record.summary).toContain("не рассчитана%");
+  });
+
+  it("keeps a genuine zero when every rate is found", () => {
+    const record = legacyRecord(
+      "Черновая себестоимость по справочникам компании: 0 ₽. Ставки по строкам черновика найдены. Расчётная прибыль до налога: 0 ₽; рентабельность на себестоимость: не рассчитана%; маржа в цене: не рассчитана%.",
+      {
+        positions: [{ rateMissing: false, isWorkItem: false }],
+        costSummary: { C0: 0 },
+      },
+    );
+    const shown = honestReadinessText(record.summary, calcMemoState(record.calc));
+    const economics = shownEconomics(shown);
+    expect(economics).toContain("Себестоимость 0 ₽: проверьте объёмы и ставки");
+    expect(economics).not.toContain("нет ставок");
+    expect(economics).toContain("Ставки по строкам черновика найдены.");
+    expect(economics).toContain("Расчётная прибыль до налога: 0 ₽");
+    expect(economics).toContain("не рассчитана;");
+    expect(economics).not.toMatch(/не рассчитана%/);
+    expect(shown).toContain(citation);
+  });
+
+  it("cleans the double period left by the readiness line", () => {
+    const shown = honestReadinessText("Вердикт ИИ: 4 / 10 — . Данных недостаточно для решения.");
+    expect(shown).toBe("Готовность к решению: данных недостаточно. Данных недостаточно для решения.");
+    expect(shown).not.toMatch(/\.\s+\./);
+    expect(shown).not.toMatch(/Вердикт ИИ/);
+  });
+
+  it("leaves a confirmed cost and an already honest note unchanged", () => {
+    const confirmed = "Черновая себестоимость по справочникам компании: 1500 ₽. Расчётная прибыль до налога: 200 ₽; рентабельность на себестоимость: 20%; маржа в цене: 16%.";
+    expect(honestReadinessText(confirmed, { cost: 1500, missingRates: 0 })).toBe(confirmed);
+    const fresh = "Готовность к решению: данных недостаточно. Данных недостаточно. Себестоимость не рассчитана: нет ставок для 4 строк. Прибыль и рентабельность не рассчитаны: себестоимость не подтверждена.";
+    expect(honestReadinessText(fresh, { cost: 0, missingRates: 4 })).toBe(fresh);
   });
 });

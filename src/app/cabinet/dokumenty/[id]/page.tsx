@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { downloadUrl } from "@/lib/api";
 import { downloadTextFile, formatDateTime } from "@/lib/format";
 import { presentAnalyticalNote } from "@/lib/analytical-note";
+import { calcMemoState } from "@/lib/wave23";
 import { readableCitations } from "@/lib/citation-display";
 import { useStore } from "@/lib/store";
 
@@ -107,7 +108,9 @@ export default function DocumentDetailPage() {
   const author = (id: string) =>
     data.users.find((u) => u.id === id)?.name ?? id;
   const displayCitations = readableCitations(doc.citations.filter((citation) => citation.confidence !== "ocr" && citation.sourceVersion !== "ocr-extract"));
-  const note = presentAnalyticalNote(doc.analyticalNote);
+  const linkedProcurement = data.procurements.find((item) => item.id === doc.procurementId);
+  const linkedCalc = data.calculations.find((item) => item.id === linkedProcurement?.calculationId);
+  const note = presentAnalyticalNote(doc.analyticalNote, calcMemoState(linkedCalc));
 
   return (
     <div>
