@@ -501,6 +501,9 @@ function SitesBanner({ header }: { header: Record<string, unknown> }) {
       <div className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4 text-sm">
         <h2 className="font-medium">Шифр 0-68</h2>
         <p className="mt-2">ОРЧ по хронометражу: {showNum(daily.orchMountedPerDay_fromTimeStudy)} шт/сутки. Нарощено опор: {showNum(daily.supportsExtendedPerDay_fromTimeStudy)} шт/сутки. Наращивание ригеля (C38): {showNum(daily.extendingOneRigelHoursPerZveno)} ч.</p>
+        <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2" data-testid="client-norm-c55">
+          Хронометраж 0-68, ячейка {typo?.cell}: в ячейке {typo?.valueInCell}. Подпись говорит «час», формула суммирует минуты. Если разделить на 60, было бы около {showNum(typo?.valueIfDividedBy60Hours)} ч — исходное значение {typo?.valueInCell} не заменено. К шифру 88-127 эта ячейка не относится.
+        </p>
         <p className="mt-2">{daily.pipeline?.note}</p>
         <p className="mt-2">Резолюция: факт {showNum(daily.project_0_68_resolution?.currentOutputOrchPerDay)} шт/сутки, план {showNum(daily.project_0_68_resolution?.planOrchPerDay)}, февраль {showNum(daily.project_0_68_resolution?.februaryPlanOrch)}. {daily.project_0_68_resolution?.shiftsMentioned}</p>
       </div>
@@ -508,9 +511,6 @@ function SitesBanner({ header }: { header: Record<string, unknown> }) {
         <h2 className="font-medium">Шифр 88-127</h2>
         <p className="mt-2">ОРЧ: факт {showNum(daily.project_88_127_resolution?.currentOutputOrchPerDay)} шт/сутки, план {showNum(daily.project_88_127_resolution?.planOrchPerDay)}, февраль {showNum(daily.project_88_127_resolution?.februaryPlanOrch)}. Бурение — в строках плана, не в общем ценнике.</p>
         <p className="mt-2">День и ночь в резолюциях не перезаписывают профиль «2×11 без выходных».</p>
-        <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2" data-testid="client-norm-c55">
-          {typo?.cell}: в ячейке {typo?.valueInCell}. Подпись говорит «час», формула суммирует минуты. Если разделить на 60, было бы около {showNum(typo?.valueIfDividedBy60Hours)} ч — исходное значение {typo?.valueInCell} не заменено.
-        </p>
       </div>
     </div>
   );
