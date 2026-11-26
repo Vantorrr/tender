@@ -39,6 +39,46 @@ export const EXCEL_RESOURCE_SCHEDULE_DEFAULTS: ResourceScheduleParams = {
   profitMarkupOnCostWithOh: 0.4,
 };
 
+/** Confirmed client calendar: two 11-hour shifts, no weekends. Rate stays 1 400. */
+export const CLIENT_2X11_NO_WEEKENDS_SHIFT = {
+  personnelShiftsPerDay: 2,
+  equipmentShiftsPerDay: 2,
+  hoursPerShift: 11,
+  weekendDays: [] as number[],
+};
+
+/** Excel sheet: one equipment shift and a Saturday/Sunday weekend. */
+export const EXCEL_CURRENT_SHIFT = {
+  personnelShiftsPerDay: EXCEL_RESOURCE_SCHEDULE_DEFAULTS.personnelShiftsPerDay,
+  equipmentShiftsPerDay: EXCEL_RESOURCE_SCHEDULE_DEFAULTS.equipmentShiftsPerDay,
+  hoursPerShift: EXCEL_RESOURCE_SCHEDULE_DEFAULTS.hoursPerShift,
+  weekendDays: [0, 6] as number[],
+};
+
+/**
+ * Shift numbers for a new calculation only.
+ * doc1_7plus1 has no confirmed shift numbers, so it keeps the Excel sheet.
+ */
+export function applyShiftProfileToParams(
+  profile: "client_2x11_no_weekends" | "excel_current" | "doc1_7plus1",
+  base: ResourceScheduleParams,
+): ResourceScheduleParams {
+  if (profile === "client_2x11_no_weekends") {
+    return {
+      ...base,
+      personnelShiftsPerDay: CLIENT_2X11_NO_WEEKENDS_SHIFT.personnelShiftsPerDay,
+      equipmentShiftsPerDay: CLIENT_2X11_NO_WEEKENDS_SHIFT.equipmentShiftsPerDay,
+      hoursPerShift: CLIENT_2X11_NO_WEEKENDS_SHIFT.hoursPerShift,
+    };
+  }
+  return {
+    ...base,
+    personnelShiftsPerDay: EXCEL_CURRENT_SHIFT.personnelShiftsPerDay,
+    equipmentShiftsPerDay: EXCEL_CURRENT_SHIFT.equipmentShiftsPerDay,
+    hoursPerShift: EXCEL_CURRENT_SHIFT.hoursPerShift,
+  };
+}
+
 export type ResourceLineCategory = "people" | "equipment" | "material";
 
 /**

@@ -25,6 +25,7 @@ import {
   ROLE_LABELS,
 } from "@/lib/roles";
 import { useStore } from "@/lib/store";
+import { resolveTenderLogicSettings, SHIFT_PROFILE_OPTIONS, type ShiftProfile } from "@/lib/tender-logic-settings";
 
 type JobRow = {
   id: string;
@@ -247,6 +248,7 @@ export default function AdminPage() {
     user,
     resetData,
     setOrganizationActive,
+    setOrganizationShiftProfile,
     importClientXlsx,
   } = useStore();
   const [jobsKey, setJobsKey] = useState(0);
@@ -333,6 +335,30 @@ export default function AdminPage() {
               </div>
               <p className="mt-3 text-sm">
                 Пользователей: {count} · закупок: {procs}
+              </p>
+              <label className="mt-3 block text-xs text-[var(--tk-muted)]">
+                Профиль смен для новых расчётов и нового ГПР
+                <select
+                  className="mt-1 h-9 w-full rounded-md border bg-white px-2 text-sm text-[var(--tk-ink)]"
+                  value={resolveTenderLogicSettings(org).shiftProfile}
+                  onChange={async (event) => {
+                    const shiftProfile = event.target.value as ShiftProfile;
+                    try {
+                      await setOrganizationShiftProfile(org.id, shiftProfile);
+                      toast.success("Профиль сохранён. Уже созданные расчёты и ГПР не изменены.");
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : "Не удалось сохранить профиль");
+                    }
+                  }}
+                >
+                  {SHIFT_PROFILE_OPTIONS.map((option) => (
+                    <option key={option.id} value={option.id}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <p className="mt-1 text-xs text-[var(--tk-muted)]">
+                {SHIFT_PROFILE_OPTIONS.find((option) => option.id === resolveTenderLogicSettings(org).shiftProfile)?.detail}
+                {" "}Сохранённые параметры действующих расчётов не переписываются. Режим 7+1 не становится дефолтом и не записывается в расчёт.
               </p>
               {user.role === "superadmin" ? (
                 <Button

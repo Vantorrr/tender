@@ -110,6 +110,19 @@ function isResourceDraftExport(calc: {
   );
 }
 
+function appendOfficialCommercialRows(
+  ws: ExcelJS.Worksheet,
+  calc: { kind?: string; immutable?: boolean; costSummary?: { reserve: number; C: number; priceExVat: number } | null },
+  rollupTotal: number,
+) {
+  const summary = calc.costSummary;
+  if (!summary || calc.immutable || calc.kind === "customer_original") return;
+  if ((summary.reserve ?? 0) === 0 && Math.abs(summary.priceExVat - rollupTotal) <= 0.009) return;
+  ws.addRow({ code: "RESERVE", name: "Непредвиденные", sum: summary.reserve });
+  ws.addRow({ code: "C_FULL", name: "Полная себестоимость", sum: summary.C });
+  ws.addRow({ code: "PRICE_EX_VAT", name: "Цена без НДС", sum: summary.priceExVat });
+}
+
 export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
   const data = readAppData();
   const calc = data.calculations.find((c) => c.id === calcId);
@@ -201,6 +214,7 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
       name: "Q часы (без материалов)",
       sum: slices.hours,
     });
+    appendOfficialCommercialRows(ws, calc, slices.total);
   } else {
     // Immutable original / legacy: позиции × коэф. + НР15/СП8
     const totals = calc.kind === "customer_original" || calc.immutable
@@ -217,6 +231,7 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
             : "Итого",
       sum: officialUnpriced ? null : totals.total,
     });
+    if (!officialUnpriced) appendOfficialCommercialRows(ws, calc, totals.total);
   }
   if (statementRows.length) {
     ws.addRow({
@@ -452,6 +467,11 @@ export async function buildCalculationPdf(calcId: string): Promise<Buffer> {
     drawWrapped(`Себестоимость с накладными X: ${money(slices.costWithOh)}${tag}`, 10);
     drawWrapped(`Прибыль Y: ${money(slices.profit)}${tag}`, 10);
     drawWrapped(`Итого ресурсного черновика Z: ${money(slices.total)}${tag}`, 12, true);
+    if (calc.costSummary && Math.abs(calc.costSummary.priceExVat - slices.total) > 0.009) {
+      drawWrapped(`Непредвиденные: ${money(calc.costSummary.reserve)}`, 10);
+      drawWrapped(`Полная себестоимость: ${money(calc.costSummary.C)}`, 10);
+      drawWrapped(`Цена без НДС: ${money(calc.costSummary.priceExVat)}`, 12, true);
+    }
     if (calc.costSummary?.northernAdjustments) {
       const north = calc.costSummary.northernAdjustments;
       drawWrapped(`Районный коэффициент: ${money(north.district)}`, 10);
@@ -461,7 +481,12 @@ export async function buildCalculationPdf(calcId: string): Promise<Buffer> {
     }
     drawWrapped(`Материалы S: ${money(slices.materials)} · Люди T: ${money(slices.labor)} · Техника U: ${money(slices.equipment)}`, 9, false, muted);
     if (calc.officeOverhead != null) drawWrapped(`Офисные расходы отдельно: ${money(calc.officeOverhead)}`, 9, false, muted);
-    if (calc.costSummary?.reserve != null) drawWrapped(`Непредвиденные расходы: ${money(calc.costSummary.reserve)}`, 9, false, muted);
+    if (
+      calc.costSummary?.reserve != null
+      && Math.abs(calc.costSummary.priceExVat - slices.total) <= 0.009
+    ) {
+      drawWrapped(`Непредвиденные расходы: ${money(calc.costSummary.reserve)}`, 9, false, muted);
+    }
   } else {
     const totals = calc.kind === "customer_original" || calc.immutable
       ? sourceEstimateTotals(calc.positions)
@@ -471,6 +496,14 @@ export async function buildCalculationPdf(calcId: string): Promise<Buffer> {
         ? "Итого исходной сметы заказчика"
         : "Итого расчёта";
     drawWrapped(`${label}: ${money(totals.total)}${partial ? " · неполный расчёт" : ""}`, 12, true);
+    if (
+      calc.kind === "resource_draft"
+      && calc.costSummary
+      && Math.abs(calc.costSummary.priceExVat - totals.total) > 0.009
+    ) {
+      drawWrapped(`Непредвиденные: ${money(calc.costSummary.reserve)}`, 10);
+      drawWrapped(`Цена без НДС: ${money(calc.costSummary.priceExVat)}`, 12, true);
+    }
     if (calc.costSummary?.northernAdjustments) {
       const north = calc.costSummary.northernAdjustments;
       drawWrapped(`Районный коэффициент: ${money(north.district)}`, 10);

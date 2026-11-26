@@ -3,7 +3,9 @@ import {
   getBootstrap,
   resetDemo,
   setOrganizationActive,
+  setOrganizationShiftProfile,
 } from "@/server/repo";
+import type { ShiftProfile } from "@/lib/tender-logic-settings";
 import { getJobs } from "@/server/jobs";
 import {
   clearClientImportFlag,
@@ -40,7 +42,19 @@ export async function POST(req: Request) {
       action?: string;
       orgId?: string;
       active?: boolean;
+      shiftProfile?: ShiftProfile;
     };
+
+    if (body.action === "setShiftProfile" && body.orgId && body.shiftProfile) {
+      if (user.role !== "superadmin" && user.role !== "admin") {
+        return json({ error: "Недостаточно прав" }, 403);
+      }
+      setOrganizationShiftProfile(user.id, body.orgId, body.shiftProfile);
+      return json({
+        ...getBootstrap(user),
+        jobs: getJobs(),
+      });
+    }
 
     if (body.action === "setOrgActive" && body.orgId && typeof body.active === "boolean") {
       if (user.role !== "superadmin") {

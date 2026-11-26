@@ -34,15 +34,23 @@ import { recentPaymentId } from "@/lib/duplicate-click";
 import { supplyNeedKey } from "@/lib/supply-need";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
 import { buildStagesFromEstimatePositions, calendarDurationDays, datesForStage, GPR_DATES_MISSING, periodFromDocumentText } from "@/lib/estimate-stages";
-import { COMPANY_RATE_RULE, composeAnalyticalNote, dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, recognizedRowsPhrase, rowCountGenitive, rowCountNominative, scheduleAfterPredecessor, scheduleParamsWithNorthernDefaults } from "@/lib/wave23";
+import { COMPANY_RATE_RULE, composeAnalyticalNote, dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, recognizedRowsPhrase, rowCountGenitive, rowCountNominative, scheduleAfterPredecessor } from "@/lib/wave23";
+import {
+  applyClientCommercialFormula,
+  sanitizeEconomicsOverride,
+  type EconomicsManual,
+} from "@/lib/client-economics";
 import {
   ESTIMATE_ROWS_AS_SOURCE_SHEET,
   GPR_FROM_CUSTOMER_SECTIONS,
   REFERENCE_REPRICE_NOT_COST,
   buildCommitteeSnapshot,
+  calendarForNewSchedule,
   isLegacyEstimateSeededCost,
   positionFeedsOfficialCost,
+  resourceParamsForNewCalculation,
   resolveTenderLogicSettings,
+  type ShiftProfile,
 } from "@/lib/tender-logic-settings";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
@@ -227,6 +235,27 @@ export function markAllNotificationsRead(userId: string) {
     data.notifications = data.notifications.map((n) =>
       n.userId === userId ? { ...n, read: true } : n
     );
+    return data;
+  });
+}
+
+export function setOrganizationShiftProfile(
+  actorId: string,
+  orgId: string,
+  shiftProfile: ShiftProfile,
+) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    if (actor.role !== "superadmin" && actor.role !== "admin") {
+      throw new Error("Нет доступа к настройкам организации");
+    }
+    assertOrgAccess(actor, orgId, "организации");
+    const known = resolveTenderLogicSettings({ tenderLogic: { shiftProfile } }).shiftProfile;
+    if (known !== shiftProfile) throw new Error("Неизвестный профиль смен");
+    const org = data.organizations.find((item) => item.id === orgId);
+    if (!org) throw new Error("Организация не найдена");
+    org.tenderLogic = { ...(org.tenderLogic ?? {}), shiftProfile };
+    audit(data, actorId, "update", "organization", orgId, `Профиль смен: ${shiftProfile}`);
     return data;
   });
 }
@@ -1454,6 +1483,7 @@ export function updateSchedule(
           replacePositions: true,
         });
         Object.assign(calc, synced.calc);
+        finishSyncedCommercialCost(calc);
       }
       if (previousPhysicalPlan !== physicalPlanSignature(updated.stages)) {
         syncProductionPlanFromSchedule(data, updated);
@@ -1521,6 +1551,7 @@ export function updateLinkedResourcesFromCalculation(
     if (isResourceLinkedDraft(calc)) {
       const synced = syncDraftFromStages(calc, schedule.stages, { replacePositions: true });
       Object.assign(calc, synced.calc);
+      finishSyncedCommercialCost(calc);
     }
     audit(data, actorId, "update", "calculation", calculationId, "Ресурсы расчёта синхронизированы с графиком");
     return data;
@@ -1585,6 +1616,7 @@ export function patchScheduleResourceAndSync(
         replacePositions: true,
       });
       Object.assign(calc, synced.calc);
+      finishSyncedCommercialCost(calc);
       calc.changeLog = [
         ...(calc.changeLog ?? []),
         {
@@ -2732,6 +2764,8 @@ export function createProcurementSchedule(actorId: string, procurementId: string
         crewSize: 0,
       }),
     ];
+    const logic = resolveTenderLogicSettings(data.organizations.find((org) => org.id === procurement.orgId));
+    const calendar = calendarForNewSchedule(logic.shiftProfile);
     data.schedules.unshift({
       id: gid,
       orgId: procurement.orgId,
@@ -2741,6 +2775,7 @@ export function createProcurementSchedule(actorId: string, procurementId: string
       status: "v_rabote",
       version: 1,
       authorId: actorId,
+      ...(calendar ? { calendar } : {}),
       assumptions: withMissingDatesNote(derived.length
         ? [
             GPR_FROM_CUSTOMER_SECTIONS,
@@ -2967,7 +3002,7 @@ export function sendProcurementToCalculation(
           ...(seedPositions.length ? [ESTIMATE_ROWS_AS_SOURCE_SHEET] : ["awaiting_estimate_rows"]),
         ],
         ...(seedPositions.length
-          ? { resourceScheduleParams: scheduleParamsWithNorthernDefaults() }
+          ? { resourceScheduleParams: resourceParamsForNewCalculation(logic.shiftProfile) }
           : {}),
       });
       p.calculationId = draftId;
@@ -3005,7 +3040,7 @@ export function sendProcurementToCalculation(
         ];
         // Defaults belong to the first draft only. A repeat send must not
         // fill a missing coefficient into an existing schedule or replace an edit.
-        linked.resourceScheduleParams ??= scheduleParamsWithNorthernDefaults();
+        linked.resourceScheduleParams ??= resourceParamsForNewCalculation(logic.shiftProfile);
       }
       linked.updatedAt = now;
       linked.changeLog = [
@@ -3389,7 +3424,7 @@ function assignCommitteeSnapshot(item: Calculation, data: AppData) {
   );
   item.committeeSnapshot = buildCommitteeSnapshot({
     nmck: procurement?.nmck,
-    officialCost: item.costSummary?.C0,
+    officialCost: item.costSummary?.C,
     officialConfirmed: confirmed,
   });
 }
@@ -3451,13 +3486,14 @@ export function shiftGprStage(
         syncDraftFromStages(calc, item.stages, { replacePositions: true }).calc
       );
       if (calc.costSummary) calc.costSummary.reserve = reserve;
-      applyResourceDraftAdjustments(calc);
+      finishSyncedCommercialCost(calc);
     }
     if (calc && calc.kind !== "customer_original") {
       const days = gprCoveredDays(item.stages, item.calendar).length;
       if (calc.busRoutes?.length) {
         calc.busRoutes = calc.busRoutes.map((r) => ({ ...r, days }));
       }
+      let shiftLabor = 0;
       if (!syncedResourceDraft && (calc.costSummary || (calc.busRoutes?.length ?? 0) > 0)) {
         const buckets = bucketsFromPositions(
           calc.positions,
@@ -3471,6 +3507,7 @@ export function shiftGprStage(
         const northern = northernInputsForEngine(calc);
         const rs = calc.resourceScheduleParams;
         const useRs = Boolean(rs);
+        shiftLabor = buckets.labor;
         const Dapprox =
           buckets.labor +
           buckets.materials +
@@ -3503,12 +3540,18 @@ export function shiftGprStage(
           priceExVat: engine.priceExVat,
           vatAmount: engine.vatAmount,
           priceIncVat: engine.priceIncVat,
+          direct: engine.direct.D,
+          overhead: site,
           method: useRs
             ? `cost-engine:${engine.profitMethod}+gpr-shift+resource-schedule-excel`
             : `cost-engine:${engine.profitMethod}+gpr-shift`,
           incomplete: engine.incomplete,
           at: new Date().toISOString(),
         };
+      }
+      if (calc.resourceScheduleParams && !syncedResourceDraft) {
+        applyNorthernFold(calc, shiftLabor);
+        applyClientEconomics(calc);
       }
       markMissingCommercialCost(calc);
       assignCommitteeSnapshot(calc, data);
@@ -3579,6 +3622,12 @@ function applyNorthernFold(calc: Calculation, labor: number) {
   const vatAmount = calc.vatPercent == null
     ? summary.vatAmount
     : Math.round(priceExVat * calc.vatPercent) / 100;
+  const foldedDirect = typeof summary.direct === "number"
+    ? Math.round((summary.direct - (previous?.extraDirect ?? 0) + extraDirect) * 100) / 100
+    : undefined;
+  const foldedOverhead = typeof summary.overhead === "number"
+    ? Math.round((summary.overhead - (previous?.extraOverhead ?? 0) + extraOverhead) * 100) / 100
+    : undefined;
   calc.costSummary = {
     ...summary,
     C0,
@@ -3587,6 +3636,8 @@ function applyNorthernFold(calc: Calculation, labor: number) {
     priceExVat,
     vatAmount,
     priceIncVat: vatAmount == null ? null : Math.round((priceExVat + vatAmount) * 100) / 100,
+    ...(foldedDirect != null ? { direct: foldedDirect } : {}),
+    ...(foldedOverhead != null ? { overhead: foldedOverhead } : {}),
     northernAdjustments: {
       district,
       allowance,
@@ -3603,6 +3654,82 @@ function applyNorthernFold(calc: Calculation, labor: number) {
         total: Math.round((summary.resourceSlices.total - (previous?.added ?? 0) + added) * 100) / 100,
       },
     } : {}),
+  };
+}
+
+function mergeEconomicsManual(
+  current: EconomicsManual | undefined,
+  patch: {
+    overhead?: EconomicsManual["overhead"] | null;
+    reserve?: EconomicsManual["reserve"] | null;
+    profit?: EconomicsManual["profit"] | null;
+  },
+): EconomicsManual {
+  const next: EconomicsManual = { ...(current ?? {}) };
+  for (const key of ["overhead", "reserve", "profit"] as const) {
+    if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
+    const clean = sanitizeEconomicsOverride(patch[key]);
+    if (clean == null) delete next[key];
+    else next[key] = clean;
+  }
+  return next;
+}
+
+/**
+ * Same tail as a full resource recompute: office overhead, northern extras,
+ * then the client 43/10/40 price. A raw tree rollup has none of those.
+ */
+function finishSyncedCommercialCost(calc: Calculation) {
+  if (!calc.resourceScheduleParams || !calc.costSummary) return;
+  if (calc.costSummary.resourceSlices) applyResourceDraftAdjustments(calc);
+  applyNorthernFold(calc, calc.costSummary?.resourceSlices?.labor ?? 0);
+  applyClientEconomics(calc);
+}
+
+/** Official price only. Reference reprice keeps reserve 0 and is not passed here. */
+function applyClientEconomics(calc: Calculation) {
+  const summary = calc.costSummary;
+  const params = calc.resourceScheduleParams;
+  if (!summary || !params) return;
+  const next = applyClientCommercialFormula({
+    C0: summary.C0,
+    profit: summary.profit,
+    direct: summary.resourceSlices?.direct ?? summary.direct ?? null,
+    overhead: summary.resourceSlices?.overhead ?? summary.overhead ?? null,
+    formulaProfitRate: params.profitMarkupOnCostWithOh,
+    vatPercent: calc.vatPercent ?? null,
+    manual: calc.economicsManual,
+  });
+  calc.costSummary = {
+    ...summary,
+    C0: next.C0,
+    C: next.C,
+    reserve: next.reserve,
+    profit: next.profit,
+    priceExVat: next.priceExVat,
+    vatAmount: next.vatAmount,
+    priceIncVat: next.priceIncVat,
+    ...(next.direct != null ? { direct: next.direct } : {}),
+    ...(next.overhead != null ? { overhead: next.overhead } : {}),
+    ...(summary.northernAdjustments ? {
+      northernAdjustments: {
+        ...summary.northernAdjustments,
+        total: next.priceExVat,
+      },
+    } : {}),
+    ...(summary.resourceSlices ? {
+      resourceSlices: {
+        ...summary.resourceSlices,
+        ...(next.manualLines.includes("overhead") && next.overhead != null
+          ? { overhead: next.overhead, costWithOh: next.C0 }
+          : {}),
+        ...(next.manualLines.includes("profit") || next.manualLines.includes("overhead")
+          ? { profit: next.profit }
+          : {}),
+        total: next.priceExVat,
+      },
+    } : {}),
+    manualLines: next.manualLines,
   };
 }
 
@@ -3669,6 +3796,12 @@ export function recomputeCalculationCost(
     resourceScheduleParams?: ResourceScheduleParams;
     /** When true (default if resourceScheduleParams set): OH = D×overheadRate. */
     useResourceScheduleEconomics?: boolean;
+    /** null on a line clears that manual correction. Omitted lines stay as saved. */
+    economicsManual?: {
+      overhead?: EconomicsManual["overhead"] | null;
+      reserve?: EconomicsManual["reserve"] | null;
+      profit?: EconomicsManual["profit"] | null;
+    };
   }
 ) {
   return mutateAppData((data) => {
@@ -3685,6 +3818,9 @@ export function recomputeCalculationCost(
     if (patch?.resourceScheduleParams) {
       item.resourceScheduleParams = patch.resourceScheduleParams;
     }
+    if (patch?.economicsManual) {
+      item.economicsManual = mergeEconomicsManual(item.economicsManual, patch.economicsManual);
+    }
     if (patch?.officeOverhead != null) {
       item.officeOverhead = Math.max(0, patch.officeOverhead);
     }
@@ -3695,7 +3831,10 @@ export function recomputeCalculationCost(
     const useRs =
       patch?.useResourceScheduleEconomics ?? Boolean(item.resourceScheduleParams);
     if (useRs && !item.resourceScheduleParams) {
-      item.resourceScheduleParams = EXCEL_RESOURCE_SCHEDULE_DEFAULTS;
+      const logic = resolveTenderLogicSettings(
+        data.organizations.find((org) => org.id === item.orgId),
+      );
+      item.resourceScheduleParams = resourceParamsForNewCalculation(logic.shiftProfile);
     }
 
     // Unified path only for explicit resource-linked drafts.
@@ -3728,6 +3867,7 @@ export function recomputeCalculationCost(
       applyResourceDraftAdjustments(item);
       const stageLabor = item.costSummary?.resourceSlices?.labor ?? 0;
       applyNorthernFold(item, stageLabor);
+      applyClientEconomics(item);
       const matNeeds = buildMaterialNeeds({
         positions: item.positions.filter((position) => position.costRole !== "customer_source"),
         stages: stagesForOfficialCost(item, linkedSchedule.stages),
@@ -3817,6 +3957,8 @@ export function recomputeCalculationCost(
       priceExVat: engine.priceExVat,
       vatAmount: engine.vatAmount,
       priceIncVat: engine.priceIncVat,
+      direct: engine.direct.D,
+      overhead: site,
       method: useRs
         ? `cost-engine:${engine.profitMethod}+resource-schedule-excel`
         : `cost-engine:${engine.profitMethod}`,
@@ -3825,6 +3967,7 @@ export function recomputeCalculationCost(
       at: new Date().toISOString(),
     };
     applyNorthernFold(item, buckets.labor);
+    if (useRs) applyClientEconomics(item);
     item.dataFlags = [
       ...(item.dataFlags ?? []).filter((f) => !f.startsWith("cost_")),
       "cost_engine_v1",

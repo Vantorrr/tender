@@ -305,13 +305,28 @@ describe("wave 2–3 server checks", () => {
       allowance: expected.allowance,
       overhead: expected.overhead,
     });
-    expect(saved.costSummary?.priceExVat).toBe(expected.total + 200 + 100);
+    const c0 = expected.total + 200 + 100;
+    expect(saved.costSummary?.C0).toBe(c0);
+    expect(saved.costSummary?.profit).toBe(0);
+    expect(saved.costSummary?.reserve).toBe(Math.round(c0 * 0.1 * 100) / 100);
+    expect(saved.costSummary?.priceExVat).toBe(Math.round((c0 + (saved.costSummary?.reserve ?? 0)) * 100) / 100);
+    expect(saved.costSummary?.northernAdjustments?.total).toBe(saved.costSummary?.priceExVat);
     const { buildCalculationXlsx, buildCalculationPdf } = await import("@/server/export");
     const workbook = new (await import("exceljs")).Workbook();
     await workbook.xlsx.load(await buildCalculationXlsx(calculation.id) as unknown as import("exceljs").Buffer);
     const sheet = workbook.getWorksheet("Расчёт")!;
     const labels = sheet.getColumn(2).values.map((value) => String(value ?? ""));
-    expect(labels).toEqual(expect.arrayContaining(["Районный коэффициент", "Северная надбавка", "Накладные расходы"]));
+    expect(labels).toEqual(expect.arrayContaining(["Районный коэффициент", "Северная надбавка", "Накладные расходы", "Цена без НДС"]));
+    let exportedPrice: number | null = null;
+    let northernTotal: number | null = null;
+    sheet.eachRow((row) => {
+      const name = String(row.getCell(2).value ?? "");
+      const amount = Number(row.getCell(6).value);
+      if (name === "Цена без НДС") exportedPrice = amount;
+      if (name === "Итого с северными условиями") northernTotal = amount;
+    });
+    expect(exportedPrice).toBe(saved.costSummary?.priceExVat);
+    expect(northernTotal).toBe(saved.costSummary?.priceExVat);
     const pdf = (await buildCalculationPdf(calculation.id)).toString("latin1");
     expect(pdf.length).toBeGreaterThan(1000);
   });

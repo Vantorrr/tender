@@ -51,16 +51,16 @@ describe("wave 1 tender logic", () => {
   it("uses the documented defaults and ignores an unknown override", () => {
     expect(DEFAULT_TENDER_LOGIC_SETTINGS).toEqual({
       importEstimateRowsMode: "translation_table",
-      shiftProfile: "excel_current",
+      shiftProfile: "client_2x11_no_weekends",
       nmckAtOrBelowCostPolicy: "warn",
     });
     expect(DOC1_7PLUS1_SHIFT_PROFILE.appliesToSavedResourceScheduleParams).toBe(false);
     expect(resolveTenderLogicSettings({ tenderLogic: { importEstimateRowsMode: "empty_packages" } })).toMatchObject({
       importEstimateRowsMode: "empty_packages",
-      shiftProfile: "excel_current",
+      shiftProfile: "client_2x11_no_weekends",
       nmckAtOrBelowCostPolicy: "warn",
     });
-    expect(resolveTenderLogicSettings({ tenderLogic: { shiftProfile: "not-a-profile" as "excel_current" } }).shiftProfile).toBe("excel_current");
+    expect(resolveTenderLogicSettings({ tenderLogic: { shiftProfile: "not-a-profile" as "excel_current" } }).shiftProfile).toBe("client_2x11_no_weekends");
     expect(EXCEL_RESOURCE_SCHEDULE_DEFAULTS).toMatchObject({
       personHourRate: 1400,
       personnelShiftsPerDay: 2,
@@ -239,7 +239,7 @@ describe("wave 1 tender logic", () => {
       floorMarginPercent: null,
       nmckVsCost: "at_or_below_cost",
     });
-    expect(withCommercial.committeeSnapshot?.fullCost).toBeCloseTo(withCommercial.costSummary?.C0 ?? 0, 2);
+    expect(withCommercial.committeeSnapshot?.fullCost).toBeCloseTo(withCommercial.costSummary?.C ?? 0, 2);
     const officialBeforeSchedule = withCommercial.costSummary?.C0 ?? 0;
 
     createProcurementSchedule("u-ruk", created.id);
@@ -399,7 +399,10 @@ describe("wave 1 tender logic", () => {
     const direct = 200;
     const overhead = Math.round(direct * 0.43 * 100) / 100;
     const cost = Math.round((direct + overhead) * 100) / 100;
-    const price = Math.round(cost * 1.4 * 100) / 100;
+    const reserve = Math.round(cost * 0.1 * 100) / 100;
+    const profit = Math.round(cost * 0.4 * 100) / 100;
+    const price = Math.round((cost + reserve + profit) * 100) / 100;
+    const rollupTotal = price;
     createProcurementSchedule("u-ruk", created.id);
     recomputeCalculationCost("u-ruk", draft.id, {
       resourceScheduleParams: params,
@@ -410,16 +413,16 @@ describe("wave 1 tender logic", () => {
     expect(scheduled.costSummary?.C0).toBeCloseTo(cost, 2);
     expect(scheduled.costSummary?.priceExVat).toBeCloseTo(price, 2);
     expect(scheduled.costSummary?.resourceSlices?.direct).toBeCloseTo(direct, 2);
-    expect(scheduled.costSummary?.resourceSlices?.total).toBeCloseTo(scheduled.costSummary?.priceExVat ?? 0, 2);
-    expect(scheduled.committeeSnapshot?.fullCost).toBeCloseTo(scheduled.costSummary?.C0 ?? 0, 2);
+    expect(scheduled.costSummary?.resourceSlices?.total).toBeCloseTo(rollupTotal, 2);
+    expect(scheduled.committeeSnapshot?.fullCost).toBeCloseTo(scheduled.costSummary?.C ?? 0, 2);
     const schedule = readAppData().schedules.find((item) => item.procurementId === created.id)!;
     shiftGprStage("u-ruk", schedule.id, schedule.stages[0]!.id, 3);
     const shifted = readAppData().calculations.find((item) => item.id === draft.id)!;
     expect(shifted.costSummary?.C0).toBeCloseTo(cost, 2);
     expect(shifted.costSummary?.priceExVat).toBeCloseTo(price, 2);
     expect(shifted.costSummary?.resourceSlices?.direct).toBeCloseTo(direct, 2);
-    expect(shifted.costSummary?.resourceSlices?.total).toBeCloseTo(shifted.costSummary?.priceExVat ?? 0, 2);
-    expect(shifted.committeeSnapshot?.fullCost).toBeCloseTo(shifted.costSummary?.C0 ?? 0, 2);
+    expect(shifted.costSummary?.resourceSlices?.total).toBeCloseTo(rollupTotal, 2);
+    expect(shifted.committeeSnapshot?.fullCost).toBeCloseTo(shifted.costSummary?.C ?? 0, 2);
   });
 
   it("does not mark a confirmed commercial total incomplete because the customer sheet has no rate", async () => {
@@ -488,7 +491,7 @@ describe("wave 1 tender logic", () => {
     expect(saved.costSummary?.incomplete ?? []).not.toContain("rate:Арматура");
     expect(saved.costSummary?.priceIncVat).toBeCloseTo((saved.costSummary?.priceExVat ?? 0) * 1.2, 2);
     expect(saved.committeeSnapshot?.nmckVsCost).toBe("above_cost");
-    expect(saved.committeeSnapshot?.fullCost).toBeCloseTo(direct + overhead, 2);
+    expect(saved.committeeSnapshot?.fullCost).toBeCloseTo(Math.round((direct + overhead) * 1.1 * 100) / 100, 2);
   });
 
   it("leaves the commercial draft empty in empty_packages mode and ignores customer-source rows in buckets", async () => {
