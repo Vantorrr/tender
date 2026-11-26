@@ -26,6 +26,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { api, downloadUrl } from "@/lib/api";
+import { EconomicsLinesEditor } from "@/components/economics-lines-editor";
 import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-panel";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
 import { labourLineEconomicsNote, NORTH_DEFAULTS, northernAdditionLines, northernEconomicsApplied, northernStatusText, refreshRateAssumption } from "@/lib/wave23";
@@ -55,6 +56,7 @@ import {
   buildCommitteeSnapshot,
   committeeValueText,
   customerSourcePositions,
+  nmckAtOrBelowCostWarning,
   officialMoneyText,
 } from "@/lib/tender-logic-settings";
 import type { NorthernInputs } from "@/lib/cost-engine";
@@ -581,8 +583,8 @@ export default function RaschetDetailPage() {
   const draftSlices = calc.costSummary?.resourceSlices;
   /** Draft chip: unified Z when present; never pretend NR15/SP8 == resource Z. */
   const total =
-    calc.kind === "resource_draft" && draftSlices
-      ? draftSlices.total
+    calc.kind === "resource_draft" && calc.costSummary
+      ? calc.costSummary.priceExVat
       : calc.kind === "customer_original"
         ? totals.total
         : (calc.costSummary?.priceExVat ?? totals.total);
@@ -1166,7 +1168,7 @@ export default function RaschetDetailPage() {
             );
             const frame = calc.committeeSnapshot ?? buildCommitteeSnapshot({
               nmck: procurement?.nmck,
-              officialCost: calc.costSummary?.C0,
+              officialCost: calc.costSummary?.C,
               officialConfirmed: confirmed,
             });
             const policy = data.organizations.find((org) => org.id === user.orgId)?.tenderLogic?.nmckAtOrBelowCostPolicy ?? "warn";
@@ -1184,11 +1186,21 @@ export default function RaschetDetailPage() {
                     <div className="mt-1 text-sm font-semibold">{value}</div>
                   </div>
                 ))}
+                {calc.kind === "resource_draft" ? (
+                  <div className="lg:col-span-4">
+                    <EconomicsLinesEditor
+                      key={`${calc.id}:${calc.updatedAt}:committee`}
+                      calculationId={calc.id}
+                      summary={calc.costSummary}
+                      manual={calc.economicsManual}
+                      locked={locked}
+                      onSaved={refresh}
+                    />
+                  </div>
+                ) : null}
                 {frame.nmckVsCost === "at_or_below_cost" ? (
                   <p className="lg:col-span-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950" data-testid="nmck-at-or-below-cost">
-                    {policy === "block"
-                      ? "НМЦК не выше полной себестоимости. Политика компании — не продолжать подачу, пока цифры не разойдутся. Решение об участии само не меняется."
-                      : "НМЦК не выше полной себестоимости. Это предупреждение. Решение об участии само не меняется."}
+                    {nmckAtOrBelowCostWarning(policy)}
                   </p>
                 ) : null}
               </>
@@ -1266,10 +1278,12 @@ export default function RaschetDetailPage() {
             params,
             officeOverhead,
             reserve,
+            reserveEdited,
           }: {
             params: ResourceScheduleParams;
             officeOverhead: number;
             reserve: number;
+            reserveEdited?: boolean;
           }) => {
             await api("/api/raschety", {
               method: "PATCH",
@@ -1281,7 +1295,7 @@ export default function RaschetDetailPage() {
                   profitMethod: "markup",
                   profitRate: params.profitMarkupOnCostWithOh,
                   officeOverhead,
-                  reserve,
+                  ...(reserveEdited ? { economicsManual: { reserve: { mode: "amount" as const, value: reserve } } } : {}),
                   useResourceScheduleEconomics: true,
                   resourceScheduleParams: params,
                 },
@@ -1633,8 +1647,7 @@ export default function RaschetDetailPage() {
               добавлять водителя и топливо сверху; расход топлива задаётся в литрах в час
             </li>
             <li>
-              Накладные расходы как процент от прямых затрат (по умолчанию 43%); прибыль — наценка на себестоимость с накладными расходами
-              (по умолчанию 40%), не доля от выручки
+              Накладные расходы — 43% от прямых. Непредвиденные — 10% от прямых с накладными и входят в цену отдельно. Прибыль — 40% от прямых с накладными, резерв в базу наценки не входит. При этих процентах цена без НДС равна себестоимости с накладными × 1,50
             </li>
             <li>
               Резерв отпуска ≠ общий резерв непредвиденных (последний — только
@@ -1818,10 +1831,20 @@ export default function RaschetDetailPage() {
           <h2 className="font-[family-name:var(--font-display)] text-base">
             Сводка расчёта
           </h2>
+          <div className="mt-3">
+            <EconomicsLinesEditor
+              key={`${calc.id}:${calc.updatedAt}:summary`}
+              calculationId={calc.id}
+              summary={calc.costSummary}
+              manual={calc.economicsManual}
+              locked={locked}
+              onSaved={refresh}
+            />
+          </div>
           <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
-            <div>Себестоимость без резерва: {officialMoneyText(calc.costSummary.C0, missingRateCount, Boolean(calc.costSummary.totalsIncomplete))}</div>
-            <div>Себестоимость с резервом: {officialMoneyText(calc.costSummary.C, missingRateCount, Boolean(calc.costSummary.totalsIncomplete))}</div>
-            <div>Прибыль: {calc.costSummary.totalsIncomplete && !(calc.costSummary.C0 > 0) ? COMMITTEE_UNSET : formatMoney(calc.costSummary.profit)}</div>
+            <div>Себестоимость с накладными: {officialMoneyText(calc.costSummary.C0, missingRateCount, Boolean(calc.costSummary.totalsIncomplete))}</div>
+            <div>Полная себестоимость: {officialMoneyText(calc.costSummary.C, missingRateCount, Boolean(calc.costSummary.totalsIncomplete))}</div>
+            <div>Прибыль: {calc.costSummary.totalsIncomplete && !(calc.costSummary.C0 > 0) ? COMMITTEE_UNSET : formatMoney(calc.costSummary.profit)}{calc.costSummary.manualLines?.includes("profit") ? " · ручная правка" : ""}</div>
             <div>Цена без НДС: {officialMoneyText(calc.costSummary.priceExVat, missingRateCount, Boolean(calc.costSummary.totalsIncomplete))}</div>
             <div>
               НДС:{" "}

@@ -1,3 +1,4 @@
+import type { EconomicsLineKey, EconomicsManual } from "@/lib/client-economics";
 import type { TenderLogicSettings } from "@/lib/tender-logic-settings";
 
 export type Role =
@@ -542,6 +543,11 @@ export interface Calculation {
     districtCoefficient?: number;
     northernPayrollShare?: number;
   };
+  /**
+   * User corrections of overhead, contingency and profit.
+   * A later recalculation keeps them until the user resets the line.
+   */
+  economicsManual?: EconomicsManual;
   busRoutes?: Array<{
     people: number;
     seats: number;
@@ -834,6 +840,12 @@ export interface CostSummarySnapshot {
     partial?: boolean;
     skipped?: string[];
   };
+  /** Direct costs D used for the overhead percent. */
+  direct?: number;
+  /** Overhead line (НР). A manual amount replaces the formula line. */
+  overhead?: number;
+  /** Lines the user overrode. Empty means the formula produced the figure. */
+  manualLines?: EconomicsLineKey[];
   /** District coefficient, northern allowance and overhead folded into the stored total. */
   northernAdjustments?: {
     district: number;

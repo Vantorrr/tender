@@ -37,6 +37,7 @@ type Props = {
     params: ResourceScheduleParams;
     officeOverhead: number;
     reserve: number;
+    reserveEdited?: boolean;
   }) => Promise<void>;
   onPatchLeaf: (leaf: EstimateLeaf, patch: {
     name?: string;
@@ -87,6 +88,7 @@ export function HierarchicalEstimatePanel({
   const [savingParams, setSavingParams] = useState(false);
   const [officeDraft, setOfficeDraft] = useState(officeOverhead);
   const [reserveDraft, setReserveDraft] = useState(costSummary?.reserve ?? 0);
+  const [reserveEdited, setReserveEdited] = useState(false);
 
   const nodes = useMemo(
     () =>
@@ -396,9 +398,10 @@ export function HierarchicalEstimatePanel({
           Подробности расчёта
         </summary>
         <p className="mt-2 max-w-3xl text-xs leading-relaxed text-[var(--tk-muted)]">
-          Формулы ресурсного шаблона: прямые = материалы + люди + техника;
-          накладные = 43% от прямых; себестоимость = прямые + накладные;
-          прибыль = 40% от себестоимости; итого = себестоимость + прибыль.
+          Формулы официального итога: прямые = материалы + люди + техника;
+          накладные = 43% от прямых; себестоимость с накладными = прямые + накладные;
+          непредвиденные = 10% от этой себестоимости; прибыль = 40% от себестоимости с накладными, без непредвиденных;
+          цена без НДС = полная себестоимость + прибыль (при этих процентах × 1,50, не × 1,54).
           Часы = количество × часы в смене × смены в день × дни; сумма = часы × ставка.
         </p>
         <div
@@ -473,7 +476,11 @@ export function HierarchicalEstimatePanel({
                     min={0}
                     step="1000"
                     value={String(value)}
-                    onChange={(event) => setValue(Math.max(0, Number(event.target.value) || 0))}
+                    onChange={(event) => {
+                      const next = Math.max(0, Number(event.target.value) || 0);
+                      setValue(next);
+                      if (label.startsWith("Непредвиденные")) setReserveEdited(true);
+                    }}
                   />
                 </label>
               ))}
@@ -488,6 +495,7 @@ export function HierarchicalEstimatePanel({
                     params: paramsDraft,
                     officeOverhead: officeDraft,
                     reserve: reserveDraft,
+                    reserveEdited,
                   });
                   toast.success("Параметры сохранены, расчёт обновлён");
                 } catch (error) {

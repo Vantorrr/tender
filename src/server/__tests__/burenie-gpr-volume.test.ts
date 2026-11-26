@@ -71,7 +71,9 @@ describe("burenie volume after the schedule", () => {
       expect.objectContaining({ quantity: 10, rate: 881 }),
     ]);
     expect(after.costSummary?.C0).toBeCloseTo(280972515.48, 2);
-    expect(after.costSummary?.priceExVat).toBeCloseTo(393361521.67, 2);
+    expect(after.costSummary?.reserve).toBeCloseTo((after.costSummary?.C0 ?? 0) * 0.1, 2);
+    expect(after.costSummary?.priceExVat).toBeCloseTo((after.costSummary?.C0 ?? 0) * 1.5, 2);
+    expect(after.costSummary?.priceExVat).not.toBeCloseTo((after.costSummary?.C0 ?? 0) * 1.54, 0);
     expect(after.costSummary?.C0).toBeCloseTo(alone.costSummary?.C0 ?? 0, 2);
     expect(after.costSummary?.priceExVat).toBeCloseTo(alone.costSummary?.priceExVat ?? 0, 2);
   });

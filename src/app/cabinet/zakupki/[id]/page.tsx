@@ -26,7 +26,7 @@ import { formatDate, formatDateTime, formatMoney, formatNumber, formatQuantity, 
 import { citationTopicLabel, isShownConfirmation, readableCitations, regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
 import { SUMMARY_FRESH, SUMMARY_UNCHANGED } from "@/lib/summary-notice";
 import { calcMemoState, citationHref, costIsPartial, costIsUncalculated, draftCostPhrase, honestReadinessText, moneyRu, rowCountNominative } from "@/lib/wave23";
-import { COMMITTEE_UNSET, buildCommitteeSnapshot, committeeValueText, positionFeedsOfficialCost } from "@/lib/tender-logic-settings";
+import { COMMITTEE_UNSET, buildCommitteeSnapshot, committeeValueText, nmckAtOrBelowCostWarning, positionFeedsOfficialCost } from "@/lib/tender-logic-settings";
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_CHECKLIST } from "@/lib/ai-topics";
 import { buildProjectAnalytics, filledOverviewBlocks, PARTICIPATE_LABELS, visibleCheckItems } from "@/lib/project-analytics";
@@ -1750,7 +1750,7 @@ export default function ZakupkaDetailPage() {
                   );
                   const frame = calc.committeeSnapshot ?? buildCommitteeSnapshot({
                     nmck: procurement.nmck,
-                    officialCost: calc.costSummary?.C0,
+                    officialCost: calc.costSummary?.C,
                     officialConfirmed: confirmed,
                   });
                   const policy = data.organizations.find((org) => org.id === user?.orgId)?.tenderLogic?.nmckAtOrBelowCostPolicy ?? "warn";
@@ -1768,11 +1768,16 @@ export default function ZakupkaDetailPage() {
                           <div className="mt-1 text-sm font-semibold">{value}</div>
                         </div>
                       ))}
+                      {calc.costSummary ? (
+                        <div className="sm:col-span-4 grid gap-2 text-sm sm:grid-cols-3">
+                          <div>Накладные: {calc.costSummary.overhead == null ? COMMITTEE_UNSET : formatMoney(calc.costSummary.overhead)}{calc.costSummary.manualLines?.includes("overhead") ? " · ручная правка" : ""}</div>
+                          <div>Непредвиденные: {formatMoney(calc.costSummary.reserve)}{calc.costSummary.manualLines?.includes("reserve") ? " · ручная правка" : ""}</div>
+                          <div>Прибыль: {formatMoney(calc.costSummary.profit)}{calc.costSummary.manualLines?.includes("profit") ? " · ручная правка" : ""}</div>
+                        </div>
+                      ) : null}
                       {frame.nmckVsCost === "at_or_below_cost" ? (
-                        <p className="sm:col-span-4 text-sm text-amber-950">
-                          {policy === "block"
-                            ? "НМЦК не выше полной себестоимости. Политика компании — не продолжать подачу. Решение об участии само не меняется."
-                            : "НМЦК не выше полной себестоимости. Это предупреждение. Решение об участии само не меняется."}
+                        <p className="sm:col-span-4 text-sm text-amber-950" data-testid="procurement-nmck-warning">
+                          {nmckAtOrBelowCostWarning(policy)}
                         </p>
                       ) : null}
                     </>

@@ -305,7 +305,11 @@ describe("wave 2–3 server checks", () => {
       allowance: expected.allowance,
       overhead: expected.overhead,
     });
-    expect(saved.costSummary?.priceExVat).toBe(expected.total + 200 + 100);
+    const c0 = expected.total + 200 + 100;
+    expect(saved.costSummary?.C0).toBe(c0);
+    expect(saved.costSummary?.profit).toBe(0);
+    expect(saved.costSummary?.reserve).toBe(Math.round(c0 * 0.1 * 100) / 100);
+    expect(saved.costSummary?.priceExVat).toBe(Math.round((c0 + (saved.costSummary?.reserve ?? 0)) * 100) / 100);
     const { buildCalculationXlsx, buildCalculationPdf } = await import("@/server/export");
     const workbook = new (await import("exceljs")).Workbook();
     await workbook.xlsx.load(await buildCalculationXlsx(calculation.id) as unknown as import("exceljs").Buffer);

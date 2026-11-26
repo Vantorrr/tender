@@ -1,14 +1,20 @@
 /**
- * Company tender rules for wave 1.
- * Unconfirmed figures (target margin 12–18%, floor 5–7% and similar) stay unset.
+ * Company tender rules.
+ * Unconfirmed Document 1 figures (margin 12–18%, floor 5–7%, reserve 3–7%) stay unset.
  * doc1_7plus1 is a named shift profile only: it is never written onto saved
- * resourceScheduleParams, and EXCEL_RESOURCE_SCHEDULE_DEFAULTS stays the Excel sheet.
+ * resourceScheduleParams. EXCEL_RESOURCE_SCHEDULE_DEFAULTS stays the Excel sheet.
+ * client_2x11_no_weekends is the default for a new official calculation and a new GPR.
  */
 import { formatMoney } from "@/lib/format";
-import { incompleteTotalText } from "@/lib/wave23";
+import {
+  applyShiftProfileToParams,
+  EXCEL_RESOURCE_SCHEDULE_DEFAULTS,
+  type ResourceScheduleParams,
+} from "@/lib/resource-schedule-model";
+import { incompleteTotalText, scheduleParamsWithNorthernDefaults } from "@/lib/wave23";
 
 export type ImportEstimateRowsMode = "translation_table" | "empty_packages";
-export type ShiftProfile = "excel_current" | "doc1_7plus1";
+export type ShiftProfile = "client_2x11_no_weekends" | "excel_current" | "doc1_7plus1";
 export type NmckAtOrBelowCostPolicy = "warn" | "block";
 
 export interface TenderLogicSettings {
@@ -19,7 +25,7 @@ export interface TenderLogicSettings {
 
 export const DEFAULT_TENDER_LOGIC_SETTINGS: TenderLogicSettings = {
   importEstimateRowsMode: "translation_table",
-  shiftProfile: "excel_current",
+  shiftProfile: "client_2x11_no_weekends",
   nmckAtOrBelowCostPolicy: "warn",
 };
 
@@ -29,6 +35,54 @@ export const DOC1_7PLUS1_SHIFT_PROFILE = {
   label: "Документ 1: режим 7+1",
   appliesToSavedResourceScheduleParams: false as const,
 };
+
+export const SHIFT_PROFILE_OPTIONS: Array<{
+  id: ShiftProfile;
+  label: string;
+  detail: string;
+}> = [
+  {
+    id: "client_2x11_no_weekends",
+    label: "2×11 без выходных",
+    detail: "2 смены персонала, 2 смены техники, 11 часов, календарь без выходных",
+  },
+  {
+    id: "excel_current",
+    label: "Текущий Excel",
+    detail: "2 смены персонала, 1 смена техники, 11 часов, выходные суббота и воскресенье",
+  },
+  {
+    id: "doc1_7plus1",
+    label: "Документ 1: режим 7+1",
+    detail: "Именованный профиль. На параметры расчёта не записывается.",
+  },
+];
+
+/** Params for a calculation that does not have them yet. Never a rewrite of a saved set. */
+export function resourceParamsForNewCalculation(profile: ShiftProfile): ResourceScheduleParams {
+  return scheduleParamsWithNorthernDefaults(
+    applyShiftProfileToParams(profile, EXCEL_RESOURCE_SCHEDULE_DEFAULTS),
+  );
+}
+
+/**
+ * Calendar for a brand-new GPR. Excel and 7+1 keep the previous scaffold
+ * (caller leaves the calendar unset). The client profile has no weekends.
+ */
+export function calendarForNewSchedule(profile: ShiftProfile): {
+  weekendDays: number[];
+  hoursPerShift: number;
+  shiftsPerDay: number;
+  timezone: string;
+} | undefined {
+  if (profile !== "client_2x11_no_weekends") return undefined;
+  return {
+    weekendDays: [],
+    hoursPerShift: 11,
+    shiftsPerDay: 2,
+    timezone: "Asia/Krasnoyarsk",
+  };
+}
 
 export const LEGACY_ESTIMATE_SEEDED_COST = "legacy_estimate_seeded_cost";
 export const ESTIMATE_ROWS_AS_SOURCE_SHEET = "estimate_rows_as_source_sheet";
@@ -46,7 +100,7 @@ export const GPR_FROM_CUSTOMER_SECTIONS =
 export const COMMITTEE_UNSET = "не задано, ждём правило компании";
 
 const IMPORT_MODES = new Set<ImportEstimateRowsMode>(["translation_table", "empty_packages"]);
-const SHIFT_PROFILES = new Set<ShiftProfile>(["excel_current", "doc1_7plus1"]);
+const SHIFT_PROFILES = new Set<ShiftProfile>(["client_2x11_no_weekends", "excel_current", "doc1_7plus1"]);
 const NMCK_POLICIES = new Set<NmckAtOrBelowCostPolicy>(["warn", "block"]);
 
 export function resolveTenderLogicSettings(
@@ -139,6 +193,15 @@ export function officialMoneyText(
   }
   if (amount == null || !Number.isFinite(amount)) return "нет подтверждённого итога";
   return formatMoney(amount);
+}
+
+export function nmckAtOrBelowCostWarning(policy: NmckAtOrBelowCostPolicy): string {
+  const decision = "Отказ автоматически не ставится: решение об участии принимает директор.";
+  const reason = "НМЦК не выше полной себестоимости (прямые, накладные и непредвиденные). При такой предельной цене работы неэффективны: цена не покрывает себестоимость.";
+  if (policy === "block") {
+    return `${reason} Политика компании — не продолжать подачу, пока цифры не разойдутся. ${decision}`;
+  }
+  return `${reason} Это предупреждение. ${decision}`;
 }
 
 export function committeeValueText(value: number | null | undefined, money = false): string {

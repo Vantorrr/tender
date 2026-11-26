@@ -606,6 +606,17 @@ export default function GprDetailPage() {
                   <div>Цена без НДС: {costText(cost.priceExVat)}</div>
                 </>
               )}
+              {(cost.reserve > 0 || (cost.manualLines?.length ?? 0) > 0) ? (
+                <div className="sm:col-span-3 text-sm" data-testid="gpr-official-economics">
+                  Накладные: {formatMoney(cost.overhead ?? cost.resourceSlices?.overhead ?? 0)}
+                  {cost.manualLines?.includes("overhead") ? " · ручная правка" : ""}.
+                  {" "}Непредвиденные: {formatMoney(cost.reserve)}
+                  {cost.manualLines?.includes("reserve") ? " · ручная правка" : ""}.
+                  {" "}Прибыль: {formatMoney(cost.profit)}
+                  {cost.manualLines?.includes("profit") ? " · ручная правка" : ""}.
+                  {" "}Официальная цена без НДС: {formatMoney(cost.priceExVat)}. Непредвиденные не входят в базу наценки.
+                </div>
+              ) : null}
               <div>
                 НДС:{" "}
                 {cost.vatAmount == null

@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { SUMMARY_UNCHANGED, summaryRefreshNotice } from "@/lib/summary-notice";
+import type { ShiftProfile } from "@/lib/tender-logic-settings";
 import { createSeedData } from "./seed";
 import { api, setClientToken } from "./api";
 import type {
@@ -141,6 +142,7 @@ interface StoreContextValue {
   analyzeProjectWithAI: (procurementId: string) => Promise<string | undefined>;
   markAllNotificationsRead: () => Promise<void>;
   setOrganizationActive: (orgId: string, active: boolean) => Promise<void>;
+  setOrganizationShiftProfile: (orgId: string, shiftProfile: ShiftProfile) => Promise<void>;
   importClientXlsx: () => Promise<{
     equipment: number;
     labor: number;
@@ -313,6 +315,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         {
           method: "POST",
           body: JSON.stringify({ action: "setOrgActive", orgId, active }),
+        }
+      );
+      applyBoot(boot);
+    },
+    [applyBoot]
+  );
+
+  const setOrganizationShiftProfile = useCallback(
+    async (orgId: string, shiftProfile: ShiftProfile) => {
+      const boot = await api<BootstrapResponse & { token?: string }>(
+        "/api/admin",
+        {
+          method: "POST",
+          body: JSON.stringify({ action: "setShiftProfile", orgId, shiftProfile }),
         }
       );
       applyBoot(boot);
@@ -775,6 +791,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     markNotificationRead,
     markAllNotificationsRead,
     setOrganizationActive,
+    setOrganizationShiftProfile,
     importClientXlsx,
     updateUser,
     createUser,
