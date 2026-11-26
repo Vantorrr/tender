@@ -87,11 +87,15 @@ function existingMember(
     document.parentDocumentId === parentDocumentId && document.archiveMemberPath === archiveMemberPath
   );
   if (keyed) return keyed;
+  const parent = documents.find((document) => document.id === parentDocumentId);
+  const listed = (parent?.extractedFiles ?? []).some((file) => file.relativePath === archiveMemberPath);
+  if (!listed) return undefined;
   const unkeyed = documents.filter((document) =>
-    !document.parentDocumentId
+    document.id !== parentDocumentId
+    && !document.parentDocumentId
     && !document.archiveMemberPath
     && document.fileName === fileName
-    && (document.fileSize == null || document.fileSize === size)
+    && document.fileSize === size
   );
   return unkeyed.length === 1 ? unkeyed[0] : undefined;
 }

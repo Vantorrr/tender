@@ -345,4 +345,33 @@ describe("production blockers: archives, xls, batch upload, official chain", () 
     expect(kept?.parentDocumentId).toBe(root!.id);
     expect(kept?.id).not.toBe(repaired?.id);
   });
+
+  it("does not reparent a standalone upload when the same file appears in an archive", async () => {
+    const created = createManualProcurement("u-ruk", { title: "Отдельный график", region: "Ямал" });
+    const schedule = xlsSchedule();
+    const direct = await postFile(created.id, "График.xls", schedule);
+    expect(direct.status).toBe(200);
+    const standalone = readAppData().documents.find((document) => document.procurementId === created.id && document.fileName === "График.xls");
+    expect(standalone?.parentDocumentId).toBeUndefined();
+    const packed = await zipBytes([{ name: "a/График.xls", data: schedule }]);
+    const archived = await postFile(created.id, "pack.zip", packed);
+    expect(archived.status).toBe(200);
+    const root = readAppData().documents.find((document) => document.procurementId === created.id && document.fileName === "pack.zip");
+    mutateAppData((data) => {
+      const archive = data.documents.find((document) => document.id === root!.id)!;
+      archive.extractedFiles = [];
+      data.documents = data.documents.filter((document) =>
+        document.procurementId !== created.id || document.id === standalone!.id || document.id === root!.id
+      );
+      return data;
+    });
+    await reextractStoredArchive("u-ruk", root!.id);
+    const after = readAppData().documents.filter((document) => document.procurementId === created.id && document.fileName === "График.xls");
+    const untouched = after.find((document) => document.id === standalone!.id);
+    expect(untouched?.parentDocumentId).toBeUndefined();
+    expect(untouched?.archiveMemberPath).toBeUndefined();
+    const member = after.find((document) => document.parentDocumentId === root!.id && document.archiveMemberPath === "a/График.xls");
+    expect(member).toBeTruthy();
+    expect(member?.id).not.toBe(standalone!.id);
+  });
 });
