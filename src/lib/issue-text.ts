@@ -49,6 +49,7 @@ export function humanizeIssue(code: string, names?: Map<string, string>): string
     return "Наценка должна быть от 0 до 100%";
   }
   if (raw === "materials_external_or_missing") return "Материалы не учтены в итоге";
+  if (raw === "no_commercial_rows") return "Нет коммерческих строк со ставками";
   if (raw === "incomplete" || raw === "rate") return "Нет ставки";
   for (const [pattern, label] of NAMED) {
     if (pattern.test(raw)) return label(tailName(raw, names));

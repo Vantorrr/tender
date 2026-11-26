@@ -73,14 +73,19 @@ export type MemoCalcState = {
  * current draft. Work lines are not rates. An empty shell is not a calc.
  */
 export function calcMemoState(calc: {
-  positions?: Array<{ rateMissing?: boolean; isWorkItem?: boolean }>;
+  positions?: Array<{ rateMissing?: boolean; isWorkItem?: boolean; costRole?: "commercial" | "customer_source"; rate?: number; quantity?: number; code?: string }>;
+  dataFlags?: string[];
   costSummary?: {
     C0?: number | null;
+    totalsIncomplete?: boolean;
     resourceSlices?: { costWithOh?: number | null } | null;
   } | null;
 } | null | undefined): MemoCalcState | null {
   if (!calc) return null;
-  const positions = calc.positions ?? [];
+  const legacy = (calc.dataFlags ?? []).includes("legacy_estimate_seeded_cost");
+  const positions = (calc.positions ?? []).filter((position) => legacy || position.costRole !== "customer_source");
+  const onlyCustomerSource = (calc.positions ?? []).some((position) => position.costRole === "customer_source") && positions.length === 0;
+  if (onlyCustomerSource) return { cost: null, missingRates: 0 };
   if (!positions.length && calc.costSummary == null) return null;
   const missingRates = positions.filter((position) => position.rateMissing && !position.isWorkItem).length;
   const withOverhead = calc.costSummary?.resourceSlices?.costWithOh;

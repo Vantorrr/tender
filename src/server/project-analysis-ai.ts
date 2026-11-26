@@ -76,6 +76,8 @@ type AnalysisEconomics = {
   missingRates: number;
   missingRateNames?: string[];
   incompleteReasons?: string[];
+  /** A customer-estimate reprice exists and must not be read as cost or as a final participate decision. */
+  repriceNotCost?: boolean;
 };
 
 export type AnalysisCompanyContext = {
@@ -862,6 +864,7 @@ export async function analyzeProjectPackageWithModel(
           ? `${costPhrase}.`
           : `Черновая себестоимость по справочникам компании: ${costPhrase}.`,
         economics.missingRates ? `Не найдены собственные ставки для ${rowCountGenitive(economics.missingRates)}.` : "Ставки по строкам черновика найдены.",
+        economics.repriceNotCost ? "Справочная переоценка сметы заказчика себестоимостью не считается, и по ней нельзя подтвердить участие." : null,
         economics.incomplete ? "Ресурсный расчёт неполный, поэтому решение об участии пока не подтверждено." : null,
         profitAndMarginPhrase(economics),
         nmckComparisonPhrase({
@@ -1041,6 +1044,7 @@ export function buildProjectAnalysisFallback(
     profitAndMarginPhrase({
       cost, missingRates: economics.missingRates, profit, priceExVat, profitabilityPercent, revenueMarginPercent,
     }),
+    economics.repriceNotCost ? "Справочная переоценка сметы заказчика себестоимостью не считается, и по ней нельзя подтвердить участие." : null,
     nmckComparisonPhrase({
       cost, missingRates: economics.missingRates, priceWithVat, nmck: procurement.nmck, style: "compare",
     }),

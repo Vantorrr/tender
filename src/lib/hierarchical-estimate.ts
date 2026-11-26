@@ -248,6 +248,7 @@ export function buildHierarchicalEstimate(opts: {
       if (isEmptyTemplate) continue;
       const resolved = resolveResourceDimensions(r, st, params);
       const sourcePosition = r.sourceKey ? positionsById.get(r.sourceKey) : undefined;
+      if (sourcePosition?.costRole === "customer_source") continue;
       const leaf = leafFromResolved(r, st, resolved, sourcePosition);
       linkedResourceIds.add(r.id);
       if (r.sourceKey) {
@@ -263,6 +264,7 @@ export function buildHierarchicalEstimate(opts: {
       }
     }
     for (const p of opts.positions ?? []) {
+      if (p.costRole === "customer_source") continue;
       const parentWorkCode = /^(?:ЕНИР|ФЕР|ТЕР|ГЭСН)(?:М)?/iu.test(p.code.trim());
       const positionSection = normalizeStageLabel(p.sourceSectionName);
       const stageSection = normalizeStageLabel(st.sectionName);
@@ -361,6 +363,7 @@ export function buildHierarchicalEstimate(opts: {
   );
   const unbound: EstimateLeaf[] = [];
   for (const p of opts.positions ?? []) {
+    if (p.costRole === "customer_source") continue;
     if (p.isWorkItem) continue;
     if (p.code === "НР" || p.code === "СП") continue;
     if (representedWorkPositionIds.has(p.id)) continue;

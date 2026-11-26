@@ -194,6 +194,7 @@ export async function POST(req: Request) {
           sourceRows: sourceRows.length,
           matchedRates: sourceRows.filter((position) => !position.rateMissing).length,
           missingRates: sourceRows.filter((position) => position.rateMissing).length,
+          note: "matchedRates — сколько строк ведомости получило ставку справочника для справочной переоценки. Это не готовая себестоимость.",
         },
       });
     }

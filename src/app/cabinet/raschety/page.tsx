@@ -5,6 +5,7 @@ import { EntityCard } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
 import { calculationTotals, sourceEstimateTotals } from "@/lib/calc-math";
 import { formatMoney } from "@/lib/format";
+import { officialMoneyText } from "@/lib/tender-logic-settings";
 import { visibleProcurementNumber } from "@/lib/pipeline";
 import { SCENARIO_LABELS } from "@/lib/roles";
 import { useStore } from "@/lib/store";
@@ -29,7 +30,7 @@ export default function RaschetyPage() {
       {items.length === 0 ? (
         <EmptyState
           title="Расчётов нет"
-          description="Нажмите «Сформировать расчёт (расчёт по формулам, без ИИ)» в карточке закупки."
+          description="Нажмите «Отправить в расчёт» в карточке закупки. Строки сметы заказчика сами по себе себестоимостью не становятся."
         />
       ) : (
         <div className="space-y-8">
@@ -39,7 +40,11 @@ export default function RaschetyPage() {
             </h2>
             <div className="grid gap-4 md:grid-cols-2">
               {drafts.map((c) => {
-                const total = calculationTotals(c).total;
+                const commercial = c.positions.filter((position) => position.costRole !== "customer_source" && !position.isWorkItem && position.code !== "НР" && position.code !== "СП");
+                const missingRates = commercial.filter((position) => position.rateMissing).length;
+                const priced = commercial.some((position) => !position.rateMissing && position.rate > 0);
+                const total = priced ? (c.costSummary?.priceExVat ?? calculationTotals(c).total) : 0;
+                const totalText = officialMoneyText(total, missingRates, !priced || Boolean(c.costSummary?.totalsIncomplete));
                 const proc = data.procurements.find(
                   (p) => p.id === c.procurementId
                 );
@@ -56,7 +61,7 @@ export default function RaschetyPage() {
                       <div className="space-y-1">
                         <div>Позиций: {c.positions.length}</div>
                         <div className="font-semibold text-[var(--tk-ink)]">
-                          Итого {formatMoney(total)}
+                          Итого {totalText}
                         </div>
                         <div className="text-xs text-emerald-800">
                           Редактируемый черновик

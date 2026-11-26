@@ -26,10 +26,11 @@ import { procurementSourceStatus } from "@/server/procurement-source";
 import { sanitizeSyncDetail } from "@/lib/wave23";
 
 /**
- * 17: TPKP demo estimate uses only latest revisions and explicit GPR stage links;
- * repeated lines are summarized by resource while preserving editable source rows.
+ * 21: legacy resource drafts that priced the customer estimate keep their saved
+ * totals. The migration only adds legacy_estimate_seeded_cost. It does not
+ * recompute, rewrite positions, or touch customer_original.
  */
-const SCHEMA_VERSION = "20";
+const SCHEMA_VERSION = "21";
 
 declare global {
   var __tkDb: DatabaseSync | undefined;
@@ -351,6 +352,23 @@ function applySchema10Extras(data: AppData): AppData {
   return data;
 }
 
+function markLegacyEstimateSeededDrafts(data: AppData) {
+  for (const calc of data.calculations ?? []) {
+    if (calc.kind === "customer_original" || calc.immutable) continue;
+    if (calc.kind != null && calc.kind !== "resource_draft") continue;
+    const flags = calc.dataFlags ?? [];
+    if (flags.includes("legacy_estimate_seeded_cost")) continue;
+    const seeded = flags.includes("seeded_from_customer_estimate");
+    const sourced = Boolean(calc.costSummary) && (calc.positions ?? []).some((position) =>
+      Boolean(position.sourceDocumentId || position.sourcePositionId)
+      && position.costRole !== "customer_source"
+      && position.costRole !== "commercial"
+    );
+    if (!seeded && !sourced) continue;
+    calc.dataFlags = [...flags, "legacy_estimate_seeded_cost"];
+  }
+}
+
 function migrate(db: DatabaseSync) {
   const row = db.prepare("SELECT payload FROM app_blob WHERE id = 1").get() as
     | { payload: string }
@@ -466,6 +484,8 @@ function migrate(db: DatabaseSync) {
         plan.updatedAt = new Date().toISOString();
       }
     }
+    // v21: mark old estimate-seeded drafts. Saved costSummary and positions stay.
+    markLegacyEstimateSeededDrafts(data);
     // Additive only: insert [TEST] fixture if missing. Never rewrite g-1/c-1/pf-1.
     ensureT25uTestFixture(data);
 

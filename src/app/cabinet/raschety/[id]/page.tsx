@@ -28,7 +28,7 @@ import {
 import { api, downloadUrl } from "@/lib/api";
 import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-panel";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
-import { labourLineEconomicsNote, NORTH_DEFAULTS, northernAdditionLines, northernEconomicsApplied, northernStatusText, refreshRateAssumption, incompleteTotalText } from "@/lib/wave23";
+import { labourLineEconomicsNote, NORTH_DEFAULTS, northernAdditionLines, northernEconomicsApplied, northernStatusText, refreshRateAssumption } from "@/lib/wave23";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
 import { bucketsFromPositions, classifyDirectCostBucket } from "@/lib/cost-engine";
 import { parseDecimalRu } from "@/lib/decimal-ru";
@@ -47,7 +47,16 @@ import {
   positionLineSum,
   sourceEstimateTotals,
 } from "@/lib/calc-math";
-import { compareCalculations } from "@/lib/calc-compare";
+import { compareCalculations, compareOriginalToReferenceReprice } from "@/lib/calc-compare";
+import {
+  COMMITTEE_UNSET,
+  LEGACY_ESTIMATE_COST_BANNER,
+  REFERENCE_REPRICE_DISCLAIMER,
+  buildCommitteeSnapshot,
+  committeeValueText,
+  customerSourcePositions,
+  officialMoneyText,
+} from "@/lib/tender-logic-settings";
 import type { NorthernInputs } from "@/lib/cost-engine";
 import type { CalcCompareAiReport } from "@/server/calc-compare-ai";
 import { ProjectAiChat } from "@/components/project-ai-chat";
@@ -238,9 +247,24 @@ const CALCULATION_FLAG_INFO: Record<string, { title: string; effect: string; act
     severity: "info",
   },
   seeded_from_customer_estimate: {
-    title: "Позиции перенесены из сметы заказчика",
-    effect: "Перенесённые объёмы участвуют в черновом расчёте; ставки и состав ресурсов проверяйте отдельно.",
+    title: "Старый перенос сметы в себестоимость",
+    effect: "Так черновик больше не создаётся. Сохранённые цифры не пересчитаны сами.",
+    severity: "review",
+  },
+  estimate_rows_as_source_sheet: {
+    title: "Ведомость из сметы заказчика",
+    effect: "Код, наименование, единица и количество лежат отдельно. Они не входят в официальную себестоимость.",
     severity: "info",
+  },
+  reference_reprice_not_cost: {
+    title: "Есть справочная переоценка",
+    effect: "Переоценка ресурсов сметы по ставкам компании. Это не черновая себестоимость.",
+    severity: "info",
+  },
+  legacy_estimate_seeded_cost: {
+    title: "Черновик по старой логике",
+    effect: "Строки сметы раньше считались себестоимостью. Сохранённые цифры не пересчитаны.",
+    severity: "review",
   },
   awaiting_estimate_rows: {
     title: "В расчёте нет распознанных строк сметы",
@@ -562,11 +586,13 @@ export default function RaschetDetailPage() {
       : calc.kind === "customer_original"
         ? totals.total
         : (calc.costSummary?.priceExVat ?? totals.total);
+  const commercialPositions = calc.positions.filter((position) => position.costRole !== "customer_source");
+  const sourceSheet = customerSourcePositions(calc.positions);
   const buckets = bucketsFromPositions(
-    calc.positions,
+    commercialPositions,
     calc.scenarioFactor || 1
   );
-  const billablePositions = calc.positions.filter(
+  const billablePositions = commercialPositions.filter(
     (position) => position.code !== "НР" && position.code !== "СП" && !position.isWorkItem,
   );
   const missingRateCount = billablePositions.filter((position) => position.rateMissing).length;
@@ -1014,17 +1040,19 @@ export default function RaschetDetailPage() {
         </section>
       ) : null}
 
-      {!locked && calc.dataFlags?.includes("seeded_from_customer_estimate") ? (
+      {!locked && calc.dataFlags?.includes("legacy_estimate_seeded_cost") ? (
+        <section className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950" role="status" data-testid="legacy-estimate-cost-banner">
+          <h2 className="font-semibold">Старая логика себестоимости</h2>
+          <p className="mt-1">{LEGACY_ESTIMATE_COST_BANNER}</p>
+        </section>
+      ) : null}
+
+      {!locked && calc.dataFlags?.includes("estimate_rows_as_source_sheet") ? (
         <section className="mb-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-950" role="status" data-testid="estimate-seeded-guidance">
-          <h2 className="font-semibold">Черновик сформирован из распознанной сметы</h2>
+          <h2 className="font-semibold">Ведомость из сметы не является себестоимостью</h2>
           <p className="mt-1">
-            Исходные количества и строки заказчика перенесены для проверки. Исходная смета остаётся неизменной; её цены в наш черновик не копировались. Ставки берутся из справочников компании: люди — по должности, техника — по модели, материалы — по названию и единице. Если должности нет, для людей ставится ставка из параметров расчёта. Строка без совпадения остаётся «нет ставки».
+            Код, наименование, единица и количество сметы заказчика лежат отдельной ведомостью. Цена заказчика не копировалась. Ставка справочника нужна только для справочной переоценки. Коммерческие строки и ведомость объёмов считаются отдельно.
           </p>
-          {missingRateCount > 0 ? (
-            <p className="mt-1 font-medium">
-              Нужны ставки для {missingRateCount} {ruPositions(missingRateCount)}. Они исключены из стоимости, пока не подтверждены. Нулевые цены не подставляются.
-            </p>
-          ) : null}
         </section>
       ) : null}
 
@@ -1104,10 +1132,14 @@ export default function RaschetDetailPage() {
                   ? "Итого черновика · расчёт неполный"
                   : "Итого черновика"}
           </div>
-          <div className="font-[family-name:var(--font-display)] text-xl">
-            {missingRateCount > 0
+          <div className="font-[family-name:var(--font-display)] text-xl" data-testid="calc-official-total">
+            {missingRateCount > 0 && total > 0
               ? `Итог неполный: нет ставок по ${missingRateCount} позициям`
-              : noPricedPositions ? "Не рассчитано" : formatMoney(total)}
+              : officialMoneyText(
+                  total,
+                  missingRateCount,
+                  calc.kind !== "customer_original" && (Boolean(calc.costSummary?.totalsIncomplete) || noPricedPositions || billablePositions.length === 0),
+                )}
             {(calc.costSummary?.totalsIncomplete ||
               draftSlices?.partial ||
               (calc.costSummary?.incomplete?.length ?? 0) > 0) &&
@@ -1122,6 +1154,93 @@ export default function RaschetDetailPage() {
           </div>
         </div>
       </div>
+
+      {calc.kind !== "customer_original" ? (
+        <section className="mb-4 grid gap-3 lg:grid-cols-4" data-testid="committee-frame">
+          {(() => {
+            const confirmed = Boolean(
+              calc.costSummary
+              && billablePositions.some((position) => !position.rateMissing && position.rate > 0)
+              && billablePositions.every((position) => !position.rateMissing)
+              && calc.costSummary.C0 > 0,
+            );
+            const frame = calc.committeeSnapshot ?? buildCommitteeSnapshot({
+              nmck: procurement?.nmck,
+              officialCost: calc.costSummary?.C0,
+              officialConfirmed: confirmed,
+            });
+            const policy = data.organizations.find((org) => org.id === user.orgId)?.tenderLogic?.nmckAtOrBelowCostPolicy ?? "warn";
+            const cells: Array<[string, string]> = [
+              ["НМЦК", frame.nmck == null ? COMMITTEE_UNSET : formatMoney(frame.nmck)],
+              ["Полная себестоимость", committeeValueText(frame.fullCost, true)],
+              ["Целевая маржа", COMMITTEE_UNSET],
+              ["Дно", COMMITTEE_UNSET],
+            ];
+            return (
+              <>
+                {cells.map(([label, value]) => (
+                  <div key={label} className="rounded-xl border border-[var(--tk-line)] bg-white/80 px-4 py-3">
+                    <div className="text-xs text-[var(--tk-muted)]">{label}</div>
+                    <div className="mt-1 text-sm font-semibold">{value}</div>
+                  </div>
+                ))}
+                {frame.nmckVsCost === "at_or_below_cost" ? (
+                  <p className="lg:col-span-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950" data-testid="nmck-at-or-below-cost">
+                    {policy === "block"
+                      ? "НМЦК не выше полной себестоимости. Политика компании — не продолжать подачу, пока цифры не разойдутся. Решение об участии само не меняется."
+                      : "НМЦК не выше полной себестоимости. Это предупреждение. Решение об участии само не меняется."}
+                  </p>
+                ) : null}
+              </>
+            );
+          })()}
+        </section>
+      ) : null}
+
+      {calc.kind !== "customer_original" ? (
+        <div className="mb-6 grid gap-3">
+          <section className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4" data-testid="customer-original-block">
+            <h2 className="text-sm font-semibold">Смета заказчика (оригинал, ориентир цены / НМЦК)</h2>
+            <p className="mt-1 text-sm text-[var(--tk-muted)]">
+              Оригинал неизменяем. Это потолок цены, а не себестоимость компании.
+              {procurement?.nmck != null ? ` НМЦК: ${formatMoney(procurement.nmck)}.` : " НМЦК не задана."}
+            </p>
+            {paired?.kind === "customer_original" ? (
+              <p className="mt-2 text-sm">
+                <Link className="underline" href={`/cabinet/raschety/${paired.id}`}>Открыть оригинал</Link>
+                {" · "}
+                {formatMoney(sourceEstimateTotals(paired.positions).total)}
+              </p>
+            ) : (
+              <p className="mt-2 text-sm text-[var(--tk-muted)]">Оригинал сметы ещё не прикреплён.</p>
+            )}
+          </section>
+          {sourceSheet.length ? (
+            <section className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4" data-testid="estimate-statement-block">
+              <h2 className="text-sm font-semibold">Ведомость из сметы (к перекладке)</h2>
+              <p className="mt-1 text-sm text-[var(--tk-muted)]">
+                {sourceSheet.length} строк: код, наименование, единица и количество. Ставка заказчика не копировалась. Эти строки не входят в официальный итог.
+              </p>
+            </section>
+          ) : null}
+          {calc.referenceReprice ? (
+            <section className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4" data-testid="reference-reprice-block">
+              <h2 className="text-sm font-semibold">Справочная переоценка</h2>
+              <p className="mt-1 text-sm">{REFERENCE_REPRICE_DISCLAIMER}</p>
+              <p className="mt-1 text-xs text-[var(--tk-muted)]">{compareOriginalToReferenceReprice(paired?.kind === "customer_original" ? paired : null, calc)?.notes[0]}</p>
+              <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+                <div>Прямые с накладными: {officialMoneyText(calc.referenceReprice.C0, sourceSheet.filter((position) => position.rateMissing && !position.isWorkItem).length, Boolean(calc.referenceReprice.totalsIncomplete))}</div>
+                <div>Цена без НДС: {officialMoneyText(calc.referenceReprice.priceExVat, sourceSheet.filter((position) => position.rateMissing && !position.isWorkItem).length, Boolean(calc.referenceReprice.totalsIncomplete))}</div>
+              </dl>
+            </section>
+          ) : null}
+        </div>
+      ) : (
+        <section className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4" data-testid="customer-original-block">
+          <h2 className="text-sm font-semibold">Смета заказчика (оригинал, ориентир цены / НМЦК)</h2>
+          <p className="mt-1 text-sm text-[var(--tk-muted)]">Документ неизменяем. Это ориентир цены заказчика, а не себестоимость компании.</p>
+        </section>
+      )}
 
       <div className="mb-8">
         <HierarchicalEstimatePanel
@@ -1700,21 +1819,23 @@ export default function RaschetDetailPage() {
             Сводка расчёта
           </h2>
           <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-3">
-            <div>Себестоимость без резерва: {incompleteTotalText(calc.costSummary.C0, missingRateCount) ?? formatMoney(calc.costSummary.C0)}</div>
-            <div>Себестоимость с резервом: {incompleteTotalText(calc.costSummary.C, missingRateCount) ?? formatMoney(calc.costSummary.C)}</div>
-            <div>Прибыль: {formatMoney(calc.costSummary.profit)}</div>
-            <div>Цена без НДС: {incompleteTotalText(calc.costSummary.priceExVat, missingRateCount) ?? formatMoney(calc.costSummary.priceExVat)}</div>
+            <div>Себестоимость без резерва: {officialMoneyText(calc.costSummary.C0, missingRateCount, Boolean(calc.costSummary.totalsIncomplete))}</div>
+            <div>Себестоимость с резервом: {officialMoneyText(calc.costSummary.C, missingRateCount, Boolean(calc.costSummary.totalsIncomplete))}</div>
+            <div>Прибыль: {calc.costSummary.totalsIncomplete && !(calc.costSummary.C0 > 0) ? COMMITTEE_UNSET : formatMoney(calc.costSummary.profit)}</div>
+            <div>Цена без НДС: {officialMoneyText(calc.costSummary.priceExVat, missingRateCount, Boolean(calc.costSummary.totalsIncomplete))}</div>
             <div>
               НДС:{" "}
               {calc.costSummary.vatAmount == null
                 ? "нет данных"
                 : formatMoney(calc.costSummary.vatAmount)}
             </div>
-            <div>Цена с НДС: {incompleteTotalText(calc.costSummary.priceIncVat, missingRateCount) ?? formatMoney(calc.costSummary.priceIncVat)}</div>
+            <div>Цена с НДС: {officialMoneyText(calc.costSummary.priceIncVat, missingRateCount, Boolean(calc.costSummary.totalsIncomplete))}</div>
             <div>
               Запас до НМЦК:{" "}
-              {procurement?.nmck != null && calc.costSummary.priceIncVat != null
-                ? `${formatMoney(procurement.nmck - calc.costSummary.priceIncVat)} (${formatNumber(((procurement.nmck - calc.costSummary.priceIncVat) / Math.max(1, procurement.nmck)) * 100)}%)`
+              {calc.costSummary.totalsIncomplete
+                ? "не рассчитан: официальный итог не подтверждён. Это не прибыль."
+                : procurement?.nmck != null && calc.costSummary.priceIncVat != null
+                ? `${formatMoney(procurement.nmck - calc.costSummary.priceIncVat)} (${formatNumber(((procurement.nmck - calc.costSummary.priceIncVat) / Math.max(1, procurement.nmck)) * 100)}%). Это запас до предельной цены, а не прибыль.`
                 : "не рассчитан: укажите НДС и проверьте НМЦК"}
             </div>
             <div>

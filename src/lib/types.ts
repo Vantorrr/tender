@@ -1,3 +1,5 @@
+import type { TenderLogicSettings } from "@/lib/tender-logic-settings";
+
 export type Role =
   | "superadmin"
   | "rukovoditel"
@@ -41,6 +43,8 @@ export interface Organization {
   active: boolean;
   /** Shareable join code for self-registration (not a privilege token). */
   joinCode?: string;
+  /** Optional company rules. Missing fields use the module defaults. */
+  tenderLogic?: Partial<TenderLogicSettings>;
 }
 
 export interface SupplierDirectoryEntry {
@@ -435,6 +439,13 @@ export interface CalcPosition {
   resourceKind?: GprStageResource["kind"];
   normId?: string;
   priceId?: string;
+  /**
+   * commercial — our row (manual, volume sheet). It feeds Calculation.costSummary.
+   * customer_source — imported estimate identity (code, name, unit, quantity).
+   * The customer rate is not copied. A directory rate is only for the reference reprice.
+   * Missing costRole keeps the previous path and still feeds the official total.
+   */
+  costRole?: "commercial" | "customer_source";
 }
 
 export type CalculationKind = "customer_original" | "resource_draft";
@@ -484,6 +495,20 @@ export interface Calculation {
   immutable?: boolean;
   /** Link draft ↔ original within same procurement. */
   pairedCalculationId?: string;
+  /**
+   * Old formula on customer_source rows only: estimate quantities × company rates
+   * and the 43/40 economics. Not a cost and not Calculation.costSummary.
+   */
+  referenceReprice?: CostSummarySnapshot;
+  /** Four decision figures. Margins stay null until the company sets a rule. */
+  committeeSnapshot?: {
+    nmck: number | null;
+    /** Confirmed official commercial total. Never the reference reprice. */
+    fullCost: number | null;
+    targetMarginPercent: number | null;
+    floorMarginPercent: number | null;
+    nmckVsCost: "unknown" | "above_cost" | "at_or_below_cost";
+  };
   changeLog?: CalcChangeEntry[];
   dataFlags?: string[];
   /** Northern / economic inputs — confirmed parameters only. */

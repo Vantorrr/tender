@@ -89,7 +89,10 @@ export function calculationTotals(
   factor: number;
 } {
   const factor = calc.scenarioFactor || 1;
-  const works = worksSubtotal(calc.positions, factor);
+  const works = worksSubtotal(
+    calc.positions.filter((position) => position.costRole !== "customer_source"),
+    factor,
+  );
   const { nr, sp, total } = overheadsFromWorks(works);
   return { works, nr, sp, total, factor };
 }

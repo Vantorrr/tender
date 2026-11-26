@@ -188,8 +188,10 @@ export function positionsFromStages(
   previous: CalcPosition[] = [],
   params: ResourceScheduleParams = EXCEL_RESOURCE_SCHEDULE_DEFAULTS
 ): CalcPosition[] {
+  const statement = previous.filter((position) => position.costRole === "customer_source");
+  const pool = previous.filter((position) => position.costRole !== "customer_source");
   const prevByName = new Map<string, CalcPosition[]>();
-  for (const position of previous) {
+  for (const position of pool) {
     if (position.code === "НР" || position.code === "СП") continue;
     const key = resourceNameKey(position.name);
     prevByName.set(key, [...(prevByName.get(key) ?? []), position]);
@@ -205,7 +207,7 @@ export function positionsFromStages(
       // A volume line with the same name is this resource, not a second row.
       const candidates = prevByName.get(resourceNameKey(r.name)) ?? [];
       const linkedBySource = r.sourceKey
-        ? previous.find((position) => position.id === r.sourceKey && !usedPreviousIds.has(position.id))
+        ? pool.find((position) => position.id === r.sourceKey && !usedPreviousIds.has(position.id))
         : undefined;
       const prev =
         linkedBySource ??
@@ -248,13 +250,14 @@ export function positionsFromStages(
         rateSourceDirectoryId: prev?.rateSourceDirectoryId,
         normId: prev?.normId,
         priceId: prev?.priceId,
+        ...(prev?.costRole ? { costRole: prev.costRole } : prev ? {} : { costRole: "commercial" as const }),
       });
     }
   }
   // Keep cost-draft positions that are not linked to a GPR resource. The
   // customer's immutable estimate is a separate Calculation and never enters
   // this sync. Old generated positions are recognized by their legacy id.
-  const manual = previous.filter(
+  const manual = pool.filter(
     (position) =>
       position.code !== "НР" &&
       position.code !== "СП" &&
@@ -262,7 +265,7 @@ export function positionsFromStages(
       !position.id.startsWith("urp-") &&
       !usedPreviousIds.has(position.id)
   );
-  return [...out, ...manual];
+  return [...out, ...manual, ...statement];
 }
 
 export function applyRollupToCostSummary(
@@ -309,6 +312,22 @@ export function applyRollupToCostSummary(
   };
 }
 
+/**
+ * Stage resources built from customer-source rows do not enter the official
+ * cost rollup. A legacy seeded draft keeps the previous path.
+ */
+export function stagesForOfficialCost(calc: Calculation, stages: GprStage[]): GprStage[] {
+  if ((calc.dataFlags ?? []).includes("legacy_estimate_seeded_cost")) return stages;
+  const blocked = new Set(
+    calc.positions.filter((position) => position.costRole === "customer_source").map((position) => position.id),
+  );
+  if (blocked.size === 0) return stages;
+  return stages.map((stage) => ({
+    ...stage,
+    resources: (stage.resources ?? []).filter((resource) => !resource.sourceKey || !blocked.has(resource.sourceKey)),
+  }));
+}
+
 export function syncDraftFromStages(
   calc: Calculation,
   stages: GprStage[],
@@ -319,12 +338,16 @@ export function syncDraftFromStages(
   rollup: ResourceScheduleResult;
 } {
   const params = calc.resourceScheduleParams ?? EXCEL_RESOURCE_SCHEDULE_DEFAULTS;
-  const build = stagesToResourceLines(stages, params);
+  const officialStages = stagesForOfficialCost(calc, stages);
+  const build = stagesToResourceLines(officialStages, params);
   const replacePositions =
     opts?.replacePositions ?? isResourceLinkedDraft(calc);
   const positions = replacePositions
-    ? positionsFromStages(stages, calc.positions, params)
+    ? positionsFromStages(officialStages, calc.positions, params)
     : calc.positions;
+  const statementOnly = officialStages.every((stage) => (stage.resources ?? []).length === 0)
+    && calc.positions.some((position) => position.costRole === "customer_source")
+    && !(calc.dataFlags ?? []).includes("legacy_estimate_seeded_cost");
   const rollup = rollupResourceSchedule({
     params,
     lines: build.lines,
@@ -345,11 +368,17 @@ export function syncDraftFromStages(
         return s + h;
       }, 0)
   );
+  const summary = applyRollupToCostSummary(
+    rollup,
+    statementOnly ? [...incomplete, "no_commercial_rows"] : incomplete,
+    knownHours,
+  );
+  if (statementOnly) summary.totalsIncomplete = true;
   const next: Calculation = {
     ...calc,
     positions,
     resourceScheduleParams: params,
-    costSummary: applyRollupToCostSummary(rollup, incomplete, knownHours),
+    costSummary: summary,
     dataFlags: replacePositions
       ? [
           ...(calc.dataFlags ?? []).filter(

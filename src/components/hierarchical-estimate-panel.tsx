@@ -503,6 +503,11 @@ export function HierarchicalEstimatePanel({
         ) : null}
       </details>
 
+      {positions.some((position) => position.costRole === "customer_source") ? (
+        <p className="mb-3 text-sm text-[var(--tk-muted)]" data-testid="estimate-sheet-not-in-cost">
+          Ниже только коммерческие ресурсы. Ведомость из сметы заказчика показана отдельно и в этот итог не входит.
+        </p>
+      ) : null}
       {view === "sheet" ? (
         <SpreadsheetEstimateGrid
           stages={stages}
