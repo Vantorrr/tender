@@ -67,6 +67,17 @@ import {
   resolveTenderLogicSettings,
   type ShiftProfile,
 } from "@/lib/tender-logic-settings";
+import {
+  findQuoteOnSupplies,
+  isCommercialRateLine,
+  isDirectorDecisionChoice,
+  positionWithoutStaleQuote,
+  quoteMatchKey,
+  quoteRateMatches,
+  quoteUnitPriceError,
+  resolveCalculationOwner,
+  type DirectorDecisionChoice,
+} from "@/lib/wave5-client";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
 import {
@@ -752,6 +763,19 @@ function assertEditableCalculation(item: Calculation) {
   }
 }
 
+function defaultOwnerFields(data: AppData, orgId: string, creatorId: string) {
+  const resolved = resolveCalculationOwner(data.users, orgId, creatorId);
+  if (resolved) return { ownerUserId: resolved.userId, ownerRole: resolved.role };
+  const creator = data.users.find((user) => user.id === creatorId);
+  return { ownerUserId: creatorId, ownerRole: creator?.role ?? ("tender" as Role) };
+}
+
+function stampLastEditor(item: Calculation, actor: User) {
+  item.lastEditorId = actor.id;
+  item.lastEditorName = actor.name;
+  item.lastEditedAt = new Date().toISOString();
+}
+
 export function updateCalculation(
   actorId: string,
   id: string,
@@ -768,29 +792,255 @@ export function updateCalculation(
       id: _i,
       immutable: _im,
       kind: _k,
+      ownerUserId: _owner,
+      ownerRole: _ownerRole,
+      referenceReprice: _reference,
+      directorDecision: _decision,
+      committeeSnapshot: _committee,
+      lastEditorId: _editor,
+      lastEditorName: _editorName,
+      lastEditedAt: _editedAt,
       ...safe
     } = patch;
     void _o;
     void _i;
     void _im;
     void _k;
+    void _owner;
+    void _ownerRole;
+    void _reference;
+    void _decision;
+    void _committee;
+    void _editor;
+    void _editorName;
+    void _editedAt;
+    if (Array.isArray(safe.positions)) {
+      safe.positions = safe.positions.map((next) =>
+        positionWithoutStaleQuote(item.positions.find((row) => row.id === next.id), next),
+      );
+    }
     const entry = {
       id: `cl-${Date.now()}`,
       at: new Date().toISOString(),
       actorId,
       detail: "Ручное обновление черновика",
     };
+    const editedAt = new Date().toISOString();
     data.calculations = data.calculations.map((c) =>
       c.id === id
         ? {
             ...c,
             ...safe,
+            lastEditorId: actor.id,
+            lastEditorName: actor.name,
+            lastEditedAt: editedAt,
             changeLog: [...(c.changeLog ?? []), entry],
-            updatedAt: new Date().toISOString(),
+            updatedAt: editedAt,
           }
         : c
     );
     audit(data, actorId, "update", "calculation", id, "Обновление расчёта");
+    return data;
+  });
+}
+
+function selectedQuotePrice(position: Calculation["positions"][number], supplies: AppData["supplyRequests"]): number | null {
+  if (position.priceSource !== "quote" && !position.selectedQuoteId) return null;
+  const found = position.selectedQuoteId ? findQuoteOnSupplies(supplies ?? [], position.selectedQuoteId) : null;
+  if (found) return found.quote.unitPrice;
+  return position.quoteUnitPrice ?? null;
+}
+
+/** Only the resource this commercial line is linked to. A shared name is not enough. */
+function writeQuoteRateOntoSchedule(data: AppData, actor: User, item: Calculation, position: Calculation["positions"][number]) {
+  if (!position.sourceResourceId) return;
+  const schedule = data.schedules.find((row) => row.calculationId === item.id);
+  if (!schedule) return;
+  assertOrgAccess(actor, schedule.orgId, "ГПР");
+  if (schedule.orgId !== item.orgId) {
+    throw new Error("График и расчёт относятся к разным организациям");
+  }
+  for (const stage of schedule.stages) {
+    for (const resource of stage.resources ?? []) {
+      if (resource.id === position.sourceResourceId) resource.rate = position.rate;
+    }
+  }
+}
+
+/**
+ * Write a chosen supplier quote into a commercial line rate, then rebuild the
+ * official 43/10/40 total. Passing a null quote restores the base rate.
+ * referenceReprice is put back exactly as it was. Manual economics stay.
+ */
+export function applyCommercialQuote(
+  actorId: string,
+  calcId: string,
+  positionId: string,
+  quoteId: string | null,
+) {
+  let reference: Calculation["referenceReprice"] | undefined;
+  let hadReference = false;
+  mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.calculations.find((row) => row.id === calcId);
+    if (!item) throw new Error("Расчёт не найден");
+    assertOrgAccess(actor, item.orgId, "расчёта");
+    assertEditableCalculation(item);
+    const position = item.positions.find((row) => row.id === positionId);
+    if (!position || !isCommercialRateLine(position)) {
+      throw new Error("КП записывается только в коммерческую строку");
+    }
+    hadReference = item.referenceReprice != null;
+    reference = item.referenceReprice ? structuredClone(item.referenceReprice) : undefined;
+    if (quoteId == null) {
+      if (position.priceSource === "quote" || position.selectedQuoteId) {
+        const quotePrice = selectedQuotePrice(position, data.supplyRequests);
+        if (quoteRateMatches(position.rate, quotePrice)) {
+          const base = position.baseRate;
+          if (base != null && Number.isFinite(base) && base > 0) {
+            position.rate = base;
+            position.rateMissing = false;
+          } else {
+            position.rate = 0;
+            position.rateMissing = true;
+          }
+        }
+        position.priceSource = "manual";
+        delete position.selectedQuoteId;
+        delete position.quoteSupplierName;
+        delete position.quoteUnitPrice;
+      }
+    } else {
+      const found = findQuoteOnSupplies(data.supplyRequests ?? [], quoteId);
+      if (!found) throw new Error("КП не найдено");
+      assertOrgAccess(actor, found.supply.orgId, "КП");
+      if (found.supply.orgId !== item.orgId) {
+        throw new Error("КП и расчёт относятся к разным организациям");
+      }
+      if (found.supply.procurementId !== item.procurementId) {
+        throw new Error("КП и расчёт относятся к разным закупкам");
+      }
+      if (found.supply.status === "cancelled") {
+        throw new Error("КП относится к закрытой потребности");
+      }
+      const priceError = quoteUnitPriceError(found.quote.unitPrice);
+      if (priceError) throw new Error(priceError);
+      if (quoteMatchKey(found.supply.materialName, found.supply.unit) !== quoteMatchKey(position.name, position.unit)) {
+        throw new Error("КП не подходит к этой позиции");
+      }
+      const previousQuote = selectedQuotePrice(position, data.supplyRequests);
+      if (!quoteRateMatches(position.rate, previousQuote)) position.baseRate = position.rate;
+      position.rate = found.quote.unitPrice;
+      position.rateMissing = false;
+      position.selectedQuoteId = found.quote.id;
+      position.quoteSupplierName = found.quote.supplierName;
+      position.quoteUnitPrice = found.quote.unitPrice;
+      position.priceSource = "quote";
+    }
+    if (!item.resourceScheduleParams) {
+      item.resourceScheduleParams = {
+        personHourRate: 1400,
+        personnelShiftsPerDay: 2,
+        hoursPerShift: 11,
+        equipmentShiftsPerDay: 2,
+        overheadRate: 0.43,
+        profitMarkupOnCostWithOh: 0.4,
+      };
+    }
+    writeQuoteRateOntoSchedule(data, actor, item, position);
+    stampLastEditor(item, actor);
+    item.changeLog = [
+      ...(item.changeLog ?? []),
+      {
+        id: `cl-${Date.now()}`,
+        at: new Date().toISOString(),
+        actorId,
+        detail: quoteId == null
+          ? `Сброшен выбор КП в строке ${position.name}`
+          : `В ставку «${position.name}» записано КП ${position.quoteSupplierName ?? ""}`.trim(),
+      },
+    ];
+    audit(data, actorId, quoteId == null ? "reset_quote" : "apply_quote", "calculation", calcId, position.name);
+    return data;
+  });
+  recomputeCalculationCost(actorId, calcId);
+  if (hadReference) {
+    mutateAppData((data) => {
+      const actor = actorUser(data, actorId);
+      const item = data.calculations.find((row) => row.id === calcId);
+      if (!item) throw new Error("Расчёт не найден");
+      assertOrgAccess(actor, item.orgId, "расчёта");
+      item.referenceReprice = reference;
+      return data;
+    });
+  }
+}
+
+export function assignCalculationOwner(actorId: string, calcId: string, ownerUserId: string) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.calculations.find((row) => row.id === calcId);
+    if (!item) throw new Error("Расчёт не найден");
+    assertOrgAccess(actor, item.orgId, "расчёта");
+    assertEditableCalculation(item);
+    const owner = data.users.find((user) => user.id === ownerUserId);
+    if (!owner || owner.blocked) throw new Error("Пользователь не найден");
+    assertOrgAccess(actor, owner.orgId, "пользователя");
+    if (owner.orgId !== item.orgId) {
+      throw new Error("Ответственного можно назначить только внутри организации расчёта");
+    }
+    item.ownerUserId = owner.id;
+    item.ownerRole = owner.role;
+    stampLastEditor(item, actor);
+    item.changeLog = [
+      ...(item.changeLog ?? []),
+      {
+        id: `cl-${Date.now()}`,
+        at: new Date().toISOString(),
+        actorId,
+        detail: `Ответственный за сбор: ${owner.name}`,
+      },
+    ];
+    audit(data, actorId, "assign_owner", "calculation", calcId, owner.name);
+    return data;
+  });
+}
+
+export function saveDirectorDecision(
+  actorId: string,
+  calcId: string,
+  input: { choice: DirectorDecisionChoice; comment: string },
+) {
+  return mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.calculations.find((row) => row.id === calcId);
+    if (!item) throw new Error("Расчёт не найден");
+    assertOrgAccess(actor, item.orgId, "расчёта");
+    assertEditableCalculation(item);
+    if (!isDirectorDecisionChoice(input.choice)) {
+      throw new Error("Выберите решение директора");
+    }
+    const comment = input.comment.trim();
+    if (!comment) throw new Error("Укажите комментарий к решению директора");
+    if (comment.length > 2000) throw new Error("Комментарий длиннее 2000 знаков");
+    item.directorDecision = {
+      choice: input.choice,
+      comment,
+      authorId: actor.id,
+      authorName: actor.name,
+      at: new Date().toISOString(),
+    };
+    stampLastEditor(item, actor);
+    item.changeLog = [
+      ...(item.changeLog ?? []),
+      {
+        id: `cl-${Date.now()}`,
+        at: new Date().toISOString(),
+        actorId,
+        detail: `Решение директора: ${input.choice}`,
+      },
+    ];
+    audit(data, actorId, "director_decision", "calculation", calcId, input.choice);
     return data;
   });
 }
@@ -1229,6 +1479,7 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
         updatedAt: now,
         kind: "resource_draft",
         immutable: false,
+        ...defaultOwnerFields(data, p.orgId, actorId),
         changeLog: [
           {
             id: `cl-${Date.now()}`,
@@ -3161,6 +3412,7 @@ export function sendProcurementToCalculation(
         updatedAt: now,
         kind: "resource_draft",
         immutable: false,
+        ...defaultOwnerFields(data, p.orgId, actorId),
         pairedCalculationId: p.originalCalculationId,
         changeLog: [
           {
@@ -3183,6 +3435,11 @@ export function sendProcurementToCalculation(
     } else {
       linked.kind = "resource_draft";
       linked.immutable = false;
+      if (!linked.ownerUserId) {
+        const owner = defaultOwnerFields(data, p.orgId, linked.authorId || actorId);
+        linked.ownerUserId = owner.ownerUserId;
+        linked.ownerRole = owner.ownerRole;
+      }
       linked.pairedCalculationId = p.originalCalculationId;
       linked.status = "v_rabote";
       if (positionsFromEstimate.length > 0) {

@@ -452,6 +452,16 @@ export interface CalcPosition {
    * A missing value is shown as unconfirmed and is not written on read.
    */
   volumeStatus?: "unconfirmed" | "confirmed";
+  /** Quote written into this commercial rate. Absent means no quote is applied. */
+  selectedQuoteId?: string;
+  /** Supplier name shown next to a rate taken from a quote. */
+  quoteSupplierName?: string;
+  /** Unit price of the quote written into the rate. Kept so reset still works if the offer leaves the active list. */
+  quoteUnitPrice?: number;
+  /** Rate before the quote was applied. Restored by «Сбросить выбор КП». */
+  baseRate?: number;
+  /** quote — the rate is the chosen quote. manual — base or hand-typed rate. */
+  priceSource?: "quote" | "manual";
 }
 
 export type CalculationKind = "customer_original" | "resource_draft";
@@ -553,6 +563,28 @@ export interface Calculation {
    * A later recalculation keeps them until the user resets the line.
    */
   economicsManual?: EconomicsManual;
+  /**
+   * Person responsible for assembling the calculation.
+   * Default is the tender engineer of the organisation, otherwise the creator.
+   * Other roles in the same organisation may still edit.
+   */
+  ownerUserId?: string;
+  ownerRole?: Role;
+  /** Last person who edited the draft. Not a visa and not a lock. */
+  lastEditorId?: string;
+  lastEditorName?: string;
+  lastEditedAt?: string;
+  /**
+   * Director's choice when the NMCK does not cover full cost.
+   * Stored separately from participateDecision. Never an automatic refusal.
+   */
+  directorDecision?: {
+    choice: "participate" | "revise_markup" | "decline";
+    comment: string;
+    authorId: string;
+    authorName: string;
+    at: string;
+  };
   busRoutes?: Array<{
     people: number;
     seats: number;
