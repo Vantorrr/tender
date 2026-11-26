@@ -3611,11 +3611,16 @@ function applyResourceDraftAdjustments(calc: Calculation) {
   const slices = current?.resourceSlices;
   const params = calc.resourceScheduleParams;
   if (!current || !slices || !params) return;
+  // Unlinked commercial and volume rows in the «other» bucket are folded into
+  // slices.direct. Labor, materials and equipment do not cover that remainder.
+  const otherDirect = Math.round((
+    (slices.direct ?? 0) - (slices.labor ?? 0) - (slices.materials ?? 0) - (slices.equipment ?? 0)
+  ) * 100) / 100;
   const engine = runCostEngine({
     directLabor: slices.labor,
     directMaterials: slices.materials,
     directEquipment: slices.equipment,
-    directSubcontract: 0,
+    directSubcontract: otherDirect > 0 ? otherDirect : 0,
     logisticsIncludingBus: 0,
     siteOverhead: slices.overhead,
     officeOverhead: Math.max(0, calc.officeOverhead ?? 0),

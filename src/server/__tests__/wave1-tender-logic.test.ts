@@ -343,6 +343,85 @@ describe("wave 1 tender logic", () => {
     expect(shifted.positions.some((position) => position.costRole === "commercial" && position.name === "Плотник")).toBe(true);
   });
 
+  it("keeps an unlinked other-bucket commercial row in C0, price and the resource slices", async () => {
+    const created = createManualProcurement("u-ruk", { title: "Прочая услуга", region: "Ямал", nmck: 100_000 });
+    const procurement = readAppData().procurements.find((item) => item.id === created.id)!;
+    const uploaded = await saveUpload("wave1-other", "smeta.xlsx", Buffer.from("estimate"));
+    mutateAppData((data) => {
+      data.documents.unshift({
+        id: "doc-wave1-other",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        title: "Смета",
+        fileName: "smeta.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: uploaded.storedPath,
+        estimatePositions: [{
+          id: "est-bit",
+          code: "ФССЦ-01",
+          name: "Долото трехшарошечное",
+          unit: "шт",
+          quantity: 4,
+          rate: 900,
+          resourceKind: "material",
+          sectionName: "Раздел 1. Бурение",
+          workName: "Бурение скважины",
+        }],
+      });
+      return data;
+    });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const draft = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "resource_draft")!;
+    mutateAppData((data) => {
+      const calc = data.calculations.find((item) => item.id === draft.id)!;
+      calc.positions.push({
+        id: "own-other",
+        costRole: "commercial",
+        code: "SRV-1",
+        name: "Прочая услуга",
+        unit: "усл",
+        quantity: 2,
+        rate: 100,
+        rateMissing: false,
+        resourceKind: "other",
+      });
+      return data;
+    });
+    const params = { ...EXCEL_RESOURCE_SCHEDULE_DEFAULTS };
+    const direct = 200;
+    const overhead = Math.round(direct * 0.43 * 100) / 100;
+    const cost = Math.round((direct + overhead) * 100) / 100;
+    const price = Math.round(cost * 1.4 * 100) / 100;
+    createProcurementSchedule("u-ruk", created.id);
+    recomputeCalculationCost("u-ruk", draft.id, {
+      resourceScheduleParams: params,
+      useResourceScheduleEconomics: true,
+      vatPercent: 20,
+    });
+    const scheduled = readAppData().calculations.find((item) => item.id === draft.id)!;
+    expect(scheduled.costSummary?.C0).toBeCloseTo(cost, 2);
+    expect(scheduled.costSummary?.priceExVat).toBeCloseTo(price, 2);
+    expect(scheduled.costSummary?.resourceSlices?.direct).toBeCloseTo(direct, 2);
+    expect(scheduled.costSummary?.resourceSlices?.total).toBeCloseTo(scheduled.costSummary?.priceExVat ?? 0, 2);
+    expect(scheduled.committeeSnapshot?.fullCost).toBeCloseTo(scheduled.costSummary?.C0 ?? 0, 2);
+    const schedule = readAppData().schedules.find((item) => item.procurementId === created.id)!;
+    shiftGprStage("u-ruk", schedule.id, schedule.stages[0]!.id, 3);
+    const shifted = readAppData().calculations.find((item) => item.id === draft.id)!;
+    expect(shifted.costSummary?.C0).toBeCloseTo(cost, 2);
+    expect(shifted.costSummary?.priceExVat).toBeCloseTo(price, 2);
+    expect(shifted.costSummary?.resourceSlices?.direct).toBeCloseTo(direct, 2);
+    expect(shifted.costSummary?.resourceSlices?.total).toBeCloseTo(shifted.costSummary?.priceExVat ?? 0, 2);
+    expect(shifted.committeeSnapshot?.fullCost).toBeCloseTo(shifted.costSummary?.C0 ?? 0, 2);
+  });
+
   it("does not mark a confirmed commercial total incomplete because the customer sheet has no rate", async () => {
     const created = createManualProcurement("u-ruk", { title: "Ведомость не дыра", region: "Ямал", nmck: 1000 });
     const procurement = readAppData().procurements.find((item) => item.id === created.id)!;
