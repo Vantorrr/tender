@@ -47,3 +47,20 @@ export function collectSuppliersMessage(names: string[]): string {
 export function gprNeedNextStep(material: string): string {
   return `Потребность «${material}» добавлена в список ниже. Дальше подберите поставщика из справочника и нажмите «Собрать».`;
 }
+
+/** Undo of the highlighted GPR need clears the path hint. Another row's hint stays. */
+export function gprPathAfterUndo(
+  path: { notice: string; highlightedId: string },
+  undoneId: string,
+): { notice: string; highlightedId: string } {
+  if (!undoneId || path.highlightedId !== undoneId) return path;
+  return { notice: "", highlightedId: "" };
+}
+
+/**
+ * The old «никого не найдено» line is only for an empty external list
+ * when the directory also has nobody. Directory matches already have their own note.
+ */
+export function showEmptyExternalSupplierLine(directoryCount: number, externalCount: number | null): boolean {
+  return externalCount === 0 && directoryCount === 0;
+}

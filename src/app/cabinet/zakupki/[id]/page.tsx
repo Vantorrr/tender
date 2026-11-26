@@ -37,7 +37,7 @@ import { plainExchangeTitle } from "@/lib/exchange-label";
 import { gprStageLabel } from "@/lib/gpr-stage-label";
 import { procurementBoardLabel, visibleProcurementNumber } from "@/lib/pipeline";
 import { REVIEW_LABELS, STATUS_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
-import { EXTERNAL_SUPPLIER_SEARCH, NO_UNDO, collectSuppliersMessage, gprNeedNextStep, searchSupplierDirectory } from "@/lib/supplier-directory";
+import { EXTERNAL_SUPPLIER_SEARCH, NO_UNDO, collectSuppliersMessage, gprNeedNextStep, gprPathAfterUndo, searchSupplierDirectory, showEmptyExternalSupplierLine } from "@/lib/supplier-directory";
 import type { Citation, DocumentCategory, ReviewStatus, SupplyRequest, SupplyStatus, SupplierDirectoryEntry, OrganizationCompanyCard } from "@/lib/types";
 import type { SupplierSearchCandidate } from "@/server/supplier-discovery";
 import { useStore } from "@/lib/store";
@@ -365,8 +365,7 @@ export default function ZakupkaDetailPage() {
   const [supplierSearchResults, setSupplierSearchResults] = useState<Record<string, SupplierSearchCandidate[]>>({});
   const [supplierCollectNote, setSupplierCollectNote] = useState<Record<string, string>>({});
   const [supplierAddedName, setSupplierAddedName] = useState("");
-  const [supplyPathNotice, setSupplyPathNotice] = useState("");
-  const [highlightedSupplyId, setHighlightedSupplyId] = useState("");
+  const [gprPath, setGprPath] = useState({ notice: "", highlightedId: "" });
   const [supplierLookup, setSupplierLookup] = useState("");
   const [supplierSearchErrors, setSupplierSearchErrors] = useState<Record<string, string>>({});
   const companyCardInput = useRef<HTMLInputElement>(null);
@@ -695,7 +694,13 @@ export default function ZakupkaDetailPage() {
         method: "POST", body: JSON.stringify({ action: "discoverSuppliers", id: supply.id }),
       });
       const external = result.candidates ?? [];
-      setSupplierSearchResults((current) => ({ ...current, [supply.id]: external }));
+      setSupplierSearchResults((current) => {
+        const next = { ...current };
+        if (external.length) next[supply.id] = external;
+        else if (showEmptyExternalSupplierLine(local.length, 0)) next[supply.id] = [];
+        else delete next[supply.id];
+        return next;
+      });
       setSupplierCollectNote((current) => ({
         ...current,
         [supply.id]: external.length
@@ -703,7 +708,12 @@ export default function ZakupkaDetailPage() {
           : collectSuppliersMessage(local.map((item) => item.name)),
       }));
     } catch {
-      setSupplierSearchResults((current) => ({ ...current, [supply.id]: [] }));
+      setSupplierSearchResults((current) => {
+        const next = { ...current };
+        if (showEmptyExternalSupplierLine(local.length, 0)) next[supply.id] = [];
+        else delete next[supply.id];
+        return next;
+      });
       setSupplierCollectNote((current) => ({
         ...current,
         [supply.id]: collectSuppliersMessage(local.map((item) => item.name)),
@@ -2073,7 +2083,7 @@ export default function ZakupkaDetailPage() {
               <p className="mt-1 text-xs text-[var(--tk-muted)]">
                 Что / сколько / когда — по материалам этапов графика.
               </p>
-              {supplyPathNotice ? <p className="mt-2 text-sm text-emerald-800" role="status" data-testid="gpr-need-path">{supplyPathNotice}</p> : null}
+              {gprPath.notice ? <p className="mt-2 text-sm text-emerald-800" role="status" data-testid="gpr-need-path">{gprPath.notice}</p> : null}
               {gprBuyList.length === 0 ? (
                 <p className="mt-2 text-sm text-[var(--tk-muted)]">
                   {gpr
@@ -2121,8 +2131,7 @@ export default function ZakupkaDetailPage() {
                               return;
                             }
                             const createdId = boot.supplyId;
-                            setHighlightedSupplyId(createdId);
-                            setSupplyPathNotice(gprNeedNextStep(need.materialName));
+                            setGprPath({ notice: gprNeedNextStep(need.materialName), highlightedId: createdId });
                             requestAnimationFrame(() => {
                               document.getElementById(`supply-${createdId}`)?.scrollIntoView({ block: "nearest" });
                             });
@@ -2132,7 +2141,10 @@ export default function ZakupkaDetailPage() {
                                 label: "Отменить",
                                 onClick: () => {
                                   void api("/api/supply", { method: "POST", body: JSON.stringify({ action: "deleteSupply", id: createdId }) })
-                                    .then(() => refresh())
+                                    .then(() => {
+                                      setGprPath((path) => gprPathAfterUndo(path, createdId));
+                                      return refresh();
+                                    })
                                     .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось отменить"));
                                 },
                               },
@@ -2281,7 +2293,7 @@ export default function ZakupkaDetailPage() {
                   <li
                     key={s.id}
                     id={`supply-${s.id}`}
-                    className={`min-w-0 rounded-lg border px-3 py-2 ${highlightedSupplyId === s.id ? "ring-2 ring-[var(--tk-copper)]" : ""}`}
+                    className={`min-w-0 rounded-lg border px-3 py-2 ${gprPath.highlightedId === s.id ? "ring-2 ring-[var(--tk-copper)]" : ""}`}
                     data-testid={`supply-${s.id}`}
                   >
                     <div className="flex flex-wrap items-start justify-between gap-2">
@@ -2329,7 +2341,7 @@ export default function ZakupkaDetailPage() {
                         <p className="mt-1 text-[var(--tk-muted)]">{candidate.evidence}</p>
                         <a className="mt-1 inline-block text-sky-800 underline" href={candidate.sourceUrl} target="_blank" rel="noreferrer">Источник ↗</a>
                       </li>)}</ul> : null}
-                      {supplierSearchResults[s.id] && supplierSearchResults[s.id].length === 0 ? <p className="mt-2 text-xs text-[var(--tk-muted)]">Подтверждённых поставщиков не найдено. Попробуйте уточнить название материала.</p> : null}
+                      {showEmptyExternalSupplierLine(searchSupplierDirectory(s.materialName, suppliers).length, supplierSearchResults[s.id] ? supplierSearchResults[s.id].length : null) ? <p className="mt-2 text-xs text-[var(--tk-muted)]">Подтверждённых поставщиков не найдено. Попробуйте уточнить название материала.</p> : null}
                       <p className="mt-2 text-[10px] text-[var(--tk-muted)]">Результаты ИИ-поиска требуют проверки на сайте поставщика. Письмо отправляется только поставщику из вашего справочника и только после нажатия кнопки отправки.</p>
                     </div>
                     <details className="mt-2 text-xs">

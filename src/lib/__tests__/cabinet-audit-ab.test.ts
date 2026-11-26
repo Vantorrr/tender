@@ -2,11 +2,11 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import pack from "@/lib/grand-reference.json";
 import { presentAnalyticalNote } from "@/lib/analytical-note";
-import { citationTextForDisplay, isShownConfirmation } from "@/lib/citation-display";
+import { citationTextForDisplay, isBareBasisText, isShownConfirmation } from "@/lib/citation-display";
 import { formatMoney } from "@/lib/format";
 import { plainUserMessage } from "@/lib/plain-user-message";
 import { visibleCheckItems } from "@/lib/project-analytics";
-import { collectSuppliersMessage, gprNeedNextStep, searchSupplierDirectory } from "@/lib/supplier-directory";
+import { collectSuppliersMessage, gprNeedNextStep, gprPathAfterUndo, searchSupplierDirectory, showEmptyExternalSupplierLine } from "@/lib/supplier-directory";
 import { neutralizeProcurementJargon } from "@/lib/wave23";
 import type { Citation } from "@/lib/types";
 
@@ -75,6 +75,22 @@ describe("cabinet audit packages A and B", () => {
       sourceFile: "ЛС-02-02-01-2023-бурение.xlsx",
     })).toBe(false);
     expect(isShownConfirmation({ text: "Штраф 0,1% за день просрочки.", sourceFile: "Договор.docx" })).toBe(true);
+    const filled = citationTextForDisplay({
+      id: "basis",
+      text: "Основание: Дефектная ведомость №1.2",
+      page: 1,
+      sourceFile: "ЛС-02-02-01.xlsx",
+    });
+    expect(filled).toBe("Основание: Дефектная ведомость №1.2");
+    expect(isBareBasisText("Основание")).toBe(true);
+    expect(isBareBasisText("Основание:")).toBe(true);
+    expect(isBareBasisText("Основание ")).toBe(true);
+    expect(citationTextForDisplay({
+      id: "bare",
+      text: "Основание:",
+      page: 1,
+      sourceFile: "ЛС-02-02-01.xlsx",
+    })).toBeNull();
   });
 
   it("does not show procurement jargon to a person", () => {
@@ -100,6 +116,12 @@ describe("cabinet audit packages A and B", () => {
     expect(collectSuppliersMessage(["СеверСнаб"])).toMatch(/не подключён/);
     expect(collectSuppliersMessage([])).toMatch(/нет/);
     expect(gprNeedNextStep("Долото")).toMatch(/Собрать/);
+    const created = { notice: gprNeedNextStep("Долото"), highlightedId: "sup-1" };
+    expect(gprPathAfterUndo(created, "sup-1")).toEqual({ notice: "", highlightedId: "" });
+    expect(gprPathAfterUndo(created, "sup-2")).toEqual(created);
+    expect(showEmptyExternalSupplierLine(2, 0)).toBe(false);
+    expect(showEmptyExternalSupplierLine(0, 0)).toBe(true);
+    expect(showEmptyExternalSupplierLine(1, null)).toBe(false);
     const cabinet = readFileSync("src/app/cabinet/zakupki/[id]/page.tsx", "utf8");
     const production = readFileSync("src/app/cabinet/proizvodstvo/page.tsx", "utf8");
     expect(`${cabinet}\n${production}`).not.toMatch(/duckduckgo/i);

@@ -23,8 +23,13 @@ export function citationTextForDisplay(citation: Citation): string | null {
   // a procurement manager. Keep the item name and quantity in the short view.
   text = text.replace(/^(?:ФЕР|ТЕР|ГЭСН|ФССЦ|ФСБЦ|ФЕРм|ФЕРр|ФЕРп)\s*[-\w.]+\s+/iu, "");
   text = repairDisplayedProse(text);
-  if (!text || /^основание(?:\s*:|\s|$)/iu.test(text)) return null;
+  if (!text || isBareBasisText(text)) return null;
   return text;
+}
+
+/** A basis label with nothing after it. A filled line such as «Основание: Дефектная ведомость №1.2» stays. */
+export function isBareBasisText(text: string): boolean {
+  return /^основание\s*:?\s*$/iu.test(text.replace(/\s+/gu, " ").trim());
 }
 
 /** Extra confirmations: no bare basis line, no cut scrap, no fragment of another contract. */
