@@ -12,7 +12,7 @@ const nextConfig: NextConfig = {
   },
   // API + SQLite session routes need request-time rendering
   cacheComponents: false,
-  serverExternalPackages: ["exceljs", "node-unrar-js"],
+  serverExternalPackages: ["exceljs", "node-unrar-js", "xlsx"],
   // Cursor preview / proxies hit the app via alternate Host headers
   allowedDevOrigins: [
     "127.0.0.1",

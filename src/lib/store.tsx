@@ -101,7 +101,10 @@ interface StoreContextValue {
     title?: string;
     file: File;
     category?: string;
+    silent?: boolean;
   }) => Promise<string | undefined>;
+  makeOfficialPackage: (procurementId: string) => Promise<{ outcome: string; upgraded: boolean }>;
+  upgradeOfficialLogic: (calculationId: string) => Promise<void>;
   updateSchedule: (id: string, patch: Partial<GprSchedule>) => Promise<void>;
   saveCalculationResources: (calculationId: string, stages: GprStage[]) => Promise<void>;
   patchScheduleResource: (
@@ -504,6 +507,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       title?: string;
       file: File;
       category?: string;
+      silent?: boolean;
     }) => {
       const form = new FormData();
       form.append("file", input.file);
@@ -514,7 +518,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         method: "POST",
         body: form,
       });
-      applyBoot(boot);
+      if (!input.silent) applyBoot(boot);
       return boot.uploadWarning;
     },
     [applyBoot]
@@ -714,6 +718,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [applyBoot]
   );
 
+  const makeOfficialPackage = useCallback(
+    async (procurementId: string) => {
+      const boot = await api<BootstrapResponse & { scheduleOutcome?: string; officialModel?: { upgraded?: boolean; outcome?: string } }>("/api/zakupki", {
+        method: "POST",
+        body: JSON.stringify({ action: "makeOfficialPackage", id: procurementId }),
+      });
+      applyBoot(boot);
+      return {
+        outcome: boot.officialModel?.outcome ?? boot.scheduleOutcome ?? "unchanged",
+        upgraded: Boolean(boot.officialModel?.upgraded),
+      };
+    },
+    [applyBoot],
+  );
+
+  const upgradeOfficialLogic = useCallback(
+    async (calculationId: string) => {
+      const boot = await api<BootstrapResponse>("/api/raschety", {
+        method: "POST",
+        body: JSON.stringify({ action: "upgradeOfficialLogic", calculationId }),
+      });
+      applyBoot(boot);
+    },
+    [applyBoot],
+  );
+
   const sendToCalculation = useCallback(
     async (procurementId: string) => {
       const boot = await api<BootstrapResponse & { calculationSummary: CalculationSummary }>("/api/zakupki", {
@@ -804,6 +834,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     updateDocument,
     reanalyzeDocument,
     createDocumentUpload,
+    makeOfficialPackage,
+    upgradeOfficialLogic,
     updateSchedule,
     saveCalculationResources,
     patchScheduleResource,

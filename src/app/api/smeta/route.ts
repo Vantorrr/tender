@@ -24,9 +24,10 @@ export async function POST(req: Request) {
       if (!(file instanceof File)) {
         return json({ error: "Файл не передан" }, 400);
       }
-      if (!file.name.toLowerCase().endsWith(".xlsx")) {
+      const lowerName = file.name.toLowerCase();
+      if (!lowerName.endsWith(".xlsx") && !lowerName.endsWith(".xlsm") && !lowerName.endsWith(".xls")) {
         return json(
-          { error: "Обмен принимает только XLSX. Выгрузите смету из сметной программы в формате Excel (.xlsx)." },
+          { error: "Обмен принимает только XLSX и старый Excel .xls. Выгрузите смету из сметной программы в формате Excel." },
           415
         );
       }
@@ -36,7 +37,18 @@ export async function POST(req: Request) {
           413
         );
       }
-      const buf = Buffer.from(await file.arrayBuffer());
+      let buf = Buffer.from(await file.arrayBuffer());
+      if (lowerName.endsWith(".xls")) {
+        const { convertXlsToXlsx } = await import("@/server/xls-workbook");
+        try {
+          buf = convertXlsToXlsx(buf) as typeof buf;
+        } catch {
+          return json(
+            { error: "Не удалось прочитать файл как XLSX. Пересохраните смету в формате .xlsx и загрузите снова." },
+            422
+          );
+        }
+      }
       let mapped;
       try {
         mapped = await parseSmetaXlsx(buf);

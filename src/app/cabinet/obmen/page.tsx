@@ -70,7 +70,7 @@ export default function ObmenPage() {
             <input
               ref={inputRef}
               type="file"
-              accept=".xlsx"
+              accept=".xlsx,.xls"
               className="hidden"
               onChange={async (e) => {
                 const file = e.target.files?.[0];

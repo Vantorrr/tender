@@ -878,9 +878,21 @@ export async function analyzeUpload(
   options: AnalyzeUploadOptions = {}
 ): Promise<UploadAnalysis> {
   const useLlm = Boolean(options.useLlm);
-  if (fileType === "xlsx" || fileName.toLowerCase().endsWith(".xlsx")) {
+  const legacyXls = fileType === "xls" || (fileName.toLowerCase().endsWith(".xls") && !fileName.toLowerCase().endsWith(".xlsx"));
+  const modernSheet = fileType === "xlsx" || fileName.toLowerCase().endsWith(".xlsx") || fileName.toLowerCase().endsWith(".xlsm");
+  if (legacyXls || modernSheet) {
+    let workbook = buf;
+    if (legacyXls) {
+      try {
+        const { convertXlsToXlsx } = await import("@/server/xls-workbook");
+        workbook = convertXlsToXlsx(buf);
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : "Не удалось прочитать книгу Excel 97–2003";
+        return unrecognized(fileName, reason);
+      }
+    }
     try {
-      const parsed = await parseGrandBuffer(buf);
+      const parsed = await parseGrandBuffer(workbook);
       if (parsed) {
         const analysis = analysisFromGrand(parsed, fileName);
         const largest = [...parsed.positions]
@@ -945,12 +957,14 @@ export async function analyzeUpload(
       }
     } catch {
       try {
-        return await analyzeGenericWorkbook(fileName, buf);
+        return await analyzeGenericWorkbook(fileName, workbook);
       } catch {
-        return unrecognized(fileName, "Файл Excel повреждён или это не книга .xlsx.");
+        return unrecognized(fileName, legacyXls
+          ? "Файл Excel 97–2003 повреждён или это не книга .xls."
+          : "Файл Excel повреждён или это не книга .xlsx.");
       }
     }
-    return analyzeGenericWorkbook(fileName, buf);
+    return analyzeGenericWorkbook(fileName, workbook);
   }
   if (fileType === "docx" || fileName.toLowerCase().endsWith(".docx")) {
     const { analysisFromDocx, parseDocxBuffer } = await import(

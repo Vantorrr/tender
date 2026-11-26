@@ -373,7 +373,7 @@ export interface DocumentItem {
   procurementId: string;
   title: string;
   fileName: string;
-  fileType: "pdf" | "doc" | "docx" | "xlsx" | "zip" | "other";
+  fileType: "pdf" | "doc" | "docx" | "xlsx" | "xls" | "zip" | "other";
   category?: DocumentCategory;
   status: CardStatus;
   versions: DocVersion[];
@@ -406,6 +406,10 @@ export interface DocumentItem {
   /** Visible archive / parse failures — never silent. */
   extractionErrors?: string[];
   extractedFiles?: Array<{ name: string; size: number; relativePath: string }>;
+  /** Archive that this file was unpacked from. */
+  parentDocumentId?: string;
+  /** Path of this member inside that archive, including folders. */
+  archiveMemberPath?: string;
 }
 
 export interface CalcPosition {

@@ -53,6 +53,8 @@ export async function GET(req: Request) {
         ? "application/pdf"
         : doc.fileType === "xlsx"
           ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          : doc.fileType === "xls"
+            ? "application/vnd.ms-excel"
           : doc.fileType === "docx"
             ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
             : doc.fileType === "zip"

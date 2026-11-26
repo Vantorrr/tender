@@ -33,7 +33,7 @@ import { canonicalUploadPath, deleteUpload, readUpload, resolveUploadPath } from
 import { recentPaymentId } from "@/lib/duplicate-click";
 import { supplyNeedKey } from "@/lib/supply-need";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
-import { buildStagesFromEstimatePositions, calendarDurationDays, datesForStage, GPR_DATES_MISSING, periodFromDocumentText } from "@/lib/estimate-stages";
+import { buildStagesFromEstimatePositions, calendarDurationDays, GPR_DATES_MISSING, periodFromDocumentText } from "@/lib/estimate-stages";
 import {
   GPR_CREW_FROM_FILE4,
   GPR_DURATION_FROM_OUTPUT,
@@ -58,6 +58,7 @@ import {
 import {
   ESTIMATE_ROWS_AS_SOURCE_SHEET,
   GPR_FROM_CUSTOMER_SECTIONS,
+  LEGACY_ESTIMATE_SEEDED_COST,
   REFERENCE_REPRICE_NOT_COST,
   buildCommitteeSnapshot,
   calendarForNewSchedule,
@@ -1323,6 +1324,9 @@ export function reanalyzeDocument(
         analysis: prepared.analysis,
         aiFailure: prepared.aiFailure,
         estimatePositions,
+        extractionErrors: prepared.positions.length || prepared.citations.length
+          ? (d.extractionErrors ?? []).filter((message) => !/формат пока нельзя|формат не анализируется|не анализируется автоматически/i.test(message))
+          : d.extractionErrors,
       };
     });
     audit(data, actorId, "reanalyze", "document", id, "Разбор по параметрам ГРАНД-Смета");
@@ -1344,6 +1348,8 @@ export function createDocument(
     prepared?: UploadAnalysis;
     extractionErrors?: string[];
     extractedFiles?: DocumentItem["extractedFiles"];
+    parentDocumentId?: string;
+    archiveMemberPath?: string;
   }
 ): { documentId: string } {
   let documentId = "";
@@ -1421,6 +1427,8 @@ export function createDocument(
       fileSize: input.fileSize,
       extractionErrors: input.extractionErrors,
       extractedFiles: input.extractedFiles,
+      ...(input.parentDocumentId ? { parentDocumentId: input.parentDocumentId } : {}),
+      ...(input.archiveMemberPath ? { archiveMemberPath: input.archiveMemberPath } : {}),
     };
     data.documents.unshift(doc);
     proc.documentIds = [...proc.documentIds, id];
@@ -1452,6 +1460,7 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
     const now = new Date().toISOString();
     const created: string[] = [];
 
+    const logic = resolveTenderLogicSettings(data.organizations.find((org) => org.id === p.orgId));
     if (!p.calculationId) {
       const id = `c-${Date.now()}`;
       const currentDir =
@@ -1488,7 +1497,8 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
             detail: "Создан ресурсный черновик",
           },
         ],
-        dataFlags: ["auto_chain", "requires_manual_check"],
+        dataFlags: ["auto_chain", "requires_manual_check", "official_43_10_40"],
+        resourceScheduleParams: resourceParamsForNewCalculation(logic.shiftProfile),
       });
       p.calculationId = id;
       created.push("расчёт");
@@ -1499,6 +1509,7 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
       const start = now.slice(0, 10);
       const stage1 = `gs-${Date.now()}`;
       const stage2 = `gs-${Date.now() + 1}`;
+      const chainCalendar = calendarForNewSchedule(logic.shiftProfile);
       data.schedules.unshift({
         id,
         orgId: p.orgId,
@@ -1508,8 +1519,9 @@ export function ensureProcurementChain(actorId: string, procurementId: string) {
         status: "v_rabote",
         version: 1,
         authorId: actorId,
+        ...(chainCalendar ? { calendar: chainCalendar } : {}),
         assumptions: [
-          "Начальные даты и этапы — только навигационная заготовка; замените их по ТЗ, производительности и календарю объекта",
+          "Начальные даты — заготовка. Длительность этапов считается по выработке, срок ТЗ по строкам не делится.",
           "Состав и количество ресурсов не подтверждены: заполните строки перед использованием итогов",
         ],
         stages: [
@@ -3021,7 +3033,15 @@ function mergeEstimateRowsIntoDraft(
 /**
  * «Отправить в расчёт»: resource draft only. The schedule is a separate action.
  */
-export function createProcurementSchedule(actorId: string, procurementId: string) {
+function scheduleHasNoOutput(schedule: { stages: GprStage[] }): boolean {
+  return schedule.stages.every((stage) => !stage.durationBasis);
+}
+
+export function createProcurementSchedule(
+  actorId: string,
+  procurementId: string,
+  opts?: { replaceUntagged?: boolean },
+) {
   let outcome: "estimate" | "placeholder" | "unchanged" = "unchanged";
   mutateAppData((data) => {
     const actor = actorUser(data, actorId);
@@ -3038,15 +3058,19 @@ export function createProcurementSchedule(actorId: string, procurementId: string
     const stampAuthor = (stages: GprStage[]) => stages.map((stage) => ({ ...stage, createdBy: stage.createdBy ?? actorId }));
     const derived = stampAuthor(buildDraftStagesFromEstimate(draft?.positions ?? [], now, period, calendar));
     const existing = procurement.gprId ? data.schedules.find((item) => item.id === procurement.gprId) : undefined;
-    if (existing && isNavigationStub(existing) && derived.length > 0) {
+    const replaceWithOutput = existing
+      && derived.length > 0
+      && (isNavigationStub(existing) || (opts?.replaceUntagged && scheduleHasNoOutput(existing)));
+    if (replaceWithOutput && existing) {
       existing.stages = stampAuthor(derived);
       existing.calculationId = procurement.calculationId;
       existing.updatedAt = now;
       if (!existing.deadline && period) existing.deadline = period;
-      if (!existing.calendar && calendar) existing.calendar = calendar;
+      if (opts?.replaceUntagged && calendar) existing.calendar = calendar;
+      else if (!existing.calendar && calendar) existing.calendar = calendar;
       existing.assumptions = withMissingDatesNote(commercialScheduleNotes(derived), Boolean(period));
       outcome = "estimate";
-      audit(data, actorId, "update", "gpr", existing.id, "Заготовка графика заменена разделами сметы");
+      audit(data, actorId, "update", "gpr", existing.id, "Заготовка графика заменена длительностью по выработке");
       return data;
     }
     if (existing && isNavigationStub(existing)) {
@@ -3059,22 +3083,21 @@ export function createProcurementSchedule(actorId: string, procurementId: string
     const gid = `g-${Date.now()}`;
     const stage1 = `gs-${Date.now()}`;
     const today = now.slice(0, 10);
-    const firstDates = datesForStage(0, 2, today, period);
-    const secondDates = datesForStage(1, 2, today, period);
+    const anchor = period?.start ?? today;
     const placeholderStages: GprStage[] = [
       ensureStageResources({
         id: stage1,
         name: "Подготовка / мобилизация",
-        start: firstDates.start,
-        end: firstDates.end,
+        start: anchor,
+        end: anchor,
         sequence: 1,
         crewSize: 0,
       }),
       ensureStageResources({
         id: `gs-${Date.now() + 1}`,
         name: "Основные работы",
-        start: secondDates.start,
-        end: secondDates.end,
+        start: anchor,
+        end: anchor,
         sequence: 2,
         dependsOn: stage1,
         dependencyType: "FS",
@@ -3095,7 +3118,8 @@ export function createProcurementSchedule(actorId: string, procurementId: string
       assumptions: withMissingDatesNote(derived.length
         ? commercialScheduleNotes(derived)
         : [
-            "Начальные даты и этапы — только навигационная заготовка; замените их по ТЗ, производительности и календарю объекта",
+            "Начальные даты — заготовка на один день. Срок ТЗ по строкам сметы не делится.",
+            "Длительность появится, когда в смете есть объём и норма выработки (ОРЧ, труба, бурение, справочники смен).",
             "Состав и количество ресурсов не подтверждены: заполните строки перед использованием итогов",
           ], Boolean(period)),
       stages: stampAuthor(derived.length ? derived : placeholderStages),
@@ -3107,6 +3131,88 @@ export function createProcurementSchedule(actorId: string, procurementId: string
     return data;
   });
   return { outcome };
+}
+
+/**
+ * One click on a draft that still shows «Старая логика себестоимости».
+ * Writes the official 43/10/40 parameters and the 2×11 calendar, then rebuilds
+ * a schedule that never received an output duration. Saved output stages stay.
+ */
+export function upgradeCalculationToOfficialLogic(actorId: string, calculationId: string) {
+  let procurementId = "";
+  mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const item = data.calculations.find((row) => row.id === calculationId);
+    if (!item) throw new Error("Расчёт не найден");
+    assertOrgAccess(actor, item.orgId, "расчёта");
+    assertEditableCalculation(item);
+    const logic = resolveTenderLogicSettings(data.organizations.find((org) => org.id === item.orgId));
+    item.resourceScheduleParams = resourceParamsForNewCalculation(logic.shiftProfile);
+    item.dataFlags = [
+      ...(item.dataFlags ?? []).filter((flag) => flag !== LEGACY_ESTIMATE_SEEDED_COST && flag !== "seeded_from_customer_estimate"),
+      "official_43_10_40",
+    ];
+    item.updatedAt = new Date().toISOString();
+    item.changeLog = [
+      ...(item.changeLog ?? []),
+      {
+        id: `cl-${Date.now()}`,
+        at: item.updatedAt,
+        actorId,
+        detail: "Пересчёт по новой логике: 43/10/40 и 2×11",
+      },
+    ];
+    procurementId = item.procurementId;
+    audit(data, actorId, "recompute", "calculation", calculationId, "Пересчёт по новой логике 43/10/40 и 2×11");
+    return data;
+  });
+  recomputeCalculationCost(actorId, calculationId, { useResourceScheduleEconomics: true });
+  if (procurementId) {
+    const procurement = readAppData().procurements.find((item) => item.id === procurementId);
+    if (procurement?.calculationId) {
+      try {
+        createProcurementSchedule(actorId, procurementId, { replaceUntagged: true });
+      } catch (error) {
+        if (!(error instanceof Error) || !/Недостаточно прав/u.test(error.message)) throw error;
+      }
+    }
+  }
+  return readAppData();
+}
+
+/**
+ * The procurement button «Сделать расчёт с ГПР».
+ * A brand-new draft receives 43/10/40 and 2×11. An existing legacy draft is
+ * upgraded in the same click. GPR duration comes from output, not an even TZ split.
+ */
+export function makeOfficialCalculationAndSchedule(actorId: string, procurementId: string) {
+  sendProcurementToCalculation(actorId, procurementId);
+  const snapshot = readAppData();
+  const procurement = snapshot.procurements.find((item) => item.id === procurementId);
+  if (!procurement?.calculationId) throw new Error("Расчёт не создан");
+  const draft = snapshot.calculations.find((item) => item.id === procurement.calculationId);
+  const legacy = isLegacyEstimateSeededCost(draft);
+  if (draft && (legacy || !draft.resourceScheduleParams)) {
+    upgradeCalculationToOfficialLogic(actorId, draft.id);
+  }
+  const schedule = createProcurementSchedule(actorId, procurementId, { replaceUntagged: true });
+  const after = readAppData();
+  const nextDraft = after.calculations.find((item) => item.id === procurement.calculationId);
+  return {
+    outcome: schedule.outcome,
+    upgraded: Boolean(legacy),
+    calculationId: procurement.calculationId,
+    scheduleId: after.procurements.find((item) => item.id === procurementId)?.gprId ?? null,
+    shiftProfile: nextDraft?.resourceScheduleParams
+      ? {
+          personnelShiftsPerDay: nextDraft.resourceScheduleParams.personnelShiftsPerDay,
+          equipmentShiftsPerDay: nextDraft.resourceScheduleParams.equipmentShiftsPerDay,
+          hoursPerShift: nextDraft.resourceScheduleParams.hoursPerShift,
+          overheadRate: nextDraft.resourceScheduleParams.overheadRate,
+          profitMarkupOnCostWithOh: nextDraft.resourceScheduleParams.profitMarkupOnCostWithOh,
+        }
+      : null,
+  };
 }
 
 /** Explicit user action. Does not run on read or migration. */
@@ -3425,7 +3531,7 @@ export function sendProcurementToCalculation(
         dataFlags: [
           "requires_manual_check",
           "no_accuracy_promise",
-          ...(seedPositions.length ? [ESTIMATE_ROWS_AS_SOURCE_SHEET] : ["awaiting_estimate_rows"]),
+          ...(seedPositions.length ? ["official_43_10_40", ESTIMATE_ROWS_AS_SOURCE_SHEET] : ["awaiting_estimate_rows"]),
         ],
         ...(seedPositions.length
           ? { resourceScheduleParams: resourceParamsForNewCalculation(logic.shiftProfile) }

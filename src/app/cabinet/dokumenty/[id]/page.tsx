@@ -146,6 +146,26 @@ export default function DocumentDetailPage() {
             >
               Скачать файл
             </Button>
+            {doc.category === "archive" || /\.(zip|rar|7z|tar|gz|tgz)$/i.test(doc.fileName) ? (
+              <Button
+                variant="outline"
+                disabled={summaryBusy}
+                data-testid="reextract-archive"
+                onClick={async () => {
+                  setSummaryBusy(true);
+                  try {
+                    await reanalyzeDocument(doc.id, { useLlm: false });
+                    toast.success("Архив распакован снова, вложенные файлы проиндексированы");
+                  } catch (error) {
+                    toast.error(error instanceof Error ? error.message : "Не удалось распаковать архив");
+                  } finally {
+                    setSummaryBusy(false);
+                  }
+                }}
+              >
+                Распаковать снова
+              </Button>
+            ) : null}
             <Button
               variant="outline"
               disabled={summaryBusy}

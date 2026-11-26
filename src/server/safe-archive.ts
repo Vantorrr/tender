@@ -31,6 +31,17 @@ const MAX_UNCOMPRESSED = 64 * 1024 * 1024;
 const MAX_SINGLE = 32 * 1024 * 1024;
 const MAX_SINGLE_ARCHIVE = 60 * 1024 * 1024;
 const MAX_NESTING_NAME = 180;
+
+/**
+ * How many archive containers may be opened in one chain.
+ * Level 1 is the uploaded archive. `zip → 7z → 7z` is level 3.
+ */
+export const MAX_ARCHIVE_DEPTH = 5;
+
+/** `depth` is 0 for the first archive inside the upload. */
+export function nestedArchiveDepthAllowed(depth: number): boolean {
+  return depth >= 0 && depth < MAX_ARCHIVE_DEPTH - 1;
+}
 const nodeRequire = createRequire(path.join(process.cwd(), "package.json"));
 let unrarWasm: ArrayBuffer | undefined;
 

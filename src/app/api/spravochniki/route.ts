@@ -35,21 +35,22 @@ export async function POST(req: Request) {
       let rows: Record<string, string | number>[] = [];
       if (name.endsWith(".csv") || name.endsWith(".txt")) {
         rows = parseDirectoryCsv(buf.toString("utf8"));
-      } else if (name.endsWith(".xlsx") || name.endsWith(".xlsm")) {
-        rows = await parseDirectoryXlsx(buf);
-      } else if (name.endsWith(".xls")) {
-        return json(
-          {
-            error:
-              "Формат .xls не поддерживается. Сохраните как .xlsx или .csv",
-          },
-          400
-        );
+      } else if (name.endsWith(".xlsx") || name.endsWith(".xlsm") || name.endsWith(".xls")) {
+        let sheet = buf;
+        if (name.endsWith(".xls")) {
+          const { convertXlsToXlsx } = await import("@/server/xls-workbook");
+          try {
+            sheet = convertXlsToXlsx(buf) as typeof sheet;
+          } catch (error) {
+            return json({ error: error instanceof Error ? error.message : "Не удалось прочитать .xls" }, 400);
+          }
+        }
+        rows = await parseDirectoryXlsx(sheet);
       } else {
         return json(
           {
             error:
-              "Неподдерживаемый формат. Допустимы: .xlsx, .xlsm, .csv",
+              "Неподдерживаемый формат. Допустимы: .xlsx, .xlsm, .xls, .csv",
           },
           400
         );

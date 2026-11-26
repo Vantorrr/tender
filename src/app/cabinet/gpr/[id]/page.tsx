@@ -281,7 +281,7 @@ export default function GprDetailPage() {
             <input
               ref={materialsFileRef}
               type="file"
-              accept=".xlsx"
+              accept=".xlsx,.xls"
               className="hidden"
               aria-label="Загрузить материалы из Excel"
               onChange={async (event) => {
