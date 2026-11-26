@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   GPR_DURATION_FROM_OUTPUT,
+  MAX_SCHEDULE_DAYS,
   applyLeverToStored,
   deadlineView,
   durationDaysFromOutput,
@@ -194,6 +195,14 @@ describe("commercial package duration", () => {
     const withMachine = applyLeverToStored({ ...stage, durationShifts: 2, durationDays: 5 }, "mechanism");
     expect(withMachine.mechanismCount).toBe(2);
     expect(withMachine.durationDays).toBe(2.5);
+  });
+
+  it("rejects a stage measured in millions of days without walking them", () => {
+    expect(endAfterWorkingDays("2026-12-01", 10, [])).toBe("2026-12-10");
+    expect(endAfterWorkingDays("2026-12-01", MAX_SCHEDULE_DAYS, []).startsWith("20")).toBe(true);
+    expect(() => endAfterWorkingDays("2026-12-01", MAX_SCHEDULE_DAYS + 1, [])).toThrow(/слишком большой/);
+    expect(() => endAfterWorkingDays("2026-12-01", 1e15, [])).toThrow(/слишком большой/);
+    expect(() => endAfterWorkingDays("2026-12-01", 2, [0, 1, 2, 3, 4, 5, 6])).toThrow(/рабочих дней/);
   });
 
   it("keeps a volume row unconfirmed until someone confirms it", () => {

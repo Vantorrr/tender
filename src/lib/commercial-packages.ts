@@ -429,19 +429,31 @@ function isWeekend(iso: string, weekendDays: number[]): boolean {
   return weekendDays.includes(new Date(`${iso}T12:00:00Z`).getUTCDay());
 }
 
+/** A stage longer than this is rejected instead of walking the calendar day by day. */
+export const MAX_SCHEDULE_DAYS = 20_000;
+
 function alignToWorkday(iso: string, weekendDays: number[]): string {
   let cursor = iso;
-  while (isWeekend(cursor, weekendDays)) cursor = addDays(cursor, 1);
-  return cursor;
+  for (let step = 0; step < 14; step += 1) {
+    if (!isWeekend(cursor, weekendDays)) return cursor;
+    cursor = addDays(cursor, 1);
+  }
+  throw new Error("Календарь не содержит рабочих дней");
 }
 
 /** Inclusive working-day end. A partial day occupies the next whole working day. */
 export function endAfterWorkingDays(start: string, days: number, weekendDays: number[]): string {
   const need = Math.max(1, Math.ceil(days - 1e-9));
+  if (!Number.isFinite(need) || need > MAX_SCHEDULE_DAYS) {
+    throw new Error("Срок этапа слишком большой. Уменьшите объём или добавьте выработку.");
+  }
   let cursor = alignToWorkday(start, weekendDays);
   let counted = 1;
+  let steps = 0;
   while (counted < need) {
     cursor = addDays(cursor, 1);
+    steps += 1;
+    if (steps > need + 14) throw new Error("Календарь не содержит рабочих дней");
     if (!isWeekend(cursor, weekendDays)) counted += 1;
   }
   return cursor;

@@ -12,6 +12,7 @@ import {
   createProcurementSchedule,
   recomputeCalculationCost,
   sendProcurementToCalculation,
+  updateSchedule,
   updateVorVolume,
 } from "@/server/repo";
 import { saveUpload } from "@/server/uploads";
@@ -400,5 +401,93 @@ describe("wave 4 commercial packages", () => {
     recomputeCalculationCost("u-ruk", draft.id, { resourceScheduleParams: savedParams, useResourceScheduleEconomics: true });
     expect(readAppData().calculations.find((item) => item.id === draft.id)?.referenceReprice?.priceExVat).toBe(first);
     expect(readAppData().calculations.find((item) => item.id === draft.id)?.referenceReprice?.C0).toBeCloseTo(BURENIE_C0, 2);
+  });
+
+  it("does not write another organization's shifts and rejects a volume that would freeze the calendar", () => {
+    const created = createManualProcurement("u-ruk", { title: "Чужой рычаг", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const procurement = readAppData().procurements.find((item) => item.id === created.id)!;
+    const draft = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "resource_draft")!;
+    const params = {
+      personHourRate: 1400,
+      personnelShiftsPerDay: 2,
+      hoursPerShift: 11,
+      equipmentShiftsPerDay: 1,
+      overheadRate: 0.43,
+      profitMarkupOnCostWithOh: 0.4,
+    };
+    mutateAppData((data) => {
+      data.calculations.unshift({
+        id: "c-beta-foreign",
+        orgId: "org-beta",
+        procurementId: "p-beta-missing",
+        title: "Чужой расчёт",
+        status: "v_rabote",
+        positions: [],
+        assumptions: [],
+        scenario: "bazovyy",
+        scenarioFactor: 1,
+        participateDecision: null,
+        directoryVersionId: "dir-rascenki-1",
+        version: 1,
+        authorId: "u-beta-tender",
+        updatedAt: new Date().toISOString(),
+        kind: "resource_draft",
+        resourceScheduleParams: { ...params, equipmentShiftsPerDay: 1 },
+      });
+      const calc = data.calculations.find((item) => item.id === draft.id)!;
+      calc.positions.push({
+        id: "vor-soil",
+        code: "ВОР",
+        costRole: "commercial",
+        name: "Бетон товарный",
+        unit: "м3",
+        quantity: 10,
+        rate: 100,
+        rateMissing: false,
+        volumeStatus: "unconfirmed",
+      });
+      calc.resourceScheduleParams = params;
+      data.schedules.unshift({
+        id: "g-foreign-lever",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        calculationId: "c-beta-foreign",
+        title: "ГПР с чужой ссылкой",
+        status: "v_rabote",
+        version: 1,
+        authorId: "u-ruk",
+        updatedAt: new Date().toISOString(),
+        calendar: { weekendDays: [], hoursPerShift: 11, shiftsPerDay: 1, timezone: "Asia/Krasnoyarsk" },
+        deadline: { start: "2026-12-01", end: "2026-12-05" },
+        stages: [{
+          id: "st-foreign",
+          name: "Разработка грунта",
+          workName: "Разработка грунта",
+          start: "2026-12-01",
+          end: "2026-12-10",
+          sequence: 1,
+          crewSize: 0,
+          durationBasis: "output_shift",
+          durationDays: 10,
+          formulaVolume: 100,
+          outputPerShift11h: 10,
+          statedLinks: 1,
+          statedShifts: 1,
+          mechanismCount: 1,
+          durationShifts: 1,
+        }],
+      });
+      return data;
+    });
+    expect(() => applyScheduleAcceleration("u-ruk", "g-foreign-lever", "shift")).toThrow(/другой организации/);
+    expect(() => applyScheduleAcceleration("u-super", "g-foreign-lever", "shift")).toThrow(/другой организации/);
+    expect(readAppData().calculations.find((item) => item.id === "c-beta-foreign")!.resourceScheduleParams!.equipmentShiftsPerDay).toBe(1);
+    expect(readAppData().schedules.find((item) => item.id === "g-foreign-lever")!.stages[0]!.end).toBe("2026-12-10");
+    expect(readAppData().schedules.find((item) => item.id === "g-foreign-lever")!.calendar!.shiftsPerDay).toBe(1);
+    updateSchedule("u-ruk", "g-foreign-lever", { calculationId: draft.id });
+    expect(readAppData().schedules.find((item) => item.id === "g-foreign-lever")!.calculationId).toBe("c-beta-foreign");
+    expect(() => updateVorVolume("u-ruk", draft.id, "vor-soil", { volume: 1e15 })).toThrow(/объём/i);
+    expect(readAppData().calculations.find((item) => item.id === draft.id)!.positions.find((position) => position.id === "vor-soil")!.quantity).toBe(10);
   });
 });

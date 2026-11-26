@@ -1456,9 +1456,11 @@ export function updateSchedule(
     const item = data.schedules.find((s) => s.id === id);
     if (!item) throw new Error("ГПР не найден");
     assertOrgAccess(actor, item.orgId, "ГПР");
-    const { orgId: _o, id: _i, ...safe } = patch;
+    const { orgId: _o, id: _i, calculationId: _c, procurementId: _p, ...safe } = patch;
     void _o;
     void _i;
+    void _c;
+    void _p;
     const physicalPlanSignature = (stages: GprStage[]) => JSON.stringify(stages.map((stage) => ({
       name: stage.name,
       workName: stage.workName,
@@ -2855,6 +2857,12 @@ export function applyScheduleAcceleration(actorId: string, scheduleId: string, l
     if (!(view.overrunDays && view.overrunDays > 0)) throw new Error("Критический путь укладывается в срок ТЗ");
     if (lever === "shift" && !view.shiftAvailable) throw new Error("Смен уже две");
     if (lever === "mechanism" && !view.mechanismAvailable) throw new Error("Механизм добавить не к чему");
+    const calc = data.calculations.find((row) => row.id === item.calculationId);
+    if (calc) {
+      if (calc.orgId !== item.orgId) throw new Error("Нет доступа к данным другой организации (расчёта)");
+      assertOrgAccess(actor, calc.orgId, "расчёта");
+      assertEditableCalculation(calc);
+    }
     const weekendDays = item.calendar?.weekendDays ?? [];
     item.stages = item.stages.map((stage) => {
       if (stage.durationBasis !== "output_shift" && stage.durationBasis !== "site_daily") return stage;
@@ -2878,14 +2886,13 @@ export function applyScheduleAcceleration(actorId: string, scheduleId: string, l
         shiftsPerDay: 2,
         timezone: item.calendar?.timezone ?? "Asia/Krasnoyarsk",
       };
-      const calc = data.calculations.find((row) => row.id === item.calculationId);
       if (calc?.resourceScheduleParams && calc.resourceScheduleParams.equipmentShiftsPerDay < 2) {
         calc.resourceScheduleParams = { ...calc.resourceScheduleParams, equipmentShiftsPerDay: 2 };
       }
     }
     item.updatedAt = new Date().toISOString();
     item.version = (item.version ?? 1) + 1;
-    calculationId = item.calculationId;
+    calculationId = calc ? item.calculationId : "";
     audit(data, actorId, "update", "gpr", item.id, lever === "shift" ? "Добавлена смена" : "Добавлен механизм");
     return data;
   });
@@ -2912,7 +2919,7 @@ export function updateVorVolume(
     const nextQty = patch.volume;
     const volumeChanged = nextQty != null && Number.isFinite(nextQty) && nextQty !== previousQty;
     if (nextQty != null) {
-      if (!Number.isFinite(nextQty) || nextQty < 0) throw new Error("Укажите объём");
+      if (!Number.isFinite(nextQty) || nextQty < 0 || nextQty > 1e12) throw new Error("Укажите объём");
       position.quantity = nextQty;
     }
     if (volumeChanged) position.volumeStatus = "unconfirmed";
