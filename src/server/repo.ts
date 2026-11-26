@@ -34,6 +34,21 @@ import { recentPaymentId } from "@/lib/duplicate-click";
 import { supplyNeedKey } from "@/lib/supply-need";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
 import { buildStagesFromEstimatePositions, calendarDurationDays, datesForStage, GPR_DATES_MISSING, periodFromDocumentText } from "@/lib/estimate-stages";
+import {
+  GPR_CREW_FROM_FILE4,
+  GPR_DURATION_FROM_OUTPUT,
+  GPR_GESN_HINT_ONLY,
+  GPR_UNCONFIRMED_DURATION,
+  applyLeverToStored,
+  deadlineView,
+  placeByDuration,
+  MAX_VOR_VOLUME,
+  formulaAfterVolumeChange,
+  shiftsForDeadline,
+  stageTracksVolumeRow,
+  type AccelerationLever,
+} from "@/lib/commercial-packages";
+import { listShiftOutputCandidates } from "@/server/client-norms";
 import { COMPANY_RATE_RULE, composeAnalyticalNote, dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, recognizedRowsPhrase, rowCountGenitive, rowCountNominative, scheduleAfterPredecessor } from "@/lib/wave23";
 import {
   applyClientCommercialFormula,
@@ -78,7 +93,7 @@ import {
 import { stampCitationSourceVersion } from "@/server/grand-smeta";
 import { parseContractRisks } from "@/server/contract-risk";
 import type { UploadAnalysis } from "@/server/grand-smeta";
-import { mutateAppData, readAppData, resetAppData } from "@/server/db";
+import { getDb, mutateAppData, readAppData, resetAppData } from "@/server/db";
 import { hashPassword } from "@/server/passwords";
 import { createSession, publicUser } from "@/server/auth";
 import { spawnSync } from "node:child_process";
@@ -1442,9 +1457,20 @@ export function updateSchedule(
     const item = data.schedules.find((s) => s.id === id);
     if (!item) throw new Error("ГПР не найден");
     assertOrgAccess(actor, item.orgId, "ГПР");
-    const { orgId: _o, id: _i, ...safe } = patch;
+    let linkedCalculationId = item.calculationId;
+    if (patch.calculationId && patch.calculationId !== item.calculationId) {
+      const linked = data.calculations.find((row) => row.id === patch.calculationId);
+      if (!linked || linked.orgId !== item.orgId) {
+        throw new Error("Нет доступа к данным другой организации (расчёта)");
+      }
+      assertOrgAccess(actor, linked.orgId, "расчёта");
+      linkedCalculationId = linked.id;
+    }
+    const { orgId: _o, id: _i, calculationId: _c, procurementId: _p, ...safe } = patch;
     void _o;
     void _i;
+    void _c;
+    void _p;
     const physicalPlanSignature = (stages: GprStage[]) => JSON.stringify(stages.map((stage) => ({
       name: stage.name,
       workName: stage.workName,
@@ -1468,7 +1494,13 @@ export function updateSchedule(
             return { ...stage, createdBy: stage.createdBy ?? actorId };
           }), calc?.positions ?? [])
         : s.stages;
-      return { ...s, ...safe, stages, updatedAt: new Date().toISOString() };
+      return {
+        ...s,
+        ...safe,
+        calculationId: linkedCalculationId,
+        stages,
+        updatedAt: new Date().toISOString(),
+      };
     });
     // Only resync explicit resource-linked drafts — never rewrite unrelated/legacy positions.
     const updated = data.schedules.find((s) => s.id === id)!;
@@ -2658,12 +2690,46 @@ function withMissingDatesNote(assumptions: string[], dated: boolean): string[] {
   return assumptions.includes(GPR_DATES_MISSING) ? assumptions : [...assumptions, GPR_DATES_MISSING];
 }
 
+function commercialScheduleNotes(stages: GprStage[]): string[] {
+  const hasDuration = stages.some((stage) => (stage.durationDays ?? 0) > 0);
+  const hasUnconfirmed = stages.some((stage) => stage.durationBasis === "unconfirmed");
+  const hasCrew = stages.some((stage) => (stage.benchmarkCrew?.length ?? 0) > 0);
+  const hasGesn = stages.some((stage) => (stage.gesnHoursHint ?? 0) > 0);
+  const notes = [GPR_FROM_CUSTOMER_SECTIONS];
+  notes.push(hasDuration
+    ? GPR_DURATION_FROM_OUTPUT
+    : "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.");
+  if (hasDuration && hasUnconfirmed) notes.push(GPR_UNCONFIRMED_DURATION);
+  if (hasGesn) notes.push(GPR_GESN_HINT_ONLY);
+  if (hasCrew) notes.push(GPR_CREW_FROM_FILE4);
+  notes.push("Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.");
+  return notes;
+}
+
 function buildDraftStagesFromEstimate(
   positions: Calculation["positions"],
   now: string,
-  period?: { start: string; end: string } | null,
+  period: { start: string; end: string } | null | undefined,
+  calendar: { weekendDays: number[]; shiftsPerDay: number } | undefined,
 ): GprStage[] {
-  return buildStagesFromEstimatePositions(positions, now, period);
+  return buildStagesFromEstimatePositions(positions, now, period, {
+    weekendDays: calendar?.weekendDays ?? [],
+    shiftsPerDay: calendar?.shiftsPerDay ?? 2,
+    lookups: listShiftOutputCandidates(getDb()),
+  });
+}
+
+function repositionDurationStages(stages: GprStage[], weekendDays: number[]): GprStage[] {
+  const movable = stages.map((stage, index) => ({ stage, index })).filter((row) => row.stage.durationBasis);
+  const anchor = movable[0]?.stage.start;
+  if (!anchor) return stages;
+  const placed = placeByDuration(anchor, weekendDays, movable.map((row) => row.stage.durationDays ?? null));
+  return stages.map((stage, index) => {
+    const placeIndex = movable.findIndex((row) => row.index === index);
+    if (placeIndex < 0) return stage;
+    const spot = placed[placeIndex];
+    return spot ? { ...stage, start: spot.start, end: spot.end } : stage;
+  });
 }
 
 function mergeEstimateRowsIntoDraft(
@@ -2716,18 +2782,18 @@ export function createProcurementSchedule(actorId: string, procurementId: string
     const now = new Date().toISOString();
     const draft = data.calculations.find((item) => item.id === procurement.calculationId && item.kind !== "customer_original");
     const period = procurementScheduleWindow(data, procurement, now.slice(0, 10));
+    const logic = resolveTenderLogicSettings(data.organizations.find((org) => org.id === procurement.orgId));
+    const calendar = calendarForNewSchedule(logic.shiftProfile);
     const stampAuthor = (stages: GprStage[]) => stages.map((stage) => ({ ...stage, createdBy: stage.createdBy ?? actorId }));
-    const derived = stampAuthor(buildDraftStagesFromEstimate(draft?.positions ?? [], now, period));
+    const derived = stampAuthor(buildDraftStagesFromEstimate(draft?.positions ?? [], now, period, calendar));
     const existing = procurement.gprId ? data.schedules.find((item) => item.id === procurement.gprId) : undefined;
     if (existing && isNavigationStub(existing) && derived.length > 0) {
       existing.stages = stampAuthor(derived);
       existing.calculationId = procurement.calculationId;
       existing.updatedAt = now;
-      existing.assumptions = withMissingDatesNote([
-        GPR_FROM_CUSTOMER_SECTIONS,
-        "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.",
-        "Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.",
-      ], Boolean(period));
+      if (!existing.deadline && period) existing.deadline = period;
+      if (!existing.calendar && calendar) existing.calendar = calendar;
+      existing.assumptions = withMissingDatesNote(commercialScheduleNotes(derived), Boolean(period));
       outcome = "estimate";
       audit(data, actorId, "update", "gpr", existing.id, "Заготовка графика заменена разделами сметы");
       return data;
@@ -2764,8 +2830,6 @@ export function createProcurementSchedule(actorId: string, procurementId: string
         crewSize: 0,
       }),
     ];
-    const logic = resolveTenderLogicSettings(data.organizations.find((org) => org.id === procurement.orgId));
-    const calendar = calendarForNewSchedule(logic.shiftProfile);
     data.schedules.unshift({
       id: gid,
       orgId: procurement.orgId,
@@ -2776,12 +2840,9 @@ export function createProcurementSchedule(actorId: string, procurementId: string
       version: 1,
       authorId: actorId,
       ...(calendar ? { calendar } : {}),
+      ...(period ? { deadline: period } : {}),
       assumptions: withMissingDatesNote(derived.length
-        ? [
-            GPR_FROM_CUSTOMER_SECTIONS,
-            "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.",
-            "Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.",
-          ]
+        ? commercialScheduleNotes(derived)
         : [
             "Начальные даты и этапы — только навигационная заготовка; замените их по ТЗ, производительности и календарю объекта",
             "Состав и количество ресурсов не подтверждены: заполните строки перед использованием итогов",
@@ -2795,6 +2856,119 @@ export function createProcurementSchedule(actorId: string, procurementId: string
     return data;
   });
   return { outcome };
+}
+
+/** Explicit user action. Does not run on read or migration. */
+export function applyScheduleAcceleration(actorId: string, scheduleId: string, lever: AccelerationLever) {
+  let calculationId = "";
+  mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    assertGprWrite(actor);
+    const item = data.schedules.find((row) => row.id === scheduleId);
+    if (!item) throw new Error("ГПР не найден");
+    assertOrgAccess(actor, item.orgId, "ГПР");
+    const shifts = shiftsForDeadline(item.stages, item.calendar?.shiftsPerDay);
+    const view = deadlineView({ stages: item.stages, deadline: item.deadline ?? null, shiftsPerDay: shifts });
+    if (!view.applicable) throw new Error("В этом графике нет длительности по выработке");
+    if (!(view.overrunDays && view.overrunDays > 0)) throw new Error("Критический путь укладывается в срок ТЗ");
+    if (lever === "shift" && !view.shiftAvailable) throw new Error("Смен уже две");
+    if (lever === "mechanism" && !view.mechanismAvailable) throw new Error("Механизм добавить не к чему");
+    const calc = data.calculations.find((row) => row.id === item.calculationId);
+    if (calc) {
+      if (calc.orgId !== item.orgId) throw new Error("Нет доступа к данным другой организации (расчёта)");
+      assertOrgAccess(actor, calc.orgId, "расчёта");
+      assertEditableCalculation(calc);
+    }
+    const weekendDays = item.calendar?.weekendDays ?? [];
+    item.stages = item.stages.map((stage) => {
+      if (stage.durationBasis !== "output_shift" && stage.durationBasis !== "site_daily") return stage;
+      const next = applyLeverToStored(stage, lever);
+      if (next === stage) return stage;
+      if (lever === "shift") return { ...next, shiftsPerDay: 2 };
+      const previousLinks = stage.mechanismCount;
+      const resources = (stage.resources ?? []).map((resource) => {
+        if (resource.kind !== "equipment" || previousLinks == null || next.mechanismCount == null) return resource;
+        if (resource.quantityBasis != null && resource.quantityBasis !== "count_per_shift") return resource;
+        if (resource.quantity !== previousLinks) return resource;
+        return { ...resource, quantity: next.mechanismCount };
+      });
+      return { ...next, resources };
+    });
+    item.stages = repositionDurationStages(item.stages, weekendDays);
+    if (lever === "shift") {
+      item.calendar = {
+        weekendDays,
+        hoursPerShift: item.calendar?.hoursPerShift ?? 11,
+        shiftsPerDay: 2,
+        timezone: item.calendar?.timezone ?? "Asia/Krasnoyarsk",
+      };
+      if (calc?.resourceScheduleParams && calc.resourceScheduleParams.equipmentShiftsPerDay < 2) {
+        calc.resourceScheduleParams = { ...calc.resourceScheduleParams, equipmentShiftsPerDay: 2 };
+      }
+    }
+    item.updatedAt = new Date().toISOString();
+    item.version = (item.version ?? 1) + 1;
+    calculationId = calc ? item.calculationId : "";
+    audit(data, actorId, "update", "gpr", item.id, lever === "shift" ? "Добавлена смена" : "Добавлен механизм");
+    return data;
+  });
+  if (calculationId) recomputeCalculationCost(actorId, calculationId, { useResourceScheduleEconomics: true });
+  return readAppData();
+}
+
+/** Explicit volume edit. Saved rows are not rewritten until this is called. */
+export function updateVorVolume(
+  actorId: string,
+  calculationId: string,
+  positionId: string,
+  patch: { volume?: number; status?: "unconfirmed" | "confirmed" },
+) {
+  mutateAppData((data) => {
+    const actor = actorUser(data, actorId);
+    const calc = data.calculations.find((item) => item.id === calculationId);
+    if (!calc) throw new Error("Расчёт не найден");
+    assertOrgAccess(actor, calc.orgId, "расчёта");
+    if (calc.immutable || calc.kind === "customer_original") throw new Error("Этот расчёт нельзя изменять");
+    const position = calc.positions.find((item) => item.id === positionId);
+    if (!position || position.code !== "ВОР") throw new Error("Строка ведомости не найдена");
+    const previousQty = position.quantity;
+    const nextQty = patch.volume;
+    const volumeChanged = nextQty != null && Number.isFinite(nextQty) && nextQty !== previousQty;
+    if (nextQty != null) {
+      if (!Number.isFinite(nextQty) || nextQty < 0 || nextQty > MAX_VOR_VOLUME) throw new Error("Укажите объём");
+      position.quantity = nextQty;
+    }
+    if (volumeChanged) position.volumeStatus = "unconfirmed";
+    else if (patch.status) position.volumeStatus = patch.status;
+    if (volumeChanged && nextQty != null) {
+      const schedule = data.schedules.find((item) => item.calculationId === calc.id && item.orgId === calc.orgId);
+      const tracked = schedule?.stages.filter((stage) => stage.durationBasis && stageTracksVolumeRow(stage, position)) ?? [];
+      if (schedule && tracked.length) {
+        schedule.stages = schedule.stages.map((stage) => {
+          if (!tracked.some((item) => item.id === stage.id)) return stage;
+          const physical = stage.volumeRowIds?.length
+            ? stage.volumeRowIds.reduce((sum, id) => sum + (id === position.id ? nextQty : (calc.positions.find((row) => row.id === id)?.quantity ?? 0)), 0)
+            : nextQty;
+          const priced = formulaAfterVolumeChange(stage, physical);
+          return {
+            ...stage,
+            formulaVolume: priced.formulaVolume,
+            durationDays: priced.durationDays,
+            formulaPerPhysical: priced.formulaPerPhysical,
+            planVolume: priced.planVolume,
+          };
+        });
+        schedule.stages = repositionDurationStages(schedule.stages, schedule.calendar?.weekendDays ?? []);
+        schedule.updatedAt = new Date().toISOString();
+        schedule.version = (schedule.version ?? 1) + 1;
+      }
+    }
+    calc.updatedAt = new Date().toISOString();
+    audit(data, actorId, "update", "calculation", calc.id, "Правка объёма ВОР");
+    return data;
+  });
+  recomputeCalculationCost(actorId, calculationId, { useResourceScheduleEconomics: true });
+  return readAppData();
 }
 
 export function sendProcurementToCalculation(

@@ -1,4 +1,5 @@
 import {
+  applyScheduleAcceleration,
   getBootstrap,
   deleteGprStage,
   patchScheduleResourceAndSync,
@@ -24,7 +25,8 @@ export async function PATCH(req: Request) {
     const body = (await req.json()) as {
       id?: string;
       patch?: Partial<GprSchedule>;
-      action?: "shiftStage" | "patchResource" | "deleteStage" | "setPredecessor";
+      action?: "shiftStage" | "patchResource" | "deleteStage" | "setPredecessor" | "applyAcceleration";
+      lever?: "shift" | "mechanism";
       dependsOn?: string | null;
       stageId?: string;
       deltaDays?: number;
@@ -43,6 +45,14 @@ export async function PATCH(req: Request) {
     };
     if (!body.id) return json({ error: "Нужен id" }, 400);
     try {
+      if (body.action === "applyAcceleration") {
+        if (body.lever !== "shift" && body.lever !== "mechanism") {
+          return json({ error: "Нужен рычаг: смена или механизм" }, 400);
+        }
+        assertGprWrite(user);
+        applyScheduleAcceleration(user.id, body.id, body.lever);
+        return json(getBootstrap(user));
+      }
       if (body.action === "deleteStage") {
         if (!body.stageId) return json({ error: "Нужен stageId" }, 400);
         deleteGprStage(user.id, body.id, body.stageId);

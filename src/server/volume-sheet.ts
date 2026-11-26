@@ -138,6 +138,7 @@ export function acceptVolumeDraft(actorId: string, calculationId: string, rows: 
         ...(resourceKind ? { resourceKind } : {}),
         ...(hit?.basis === "person_hour" ? { rateBasis: "person_hour" as const } : hit ? { rateBasis: "directory" as const, rateSourceDirectoryId: hit.dirId } : {}),
         sourceWorkName: row.work.trim(),
+        volumeStatus: "unconfirmed" as const,
       };
       const existing = calculation.positions.find((position) =>
         position.code === "ВОР" && volumeKey(position.name, position.unit) === volumeKey(row.work, row.unit)

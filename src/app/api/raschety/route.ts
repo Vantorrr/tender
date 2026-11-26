@@ -5,6 +5,7 @@ import {
   recomputeCalculationCost,
   updateCalculation,
   updateLinkedResourcesFromCalculation,
+  updateVorVolume,
 } from "@/server/repo";
 import { withSection, json } from "@/server/http";
 import type { Calculation, GprStage } from "@/lib/types";
@@ -61,7 +62,14 @@ export async function PATCH(req: Request) {
 
 export async function POST(req: Request) {
   return withSection(req, "raschety", async (user) => {
-    const body = (await req.json()) as { action?: string; calculationId?: string; rows?: VolumeDraftRow[] };
+    const body = (await req.json()) as {
+      action?: string;
+      calculationId?: string;
+      rows?: VolumeDraftRow[];
+      positionId?: string;
+      volume?: number;
+      status?: "unconfirmed" | "confirmed";
+    };
     if (body.action === "draftVolumes") {
       if (!body.calculationId) return json({ error: "Укажите расчёт" }, 400);
       try {
@@ -76,6 +84,20 @@ export async function POST(req: Request) {
         acceptVolumeDraft(user.id, body.calculationId, body.rows);
       } catch (error) {
         const message = error instanceof Error ? error.message : "Не удалось сохранить ведомость";
+        if (message.includes("Недостаточно прав") || message.startsWith("Нет доступа")) throw error;
+        return json({ error: message }, 400);
+      }
+      return json(getBootstrap(user));
+    }
+    if (body.action === "updateVolume") {
+      if (!body.calculationId || !body.positionId) return json({ error: "Укажите строку ведомости" }, 400);
+      try {
+        updateVorVolume(user.id, body.calculationId, body.positionId, {
+          volume: body.volume,
+          status: body.status,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Не удалось сохранить объём";
         if (message.includes("Недостаточно прав") || message.startsWith("Нет доступа")) throw error;
         return json({ error: message }, 400);
       }

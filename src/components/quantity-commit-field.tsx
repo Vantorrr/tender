@@ -12,12 +12,14 @@ export function QuantityCommitField({
   value,
   ariaLabel,
   testId,
+  disabled = false,
   onCommit,
 }: {
   label: string;
   value: number;
   ariaLabel: string;
   testId?: string;
+  disabled?: boolean;
   onCommit: (next: number) => Promise<void> | void;
 }) {
   const [draft, setDraft] = useState(String(value));
@@ -30,6 +32,7 @@ export function QuantityCommitField({
   }, [value]);
 
   async function commit() {
+    if (disabled) return;
     const parsed = parseCommittedQuantity(draft);
     if (!parsed.ok) {
       setError(parsed.error);
@@ -60,7 +63,7 @@ export function QuantityCommitField({
           aria-label={ariaLabel}
           data-testid={testId}
           value={draft}
-          disabled={saving}
+          disabled={disabled || saving}
           onChange={(event) => {
             setDraft(event.target.value);
             setError(null);
@@ -72,7 +75,7 @@ export function QuantityCommitField({
             }
           }}
         />
-        <Button type="button" size="sm" variant="outline" disabled={saving} onClick={() => void commit()}>
+        <Button type="button" size="sm" variant="outline" disabled={disabled || saving} onClick={() => void commit()}>
           {saving ? "Сохраняю…" : "Сохранить"}
         </Button>
       </span>

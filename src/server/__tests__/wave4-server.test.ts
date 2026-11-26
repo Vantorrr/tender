@@ -193,12 +193,16 @@ describe("wave 4 pricing, volumes and return quantities", () => {
       return data;
     });
     createProcurementSchedule("u-ruk", created.id);
-    const stages = readAppData().schedules.find((item) => item.procurementId === created.id)!.stages;
+    const schedule = readAppData().schedules.find((item) => item.procurementId === created.id)!;
+    const stages = schedule.stages;
     expect(stages.length).toBeGreaterThan(1);
-    expect(stages.some((stage) => stage.start === stage.end && stage.start === new Date().toISOString().slice(0, 10))).toBe(false);
+    expect(schedule.deadline).toEqual({ start: "2026-12-01", end: "2026-12-20" });
     expect(stages[0]?.start).toBe("2026-12-01");
-    expect(stages[stages.length - 1]?.end).toBe("2026-12-20");
-    expect(readAppData().schedules.find((item) => item.procurementId === created.id)!.assumptions ?? []).not.toContain(GPR_DATES_MISSING);
+    expect(stages.every((stage) => stage.end !== "2026-12-20" || stage.durationDays != null)).toBe(true);
+    expect(stages.every((stage) => stage.start === stage.end)).toBe(true);
+    expect(stages.find((stage) => stage.name === "Бурение")?.benchmarkSource ?? "").toMatch(/88-127/);
+    expect(schedule.assumptions ?? []).not.toContain(GPR_DATES_MISSING);
+    expect(schedule.assumptions?.join(" ") ?? "").toMatch(/не коммерческий ГПР/i);
   });
 
   it("prices an accepted labour line once, with northern coefficients and overhead, before and after the schedule", () => {
@@ -352,7 +356,7 @@ describe("wave 4 pricing, volumes and return quantities", () => {
     expect(unpricedBase).toBeGreaterThan(0);
   });
 
-  it("spreads stages across a contract duration when the file has no calendar dates", async () => {
+  it("keeps a contract duration as a deadline and does not slice it across estimate rows", async () => {
     const created = createManualProcurement("u-ruk", { title: "Срок договором", region: "Ямал" });
     sendProcurementToCalculation("u-ruk", created.id);
     const draft = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "resource_draft")!;
@@ -385,11 +389,14 @@ describe("wave 4 pricing, volumes and return quantities", () => {
       return data;
     });
     createProcurementSchedule("u-ruk", created.id);
-    const stages = readAppData().schedules.find((item) => item.procurementId === created.id)!.stages;
+    const schedule = readAppData().schedules.find((item) => item.procurementId === created.id)!;
+    const stages = schedule.stages;
     const today = new Date().toISOString().slice(0, 10);
+    expect(schedule.deadline?.start).toBe(today);
+    expect(diffDays(schedule.deadline!.start, schedule.deadline!.end) + 1).toBe(90);
     expect(stages[0]?.start).toBe(today);
-    expect(stages[stages.length - 1]?.end).not.toBe(today);
-    expect(stages[0]?.start).not.toBe(stages[1]?.start);
+    expect(stages.every((stage) => stage.start === today && stage.end === today)).toBe(true);
+    expect(stages[0]?.durationBasis).toBe("unconfirmed");
   });
 
   it("renders the analytical note as a verdict and five blocks", () => {
@@ -476,10 +483,12 @@ describe("wave 4 pricing, volumes and return quantities", () => {
       return data;
     });
     createProcurementSchedule("u-ruk", created.id);
-    const stages = readAppData().schedules.find((item) => item.procurementId === created.id)!.stages;
+    const schedule = readAppData().schedules.find((item) => item.procurementId === created.id)!;
+    const stages = schedule.stages;
     const today = new Date().toISOString().slice(0, 10);
     expect(stages[0]?.start).toBe(today);
-    expect(diffDays(stages[0]!.start, stages[stages.length - 1]!.end) + 1).toBe(90);
+    expect(diffDays(schedule.deadline!.start, schedule.deadline!.end) + 1).toBe(90);
+    expect(diffDays(stages[0]!.start, stages[stages.length - 1]!.end) + 1).toBe(1);
   });
 
   it("merges return lines of the same material and unit into one supply", () => {
