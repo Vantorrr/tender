@@ -71,7 +71,9 @@ import {
   findQuoteOnSupplies,
   isCommercialRateLine,
   isDirectorDecisionChoice,
+  positionWithoutStaleQuote,
   quoteMatchKey,
+  quoteRateMatches,
   quoteUnitPriceError,
   resolveCalculationOwner,
   type DirectorDecisionChoice,
@@ -812,6 +814,11 @@ export function updateCalculation(
     void _editor;
     void _editorName;
     void _editedAt;
+    if (Array.isArray(safe.positions)) {
+      safe.positions = safe.positions.map((next) =>
+        positionWithoutStaleQuote(item.positions.find((row) => row.id === next.id), next),
+      );
+    }
     const entry = {
       id: `cl-${Date.now()}`,
       at: new Date().toISOString(),
@@ -837,19 +844,24 @@ export function updateCalculation(
   });
 }
 
+function selectedQuotePrice(position: Calculation["positions"][number], supplies: AppData["supplyRequests"]): number | null {
+  if (position.priceSource !== "quote" || !position.selectedQuoteId) return null;
+  const found = findQuoteOnSupplies(supplies ?? [], position.selectedQuoteId);
+  return found ? found.quote.unitPrice : null;
+}
+
+/** Only the resource this commercial line is linked to. A shared name is not enough. */
 function writeQuoteRateOntoSchedule(data: AppData, actor: User, item: Calculation, position: Calculation["positions"][number]) {
+  if (!position.sourceResourceId) return;
   const schedule = data.schedules.find((row) => row.calculationId === item.id);
   if (!schedule) return;
   assertOrgAccess(actor, schedule.orgId, "ГПР");
   if (schedule.orgId !== item.orgId) {
     throw new Error("График и расчёт относятся к разным организациям");
   }
-  const key = quoteMatchKey(position.name, position.unit);
   for (const stage of schedule.stages) {
     for (const resource of stage.resources ?? []) {
-      const sameResource = position.sourceResourceId != null && position.sourceResourceId === resource.id;
-      const sameLine = quoteMatchKey(resource.name, resource.unit) === key;
-      if (sameResource || sameLine) resource.rate = position.rate;
+      if (resource.id === position.sourceResourceId) resource.rate = position.rate;
     }
   }
 }
@@ -880,14 +892,17 @@ export function applyCommercialQuote(
     hadReference = item.referenceReprice != null;
     reference = item.referenceReprice ? structuredClone(item.referenceReprice) : undefined;
     if (quoteId == null) {
-      if (position.priceSource === "quote") {
-        const base = position.baseRate;
-        if (base != null && Number.isFinite(base) && base > 0) {
-          position.rate = base;
-          position.rateMissing = false;
-        } else {
-          position.rate = 0;
-          position.rateMissing = true;
+      if (position.priceSource === "quote" || position.selectedQuoteId) {
+        const quotePrice = selectedQuotePrice(position, data.supplyRequests);
+        if (quoteRateMatches(position.rate, quotePrice)) {
+          const base = position.baseRate;
+          if (base != null && Number.isFinite(base) && base > 0) {
+            position.rate = base;
+            position.rateMissing = false;
+          } else {
+            position.rate = 0;
+            position.rateMissing = true;
+          }
         }
         position.priceSource = "manual";
         delete position.selectedQuoteId;
@@ -911,7 +926,8 @@ export function applyCommercialQuote(
       if (quoteMatchKey(found.supply.materialName, found.supply.unit) !== quoteMatchKey(position.name, position.unit)) {
         throw new Error("КП не подходит к этой позиции");
       }
-      if (position.priceSource !== "quote") position.baseRate = position.rate;
+      const previousQuote = selectedQuotePrice(position, data.supplyRequests);
+      if (!quoteRateMatches(position.rate, previousQuote)) position.baseRate = position.rate;
       position.rate = found.quote.unitPrice;
       position.rateMissing = false;
       position.selectedQuoteId = found.quote.id;

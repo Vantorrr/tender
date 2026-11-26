@@ -98,6 +98,39 @@ export function quoteMatchKey(name: string, unit: string): string {
   return `${quoteTerm(name)}|${quoteTerm(unit)}`;
 }
 
+/** The stored rate is still the chosen quote, not a later manual edit. */
+export function quoteRateMatches(
+  rate: number | null | undefined,
+  quotePrice: number | null | undefined,
+): boolean {
+  if (rate == null || quotePrice == null || !Number.isFinite(rate) || !Number.isFinite(quotePrice)) return false;
+  return roundMoney(rate) === roundMoney(quotePrice);
+}
+
+/**
+ * A manual rate edit must drop the quote badge. Reset then keeps the edited
+ * rate instead of jumping back to the pre-quote base.
+ */
+export function positionWithoutStaleQuote<T extends {
+  rate: number;
+  rateMissing?: boolean;
+  priceSource?: "quote" | "manual";
+  selectedQuoteId?: string;
+  quoteSupplierName?: string;
+  baseRate?: number;
+}>(previous: T | undefined, next: T): T {
+  if (!previous || previous.priceSource !== "quote") return next;
+  const sameRate = roundMoney(previous.rate) === roundMoney(next.rate)
+    && Boolean(previous.rateMissing) === Boolean(next.rateMissing);
+  if (sameRate) return next;
+  const { selectedQuoteId: _quote, quoteSupplierName: _name, priceSource: _source, ...rest } = next;
+  return {
+    ...rest,
+    priceSource: "manual",
+    baseRate: next.rateMissing ? previous.baseRate : next.rate,
+  } as T;
+}
+
 export function quoteUnitPriceError(price: number): string | null {
   if (!Number.isFinite(price)) return "Цена КП должна быть числом";
   if (price < 0) return "Цена КП не может быть отрицательной";

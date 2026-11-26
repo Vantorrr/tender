@@ -252,10 +252,19 @@ export function positionsFromStages(
         normId: prev?.normId,
         priceId: prev?.priceId,
         ...(prev?.costRole ? { costRole: prev.costRole } : prev ? {} : { costRole: "commercial" as const }),
-        ...(prev?.selectedQuoteId ? { selectedQuoteId: prev.selectedQuoteId } : {}),
-        ...(prev?.quoteSupplierName ? { quoteSupplierName: prev.quoteSupplierName } : {}),
-        ...(prev?.priceSource ? { priceSource: prev.priceSource } : {}),
-        ...(prev?.baseRate != null ? { baseRate: prev.baseRate } : {}),
+        ...(prev?.priceSource === "quote" && prev.selectedQuoteId && !rateMissing && roundMoney(prev.rate) === roundMoney(keptRate ?? 0)
+          ? {
+              selectedQuoteId: prev.selectedQuoteId,
+              ...(prev.quoteSupplierName ? { quoteSupplierName: prev.quoteSupplierName } : {}),
+              priceSource: prev.priceSource,
+              ...(prev.baseRate != null ? { baseRate: prev.baseRate } : {}),
+            }
+          : prev?.priceSource === "quote"
+            ? {
+                priceSource: "manual" as const,
+                ...(!rateMissing && keptRate != null ? { baseRate: keptRate } : {}),
+              }
+            : {}),
       });
     }
   }

@@ -6,6 +6,8 @@ import {
   buildBddsFrame,
   buildNmckCostGap,
   displayedCalculationOwner,
+  positionWithoutStaleQuote,
+  quoteRateMatches,
   quoteUnitPriceError,
   resolveCalculationOwner,
   suitableQuotesForPosition,
@@ -63,6 +65,14 @@ describe("wave 5 quote hint", () => {
     expect(hint.spreadLabel).toMatch(/400,00/);
     expect(hint).not.toHaveProperty("selectedQuoteId");
     expect(hint.average).not.toBe(hint.min);
+    expect(quoteRateMatches(1800, 1800)).toBe(true);
+    expect(quoteRateMatches(1800.004, 1800)).toBe(true);
+    expect(quoteRateMatches(777, 1800)).toBe(false);
+    const quoted = { ...pipe, rate: 1800, priceSource: "quote" as const, selectedQuoteId: "q-1", quoteSupplierName: "Альфа", baseRate: 100 };
+    expect(positionWithoutStaleQuote(quoted, { ...quoted, rate: 777 }).priceSource).toBe("manual");
+    expect(positionWithoutStaleQuote(quoted, { ...quoted, rate: 777 })).toMatchObject({ rate: 777, baseRate: 777 });
+    expect(positionWithoutStaleQuote(quoted, { ...quoted, rate: 777 }).selectedQuoteId).toBeUndefined();
+    expect(positionWithoutStaleQuote(quoted, quoted).selectedQuoteId).toBe("q-1");
     expect(quoteUnitPriceError(-1)).toMatch(/отрицательн/);
     expect(quoteUnitPriceError(Number.POSITIVE_INFINITY)).toMatch(/числом/);
     expect(quoteUnitPriceError(1_000_000_001)).toMatch(/слишком больш/);

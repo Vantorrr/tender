@@ -17,6 +17,7 @@ import {
   displayedCalculationOwner,
   isCommercialRateLine,
   ownerRoleLabel,
+  quoteRateMatches,
   suitableQuotesForPosition,
   type DirectorDecisionChoice,
 } from "@/lib/wave5-client";
@@ -139,12 +140,15 @@ export function QuoteRatePicker({
           {lines.map((position) => {
             const offers = suitableQuotesForPosition(position, supplies, calculation.procurementId);
             const hint = averageQuoteHint(offers.map((offer) => offer.unitPrice));
+            const appliedQuote = position.priceSource === "quote"
+              ? offers.find((offer) => offer.quoteId === position.selectedQuoteId && quoteRateMatches(position.rate, offer.unitPrice))
+              : undefined;
             return (
               <article key={position.id} className="rounded-lg border border-[var(--tk-line)] p-3" data-testid={`quote-line-${position.id}`}>
                 <div className="text-sm font-medium">{position.name}</div>
                 <p className="mt-1 text-xs text-[var(--tk-muted)]">
                   Ставка сейчас: {position.rateMissing || !(position.rate > 0) ? "нет ставки" : formatMoney(position.rate)}
-                  {position.priceSource === "quote" && position.quoteSupplierName ? ` · КП ${position.quoteSupplierName}` : ""}
+                  {appliedQuote ? ` · КП ${appliedQuote.supplierName}` : ""}
                 </p>
                 <p className="mt-2 text-sm" data-testid={`quote-hint-${position.id}`}>{hint.label}</p>
                 {hint.average != null ? <p className="text-sm font-semibold">{formatMoney(hint.average)}</p> : null}
@@ -154,7 +158,7 @@ export function QuoteRatePicker({
                 ) : (
                   <ul className="mt-2 grid gap-2">
                     {offers.map((offer) => {
-                      const selected = position.selectedQuoteId === offer.quoteId;
+                      const selected = appliedQuote?.quoteId === offer.quoteId;
                       return (
                         <li key={offer.quoteId} className="flex flex-wrap items-center justify-between gap-2 text-sm">
                           <span>
@@ -177,7 +181,7 @@ export function QuoteRatePicker({
                     })}
                   </ul>
                 )}
-                {!locked && position.priceSource === "quote" ? (
+                {!locked && appliedQuote ? (
                   <Button
                     className="mt-2"
                     size="sm"

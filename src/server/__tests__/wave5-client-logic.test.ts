@@ -8,6 +8,7 @@ import {
   applyCommercialQuote,
   assignCalculationOwner,
   createManualProcurement,
+  patchScheduleResourceAndSync,
   recordSupplierQuote,
   recomputeCalculationCost,
   saveDirectorDecision,
@@ -375,5 +376,88 @@ describe("wave 5 client logic", () => {
     expect(JSON.stringify(after.referenceReprice)).toBe(reference);
     expect(after.referenceReprice?.C0).toBeCloseTo(BURENIE_C0, 2);
     expect(after.referenceReprice?.priceExVat).toBeCloseTo(BURENIE_PRICE, 2);
+  });
+
+  it("writes a quote only onto the linked resource and drops the badge after a manual rate edit", () => {
+    const created = createManualProcurement("u-ruk", { title: "Две трубы", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const draft = draftOf(created.id);
+    updateCalculation("u-ruk", draft.id, {
+      positions: [
+        { id: "pipe-a", costRole: "commercial", code: "MAT-PIPE", name: "Труба", unit: "м", quantity: 2, rate: 100, sourceResourceId: "res-a", resourceKind: "material" },
+        { id: "pipe-b", costRole: "commercial", code: "MAT-PIPE", name: "Труба", unit: "м", quantity: 2, rate: 100, sourceResourceId: "res-b", resourceKind: "material" },
+      ],
+      resourceScheduleParams: PARAMS,
+    });
+    const procurement = readAppData().procurements.find((item) => item.id === created.id)!;
+    mutateAppData((data) => {
+      data.schedules.unshift({
+        id: "g-two-pipes",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        calculationId: draft.id,
+        title: "ГПР двух труб",
+        status: "v_rabote",
+        version: 1,
+        authorId: "u-ruk",
+        updatedAt: new Date().toISOString(),
+        stages: [
+          { id: "st-a", name: "Участок А", start: "2026-12-01", end: "2026-12-05", sequence: 1, resources: [{ id: "res-a", kind: "material", name: "Труба", unit: "м", quantity: 2, rate: 100 }] },
+          { id: "st-b", name: "Участок Б", start: "2026-12-06", end: "2026-12-10", sequence: 2, resources: [{ id: "res-b", kind: "material", name: "Труба", unit: "м", quantity: 2, rate: 250 }] },
+        ],
+      });
+      return data;
+    });
+    const supply = upsertSupplyRequest("u-ruk", {
+      procurementId: created.id,
+      materialName: "Труба",
+      unit: "м",
+      qtyNeed: 4,
+      needBy: "2026-12-01",
+    });
+    recordSupplierQuote("u-ruk", supply.supplyId, { id: "q-a", supplierName: "Альфа", unitPrice: 450 });
+    recordSupplierQuote("u-ruk", supply.supplyId, { id: "q-b", supplierName: "Бета", unitPrice: 150 });
+    applyCommercialQuote("u-ruk", draft.id, "pipe-a", "q-a");
+    applyCommercialQuote("u-ruk", draft.id, "pipe-b", "q-b");
+    const both = readAppData();
+    const resources = both.schedules.find((item) => item.id === "g-two-pipes")!.stages.flatMap((stage) => stage.resources ?? []);
+    expect(resources.find((resource) => resource.id === "res-a")?.rate).toBe(450);
+    expect(resources.find((resource) => resource.id === "res-b")?.rate).toBe(150);
+    const lines = both.calculations.find((item) => item.id === draft.id)!.positions.filter((position) => position.name === "Труба");
+    expect(lines.find((position) => position.sourceResourceId === "res-a")).toMatchObject({ selectedQuoteId: "q-a", rate: 450 });
+    expect(lines.find((position) => position.sourceResourceId === "res-b")).toMatchObject({ selectedQuoteId: "q-b", rate: 150 });
+
+    applyCommercialQuote("u-ruk", draft.id, "pipe-a", null);
+    const afterReset = readAppData();
+    const resetResources = afterReset.schedules.find((item) => item.id === "g-two-pipes")!.stages.flatMap((stage) => stage.resources ?? []);
+    expect(resetResources.find((resource) => resource.id === "res-a")?.rate).toBe(100);
+    expect(resetResources.find((resource) => resource.id === "res-b")?.rate).toBe(150);
+    const kept = afterReset.calculations.find((item) => item.id === draft.id)!.positions.find((position) => position.sourceResourceId === "res-b");
+    expect(kept).toMatchObject({ selectedQuoteId: "q-b", rate: 150, priceSource: "quote" });
+
+    patchScheduleResourceAndSync("u-ruk", "g-two-pipes", { resourceId: "res-b", stageId: "st-b", rate: 888 });
+    const afterGpr = readAppData();
+    const gprLine = afterGpr.calculations.find((item) => item.id === draft.id)!.positions.find((position) => position.sourceResourceId === "res-b")!;
+    expect(gprLine.rate).toBe(888);
+    expect(gprLine.selectedQuoteId).toBeUndefined();
+    expect(gprLine.quoteSupplierName).toBeUndefined();
+    expect(gprLine.priceSource).toBe("manual");
+    expect(afterGpr.calculations.find((item) => item.id === draft.id)!.positions.find((position) => position.sourceResourceId === "res-a")).toMatchObject({ rate: 100 });
+    applyCommercialQuote("u-ruk", draft.id, gprLine.id, null);
+    expect(readAppData().calculations.find((item) => item.id === draft.id)!.positions.find((position) => position.id === gprLine.id)?.rate).toBe(888);
+    expect(readAppData().schedules.find((item) => item.id === "g-two-pipes")!.stages.flatMap((stage) => stage.resources ?? []).find((resource) => resource.id === "res-a")?.rate).toBe(100);
+
+    applyCommercialQuote("u-ruk", draft.id, gprLine.id, "q-b");
+    const current = readAppData().calculations.find((item) => item.id === draft.id)!;
+    updateCalculation("u-ruk", draft.id, {
+      positions: current.positions.map((position) => position.id === gprLine.id ? { ...position, rate: 777 } : position),
+    });
+    const edited = readAppData().calculations.find((item) => item.id === draft.id)!.positions.find((position) => position.id === gprLine.id)!;
+    expect(edited.rate).toBe(777);
+    expect(edited.selectedQuoteId).toBeUndefined();
+    expect(edited.quoteSupplierName).toBeUndefined();
+    expect(edited.priceSource).toBe("manual");
+    applyCommercialQuote("u-ruk", draft.id, edited.id, null);
+    expect(readAppData().calculations.find((item) => item.id === draft.id)!.positions.find((position) => position.id === edited.id)?.rate).toBe(777);
   });
 });
