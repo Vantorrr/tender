@@ -3,6 +3,7 @@
  * Dimensions come from shared resolveResourceDimensions (tree / export / sync).
  */
 import { roundMoney } from "@/lib/calc-math";
+import { bucketsFromPositions } from "@/lib/cost-engine";
 import {
   resolveResourceDimensions,
 } from "@/lib/resource-dimensions";
@@ -368,12 +369,23 @@ export function syncDraftFromStages(
         return s + h;
       }, 0)
   );
-  const summary = applyRollupToCostSummary(
-    rollup,
-    statementOnly ? [...incomplete, "no_commercial_rows"] : incomplete,
-    knownHours,
+  const summary = applyRollupToCostSummary(rollup, incomplete, knownHours);
+  foldUnlinkedCommercial(positions, params, summary);
+  const pricedOfficial = positions.some((position) =>
+    position.costRole !== "customer_source"
+    && !position.isWorkItem
+    && position.code !== "НР"
+    && position.code !== "СП"
+    && !position.rateMissing
+    && position.rate > 0
+    && position.quantity !== 0
   );
-  if (statementOnly) summary.totalsIncomplete = true;
+  if (statementOnly && !pricedOfficial) {
+    summary.totalsIncomplete = true;
+    if (!summary.incomplete.includes("no_commercial_rows")) {
+      summary.incomplete = [...summary.incomplete, "no_commercial_rows"];
+    }
+  }
   const next: Calculation = {
     ...calc,
     positions,
@@ -392,6 +404,49 @@ export function syncDraftFromStages(
     updatedAt: new Date().toISOString(),
   };
   return { calc: next, build, rollup };
+}
+
+/**
+ * Commercial and volume-sheet rows that are not stage resources still belong
+ * in the official total. Customer-source rows stay out.
+ */
+function foldUnlinkedCommercial(
+  positions: CalcPosition[],
+  params: ResourceScheduleParams,
+  summary: CostSummarySnapshot,
+): void {
+  const covered = new Set(
+    positions.filter((position) => position.sourceResourceId).map((position) => resourceNameKey(position.name)),
+  );
+  const extra = bucketsFromPositions(positions.filter((position) =>
+    !position.sourceResourceId
+    && !position.isWorkItem
+    && position.costRole !== "customer_source"
+    && (position.code === "ВОР" || position.costRole === "commercial")
+    && !covered.has(resourceNameKey(position.name))
+  ));
+  const direct = roundMoney(extra.labor + extra.materials + extra.equipment + extra.other);
+  if (!direct) return;
+  const overhead = roundMoney(direct * (params.overheadRate ?? 0));
+  const added = roundMoney(direct + overhead);
+  const extraProfit = roundMoney(added * (params.profitMarkupOnCostWithOh ?? 0));
+  summary.C0 = roundMoney(summary.C0 + added);
+  summary.C = roundMoney(summary.C + added);
+  summary.profit = roundMoney((summary.profit ?? 0) + extraProfit);
+  summary.priceExVat = roundMoney((summary.priceExVat ?? 0) + added + extraProfit);
+  if (summary.resourceSlices) {
+    summary.resourceSlices = {
+      ...summary.resourceSlices,
+      labor: roundMoney((summary.resourceSlices.labor ?? 0) + extra.labor),
+      materials: roundMoney((summary.resourceSlices.materials ?? 0) + extra.materials),
+      equipment: roundMoney((summary.resourceSlices.equipment ?? 0) + extra.equipment),
+      direct: roundMoney((summary.resourceSlices.direct ?? 0) + direct),
+      overhead: roundMoney((summary.resourceSlices.overhead ?? 0) + overhead),
+      costWithOh: roundMoney((summary.resourceSlices.costWithOh ?? 0) + added),
+      profit: roundMoney((summary.resourceSlices.profit ?? 0) + extraProfit),
+      total: roundMoney((summary.resourceSlices.total ?? 0) + added + extraProfit),
+    };
+  }
 }
 
 export function patchStageResource(

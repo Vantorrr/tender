@@ -92,6 +92,7 @@ import {
 import {
   isResourceLinkedDraft,
   patchStageResource,
+  stagesForOfficialCost,
   syncDraftFromStages,
 } from "@/lib/unified-resource-sync";
 
@@ -3250,9 +3251,22 @@ export function joinOrganizationByCode(input: {
 function markMissingCommercialCost(item: Calculation) {
   if (isLegacyEstimateSeededCost(item)) return;
   const priced = item.positions.some((position) => positionFeedsOfficialCost(position));
-  if (priced) {
-    if (item.costSummary) {
-      item.costSummary.incomplete = item.costSummary.incomplete.filter((flag) => flag !== "no_commercial_rows");
+  if (priced && item.costSummary) {
+    const customerKeys = new Set(
+      item.positions
+        .filter((position) => position.costRole === "customer_source")
+        .flatMap((position) => [position.id, position.code, position.name]),
+    );
+    item.costSummary.incomplete = item.costSummary.incomplete.filter((flag) => {
+      if (flag === "no_commercial_rows") return false;
+      const label = flag.includes(":") ? flag.slice(flag.indexOf(":") + 1) : "";
+      return !(label && customerKeys.has(label) && (flag.startsWith("rate:") || flag.startsWith("missing_rate:")));
+    });
+    const billable = item.positions.filter((position) =>
+      position.costRole !== "customer_source" && !position.isWorkItem && position.code !== "НР" && position.code !== "СП",
+    );
+    if (billable.length > 0 && billable.every((position) => !position.rateMissing)) {
+      item.costSummary.totalsIncomplete = item.costSummary.incomplete.length > 0;
     }
     return;
   }
@@ -3634,49 +3648,6 @@ function volumeNameKey(name: string): string {
   return name.trim().toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
 }
 
-/**
- * Volume lines already linked to a stage are in the rollup.
- * A volume line that is still only on the draft is labour, material or
- * equipment like any other row: direct cost plus overhead, once.
- */
-function foldUnlinkedVolumes(calc: Calculation): number {
-  const params = calc.resourceScheduleParams;
-  const summary = calc.costSummary;
-  if (!params || !summary) return 0;
-  const covered = new Set(calc.positions
-    .filter((position) => position.sourceResourceId)
-    .map((position) => volumeNameKey(position.name)));
-  const extra = bucketsFromPositions(calc.positions.filter((position) =>
-    !position.sourceResourceId
-    && !position.isWorkItem
-    && position.costRole !== "customer_source"
-    && (position.code === "ВОР" || position.costRole === "commercial")
-    && !covered.has(volumeNameKey(position.name))));
-  const direct = roundMoney(extra.labor + extra.materials + extra.equipment + extra.other);
-  if (!direct) return extra.labor;
-  const overhead = roundMoney(direct * (params.overheadRate ?? 0));
-  const added = roundMoney(direct + overhead);
-  const extraProfit = roundMoney(added * (params.profitMarkupOnCostWithOh ?? 0));
-  summary.C0 = roundMoney(summary.C0 + added);
-  summary.C = roundMoney(summary.C + added);
-  summary.profit = roundMoney((summary.profit ?? 0) + extraProfit);
-  summary.priceExVat = roundMoney((summary.priceExVat ?? 0) + added + extraProfit);
-  if (summary.resourceSlices) {
-    summary.resourceSlices = {
-      ...summary.resourceSlices,
-      labor: roundMoney((summary.resourceSlices.labor ?? 0) + extra.labor),
-      materials: roundMoney((summary.resourceSlices.materials ?? 0) + extra.materials),
-      equipment: roundMoney((summary.resourceSlices.equipment ?? 0) + extra.equipment),
-      direct: roundMoney((summary.resourceSlices.direct ?? 0) + direct),
-      overhead: roundMoney((summary.resourceSlices.overhead ?? 0) + overhead),
-      costWithOh: roundMoney((summary.resourceSlices.costWithOh ?? 0) + added),
-      profit: roundMoney((summary.resourceSlices.profit ?? 0) + extraProfit),
-      total: roundMoney((summary.resourceSlices.total ?? 0) + added + extraProfit),
-    };
-  }
-  return extra.labor;
-}
-
 export function recomputeCalculationCost(
   actorId: string,
   calcId: string,
@@ -3751,11 +3722,10 @@ export function recomputeCalculationCost(
       if (item.costSummary) item.costSummary.reserve = reserve;
       applyResourceDraftAdjustments(item);
       const stageLabor = item.costSummary?.resourceSlices?.labor ?? 0;
-      const extraLabor = foldUnlinkedVolumes(item);
-      applyNorthernFold(item, stageLabor + extraLabor);
+      applyNorthernFold(item, stageLabor);
       const matNeeds = buildMaterialNeeds({
         positions: item.positions.filter((position) => position.costRole !== "customer_source"),
-        stages: linkedSchedule.stages,
+        stages: stagesForOfficialCost(item, linkedSchedule.stages),
       });
       const extra = materialNeedsIncomplete(matNeeds).slice(0, 20);
       if (extra.length && item.costSummary) {

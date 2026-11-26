@@ -17,6 +17,7 @@ import {
   createManualProcurement,
   createProcurementSchedule,
   recomputeCalculationCost,
+  shiftGprStage,
   sendProcurementToCalculation,
 } from "@/server/repo";
 import { saveUpload } from "@/server/uploads";
@@ -251,7 +252,15 @@ describe("wave 1 tender logic", () => {
     expect(afterSchedule.costSummary?.C0 ?? 0).not.toBeCloseTo(BURENIE_C0, 0);
     expect(afterSchedule.costSummary?.C0).toBeCloseTo(officialBeforeSchedule, 2);
     expect(afterSchedule.referenceReprice?.C0).toBeCloseTo(BURENIE_C0, 2);
+    expect(afterSchedule.costSummary?.incomplete ?? []).not.toContain("no_commercial_rows");
     expect(readAppData().schedules.find((item) => item.procurementId === created.id)?.assumptions?.join(" ") ?? "").toMatch(/не коммерческий ГПР/i);
+    const schedule = readAppData().schedules.find((item) => item.procurementId === created.id)!;
+    shiftGprStage("u-ruk", schedule.id, schedule.stages[0]!.id, 2);
+    const shifted = readAppData().calculations.find((item) => item.id === draft.id)!;
+    expect(shifted.costSummary?.C0 ?? 0).toBeGreaterThan(200);
+    expect(shifted.costSummary?.C0 ?? 0).not.toBeCloseTo(BURENIE_C0, 0);
+    expect(shifted.costSummary?.incomplete ?? []).not.toContain("no_commercial_rows");
+    expect(shifted.referenceReprice?.C0).toBeCloseTo(BURENIE_C0, 2);
 
     const { buildCalculationXlsx } = await import("@/server/export");
     const workbook = new (await import("exceljs")).Workbook();
@@ -262,6 +271,145 @@ describe("wave 1 tender logic", () => {
     const repriceText = workbook.getWorksheet("Справочная переоценка")?.getSheetValues().flat().join(" ") ?? "";
     expect(repriceText).toContain(REFERENCE_REPRICE_DISCLAIMER);
     expect(repriceText).not.toMatch(/переоценка себестоимости|себестоимость переоценки/i);
+  });
+
+  it("keeps the commercial total when a GPR date shift rolls up only the customer schedule", async () => {
+    const created = createManualProcurement("u-ruk", { title: "Сдвиг не обнуляет", region: "Ямал" });
+    const procurement = readAppData().procurements.find((item) => item.id === created.id)!;
+    const uploaded = await saveUpload("wave1-shift", "smeta.xlsx", Buffer.from("estimate"));
+    mutateAppData((data) => {
+      data.documents.unshift({
+        id: "doc-wave1-shift",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        title: "Смета",
+        fileName: "smeta.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: uploaded.storedPath,
+        estimatePositions: [{
+          id: "est-bit",
+          code: "ФССЦ-01",
+          name: "Долото трехшарошечное",
+          unit: "шт",
+          quantity: 4,
+          rate: 900,
+          resourceKind: "material",
+          sectionName: "Раздел 1. Бурение",
+          workName: "Бурение скважины",
+        }],
+      });
+      return data;
+    });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const draft = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "resource_draft")!;
+    mutateAppData((data) => {
+      const calc = data.calculations.find((item) => item.id === draft.id)!;
+      calc.positions.push({
+        id: "own-labor",
+        costRole: "commercial",
+        code: "LAB-OWN",
+        name: "Плотник",
+        unit: "чел.-ч",
+        quantity: 2,
+        rate: 100,
+        rateMissing: false,
+      });
+      calc.vatPercent = 20;
+      return data;
+    });
+    const params = { ...EXCEL_RESOURCE_SCHEDULE_DEFAULTS };
+    recomputeCalculationCost("u-ruk", draft.id, { resourceScheduleParams: params, useResourceScheduleEconomics: true, vatPercent: 20 });
+    const priced = readAppData().calculations.find((item) => item.id === draft.id)!;
+    const direct = 200;
+    const overhead = Math.round(direct * 0.43 * 100) / 100;
+    expect(priced.costSummary?.C0).toBeCloseTo(direct + overhead, 2);
+    createProcurementSchedule("u-ruk", created.id);
+    recomputeCalculationCost("u-ruk", draft.id, { resourceScheduleParams: params, useResourceScheduleEconomics: true, vatPercent: 20 });
+    const scheduled = readAppData().calculations.find((item) => item.id === draft.id)!;
+    expect(scheduled.costSummary?.C0).toBeCloseTo(direct + overhead, 2);
+    const schedule = readAppData().schedules.find((item) => item.procurementId === created.id)!;
+    shiftGprStage("u-ruk", schedule.id, schedule.stages[0]!.id, 4);
+    const shifted = readAppData().calculations.find((item) => item.id === draft.id)!;
+    expect(shifted.costSummary?.C0).toBeCloseTo(direct + overhead, 2);
+    expect(shifted.costSummary?.C0 ?? 0).not.toBe(0);
+    expect(shifted.positions.some((position) => position.costRole === "commercial" && position.name === "Плотник")).toBe(true);
+  });
+
+  it("does not mark a confirmed commercial total incomplete because the customer sheet has no rate", async () => {
+    const created = createManualProcurement("u-ruk", { title: "Ведомость не дыра", region: "Ямал", nmck: 1000 });
+    const procurement = readAppData().procurements.find((item) => item.id === created.id)!;
+    const uploaded = await saveUpload("wave1-gap", "smeta.xlsx", Buffer.from("estimate"));
+    mutateAppData((data) => {
+      data.documents.unshift({
+        id: "doc-wave1-gap",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        title: "Смета",
+        fileName: "smeta.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: uploaded.storedPath,
+        estimatePositions: [{
+          id: "est-arm",
+          code: "NO-OWN-RATE",
+          name: "Арматура",
+          unit: "т",
+          quantity: 80,
+          rate: 75,
+          resourceKind: "material",
+          sectionName: "Раздел 2. Монтаж",
+          workName: "Монтаж конструкций",
+        }],
+      });
+      return data;
+    });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const draft = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "resource_draft")!;
+    mutateAppData((data) => {
+      const calc = data.calculations.find((item) => item.id === draft.id)!;
+      calc.positions.push({
+        id: "own-labor",
+        costRole: "commercial",
+        code: "LAB-OWN",
+        name: "Плотник",
+        unit: "чел.-ч",
+        quantity: 2,
+        rate: 100,
+        rateMissing: false,
+      });
+      return data;
+    });
+    createProcurementSchedule("u-ruk", created.id);
+    recomputeCalculationCost("u-ruk", draft.id, {
+      resourceScheduleParams: { ...EXCEL_RESOURCE_SCHEDULE_DEFAULTS },
+      useResourceScheduleEconomics: true,
+      vatPercent: 20,
+    });
+    const saved = readAppData().calculations.find((item) => item.id === draft.id)!;
+    const direct = 200;
+    const overhead = Math.round(direct * 0.43 * 100) / 100;
+    expect(saved.costSummary?.C0).toBeCloseTo(direct + overhead, 2);
+    expect(saved.costSummary?.totalsIncomplete).toBe(false);
+    expect(saved.costSummary?.incomplete ?? []).not.toContain("no_commercial_rows");
+    expect(saved.costSummary?.incomplete ?? []).not.toContain("rate:Арматура");
+    expect(saved.costSummary?.priceIncVat).toBeCloseTo((saved.costSummary?.priceExVat ?? 0) * 1.2, 2);
+    expect(saved.committeeSnapshot?.nmckVsCost).toBe("above_cost");
+    expect(saved.committeeSnapshot?.fullCost).toBeCloseTo(direct + overhead, 2);
   });
 
   it("leaves the commercial draft empty in empty_packages mode and ignores customer-source rows in buckets", async () => {
