@@ -447,6 +447,11 @@ export interface CalcPosition {
    * Missing costRole keeps the previous path and still feeds the official total.
    */
   costRole?: "commercial" | "customer_source";
+  /**
+   * Volume-sheet confirmation. Absent on rows that are not a VOR line.
+   * A missing value is shown as unconfirmed and is not written on read.
+   */
+  volumeStatus?: "unconfirmed" | "confirmed";
 }
 
 export type CalculationKind = "customer_original" | "resource_draft";
@@ -636,6 +641,30 @@ export interface GprStage {
   workNames?: string[];
   /** User who added this stage. Older stages fall back to the schedule author. */
   createdBy?: string;
+  /**
+   * How the stage length was chosen.
+   * output_shift — catalog output per 11h shift.
+   * site_daily — a file-4 daily norm.
+   * unconfirmed — no single output; the TZ window is not sliced into this stage.
+   * Absent on schedules saved before this field existed.
+   */
+  durationBasis?: "output_shift" | "site_daily" | "unconfirmed";
+  /** Exact days from the output formula. The calendar end is the ceiling of this. */
+  durationDays?: number | null;
+  /** Numerator of the duration formula, in the same units as the output norm. */
+  formulaVolume?: number | null;
+  outputPerShift11h?: number | null;
+  /** File-4 output of the stated crew for one day. Not a per-shift figure. */
+  dailyOutput?: number | null;
+  statedLinks?: number | null;
+  statedShifts?: number | null;
+  mechanismCount?: number | null;
+  /** Shifts used in the duration formula. Resource costing still uses shiftsPerDay. */
+  durationShifts?: number | null;
+  /** GESN / estimate hours. A hint only: they do not set start or end. */
+  gesnHoursHint?: number | null;
+  benchmarkSource?: string | null;
+  benchmarkCrew?: Array<{ role: string; count: number; kind: "labor" | "equipment" }>;
 }
 
 export interface WorkCalendar {
@@ -660,6 +689,12 @@ export interface GprSchedule {
   conflicts?: string[];
   /** User-visible assumptions / unconfirmed scaffold inputs. */
   assumptions?: string[];
+  /**
+   * TZ window kept as a deadline check.
+   * Stage lengths are not a slice of this window.
+   * Absent means the saved schedule had no parsed deadline.
+   */
+  deadline?: { start: string; end: string } | null;
 }
 
 export interface MoneyPayment {

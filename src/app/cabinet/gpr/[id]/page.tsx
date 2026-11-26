@@ -14,6 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { api, downloadUrl } from "@/lib/api";
 import { GPR_LINKED_ROW_PX, PlanFactGantt } from "@/components/plan-fact-gantt";
+import { GprDeadlinePanel } from "@/components/gpr-deadline-panel";
 import { GprResourceTree } from "@/components/gpr-resource-tree";
 import { collectCalendarWarnings } from "@/lib/calendar-availability";
 import { bucketsFromPositions, missingRatesInBucket } from "@/lib/cost-engine";
@@ -378,6 +379,22 @@ export default function GprDetailPage() {
           <ul className="mt-1 list-disc space-y-1 pl-5">{schedule.assumptions!.map((assumption) => <li key={assumption}>{assumption}</li>)}</ul>
         </div>
       ) : null}
+
+      <GprDeadlinePanel
+        schedule={schedule}
+        onApply={async (lever) => {
+          try {
+            await api("/api/gpr", {
+              method: "PATCH",
+              body: JSON.stringify({ id: schedule.id, action: "applyAcceleration", lever }),
+            });
+            await refresh();
+            toast.success(lever === "shift" ? "Смена добавлена, срок и цена пересчитаны" : "Механизм добавлен, срок и цена пересчитаны");
+          } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Не удалось применить рычаг");
+          }
+        }}
+      />
 
       <div className="mb-6 xl:overflow-x-hidden" data-testid="gpr-project-screen">
         <div className="grid items-start gap-4 xl:grid-cols-[minmax(34rem,42rem)_minmax(0,1fr)] xl:gap-0 xl:overflow-hidden xl:rounded-xl xl:border xl:border-[var(--tk-line)] xl:bg-white">

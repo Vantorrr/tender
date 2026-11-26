@@ -6,6 +6,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import type { ShiftOutputCandidate } from "@/lib/commercial-packages";
 import {
   foldNormSearch,
   isClientNormKind,
@@ -1256,4 +1257,55 @@ export function parseClientNormQuery(url: URL): ClientNormQuery | null {
     limit: limit ? Number(limit) : undefined,
     offset: offset ? Number(offset) : undefined,
   };
+}
+
+/** Read-only lookup for a new GPR. Does not write a cost or a schedule. */
+export function listShiftOutputCandidates(db: DatabaseSync): ShiftOutputCandidate[] {
+  ensureClientNormTables(db);
+  const output = db.prepare(
+    `SELECT work_name, unit, mechanism, soil_name, productivity_per_shift_11h
+     FROM client_output_norm
+     WHERE productivity_per_shift_11h > 0`,
+  ).all() as Array<{
+    work_name: string;
+    unit: string | null;
+    mechanism: string | null;
+    soil_name: string | null;
+    productivity_per_shift_11h: number;
+  }>;
+  const labor = db.prepare(
+    `SELECT operation_title, material, size, unit, norm_per_shift_11h
+     FROM client_labor_norm
+     WHERE norm_per_shift_11h > 0`,
+  ).all() as Array<{
+    operation_title: string;
+    material: string | null;
+    size: string | null;
+    unit: string | null;
+    norm_per_shift_11h: number;
+  }>;
+  return [
+    ...output.map((row) => ({
+      catalog: "output" as const,
+      workName: row.work_name,
+      unit: row.unit,
+      outputPerShift11h: row.productivity_per_shift_11h,
+      mechanism: row.mechanism,
+      soilName: row.soil_name,
+      material: null,
+      size: null,
+      source: `Нормы выработки земля/дороги, смена 11 ч${row.mechanism ? `, ${row.mechanism}` : ""}`,
+    })),
+    ...labor.map((row) => ({
+      catalog: "labor" as const,
+      workName: row.operation_title,
+      unit: row.unit,
+      outputPerShift11h: row.norm_per_shift_11h,
+      mechanism: null,
+      soilName: null,
+      material: row.material,
+      size: row.size,
+      source: `Нормы труда МК, смена 11 ч, ${row.operation_title}${row.material ? `, ${row.material}` : ""}`,
+    })),
+  ];
 }

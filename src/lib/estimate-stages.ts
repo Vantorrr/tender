@@ -1,6 +1,18 @@
+import {
+  gesnHoursHint,
+  placeByDuration,
+  planCommercialStage,
+  type ShiftOutputCandidate,
+} from "@/lib/commercial-packages";
 import { classifyDirectCostBucket, isWorkActivityName } from "@/lib/cost-engine";
 import { mergeStageResources } from "@/lib/resource-merge";
 import type { CalcPosition, GprStage, GprStageResource } from "@/lib/types";
+
+export interface CommercialStageOptions {
+  weekendDays: number[];
+  shiftsPerDay: number;
+  lookups: ShiftOutputCandidate[];
+}
 
 /**
  * One stage per estimate section and work.
@@ -120,6 +132,7 @@ export function buildStagesFromEstimatePositions(
   positions: CalcPosition[],
   now: string,
   period?: { start: string; end: string } | null,
+  options?: CommercialStageOptions,
 ): GprStage[] {
   const sections = new Map<string, { sectionName: string; workName: string; positions: CalcPosition[] }>();
   for (const position of positions) {
@@ -137,13 +150,28 @@ export function buildStagesFromEstimatePositions(
 
   const groups = [...sections.values()];
   const today = now.slice(0, 10);
-  return groups.map(({ sectionName, workName, positions: rows }, index) => {
+  const weekendDays = options?.weekendDays ?? [];
+  const shiftsPerDay = options?.shiftsPerDay ?? 2;
+  const lookups = options?.lookups ?? [];
+  const anchor = period?.start ?? today;
+  const drafted = groups.map(({ sectionName, workName, positions: rows }, index) => {
     const stageId = `gs-est-${index + 1}`;
     const workPositions = rows.filter((position) => position.isWorkItem && position.name === workName);
     const workUnits = new Set(workPositions.map((position) => position.unit));
     const workVolume = workPositions.length > 0 && workUnits.size === 1
       ? workPositions.reduce((total, position) => total + position.quantity, 0)
       : null;
+    const volumeRows = rows.filter((position) => position.code === "ВОР");
+    const volumeUnits = new Set(volumeRows.map((position) => position.unit));
+    const volumeSheet = volumeRows.length > 0 && volumeUnits.size === 1
+      ? volumeRows.reduce((total, position) => total + position.quantity, 0)
+      : null;
+    const physicalVolume = workVolume ?? volumeSheet;
+    const physicalUnit = workVolume != null
+      ? workPositions[0]?.unit ?? null
+      : volumeSheet != null
+        ? volumeRows[0]?.unit ?? null
+        : null;
     const resources: GprStageResource[] = rows.flatMap((position) => {
       if (position.isWorkItem) return [];
       const code = position.code.toLocaleUpperCase("ru-RU");
@@ -177,19 +205,45 @@ export function buildStagesFromEstimatePositions(
       }];
     });
 
-    const dates = datesForStage(index, groups.length, today, period ?? null);
+    const resourcesMerged = mergeStageResources(resources);
+    const plan = planCommercialStage({
+      workName,
+      unit: physicalUnit,
+      volume: physicalVolume,
+      shiftsPerDay,
+      lookups,
+      gesnHoursHint: gesnHoursHint(resourcesMerged),
+    });
     return {
       id: stageId,
       name: workName,
       ...(workName !== sectionName ? { sectionName, workName } : { sectionName }),
-      start: dates.start,
-      end: dates.end,
+      start: anchor,
+      end: anchor,
       sequence: index + 1,
       crewSize: 0,
-      ...(workVolume != null ? { planVolume: workVolume, planUnit: workPositions[0].unit } : {}),
-      resources: mergeStageResources(resources),
+      ...(physicalVolume != null && physicalUnit ? { planVolume: physicalVolume, planUnit: physicalUnit } : {}),
+      resources: resourcesMerged,
+      durationBasis: plan.durationBasis,
+      ...(plan.durationDays != null ? { durationDays: plan.durationDays } : {}),
+      ...(plan.formulaVolume != null ? { formulaVolume: plan.formulaVolume } : {}),
+      ...(plan.outputPerShift11h != null ? { outputPerShift11h: plan.outputPerShift11h } : {}),
+      ...(plan.dailyOutput != null ? { dailyOutput: plan.dailyOutput } : {}),
+      ...(plan.statedLinks != null ? { statedLinks: plan.statedLinks } : {}),
+      ...(plan.statedShifts != null ? { statedShifts: plan.statedShifts } : {}),
+      ...(plan.mechanismCount != null ? { mechanismCount: plan.mechanismCount } : {}),
+      ...(plan.durationShifts != null ? { durationShifts: plan.durationShifts } : {}),
+      ...(plan.gesnHoursHint != null ? { gesnHoursHint: plan.gesnHoursHint } : {}),
+      ...(plan.benchmarkSource ? { benchmarkSource: plan.benchmarkSource } : {}),
+      ...(plan.benchmarkCrew.length ? { benchmarkCrew: plan.benchmarkCrew } : {}),
     };
   });
+  const placed = placeByDuration(anchor, weekendDays, drafted.map((stage) => stage.durationDays ?? null));
+  return drafted.map((stage, index) => ({
+    ...stage,
+    start: placed[index]?.start ?? anchor,
+    end: placed[index]?.end ?? anchor,
+  }));
 }
 
 export function signedQuantityBySection(

@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/table";
 import { api, downloadUrl } from "@/lib/api";
 import { EconomicsLinesEditor } from "@/components/economics-lines-editor";
+import { VorWorkplace } from "@/components/vor-workplace";
 import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-panel";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
 import { labourLineEconomicsNote, NORTH_DEFAULTS, northernAdditionLines, northernEconomicsApplied, northernStatusText, refreshRateAssumption } from "@/lib/wave23";
@@ -1335,6 +1336,32 @@ export default function RaschetDetailPage() {
           }}
         />
       </div>
+
+      <VorWorkplace
+        positions={calc.positions}
+        stages={linkedSchedule?.stages ?? []}
+        locked={locked}
+        onVolume={(positionId, volume) => {
+          if (locked) return;
+          return api("/api/raschety", {
+            method: "POST",
+            body: JSON.stringify({ action: "updateVolume", calculationId: calc.id, positionId, volume }),
+          }).then(() => refresh()).then(() => {
+            toast.success("Объём обновлён, длительность и цена пересчитаны");
+          }).catch((error: unknown) => {
+            toast.error(error instanceof Error ? error.message : "Не удалось сохранить объём");
+          });
+        }}
+        onStatus={(positionId, status) => {
+          if (locked) return;
+          return api("/api/raschety", {
+            method: "POST",
+            body: JSON.stringify({ action: "updateVolume", calculationId: calc.id, positionId, status }),
+          }).then(() => refresh()).catch((error: unknown) => {
+            toast.error(error instanceof Error ? error.message : "Не удалось подтвердить строку");
+          });
+        }}
+      />
 
       <section className="mb-6 rounded-xl border border-[var(--tk-line)] bg-white/80 p-4" data-testid="volume-sheet">
         <h2 className="text-sm font-semibold">Ведомость объёмов</h2>
