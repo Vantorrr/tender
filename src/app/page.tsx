@@ -72,10 +72,16 @@ export default function HomePage() {
           </Settle>
         </section>
 
-        <section className="grid gap-4 py-8 sm:grid-cols-3">
+        <section className="grid items-stretch gap-4 py-8 sm:grid-cols-3">
           {POINTS.map((item, index) => (
-            <Settle key={item.title} delay={620 + index * 110} y={32} blur={8}>
-              <div className="tk-glass rounded-3xl p-5">
+            <Settle
+              key={item.title}
+              delay={620 + index * 110}
+              y={32}
+              blur={8}
+              className="flex h-full flex-col"
+            >
+              <div className="tk-glass flex h-full flex-col rounded-3xl p-5">
                 <item.icon className="mb-3 h-5 w-5 text-[var(--tk-copper-deep)]" />
                 <h2 className="font-[family-name:var(--font-display)] text-base text-[var(--tk-ink)]">
                   {item.title}
