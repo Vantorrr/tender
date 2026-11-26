@@ -22,6 +22,7 @@ export default function DokumentyPage() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [failures, setFailures] = useState<Array<{ name: string; message: string }>>([]);
+  const [warnings, setWarnings] = useState<Array<{ name: string; message: string }>>([]);
   const [uploading, setUploading] = useState(false);
 
   const filtered = orgDocuments.filter((d) => {
@@ -36,6 +37,7 @@ export default function DokumentyPage() {
     }
     setUploading(true);
     setFailures([]);
+    setWarnings([]);
     setProgress({ done: 0, total: files.length });
     try {
       const result = await runUploadQueue(files, async (file) => {
@@ -45,14 +47,16 @@ export default function DokumentyPage() {
           file,
           silent: true,
         });
-        if (warning) throw new Error(warning);
+        return warning ? { warning } : undefined;
       }, {
         concurrency: 4,
         onProgress: (done, total) => setProgress({ done, total }),
       });
       await refresh();
       setFailures(result.errors);
+      setWarnings(result.warnings);
       if (result.errors.length) toast.warning(`Загружено ${result.uploaded} из ${result.uploaded + result.errors.length}`);
+      else if (result.warnings.length) toast.warning(`Загружено ${result.uploaded} из ${result.uploaded}. Часть файлов сохранена без разбора.`);
       else toast.success(`Загружено ${result.uploaded} из ${result.uploaded}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка загрузки");
@@ -134,6 +138,11 @@ export default function DokumentyPage() {
         {failures.length ? (
           <ul className="mt-2 space-y-1 text-sm text-rose-900" data-testid="documents-upload-failures">
             {failures.map((failure) => <li key={`${failure.name}-${failure.message}`}>{failure.name}: {failure.message}</li>)}
+          </ul>
+        ) : null}
+        {warnings.length ? (
+          <ul className="mt-2 space-y-1 text-sm text-amber-900" data-testid="documents-upload-warnings">
+            {warnings.map((warning) => <li key={`${warning.name}-${warning.message}`}>{warning.name}: сохранён, разбор не завершён. {warning.message}</li>)}
           </ul>
         ) : null}
       </div>

@@ -1348,6 +1348,8 @@ export function createDocument(
     prepared?: UploadAnalysis;
     extractionErrors?: string[];
     extractedFiles?: DocumentItem["extractedFiles"];
+    parentDocumentId?: string;
+    archiveMemberPath?: string;
   }
 ): { documentId: string } {
   let documentId = "";
@@ -1425,6 +1427,8 @@ export function createDocument(
       fileSize: input.fileSize,
       extractionErrors: input.extractionErrors,
       extractedFiles: input.extractedFiles,
+      ...(input.parentDocumentId ? { parentDocumentId: input.parentDocumentId } : {}),
+      ...(input.archiveMemberPath ? { archiveMemberPath: input.archiveMemberPath } : {}),
     };
     data.documents.unshift(doc);
     proc.documentIds = [...proc.documentIds, id];

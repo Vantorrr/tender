@@ -333,6 +333,7 @@ export default function ZakupkaDetailPage() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
   const [uploadFailures, setUploadFailures] = useState<Array<{ name: string; message: string }>>([]);
+  const [uploadWarnings, setUploadWarnings] = useState<Array<{ name: string; message: string }>>([]);
   const [payTitle, setPayTitle] = useState("");
   const [payType, setPayType] = useState<PaymentBucket>("postuplenie");
   const [payAmount, setPayAmount] = useState("");
@@ -723,6 +724,7 @@ export default function ZakupkaDetailPage() {
     setBusy(true);
     setUploadError(null);
     setUploadFailures([]);
+    setUploadWarnings([]);
     setUploadProgress({ done: 0, total: files.length });
     try {
       const result = await runUploadQueue(files, async (file) => {
@@ -739,19 +741,24 @@ export default function ZakupkaDetailPage() {
             body: JSON.stringify({ action: "attachCustomerEstimate", id: procurement.id, fileName: file.name }),
           });
         }
-        if (warning) throw new Error(warning);
+        return warning ? { warning } : undefined;
       }, {
         concurrency: 4,
         onProgress: (done, total) => setUploadProgress({ done, total }),
       });
       await refresh();
       setUploadFailures(result.errors);
-      if (result.errors.length) {
-        const message = `Загружено ${result.uploaded} из ${result.uploaded + result.errors.length}. Ошибок: ${result.errors.length}.`;
+      setUploadWarnings(result.warnings);
+      const saved = result.uploaded;
+      const failed = result.errors.length;
+      if (failed) {
+        const message = `Загружено ${saved} из ${saved + failed}. Ошибок: ${failed}.`;
         setUploadError(message);
         toast.warning(message);
+      } else if (result.warnings.length) {
+        toast.warning(`Загружено ${saved} из ${saved}. ${result.warnings.length} файл(ов) сохранены, но не разобраны.`);
       } else {
-        toast.success(`Загружено ${result.uploaded} из ${result.uploaded}`);
+        toast.success(`Загружено ${saved} из ${saved}`);
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Ошибка загрузки";
@@ -1001,6 +1008,13 @@ export default function ZakupkaDetailPage() {
         <ul className="mb-3 space-y-1 text-sm text-rose-900" data-testid="upload-failures">
           {uploadFailures.map((failure) => (
             <li key={`${failure.name}-${failure.message}`}>{failure.name}: {failure.message}</li>
+          ))}
+        </ul>
+      ) : null}
+      {uploadWarnings.length ? (
+        <ul className="mb-3 space-y-1 text-sm text-amber-900" data-testid="upload-warnings">
+          {uploadWarnings.map((warning) => (
+            <li key={`${warning.name}-${warning.message}`}>{warning.name}: сохранён, разбор не завершён. {warning.message}</li>
           ))}
         </ul>
       ) : null}

@@ -406,6 +406,10 @@ export interface DocumentItem {
   /** Visible archive / parse failures — never silent. */
   extractionErrors?: string[];
   extractedFiles?: Array<{ name: string; size: number; relativePath: string }>;
+  /** Archive that this file was unpacked from. */
+  parentDocumentId?: string;
+  /** Path of this member inside that archive, including folders. */
+  archiveMemberPath?: string;
 }
 
 export interface CalcPosition {

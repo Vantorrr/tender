@@ -13,7 +13,7 @@ import {
   makeOfficialCalculationAndSchedule,
   upgradeCalculationToOfficialLogic,
 } from "@/server/repo";
-import { saveUpload } from "@/server/uploads";
+import { readUpload, saveUpload } from "@/server/uploads";
 import { MAX_ARCHIVE_DEPTH } from "@/server/safe-archive";
 import { isOleCompound } from "@/server/xls-workbook";
 import "./setup";
@@ -130,6 +130,20 @@ describe("production blockers: archives, xls, batch upload, official chain", () 
     expect(stored?.status).not.toBe("oshibka");
     expect(stored?.extractionErrors ?? []).toEqual([]);
     expect(stored?.estimatePositions?.some((position) => position.name.includes("ОРЧ"))).toBe(true);
+  });
+
+  it("keeps a saved-file warning out of the failed upload count", async () => {
+    const result = await runUploadQueue(
+      [new File(["ok"], "saved.pdf"), new File(["warn"], "partial.xls"), new File(["no"], "lost.docx")],
+      async (file) => {
+        if (file.name === "lost.docx") throw new Error("сеть оборвалась");
+        if (file.name === "partial.xls") return { warning: "Файл сохранён, но не разобран: таймаут" };
+        return undefined;
+      },
+    );
+    expect(result.uploaded).toBe(2);
+    expect(result.errors).toEqual([{ name: "lost.docx", message: "сеть оборвалась" }]);
+    expect(result.warnings).toEqual([{ name: "partial.xls", message: "Файл сохранён, но не разобран: таймаут" }]);
   });
 
   it("uploads several files through the queue and keeps per-file failures", async () => {
@@ -278,5 +292,57 @@ describe("production blockers: archives, xls, batch upload, official chain", () 
     expect(rebuilt.stages.some((item) => item.durationBasis === "site_daily")).toBe(true);
     const fixture = path.join(process.cwd(), "fixtures/grand-smeta/ls-02-02-01-burenie.xlsx");
     expect(fs.existsSync(fixture)).toBe(true);
+  });
+
+  it("stores parallel uploads on different paths", async () => {
+    const created = createManualProcurement("u-ruk", { title: "Параллельная загрузка", region: "Ямал" });
+    const [left, right] = await Promise.all([
+      postFile(created.id, "left.txt", Buffer.from("left-bytes")),
+      postFile(created.id, "right.txt", Buffer.from("right-bytes")),
+    ]);
+    expect(left.status).toBe(200);
+    expect(right.status).toBe(200);
+    const docs = readAppData().documents.filter((document) => document.procurementId === created.id && document.storedPath);
+    const paths = docs.map((document) => document.storedPath);
+    expect(new Set(paths).size).toBe(paths.length);
+    const leftDoc = docs.find((document) => document.fileName === "left.txt");
+    const rightDoc = docs.find((document) => document.fileName === "right.txt");
+    expect(readUpload(leftDoc!.storedPath!)?.toString("utf8")).toBe("left-bytes");
+    expect(readUpload(rightDoc!.storedPath!)?.toString("utf8")).toBe("right-bytes");
+  });
+
+  it("re-extracts two same-named files from different folders separately", async () => {
+    const created = createManualProcurement("u-ruk", { title: "Два графика", region: "Ямал" });
+    const schedule = xlsSchedule();
+    const packed = await zipBytes([
+      { name: "a/График.xls", data: schedule },
+      { name: "b/График.xls", data: schedule },
+    ]);
+    const response = await postFile(created.id, "оба.zip", packed);
+    expect(response.status).toBe(200);
+    const copies = () => readAppData().documents.filter((document) => document.procurementId === created.id && document.fileName === "График.xls");
+    expect(copies()).toHaveLength(2);
+    expect(new Set(copies().map((document) => `${document.parentDocumentId}:${document.archiveMemberPath}`)).size).toBe(2);
+    const stale = copies().find((document) => document.archiveMemberPath === "b/График.xls");
+    expect(stale).toBeTruthy();
+    mutateAppData((data) => {
+      const item = data.documents.find((document) => document.id === stale!.id)!;
+      item.extractionErrors = ["Файл сохранён из архива; формат пока нельзя автоматически разобрать"];
+      item.analyticalNote = "формат не анализируется автоматически";
+      item.citations = [];
+      item.estimatePositions = [];
+      return data;
+    });
+    const root = readAppData().documents.find((document) => document.procurementId === created.id && document.fileName === "оба.zip");
+    await reextractStoredArchive("u-ruk", root!.id);
+    const after = copies();
+    expect(after).toHaveLength(2);
+    const repaired = after.find((document) => document.archiveMemberPath === "b/График.xls");
+    expect(repaired?.parentDocumentId).toBe(root!.id);
+    expect(repaired?.extractionErrors ?? []).toEqual([]);
+    expect((repaired?.citations.length ?? 0) + (repaired?.estimatePositions?.length ?? 0)).toBeGreaterThan(0);
+    const kept = after.find((document) => document.archiveMemberPath === "a/График.xls");
+    expect(kept?.parentDocumentId).toBe(root!.id);
+    expect(kept?.id).not.toBe(repaired?.id);
   });
 });

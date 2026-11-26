@@ -62,6 +62,7 @@ export default function ZakupkiPage() {
   const [manualFiles, setManualFiles] = useState<File[]>([]);
   const [manualProgress, setManualProgress] = useState<{ done: number; total: number } | null>(null);
   const [manualFailures, setManualFailures] = useState<Array<{ name: string; message: string }>>([]);
+  const [manualWarnings, setManualWarnings] = useState<Array<{ name: string; message: string }>>([]);
   const [sourceHealth, setSourceHealth] = useState<{ status?: string; detail?: string; lastSuccessAt?: string | null } | null>(null);
   useEffect(() => {
     void fetch("/api/health")
@@ -199,14 +200,17 @@ export default function ZakupkiPage() {
             file,
             silent: true,
           });
-          if (warning) throw new Error(warning);
+          return warning ? { warning } : undefined;
         }, {
           concurrency: 4,
           onProgress: (done, total) => setManualProgress({ done, total }),
         });
         setManualFailures(uploaded.errors);
+        setManualWarnings(uploaded.warnings);
         if (uploaded.errors.length) {
           toast.warning(`Закупка создана. Загружено ${uploaded.uploaded} из ${uploaded.uploaded + uploaded.errors.length}`);
+        } else if (uploaded.warnings.length) {
+          toast.warning(`Закупка создана. Загружено ${uploaded.uploaded} из ${uploaded.uploaded}. Часть файлов сохранена без разбора.`);
         } else {
           toast.success(`Закупка создана. Загружено ${uploaded.uploaded} из ${uploaded.uploaded}`);
         }
@@ -284,8 +288,13 @@ export default function ZakupkiPage() {
             />
             {manualProgress ? <p className="mt-2 text-sm" role="status" data-testid="manual-upload-progress">Загружено {manualProgress.done} из {manualProgress.total}</p> : null}
             {manualFailures.length ? (
-              <ul className="mt-2 space-y-1 text-sm text-rose-900">
+              <ul className="mt-2 space-y-1 text-sm text-rose-900" data-testid="manual-upload-failures">
                 {manualFailures.map((failure) => <li key={`${failure.name}-${failure.message}`}>{failure.name}: {failure.message}</li>)}
+              </ul>
+            ) : null}
+            {manualWarnings.length ? (
+              <ul className="mt-2 space-y-1 text-sm text-amber-900" data-testid="manual-upload-warnings">
+                {manualWarnings.map((warning) => <li key={`${warning.name}-${warning.message}`}>{warning.name}: сохранён, разбор не завершён. {warning.message}</li>)}
               </ul>
             ) : null}
           </div>

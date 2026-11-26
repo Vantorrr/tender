@@ -2,7 +2,7 @@
  * Nested archive walk shared by the first upload and a later re-extract.
  * Depth, size, file count, path traversal and archive cycles stay bounded.
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import {
   createDocument,
@@ -75,12 +75,25 @@ function isStaleExtract(document: DocumentItem): boolean {
     || STALE_EXTRACT.test(document.analyticalNote ?? "");
 }
 
-function existingMember(procurementId: string, fileName: string, size: number): DocumentItem | undefined {
-  return readAppData().documents.find((document) =>
-    document.procurementId === procurementId
+function existingMember(
+  procurementId: string,
+  fileName: string,
+  size: number,
+  parentDocumentId: string,
+  archiveMemberPath: string,
+): DocumentItem | undefined {
+  const documents = readAppData().documents.filter((document) => document.procurementId === procurementId);
+  const keyed = documents.find((document) =>
+    document.parentDocumentId === parentDocumentId && document.archiveMemberPath === archiveMemberPath
+  );
+  if (keyed) return keyed;
+  const unkeyed = documents.filter((document) =>
+    !document.parentDocumentId
+    && !document.archiveMemberPath
     && document.fileName === fileName
     && (document.fileSize == null || document.fileSize === size)
   );
+  return unkeyed.length === 1 ? unkeyed[0] : undefined;
 }
 
 async function openArchive(name: string, bytes: Buffer, dir: string): Promise<ArchiveExtractResult> {
@@ -99,16 +112,22 @@ export async function ingestArchiveMembers(input: {
   seenHashes: Set<string>;
   budget: IngestBudget;
   reuse: boolean;
+  /** Document id of the archive these members were unpacked from. */
+  parentDocumentId: string;
 }): Promise<ArchiveIngestSummary> {
   const analyzedFiles: ArchiveIngestSummary["analyzedFiles"] = [];
   const errors: string[] = [];
   for (const extractedFile of input.files) {
     const childBytes = fs.readFileSync(extractedFile.absolutePath);
-    const childId = `d-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const childId = `d-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    const archiveMemberPath = extractedFile.relativePath;
     const prior = input.reuse
-      ? existingMember(input.procurementId, extractedFile.name, childBytes.length)
+      ? existingMember(input.procurementId, extractedFile.name, childBytes.length, input.parentDocumentId, archiveMemberPath)
       : undefined;
     if (prior && input.reuse && !isStaleExtract(prior)) {
+      if (prior.parentDocumentId !== input.parentDocumentId || prior.archiveMemberPath !== archiveMemberPath) {
+        updateDocument(input.userId, prior.id, { parentDocumentId: input.parentDocumentId, archiveMemberPath });
+      }
       analyzedFiles.push({ name: extractedFile.relativePath, documentId: prior.id, status: "already_indexed" });
       continue;
     }
@@ -163,6 +182,8 @@ export async function ingestArchiveMembers(input: {
           size: file.size,
           relativePath: file.relativePath,
         })),
+        parentDocumentId: input.parentDocumentId,
+        archiveMemberPath,
       }).documentId;
       analyzedFiles.push({
         name: extractedFile.relativePath,
@@ -178,6 +199,7 @@ export async function ingestArchiveMembers(input: {
           files: childExtracted.files,
           depth: input.depth + 1,
           seenHashes: nextSeen,
+          parentDocumentId: archiveId,
         });
         analyzedFiles.push(...nested.analyzedFiles);
         nestedErrors = nested.errors;
@@ -197,6 +219,8 @@ export async function ingestArchiveMembers(input: {
         })),
         status: archiveResultStatus(childExtracted.ok, archiveErrors),
         category: "archive",
+        parentDocumentId: input.parentDocumentId,
+        archiveMemberPath,
       });
       continue;
     }
@@ -216,9 +240,16 @@ export async function ingestArchiveMembers(input: {
         storedPath: stored.storedPath,
         fileSize: stored.fileSize,
         extractionErrors: [reason],
+        parentDocumentId: input.parentDocumentId,
+        archiveMemberPath,
       }).documentId;
       if (prior) {
-        updateDocument(input.userId, documentId, { extractionErrors: [reason], status: "oshibka" });
+        updateDocument(input.userId, documentId, {
+          extractionErrors: [reason],
+          status: "oshibka",
+          parentDocumentId: input.parentDocumentId,
+          archiveMemberPath,
+        });
       }
       errors.push(`${extractedFile.relativePath}: формат не анализируется автоматически`);
       analyzedFiles.push({ name: extractedFile.relativePath, documentId, status: "saved_without_analysis" });
@@ -243,6 +274,8 @@ export async function ingestArchiveMembers(input: {
           extractionErrors: [],
           status: prepared.status,
           fileType: IMAGE_EXTENSIONS.has(ext) ? "other" : fileType,
+          parentDocumentId: input.parentDocumentId,
+        archiveMemberPath,
         });
         analyzedFiles.push({ name: extractedFile.relativePath, documentId: prior.id, status: "analyzed" });
       } else {
@@ -256,6 +289,8 @@ export async function ingestArchiveMembers(input: {
           storedPath: stored.storedPath,
           fileSize: stored.fileSize,
           prepared,
+          parentDocumentId: input.parentDocumentId,
+        archiveMemberPath,
         });
         analyzedFiles.push({ name: extractedFile.relativePath, documentId: child.documentId, status: "analyzed" });
       }
@@ -273,6 +308,8 @@ export async function ingestArchiveMembers(input: {
           fileType: documentFileType(extractedFile.name),
           category: inferCategory(null, extractedFile.name),
           extractionErrors: [message],
+          parentDocumentId: input.parentDocumentId,
+        archiveMemberPath,
         });
       }
     }
@@ -313,6 +350,7 @@ export async function reextractStoredArchive(actorId: string, documentId: string
     seenHashes: seen,
     budget,
     reuse: true,
+    parentDocumentId: document.id,
   });
   const archiveErrors = [...extracted.errors, ...nested.errors];
   updateDocument(actorId, document.id, {

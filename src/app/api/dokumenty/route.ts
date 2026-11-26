@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   createDocument,
   getBootstrap,
@@ -20,6 +20,10 @@ import { withAnySection, json } from "@/server/http";
 import type { DocumentCategory, DocumentItem } from "@/lib/types";
 
 const DOC_SECTIONS = ["dokumenty", "zakupki", "riski"] as const;
+
+function uploadId(): string {
+  return `d-${Date.now()}-${randomUUID().slice(0, 8)}`;
+}
 
 function inferCategory(
   raw: string | null,
@@ -76,7 +80,7 @@ export async function POST(req: Request) {
       const archiveFormat = detectArchiveFormat(file.name, buf);
 
       if (archiveFormat !== "none") {
-        const tempId = `d-${Date.now()}`;
+        const tempId = uploadId();
         const stored = await saveUpload(tempId, file.name, buf);
         const extracted = archiveFormat === "rar"
           ? await extractRarArchiveSafely(file.name, buf, archiveExtractDir(tempId))
@@ -111,6 +115,7 @@ export async function POST(req: Request) {
             bytes: extracted.files.reduce((sum, file) => sum + file.size, 0),
           },
           reuse: false,
+          parentDocumentId: archiveDoc.documentId,
         });
         const archiveErrors = [...extracted.errors, ...childErrors];
         updateDocument(user.id, archiveDoc.documentId, {
@@ -156,7 +161,7 @@ export async function POST(req: Request) {
         // Preserve the user's original file even when extraction/OCR fails.
         // A parser outage should mark the document for review, not look like
         // the upload itself was rejected and discard the bytes.
-        const tempId = `d-${Date.now()}`;
+        const tempId = uploadId();
         const stored = await saveUpload(tempId, file.name, buf);
         createDocument(user.id, {
           orgId: user.orgId,
@@ -177,7 +182,7 @@ export async function POST(req: Request) {
       }
       const title =
         String(form.get("title") ?? "").trim() || prepared.title;
-      const tempId = `d-${Date.now()}`;
+      const tempId = uploadId();
       const stored = await saveUpload(tempId, file.name, buf);
       createDocument(user.id, {
         orgId: user.orgId,
