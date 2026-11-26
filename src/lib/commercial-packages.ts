@@ -252,7 +252,7 @@ function planFromNormHours(input: {
   return {
     durationBasis: "output_shift",
     durationDays,
-    formulaVolume: durationDays * shiftHours * shifts,
+    formulaVolume: hours,
     outputPerShift11h: shiftHours,
     dailyOutput: null,
     statedLinks: 1,
@@ -393,6 +393,11 @@ function sitePlan(
   };
 }
 
+function floorNormHourDay(days: number | null, benchmarkSource?: string | null): number | null {
+  if (days == null || !(days > 0) || days >= 1) return days;
+  return (benchmarkSource ?? "").startsWith("Нормативные часы сметы") ? 1 : days;
+}
+
 export function durationFromStored(stage: {
   durationBasis?: DurationBasis | null;
   formulaVolume?: number | null;
@@ -402,16 +407,17 @@ export function durationFromStored(stage: {
   statedShifts?: number | null;
   mechanismCount?: number | null;
   durationShifts?: number | null;
+  benchmarkSource?: string | null;
 }): number | null {
   const volume = stage.formulaVolume;
   if (volume == null || !(volume > 0)) return null;
   if (stage.durationBasis === "output_shift") {
-    return durationDaysFromOutput({
+    return floorNormHourDay(durationDaysFromOutput({
       volume,
       outputPerShift11h: stage.outputPerShift11h ?? 0,
       shiftsPerDay: stage.durationShifts ?? 0,
       mechanisms: stage.mechanismCount ?? 0,
-    });
+    }), stage.benchmarkSource);
   }
   if (stage.durationBasis === "site_daily") {
     const daily = stage.dailyOutput ?? 0;
@@ -707,6 +713,7 @@ export function formulaAfterVolumeChange(
     statedShifts?: number | null;
     mechanismCount?: number | null;
     durationShifts?: number | null;
+    benchmarkSource?: string | null;
   },
   nextPhysical: number,
 ): { formulaVolume: number; durationDays: number | null; formulaPerPhysical: number | null; planVolume: number } {

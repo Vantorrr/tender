@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { closeDb, ensureReady, mutateAppData, readAppData } from "@/server/db";
-import { makeOfficialCalculationAndSchedule } from "@/server/repo";
+import {
+  createManualProcurement,
+  createProcurementSchedule,
+  makeOfficialCalculationAndSchedule,
+  sendProcurementToCalculation,
+  updateCalculation,
+} from "@/server/repo";
 import "./setup";
 
 const DRILLING_HOURS = 2648.0544;
@@ -71,5 +77,34 @@ describe("p-tpkp GPR duration from estimate hours", () => {
     expect(restored.length).toBe(withDuration.length);
     expect(rebuilt.stages.some((stage) => /бурение скважин/iu.test(stage.name) && stage.start < stage.end)).toBe(true);
     expect(rebuilt.calendar).toMatchObject({ weekendDays: [], hoursPerShift: 11, shiftsPerDay: 2 });
+  });
+
+  it("keeps a one-day schedule and the real hour total when the button runs again", () => {
+    const created = createManualProcurement("u-ruk", { title: "Один день", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const draft = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "resource_draft")!;
+    updateCalculation("u-ruk", draft.id, {
+      positions: [
+        { id: "w", code: "ФЕР-1", name: "Резка", unit: "рез", quantity: 1, rate: 0, isWorkItem: true, sourceSectionName: "Раздел 1", sourceWorkName: "Резка" },
+        { id: "crew", code: "БР", name: "Бригада", unit: "чел", quantity: 12, rate: 0, resourceKind: "labor", sourceSectionName: "Раздел 1", sourceWorkName: "Резка" },
+        { id: "h", code: "ЗТ", name: "Затраты труда рабочих", unit: "чел.-ч", quantity: 3.5, rate: 0, resourceKind: "labor", sourceSectionName: "Раздел 1", sourceWorkName: "Резка" },
+      ],
+    });
+    createProcurementSchedule("u-ruk", created.id);
+    const schedule = readAppData().schedules.find((item) => item.procurementId === created.id)!;
+    expect(schedule.stages).toHaveLength(1);
+    expect(schedule.stages[0]).toMatchObject({ durationDays: 1 });
+    expect(schedule.stages[0]?.formulaVolume).toBeCloseTo(3.5, 5);
+    expect(schedule.stages[0]?.start).toBe(schedule.stages[0]?.end);
+    mutateAppData((data) => {
+      const stored = data.schedules.find((item) => item.id === schedule.id)!;
+      stored.stages[0] = { ...stored.stages[0]!, crewSize: 9 };
+      return data;
+    });
+    createProcurementSchedule("u-ruk", created.id, { replaceUntagged: true });
+    const kept = readAppData().schedules.find((item) => item.id === schedule.id)!;
+    expect(kept.stages[0]?.crewSize).toBe(9);
+    expect(kept.stages[0]?.formulaVolume).toBeCloseTo(3.5, 5);
+    expect(kept.stages[0]?.durationDays).toBe(1);
   });
 });

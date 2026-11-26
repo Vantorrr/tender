@@ -2999,7 +2999,7 @@ function normHoursFromProcurementFiles(
 }
 
 function scheduleHasRealDuration(schedule: { stages: GprStage[] }): boolean {
-  return schedule.stages.some((stage) => (stage.durationDays ?? 0) > 0 && stage.start < stage.end);
+  return schedule.stages.some((stage) => (stage.durationDays ?? 0) > 0);
 }
 
 function buildDraftStagesFromEstimate(

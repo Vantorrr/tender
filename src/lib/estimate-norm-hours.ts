@@ -22,6 +22,9 @@ function sectionNumber(section: string): string | null {
   return /^раздел\s+(\d+)/iu.exec(fold(section))?.[1] ?? null;
 }
 
+/** чел.-ч / маш.-ч / н-ч. A bare «чел» is headcount, not hours. */
+const HOUR_UNIT = /(?:маш|чел|н)\s*[.\u00b7\-]*\s*ч/iu;
+
 /** Worker hours, then machine hours, then operator hours. Null when the rows have none. */
 export function hoursOnPositions(rows: Array<{
   name: string;
@@ -35,15 +38,12 @@ export function hoursOnPositions(rows: Array<{
   for (const row of rows) {
     if (row.isWorkItem) continue;
     if (!(row.quantity > 0)) continue;
+    if (!HOUR_UNIT.test(row.unit)) continue;
     const unit = row.unit.toLocaleLowerCase("ru-RU");
-    if (!/ч/iu.test(unit)) continue;
     const name = row.name.trim().toLocaleLowerCase("ru-RU");
-    if (/чел/iu.test(unit)) {
-      if (name === "зтм" || name === "затраты труда машинистов" || /машинист/iu.test(name)) operators += row.quantity;
-      else labor += row.quantity;
-    } else if (/маш/iu.test(unit)) {
-      machine += row.quantity;
-    }
+    if (/маш/iu.test(unit) && !/чел/iu.test(unit)) machine += row.quantity;
+    else if (name === "зтм" || name === "затраты труда машинистов" || /машинист/iu.test(name)) operators += row.quantity;
+    else labor += row.quantity;
   }
   if (labor > 0) return labor;
   if (machine > 0) return machine;

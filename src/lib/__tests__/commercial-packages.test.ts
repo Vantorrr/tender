@@ -19,6 +19,7 @@ import {
   type ShiftOutputCandidate,
 } from "@/lib/commercial-packages";
 import { buildStagesFromEstimatePositions } from "@/lib/estimate-stages";
+import { hoursOnPositions } from "@/lib/estimate-norm-hours";
 import type { CalcPosition } from "@/lib/types";
 
 const excavator: ShiftOutputCandidate = {
@@ -292,7 +293,18 @@ describe("commercial package duration", () => {
       gesnHoursHint: null,
     });
     expect(short.durationDays).toBe(1);
+    expect(short.formulaVolume).toBeCloseTo(3.519, 5);
     expect(short.durationBasis).toBe("output_shift");
+    const withMachine = applyLeverToStored({ ...short, start: "2026-12-01", end: "2026-12-01" }, "mechanism");
+    expect(withMachine.formulaVolume).toBeCloseTo(3.519, 5);
+    expect(withMachine.durationDays).toBe(1);
+    const doubled = formulaAfterVolumeChange({ ...short, planVolume: 1.53, formulaPerPhysical: 3.519 / 1.53 }, 3.06);
+    expect(doubled.formulaVolume).toBeCloseTo(7.038, 5);
+    expect(doubled.durationDays).toBe(1);
+    expect(hoursOnPositions([
+      { name: "Бригада", unit: "чел", quantity: 12 },
+      { name: "Затраты труда рабочих", unit: "чел.-ч", quantity: 4 },
+    ])).toBe(4);
 
     const untouched = planCommercialStage({
       workName: "Бурение скважин",
