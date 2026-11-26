@@ -1483,7 +1483,7 @@ export function updateSchedule(
           replacePositions: true,
         });
         Object.assign(calc, synced.calc);
-        applyClientEconomics(calc);
+        finishSyncedCommercialCost(calc);
       }
       if (previousPhysicalPlan !== physicalPlanSignature(updated.stages)) {
         syncProductionPlanFromSchedule(data, updated);
@@ -1551,7 +1551,7 @@ export function updateLinkedResourcesFromCalculation(
     if (isResourceLinkedDraft(calc)) {
       const synced = syncDraftFromStages(calc, schedule.stages, { replacePositions: true });
       Object.assign(calc, synced.calc);
-      applyClientEconomics(calc);
+      finishSyncedCommercialCost(calc);
     }
     audit(data, actorId, "update", "calculation", calculationId, "Ресурсы расчёта синхронизированы с графиком");
     return data;
@@ -1616,7 +1616,7 @@ export function patchScheduleResourceAndSync(
         replacePositions: true,
       });
       Object.assign(calc, synced.calc);
-      applyClientEconomics(calc);
+      finishSyncedCommercialCost(calc);
       calc.changeLog = [
         ...(calc.changeLog ?? []),
         {
@@ -3486,13 +3486,14 @@ export function shiftGprStage(
         syncDraftFromStages(calc, item.stages, { replacePositions: true }).calc
       );
       if (calc.costSummary) calc.costSummary.reserve = reserve;
-      applyResourceDraftAdjustments(calc);
+      finishSyncedCommercialCost(calc);
     }
     if (calc && calc.kind !== "customer_original") {
       const days = gprCoveredDays(item.stages, item.calendar).length;
       if (calc.busRoutes?.length) {
         calc.busRoutes = calc.busRoutes.map((r) => ({ ...r, days }));
       }
+      let shiftLabor = 0;
       if (!syncedResourceDraft && (calc.costSummary || (calc.busRoutes?.length ?? 0) > 0)) {
         const buckets = bucketsFromPositions(
           calc.positions,
@@ -3506,6 +3507,7 @@ export function shiftGprStage(
         const northern = northernInputsForEngine(calc);
         const rs = calc.resourceScheduleParams;
         const useRs = Boolean(rs);
+        shiftLabor = buckets.labor;
         const Dapprox =
           buckets.labor +
           buckets.materials +
@@ -3547,7 +3549,10 @@ export function shiftGprStage(
           at: new Date().toISOString(),
         };
       }
-      if (calc.resourceScheduleParams) applyClientEconomics(calc);
+      if (calc.resourceScheduleParams && !syncedResourceDraft) {
+        applyNorthernFold(calc, shiftLabor);
+        applyClientEconomics(calc);
+      }
       markMissingCommercialCost(calc);
       assignCommitteeSnapshot(calc, data);
       calc.dataFlags = [
@@ -3668,6 +3673,17 @@ function mergeEconomicsManual(
     else next[key] = clean;
   }
   return next;
+}
+
+/**
+ * Same tail as a full resource recompute: office overhead, northern extras,
+ * then the client 43/10/40 price. A raw tree rollup has none of those.
+ */
+function finishSyncedCommercialCost(calc: Calculation) {
+  if (!calc.resourceScheduleParams || !calc.costSummary) return;
+  if (calc.costSummary.resourceSlices) applyResourceDraftAdjustments(calc);
+  applyNorthernFold(calc, calc.costSummary?.resourceSlices?.labor ?? 0);
+  applyClientEconomics(calc);
 }
 
 /** Official price only. Reference reprice keeps reserve 0 and is not passed here. */

@@ -16,6 +16,7 @@ import { parseGrandBuffer } from "@/server/grand-smeta";
 import {
   createManualProcurement,
   createProcurementSchedule,
+  patchScheduleResourceAndSync,
   recomputeCalculationCost,
   sendProcurementToCalculation,
 } from "@/server/repo";
@@ -466,5 +467,53 @@ describe("wave 2 client economics and shifts", () => {
     expect(withCommercial.committeeSnapshot?.fullCost).toBeCloseTo(withCommercial.costSummary?.C ?? 0, 2);
     expect(nmckAtOrBelowCostWarning("warn")).toMatch(/директор/);
     expect(nmckAtOrBelowCostWarning("warn")).toMatch(/не ставится/i);
+  });
+
+  it("keeps northern extras and office overhead when a GPR resource quantity and rate change", () => {
+    const created = createManualProcurement("u-ruk", { title: "Север при правке ГПР", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const draft = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "resource_draft")!;
+    createProcurementSchedule("u-ruk", created.id);
+    const schedule = readAppData().schedules.find((item) => item.procurementId === created.id)!;
+    mutateAppData((data) => {
+      const row = data.schedules.find((item) => item.id === schedule.id)!;
+      row.stages[0]!.resources = [{
+        id: "lab-north",
+        kind: "labor",
+        name: "Плотник",
+        unit: "чел",
+        quantity: 1,
+        rate: 1000,
+        quantityBasis: "count_per_shift",
+        hoursPerShift: 11,
+        shiftsPerDay: 2,
+        days: 1,
+      }];
+      return data;
+    });
+    recomputeCalculationCost("u-ruk", draft.id, { useResourceScheduleEconomics: true, officeOverhead: 200 });
+    const prepared = readAppData().calculations.find((item) => item.id === draft.id)!;
+    expect(prepared.resourceScheduleParams?.districtCoefficient).toBe(1.8);
+    patchScheduleResourceAndSync("u-ruk", schedule.id, {
+      resourceId: "lab-north",
+      stageId: schedule.stages[0]!.id,
+      quantity: 2,
+      rate: 1500,
+    });
+    const patched = readAppData().calculations.find((item) => item.id === draft.id)!;
+    recomputeCalculationCost("u-ruk", draft.id, {
+      useResourceScheduleEconomics: true,
+      officeOverhead: 200,
+      resourceScheduleParams: prepared.resourceScheduleParams,
+    });
+    const full = readAppData().calculations.find((item) => item.id === draft.id)!;
+    expect(patched.costSummary?.northernAdjustments?.district ?? 0).toBeGreaterThan(0);
+    expect(patched.costSummary?.priceExVat).toBe(full.costSummary?.priceExVat);
+    expect(patched.costSummary?.resourceSlices?.total).toBe(patched.costSummary?.priceExVat);
+    expect(patched.costSummary?.northernAdjustments?.total).toBe(patched.costSummary?.priceExVat);
+    expect(patched.costSummary?.C0).toBe(full.costSummary?.C0);
+    expect(patched.costSummary?.northernAdjustments?.district).toBe(full.costSummary?.northernAdjustments?.district);
+    expect(patched.costSummary?.northernAdjustments?.allowance).toBe(full.costSummary?.northernAdjustments?.allowance);
+    expect(full.referenceReprice).toBeUndefined();
   });
 });
