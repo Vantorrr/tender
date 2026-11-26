@@ -263,6 +263,120 @@ describe("commercial package duration", () => {
     });
   });
 
+  it("turns estimate labor hours into days on a 2×11 calendar and does not slice the TZ", () => {
+    const drilling = planCommercialStage({
+      workName: "Бурение скважин диаметром 450 мм",
+      unit: "м",
+      volume: 716,
+      shiftsPerDay: 2,
+      hoursPerShift: 11,
+      normHours: 2648.0544,
+      lookups: [],
+      gesnHoursHint: 40,
+    });
+    expect(drilling.durationBasis).toBe("output_shift");
+    expect(drilling.durationDays).toBeCloseTo(2648.0544 / 22, 5);
+    expect(drilling.durationDays ?? 0).toBeGreaterThanOrEqual(1);
+    expect(drilling.benchmarkSource).toMatch(/Нормативные часы сметы/);
+    expect(drilling.note).toMatch(/не делится/);
+    expect(drilling.benchmarkCrew.some((line) => line.role === "Экскаватор")).toBe(true);
+
+    const short = planCommercialStage({
+      workName: "Заполнение раствором пустот между стенкой скважины и телом сваи",
+      unit: "м3",
+      volume: 1.53,
+      shiftsPerDay: 2,
+      hoursPerShift: 11,
+      normHours: 3.519,
+      lookups: [],
+      gesnHoursHint: null,
+    });
+    expect(short.durationDays).toBe(1);
+    expect(short.durationBasis).toBe("output_shift");
+
+    const untouched = planCommercialStage({
+      workName: "Бурение скважин",
+      unit: "шт",
+      volume: 100,
+      shiftsPerDay: 2,
+      lookups: [],
+      gesnHoursHint: 40,
+    });
+    expect(untouched.durationDays).toBeNull();
+    expect(untouched.durationBasis).toBe("unconfirmed");
+
+    const catalogWins = planCommercialStage({
+      workName: "Разработка грунта экскаватором в отвал, Экскаватор Komatsu 220",
+      unit: "1000 м3",
+      volume: 200,
+      shiftsPerDay: 2,
+      normHours: 88,
+      lookups: [excavator],
+      gesnHoursHint: 88,
+    });
+    expect(catalogWins.durationDays).toBe(10);
+    expect(catalogWins.benchmarkSource).not.toMatch(/Нормативные часы/);
+
+    const pipe = planCommercialStage({
+      workName: "Монтаж трубы",
+      unit: "м",
+      volume: 240,
+      shiftsPerDay: 2,
+      normHours: 999,
+      lookups: [],
+      gesnHoursHint: null,
+    });
+    expect(pipe.durationDays).toBe(2);
+    expect(pipe.durationBasis).toBe("site_daily");
+
+    const deadline = { start: "2026-12-01", end: "2026-12-30" };
+    const stages = buildStagesFromEstimatePositions([
+      {
+        id: "drill",
+        code: "ФЕР05-01-055-05",
+        name: "Бурение скважин диаметром 450 мм",
+        unit: "м",
+        quantity: 716,
+        rate: 0,
+        isWorkItem: true,
+        sourceSectionName: "Раздел 1. Бурение скважин",
+        sourceWorkName: "Бурение скважин диаметром 450 мм",
+      },
+      {
+        id: "idle",
+        code: "ФЕР-9",
+        name: "Погрузка",
+        unit: "т",
+        quantity: 1,
+        rate: 0,
+        isWorkItem: true,
+        sourceSectionName: "Раздел 9. Погрузка без нормы",
+        sourceWorkName: "Погрузка",
+      },
+    ], "2026-11-26T00:00:00.000Z", deadline, {
+      weekendDays: [],
+      shiftsPerDay: 2,
+      hoursPerShift: 11,
+      lookups: [],
+      normHours: [{
+        sectionName: "Раздел 1. Бурение скважин",
+        workName: "Бурение скважин диаметром 450 мм",
+        laborHours: 2648.0544,
+        machineHours: 0,
+      }],
+    });
+    const bore = stages.find((stage) => stage.name.includes("Бурение"))!;
+    const idle = stages.find((stage) => stage.name === "Погрузка")!;
+    expect(bore.durationDays).toBeCloseTo(2648.0544 / 22, 5);
+    expect(bore.start).toBe("2026-12-01");
+    expect(bore.end > bore.start).toBe(true);
+    expect(bore.end).not.toBe(deadline.end);
+    expect(idle.durationBasis).toBe("unconfirmed");
+    expect(idle.durationDays).toBeUndefined();
+    expect(idle.start).toBe(idle.end);
+    expect(idle.end).not.toBe(deadline.end);
+  });
+
   it("keeps a volume row unconfirmed until someone confirms it", () => {
     expect(volumeStatusLabel(undefined)).toBe("не подтверждено");
     expect(volumeStatusLabel("unconfirmed")).toBe("не подтверждено");

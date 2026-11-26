@@ -49,6 +49,8 @@ import {
   type AccelerationLever,
 } from "@/lib/commercial-packages";
 import { listShiftOutputCandidates } from "@/server/client-norms";
+import { readEstimateNormHours } from "@/server/estimate-norm-hours";
+import type { EstimateNormHours } from "@/lib/estimate-norm-hours";
 import { COMPANY_RATE_RULE, composeAnalyticalNote, dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, recognizedRowsPhrase, rowCountGenitive, rowCountNominative, scheduleAfterPredecessor } from "@/lib/wave23";
 import {
   applyClientCommercialFormula,
@@ -2957,28 +2959,62 @@ function commercialScheduleNotes(stages: GprStage[]): string[] {
   const hasDuration = stages.some((stage) => (stage.durationDays ?? 0) > 0);
   const hasUnconfirmed = stages.some((stage) => stage.durationBasis === "unconfirmed");
   const hasCrew = stages.some((stage) => (stage.benchmarkCrew?.length ?? 0) > 0);
-  const hasGesn = stages.some((stage) => (stage.gesnHoursHint ?? 0) > 0);
+  const hasGesnHintOnly = stages.some((stage) =>
+    (stage.gesnHoursHint ?? 0) > 0 && !(stage.benchmarkSource ?? "").startsWith("Нормативные часы сметы"),
+  );
   const notes = [GPR_FROM_CUSTOMER_SECTIONS];
   notes.push(hasDuration
     ? GPR_DURATION_FROM_OUTPUT
     : "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.");
   if (hasDuration && hasUnconfirmed) notes.push(GPR_UNCONFIRMED_DURATION);
-  if (hasGesn) notes.push(GPR_GESN_HINT_ONLY);
+  if (hasGesnHintOnly) notes.push(GPR_GESN_HINT_ONLY);
   if (hasCrew) notes.push(GPR_CREW_FROM_FILE4);
   notes.push("Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.");
   return notes;
+}
+
+function normHoursFromProcurementFiles(
+  data: AppData,
+  procurementId: string,
+  positions: Calculation["positions"],
+): EstimateNormHours[] {
+  const linked = new Set(positions.map((position) => position.sourceDocumentId).filter((id): id is string => Boolean(id)));
+  const documents = data.documents.filter((document) =>
+    document.procurementId === procurementId
+    && document.storedPath
+    && (linked.size === 0 || linked.has(document.id))
+    && /\.xls[x]?$/iu.test(document.fileName),
+  );
+  const hints: EstimateNormHours[] = [];
+  for (const document of documents) {
+    const bytes = readUpload(document.storedPath!);
+    if (!bytes?.length) continue;
+    try {
+      hints.push(...readEstimateNormHours(bytes));
+    } catch {
+      // One broken workbook does not cancel the other estimates.
+    }
+  }
+  return hints;
+}
+
+function scheduleHasRealDuration(schedule: { stages: GprStage[] }): boolean {
+  return schedule.stages.some((stage) => (stage.durationDays ?? 0) > 0 && stage.start < stage.end);
 }
 
 function buildDraftStagesFromEstimate(
   positions: Calculation["positions"],
   now: string,
   period: { start: string; end: string } | null | undefined,
-  calendar: { weekendDays: number[]; shiftsPerDay: number } | undefined,
+  calendar: { weekendDays: number[]; shiftsPerDay: number; hoursPerShift?: number } | undefined,
+  hints: EstimateNormHours[],
 ): GprStage[] {
   return buildStagesFromEstimatePositions(positions, now, period, {
     weekendDays: calendar?.weekendDays ?? [],
     shiftsPerDay: calendar?.shiftsPerDay ?? 2,
+    hoursPerShift: calendar?.hoursPerShift ?? 11,
     lookups: listShiftOutputCandidates(getDb()),
+    normHours: hints,
   });
 }
 
@@ -3033,10 +3069,6 @@ function mergeEstimateRowsIntoDraft(
 /**
  * «Отправить в расчёт»: resource draft only. The schedule is a separate action.
  */
-function scheduleHasNoOutput(schedule: { stages: GprStage[] }): boolean {
-  return schedule.stages.every((stage) => !stage.durationBasis);
-}
-
 export function createProcurementSchedule(
   actorId: string,
   procurementId: string,
@@ -3056,11 +3088,12 @@ export function createProcurementSchedule(
     const logic = resolveTenderLogicSettings(data.organizations.find((org) => org.id === procurement.orgId));
     const calendar = calendarForNewSchedule(logic.shiftProfile);
     const stampAuthor = (stages: GprStage[]) => stages.map((stage) => ({ ...stage, createdBy: stage.createdBy ?? actorId }));
-    const derived = stampAuthor(buildDraftStagesFromEstimate(draft?.positions ?? [], now, period, calendar));
+    const hints = normHoursFromProcurementFiles(data, procurement.id, draft?.positions ?? []);
+    const derived = stampAuthor(buildDraftStagesFromEstimate(draft?.positions ?? [], now, period, calendar, hints));
     const existing = procurement.gprId ? data.schedules.find((item) => item.id === procurement.gprId) : undefined;
     const replaceWithOutput = existing
       && derived.length > 0
-      && (isNavigationStub(existing) || (opts?.replaceUntagged && scheduleHasNoOutput(existing)));
+      && (isNavigationStub(existing) || (opts?.replaceUntagged && !scheduleHasRealDuration(existing)));
     if (replaceWithOutput && existing) {
       existing.stages = stampAuthor(derived);
       existing.calculationId = procurement.calculationId;

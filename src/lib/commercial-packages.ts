@@ -3,8 +3,10 @@
  * Days = volume / (output per 11h shift × shifts per day × mechanisms or crews).
  * A TZ window is a deadline, never an equal slice across estimate lines.
  * GESN hours stay a hint and do not become the stage length.
- * File 4 daily norms (ОРЧ, pipe, drilling on 88-127) staff the crew and,
+ * File 4 daily norms (ОРЧ, pipe, extension) staff the crew and,
  * when the file states a daily output, set the length. They are not a price.
+ * Drilling has no daily rate in file 4. Estimate labor hours (ЗТ) then
+ * become days as hours / (11 h × shifts). A TZ window is still not sliced.
  */
 import { foldNormSearch } from "@/lib/client-norms";
 
@@ -19,6 +21,9 @@ export const GPR_UNCONFIRMED_DURATION =
 
 export const GPR_CREW_FROM_FILE4 =
   "Комплектация совпавших работ взята из эталона файла 4 (фото рабочего дня и потребность участков) и подписана источником. Это не ставка.";
+
+export const GPR_NORM_HOURS_SOURCE =
+  "Нормативные часы сметы (ЗТ), смена 11 ч. Срок ТЗ по строкам сметы не делится.";
 
 export type DurationBasis = "output_shift" | "site_daily" | "unconfirmed";
 export type SiteWorkKind = "orch" | "pipe" | "drilling" | "extension";
@@ -230,24 +235,56 @@ function emptyPlan(gesnHoursHint: number | null, note: string | null, crew: Benc
   };
 }
 
+function planFromNormHours(input: {
+  hours: number | null | undefined;
+  hoursPerShift: number;
+  shifts: number;
+  gesnHoursHint: number | null;
+  crew: BenchmarkCrewLine[];
+}): CommercialStagePlan | null {
+  const hours = input.hours ?? 0;
+  const shiftHours = input.hoursPerShift;
+  const shifts = input.shifts;
+  if (!(hours > 0) || !(shiftHours > 0) || !(shifts > 0)) return null;
+  const raw = hours / (shiftHours * shifts);
+  if (!(raw > 0) || !Number.isFinite(raw)) return null;
+  const durationDays = raw < 1 ? 1 : raw;
+  return {
+    durationBasis: "output_shift",
+    durationDays,
+    formulaVolume: durationDays * shiftHours * shifts,
+    outputPerShift11h: shiftHours,
+    dailyOutput: null,
+    statedLinks: 1,
+    statedShifts: 1,
+    mechanismCount: 1,
+    durationShifts: shifts,
+    benchmarkSource: GPR_NORM_HOURS_SOURCE,
+    benchmarkCrew: input.crew,
+    gesnHoursHint: input.gesnHoursHint,
+    note: raw < 1
+      ? "Нормативных часов меньше одной смены на звено. Этап поставлен на 1 день. Срок ТЗ по строкам сметы не делится."
+      : "Длительность = нормативные часы сметы / (часы смены × число смен). Срок ТЗ по строкам сметы не делится.",
+  };
+}
+
 export function planCommercialStage(input: {
   workName: string;
   unit: string | null;
   volume: number | null;
   shiftsPerDay: number;
+  hoursPerShift?: number;
+  /** Worker or machine hours from the estimate. Not the GESN hint. */
+  normHours?: number | null;
   lookups: ShiftOutputCandidate[];
   gesnHoursHint: number | null;
 }): CommercialStagePlan {
   const shifts = Number.isFinite(input.shiftsPerDay) && input.shiftsPerDay > 0 ? input.shiftsPerDay : 1;
+  const hoursPerShift = Number.isFinite(input.hoursPerShift) && (input.hoursPerShift ?? 0) > 0 ? input.hoursPerShift! : 11;
   const kind = matchSiteWorkKind(input.workName);
-  if (kind) {
-    const site = sitePlan(kind, input.workName, input.unit, input.volume, input.gesnHoursHint);
-    if (site) return site;
-  }
+  const site = kind ? sitePlan(kind, input.workName, input.unit, input.volume, input.gesnHoursHint) : null;
+  if (site && (site.durationDays ?? 0) > 0) return site;
   const picked = pickShiftOutput(input.workName, input.unit, input.lookups);
-  if (picked.status === "ambiguous") {
-    return emptyPlan(input.gesnHoursHint, "Несколько норм выработки, механизм или группа грунта не выбраны. Длительность не назначена.");
-  }
   if (picked.status === "unique" && input.volume != null && input.volume > 0) {
     const formulaVolume = input.volume * picked.volume;
     const durationDays = durationDaysFromOutput({
@@ -272,6 +309,18 @@ export function planCommercialStage(input: {
       note: null,
     };
   }
+  const fromHours = planFromNormHours({
+    hours: input.normHours,
+    hoursPerShift,
+    shifts,
+    gesnHoursHint: input.gesnHoursHint,
+    crew: site?.benchmarkCrew ?? [],
+  });
+  if (fromHours) return fromHours;
+  if (picked.status === "ambiguous") {
+    return emptyPlan(input.gesnHoursHint, "Несколько норм выработки, механизм или группа грунта не выбраны. Длительность не назначена.");
+  }
+  if (site) return site;
   return emptyPlan(
     input.gesnHoursHint,
     input.gesnHoursHint != null

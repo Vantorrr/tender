@@ -5,13 +5,17 @@ import {
   type ShiftOutputCandidate,
 } from "@/lib/commercial-packages";
 import { classifyDirectCostBucket, isWorkActivityName } from "@/lib/cost-engine";
+import { hoursOnPositions, lookupNormHours, type EstimateNormHours } from "@/lib/estimate-norm-hours";
 import { mergeStageResources } from "@/lib/resource-merge";
 import type { CalcPosition, GprStage, GprStageResource } from "@/lib/types";
 
 export interface CommercialStageOptions {
   weekendDays: number[];
   shiftsPerDay: number;
+  hoursPerShift?: number;
   lookups: ShiftOutputCandidate[];
+  /** ЗТ / маш.-ч read from the estimate file when the calculation rows omit them. */
+  normHours?: EstimateNormHours[];
 }
 
 /**
@@ -152,7 +156,9 @@ export function buildStagesFromEstimatePositions(
   const today = now.slice(0, 10);
   const weekendDays = options?.weekendDays ?? [];
   const shiftsPerDay = options?.shiftsPerDay ?? 2;
+  const hoursPerShift = options?.hoursPerShift && options.hoursPerShift > 0 ? options.hoursPerShift : 11;
   const lookups = options?.lookups ?? [];
+  const normHourHints = options?.normHours ?? [];
   const anchor = period?.start ?? today;
   const drafted = groups.map(({ sectionName, workName, positions: rows }, index) => {
     const stageId = `gs-est-${index + 1}`;
@@ -207,11 +213,14 @@ export function buildStagesFromEstimatePositions(
     });
 
     const resourcesMerged = mergeStageResources(resources);
+    const normHours = hoursOnPositions(rows) ?? lookupNormHours(sectionName, workName, normHourHints);
     const plan = planCommercialStage({
       workName,
       unit: physicalUnit,
       volume: physicalVolume,
       shiftsPerDay,
+      hoursPerShift,
+      normHours,
       lookups,
       gesnHoursHint: gesnHoursHint(resourcesMerged),
     });
