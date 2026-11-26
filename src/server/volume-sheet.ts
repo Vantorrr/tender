@@ -129,6 +129,7 @@ export function acceptVolumeDraft(actorId: string, calculationId: string, rows: 
       const bucket = classifyDirectCostBucket({ code: "ВОР", name: row.work, unit: row.unit });
       const resourceKind = bucket === "labor" ? "labor" as const : bucket === "materials" ? "material" as const : bucket === "equipment" ? "equipment" as const : undefined;
       const priced = {
+        costRole: "commercial" as const,
         name: row.work.trim(),
         unit: row.unit.trim(),
         quantity: row.volume,

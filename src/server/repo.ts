@@ -3,6 +3,7 @@ import type {
   AppData,
   Calculation,
   CardStatus,
+  CostSummarySnapshot,
   DailyFact,
   DocumentItem,
   GprSchedule,
@@ -34,6 +35,15 @@ import { supplyNeedKey } from "@/lib/supply-need";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
 import { buildStagesFromEstimatePositions, calendarDurationDays, datesForStage, GPR_DATES_MISSING, periodFromDocumentText } from "@/lib/estimate-stages";
 import { COMPANY_RATE_RULE, composeAnalyticalNote, dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, recognizedRowsPhrase, rowCountGenitive, rowCountNominative, scheduleAfterPredecessor, scheduleParamsWithNorthernDefaults } from "@/lib/wave23";
+import {
+  ESTIMATE_ROWS_AS_SOURCE_SHEET,
+  GPR_FROM_CUSTOMER_SECTIONS,
+  REFERENCE_REPRICE_NOT_COST,
+  buildCommitteeSnapshot,
+  isLegacyEstimateSeededCost,
+  positionFeedsOfficialCost,
+  resolveTenderLogicSettings,
+} from "@/lib/tender-logic-settings";
 import { aiAnalysisFailureStatus } from "@/lib/ai-status";
 import { buildProjectAnalytics } from "@/lib/project-analytics";
 import {
@@ -82,6 +92,7 @@ import {
 import {
   isResourceLinkedDraft,
   patchStageResource,
+  stagesForOfficialCost,
   syncDraftFromStages,
 } from "@/lib/unified-resource-sync";
 
@@ -870,6 +881,7 @@ export function addCalcPositionFromDirectory(
           : "ед.",
       quantity: input.quantity ?? 1,
       rate,
+      costRole: "commercial" as const,
       ...(rateMissing ? { rateMissing: true } : {}),
     };
     data.calculations = data.calculations.map((c) =>
@@ -2242,14 +2254,19 @@ export async function analyzeProcurementPackageWithAI(
   const documents = snapshot.documents.filter((document) => document.procurementId === procurement.id && document.storedPath);
   const deterministic = buildProjectAnalytics(procurement, documents);
   const draft = snapshot.calculations.find((item) => item.id === procurement.calculationId && item.kind === "resource_draft");
-  const missingRates = draft?.positions.filter((position) => position.rateMissing && !position.isWorkItem).length ?? 0;
-  const directCost = draft?.costSummary?.resourceSlices?.costWithOh ?? draft?.costSummary?.C0 ?? null;
-  const priceExVat = draft?.costSummary?.priceExVat ?? null;
-  const profit = draft?.costSummary?.profit ?? draft?.costSummary?.resourceSlices?.profit ?? null;
+  const legacyCost = isLegacyEstimateSeededCost(draft);
+  const officialPositions = (draft?.positions ?? []).filter((position) => legacyCost || position.costRole !== "customer_source");
+  const missingRates = officialPositions.filter((position) => position.rateMissing && !position.isWorkItem).length;
+  const pricedOfficial = officialPositions.some((position) => positionFeedsOfficialCost(position));
+  const directCost = pricedOfficial
+    ? (draft?.costSummary?.resourceSlices?.costWithOh ?? draft?.costSummary?.C0 ?? null)
+    : null;
+  const priceExVat = pricedOfficial ? (draft?.costSummary?.priceExVat ?? null) : null;
+  const profit = pricedOfficial ? (draft?.costSummary?.profit ?? draft?.costSummary?.resourceSlices?.profit ?? null) : null;
   const economics = draft ? {
     cost: directCost,
     priceExVat,
-    priceWithVat: draft.costSummary?.priceIncVat ?? null,
+    priceWithVat: pricedOfficial ? (draft.costSummary?.priceIncVat ?? null) : null,
     profit,
     profitabilityPercent: directCost != null && directCost > 0 && profit != null
       ? Math.round((profit / directCost) * 10000) / 100
@@ -2257,11 +2274,11 @@ export async function analyzeProcurementPackageWithAI(
     revenueMarginPercent: priceExVat != null && priceExVat > 0 && profit != null
       ? Math.round((profit / priceExVat) * 10000) / 100
       : null,
-    incomplete: Boolean(!draft.costSummary || draft.positions.length === 0 ||
-      draft.costSummary.totalsIncomplete || draft.costSummary.incomplete?.length || missingRates),
+    incomplete: Boolean(!pricedOfficial || !draft.costSummary || draft.costSummary.totalsIncomplete || draft.costSummary.incomplete?.length || missingRates),
     missingRates,
-    missingRateNames: draft.positions.filter((position) => position.rateMissing && !position.isWorkItem).map((position) => position.name),
+    missingRateNames: officialPositions.filter((position) => position.rateMissing && !position.isWorkItem).map((position) => position.name),
     incompleteReasons: draft.costSummary?.incomplete ?? [],
+    repriceNotCost: Boolean(draft.dataFlags?.includes(REFERENCE_REPRICE_NOT_COST)),
   } : undefined;
   const currentDirectories = snapshot.directories.filter((directory) => directory.current);
   const profile = currentDirectories.find((directory) => directory.type === "profil");
@@ -2619,19 +2636,23 @@ function buildDraftStagesFromEstimate(
 
 function mergeEstimateRowsIntoDraft(
   existing: Calculation["positions"],
-  imported: Calculation["positions"]
+  imported: Calculation["positions"],
+  opts?: { legacy?: boolean },
 ): Calculation["positions"] {
   const importedBySourceId = new Map(
     imported.filter((position) => position.sourcePositionId)
       .map((position) => [position.sourcePositionId!, position])
   );
   const refreshed = existing.map((position) => {
+    if (position.costRole === "commercial") return position;
     const source = position.sourcePositionId
       ? importedBySourceId.get(position.sourcePositionId)
       : undefined;
     if (!source) return position;
+    if (opts?.legacy && position.costRole !== "customer_source") return position;
     return {
       ...position,
+      costRole: "customer_source" as const,
       isWorkItem: source.isWorkItem ?? false,
       ...(source.isWorkItem ? { rateMissing: false } : {}),
       ...(source.resourceKind ? { resourceKind: source.resourceKind } : { resourceKind: undefined }),
@@ -2642,7 +2663,9 @@ function mergeEstimateRowsIntoDraft(
   const known = new Set(refreshed.map((position) => position.sourcePositionId).filter(Boolean));
   return [
     ...refreshed,
-    ...imported.filter((position) => !position.sourcePositionId || !known.has(position.sourcePositionId)),
+    ...imported
+      .filter((position) => !position.sourcePositionId || !known.has(position.sourcePositionId))
+      .map((position) => ({ ...position, costRole: "customer_source" as const })),
   ];
 }
 
@@ -2669,7 +2692,7 @@ export function createProcurementSchedule(actorId: string, procurementId: string
       existing.calculationId = procurement.calculationId;
       existing.updatedAt = now;
       existing.assumptions = withMissingDatesNote([
-        "Виды работ и вложенные ресурсы сгруппированы по разделам распознанной сметы. Проверьте состав строк и сопоставьте их с видами работ объекта.",
+        GPR_FROM_CUSTOMER_SECTIONS,
         "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.",
         "Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.",
       ], Boolean(period));
@@ -2720,7 +2743,7 @@ export function createProcurementSchedule(actorId: string, procurementId: string
       authorId: actorId,
       assumptions: withMissingDatesNote(derived.length
         ? [
-            "Виды работ и вложенные ресурсы сгруппированы по разделам распознанной сметы. Проверьте состав строк и сопоставьте их с видами работ объекта.",
+            GPR_FROM_CUSTOMER_SECTIONS,
             "Даты, длительность и производительность не извлечены из сметы; календарь ГПР нужно подтвердить по ТЗ и условиям объекта.",
             "Ставки ресурсов берутся только из справочника компании; неподтверждённые ставки остаются пустыми.",
           ]
@@ -2847,8 +2870,12 @@ export function sendProcurementToCalculation(
       p.originalCalculationId = oid;
     }
 
-    // Create or refresh editable resource draft
-    const positionsFromEstimate = allEstimatePositions
+    // Customer estimate is a price ceiling, not our cost. translation_table
+    // keeps a source sheet; empty_packages leaves the commercial draft empty of those rows.
+    const logic = resolveTenderLogicSettings(data.organizations.find((org) => org.id === p.orgId));
+    const positionsFromEstimate = logic.importEstimateRowsMode === "empty_packages"
+      ? []
+      : allEstimatePositions
       .filter(({ position }) =>
         Boolean(position.code && position.name && position.unit) &&
         Number.isFinite(position.quantity) &&
@@ -2865,11 +2892,12 @@ export function sendProcurementToCalculation(
         const unitCompatible = Boolean(hit);
         return {
           id: `draft-${position.id}`,
+          costRole: "customer_source" as const,
           code: position.code,
           name: position.name,
           unit: position.unit,
           quantity: position.quantity,
-          // The customer rate is never copied into our editable draft.
+          // The customer rate is never copied. A directory rate is only for the reference reprice.
           rate: unitCompatible ? hit!.rate : 0,
           rateMissing: !unitCompatible && !position.isWorkItem,
           ...(position.isWorkItem ? { isWorkItem: true } : {}),
@@ -2903,10 +2931,12 @@ export function sendProcurementToCalculation(
         positions: seedPositions,
         assumptions: [
           seedPositions.length
-            ? `Черновик заполнен ${seedPositions.length} распознанными строками из ${estimateDocsWithData.length} смет(ы). Исходные сметы сохранены отдельно и неизменны.`
-            : "Ресурсный черновик создан пустым: в документах нет распознанных строк сметы",
+            ? `Ведомость из сметы заказчика (${seedPositions.length} строк) записана отдельно от коммерческого черновика. Исходные сметы неизменны. Это не расчёт себестоимости.`
+            : logic.importEstimateRowsMode === "empty_packages" && allEstimatePositions.length
+              ? "Коммерческий черновик создан без строк сметы заказчика. Оригинал сметы и распознанные позиции сохранены."
+              : "Ресурсный черновик создан пустым: в документах нет распознанных строк сметы",
           seedPositions.length
-            ? `В черновик перенесены только код, наименование, единица и количество. ${COMPANY_RATE_RULE}; цена заказчика не копировалась.`
+            ? `В ведомость перенесены только код, наименование, единица и количество. ${COMPANY_RATE_RULE}; цена заказчика не копировалась. Ставка справочника нужна только для справочной переоценки.`
             : "Загрузите смету XLSX с позициями или добавьте ресурсы из справочников; система не будет угадывать объёмы и тарифы",
           "Проверьте состав ресурсов и каждую ставку до использования итогов",
           "Не является утверждённой нормативной сметой",
@@ -2934,7 +2964,7 @@ export function sendProcurementToCalculation(
         dataFlags: [
           "requires_manual_check",
           "no_accuracy_promise",
-          ...(seedPositions.length ? ["seeded_from_customer_estimate"] : ["awaiting_estimate_rows"]),
+          ...(seedPositions.length ? [ESTIMATE_ROWS_AS_SOURCE_SHEET] : ["awaiting_estimate_rows"]),
         ],
         ...(seedPositions.length
           ? { resourceScheduleParams: scheduleParamsWithNorthernDefaults() }
@@ -2948,12 +2978,14 @@ export function sendProcurementToCalculation(
       linked.status = "v_rabote";
       if (positionsFromEstimate.length > 0) {
         const previousCount = linked.positions.length;
-        linked.positions = mergeEstimateRowsIntoDraft(linked.positions, positionsFromEstimate);
+        linked.positions = mergeEstimateRowsIntoDraft(linked.positions, positionsFromEstimate, {
+          legacy: isLegacyEstimateSeededCost(linked),
+        });
         const addedCount = linked.positions.length - previousCount;
         if (addedCount > 0 && previousCount > 0) {
           linked.assumptions = [
             ...(linked.assumptions ?? []),
-            `Добавлено ${rowCountNominative(addedCount)} сметы заказчика; существующие ручные позиции сохранены.`,
+            `В ведомость добавлено ${rowCountNominative(addedCount)} сметы заказчика. Ручные коммерческие позиции сохранены и не смешаны с ведомостью.`,
           ];
         }
       }
@@ -2962,13 +2994,13 @@ export function sendProcurementToCalculation(
           ...(linked.assumptions ?? []).filter(
             (assumption) => !assumption.startsWith("Ресурсный черновик создан пустым:")
           ),
-          `Черновик содержит распознанные строки из ${estimateDocsWithData.length} смет(ы). Исходные сметы сохранены отдельно и неизменны.`,
-          `Для импортированных строк перенесены только код, наименование, единица и количество. ${COMPANY_RATE_RULE}; цена заказчика не копировалась.`,
+          `Ведомость из ${estimateDocsWithData.length} смет(ы) записана отдельно. Исходные сметы неизменны. Это не расчёт себестоимости.`,
+          `Для строк ведомости перенесены только код, наименование, единица и количество. ${COMPANY_RATE_RULE}; цена заказчика не копировалась.`,
           "Проверьте состав ресурсов и каждую ставку до использования итогов",
         ];
         linked.dataFlags = [
-          ...(linked.dataFlags ?? []).filter((flag) => flag !== "awaiting_estimate_rows"),
-          "seeded_from_customer_estimate",
+          ...(linked.dataFlags ?? []).filter((flag) => flag !== "awaiting_estimate_rows" && flag !== "seeded_from_customer_estimate"),
+          ESTIMATE_ROWS_AS_SOURCE_SHEET,
           "requires_manual_check",
         ];
         // Defaults belong to the first draft only. A repeat send must not
@@ -3216,6 +3248,152 @@ export function joinOrganizationByCode(input: {
   return { token, userId, orgId };
 }
 
+function markMissingCommercialCost(item: Calculation) {
+  if (isLegacyEstimateSeededCost(item)) return;
+  const priced = item.positions.some((position) => positionFeedsOfficialCost(position));
+  if (priced && item.costSummary) {
+    const customerKeys = new Set(
+      item.positions
+        .filter((position) => position.costRole === "customer_source")
+        .flatMap((position) => [position.id, position.code, position.name]),
+    );
+    item.costSummary.incomplete = item.costSummary.incomplete.filter((flag) => {
+      if (flag === "no_commercial_rows") return false;
+      const label = flag.includes(":") ? flag.slice(flag.indexOf(":") + 1) : "";
+      return !(label && customerKeys.has(label) && (flag.startsWith("rate:") || flag.startsWith("missing_rate:")));
+    });
+    const billable = item.positions.filter((position) =>
+      position.costRole !== "customer_source" && !position.isWorkItem && position.code !== "НР" && position.code !== "СП",
+    );
+    if (billable.length > 0 && billable.every((position) => !position.rateMissing)) {
+      item.costSummary.totalsIncomplete = item.costSummary.incomplete.length > 0;
+    }
+    return;
+  }
+  const at = new Date().toISOString();
+  if (!item.costSummary) {
+    item.costSummary = {
+      C0: 0,
+      C: 0,
+      reserve: 0,
+      profit: 0,
+      priceExVat: 0,
+      vatAmount: null,
+      priceIncVat: null,
+      method: "cost-engine:no-commercial-rows",
+      incomplete: ["no_commercial_rows"],
+      totalsIncomplete: true,
+      at,
+    };
+    return;
+  }
+  item.costSummary.totalsIncomplete = true;
+  if (!item.costSummary.incomplete.includes("no_commercial_rows")) {
+    item.costSummary.incomplete = [...item.costSummary.incomplete, "no_commercial_rows"];
+  }
+}
+
+function attachReferenceReprice(
+  item: Calculation,
+  data: AppData,
+  patch?: {
+    siteOverhead?: number;
+    officeOverhead?: number;
+    reserve?: number;
+    profitMethod?: "markup" | "margin";
+    profitRate?: number;
+    includeReserveInPriceBase?: boolean;
+    useResourceScheduleEconomics?: boolean;
+  },
+) {
+  const source = item.positions.filter((position) => position.costRole === "customer_source");
+  if (!source.length) {
+    delete item.referenceReprice;
+    item.dataFlags = (item.dataFlags ?? []).filter((flag) => flag !== REFERENCE_REPRICE_NOT_COST);
+    return;
+  }
+  const useRs = patch?.useResourceScheduleEconomics ?? Boolean(item.resourceScheduleParams);
+  const buckets = bucketsFromPositions(source, item.scenarioFactor || 1, { includeCustomerSource: true });
+  const northern = northernInputsForEngine(item);
+  const rs = item.resourceScheduleParams;
+  const direct = buckets.labor + buckets.materials + buckets.equipment + buckets.other;
+  const site = useRs
+    ? patch?.siteOverhead ?? Math.round(direct * (rs?.overheadRate ?? 0.43) * 100) / 100
+    : patch?.siteOverhead ?? overheadsFromWorks(buckets.labor + buckets.equipment).nr;
+  const profitRate = useRs
+    ? patch?.profitRate ?? rs?.profitMarkupOnCostWithOh ?? 0.4
+    : patch?.profitRate ?? 0.08;
+  const engine = runCostEngine({
+    directLabor: buckets.labor,
+    directMaterials: buckets.materials,
+    directEquipment: buckets.equipment,
+    directSubcontract: buckets.other,
+    logisticsIncludingBus: 0,
+    siteOverhead: site,
+    officeOverhead: 0,
+    reserve: 0,
+    profitMethod: patch?.profitMethod ?? "markup",
+    profitRate,
+    includeReserveInPriceBase: patch?.includeReserveInPriceBase ?? (useRs ? false : true),
+    vatPercent: item.vatPercent ?? null,
+    northern,
+  });
+  const linkedSchedule = data.schedules.find((schedule) => schedule.calculationId === item.id);
+  const matNeeds = buildMaterialNeeds({ positions: source, stages: linkedSchedule?.stages });
+  const incomplete = [
+    ...engine.incomplete,
+    ...source
+      .filter((position) => position.rateMissing && !position.isWorkItem)
+      .slice(0, 20)
+      .map((position) => `missing_rate:${position.code || position.id}`),
+    ...(buckets.materialsUnpriced ? ["materials_positions"] : []),
+    ...materialNeedsIncomplete(matNeeds).slice(0, 20),
+  ];
+  const summary: CostSummarySnapshot = {
+    C0: engine.C0,
+    C: engine.C,
+    reserve: engine.reserve,
+    profit: engine.profit,
+    priceExVat: engine.priceExVat,
+    vatAmount: engine.vatAmount,
+    priceIncVat: engine.priceIncVat,
+    method: `reference-reprice-not-cost+${useRs ? "resource-schedule-excel" : engine.profitMethod}`,
+    incomplete,
+    totalsIncomplete: incomplete.length > 0,
+    at: new Date().toISOString(),
+  };
+  const saved = item.costSummary;
+  item.costSummary = summary;
+  applyNorthernFold(item, buckets.labor);
+  item.referenceReprice = item.costSummary;
+  item.costSummary = saved;
+  if (item.referenceReprice && !item.referenceReprice.method.includes("reference-reprice-not-cost")) {
+    item.referenceReprice.method = `reference-reprice-not-cost+${item.referenceReprice.method}`;
+  }
+  item.dataFlags = [
+    ...(item.dataFlags ?? []).filter((flag) => flag !== REFERENCE_REPRICE_NOT_COST),
+    REFERENCE_REPRICE_NOT_COST,
+  ];
+}
+
+function assignCommitteeSnapshot(item: Calculation, data: AppData) {
+  const procurement = data.procurements.find((row) => row.id === item.procurementId);
+  const commercial = item.positions.filter((position) =>
+    position.costRole !== "customer_source" && !position.isWorkItem && position.code !== "НР" && position.code !== "СП",
+  );
+  const confirmed = Boolean(
+    item.costSummary
+    && commercial.some((position) => positionFeedsOfficialCost(position))
+    && commercial.every((position) => !position.rateMissing)
+    && item.costSummary.C0 > 0,
+  );
+  item.committeeSnapshot = buildCommitteeSnapshot({
+    nmck: procurement?.nmck,
+    officialCost: item.costSummary?.C0,
+    officialConfirmed: confirmed,
+  });
+}
+
 export function shiftGprStage(
   actorId: string,
   scheduleId: string,
@@ -3332,6 +3510,8 @@ export function shiftGprStage(
           at: new Date().toISOString(),
         };
       }
+      markMissingCommercialCost(calc);
+      assignCommitteeSnapshot(calc, data);
       calc.dataFlags = [
         ...(calc.dataFlags ?? []).filter((f) => f !== "gpr_dates_shifted"),
         "gpr_dates_shifted",
@@ -3431,11 +3611,16 @@ function applyResourceDraftAdjustments(calc: Calculation) {
   const slices = current?.resourceSlices;
   const params = calc.resourceScheduleParams;
   if (!current || !slices || !params) return;
+  // Unlinked commercial and volume rows in the «other» bucket are folded into
+  // slices.direct. Labor, materials and equipment do not cover that remainder.
+  const otherDirect = Math.round((
+    (slices.direct ?? 0) - (slices.labor ?? 0) - (slices.materials ?? 0) - (slices.equipment ?? 0)
+  ) * 100) / 100;
   const engine = runCostEngine({
     directLabor: slices.labor,
     directMaterials: slices.materials,
     directEquipment: slices.equipment,
-    directSubcontract: 0,
+    directSubcontract: otherDirect > 0 ? otherDirect : 0,
     logisticsIncludingBus: 0,
     siteOverhead: slices.overhead,
     officeOverhead: Math.max(0, calc.officeOverhead ?? 0),
@@ -3466,48 +3651,6 @@ function applyResourceDraftAdjustments(calc: Calculation) {
 
 function volumeNameKey(name: string): string {
   return name.trim().toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
-}
-
-/**
- * Volume lines already linked to a stage are in the rollup.
- * A volume line that is still only on the draft is labour, material or
- * equipment like any other row: direct cost plus overhead, once.
- */
-function foldUnlinkedVolumes(calc: Calculation): number {
-  const params = calc.resourceScheduleParams;
-  const summary = calc.costSummary;
-  if (!params || !summary) return 0;
-  const covered = new Set(calc.positions
-    .filter((position) => position.sourceResourceId)
-    .map((position) => volumeNameKey(position.name)));
-  const extra = bucketsFromPositions(calc.positions.filter((position) =>
-    position.code === "ВОР"
-    && !position.sourceResourceId
-    && !position.isWorkItem
-    && !covered.has(volumeNameKey(position.name))));
-  const direct = roundMoney(extra.labor + extra.materials + extra.equipment + extra.other);
-  if (!direct) return extra.labor;
-  const overhead = roundMoney(direct * (params.overheadRate ?? 0));
-  const added = roundMoney(direct + overhead);
-  const extraProfit = roundMoney(added * (params.profitMarkupOnCostWithOh ?? 0));
-  summary.C0 = roundMoney(summary.C0 + added);
-  summary.C = roundMoney(summary.C + added);
-  summary.profit = roundMoney((summary.profit ?? 0) + extraProfit);
-  summary.priceExVat = roundMoney((summary.priceExVat ?? 0) + added + extraProfit);
-  if (summary.resourceSlices) {
-    summary.resourceSlices = {
-      ...summary.resourceSlices,
-      labor: roundMoney((summary.resourceSlices.labor ?? 0) + extra.labor),
-      materials: roundMoney((summary.resourceSlices.materials ?? 0) + extra.materials),
-      equipment: roundMoney((summary.resourceSlices.equipment ?? 0) + extra.equipment),
-      direct: roundMoney((summary.resourceSlices.direct ?? 0) + direct),
-      overhead: roundMoney((summary.resourceSlices.overhead ?? 0) + overhead),
-      costWithOh: roundMoney((summary.resourceSlices.costWithOh ?? 0) + added),
-      profit: roundMoney((summary.resourceSlices.profit ?? 0) + extraProfit),
-      total: roundMoney((summary.resourceSlices.total ?? 0) + added + extraProfit),
-    };
-  }
-  return extra.labor;
 }
 
 export function recomputeCalculationCost(
@@ -3584,11 +3727,10 @@ export function recomputeCalculationCost(
       if (item.costSummary) item.costSummary.reserve = reserve;
       applyResourceDraftAdjustments(item);
       const stageLabor = item.costSummary?.resourceSlices?.labor ?? 0;
-      const extraLabor = foldUnlinkedVolumes(item);
-      applyNorthernFold(item, stageLabor + extraLabor);
+      applyNorthernFold(item, stageLabor);
       const matNeeds = buildMaterialNeeds({
-        positions: item.positions,
-        stages: linkedSchedule.stages,
+        positions: item.positions.filter((position) => position.costRole !== "customer_source"),
+        stages: stagesForOfficialCost(item, linkedSchedule.stages),
       });
       const extra = materialNeedsIncomplete(matNeeds).slice(0, 20);
       if (extra.length && item.costSummary) {
@@ -3597,6 +3739,9 @@ export function recomputeCalculationCost(
         ];
         item.costSummary.totalsIncomplete = true;
       }
+      markMissingCommercialCost(item);
+      attachReferenceReprice(item, data, patch);
+      assignCommitteeSnapshot(item, data);
       audit(
         data,
         actorId,
@@ -3650,13 +3795,14 @@ export function recomputeCalculationCost(
       vatPercent: item.vatPercent ?? null,
       northern,
     });
+    const officialPositions = item.positions.filter((position) => position.costRole !== "customer_source");
     const matNeeds = buildMaterialNeeds({
-      positions: item.positions,
+      positions: officialPositions,
       stages: linkedSchedule?.stages,
     });
     const incomplete = [
       ...engine.incomplete,
-      ...item.positions
+      ...officialPositions
         .filter((position) => position.rateMissing && !position.isWorkItem)
         .slice(0, 20)
         .map((position) => `missing_rate:${position.code || position.id}`),
@@ -3687,6 +3833,9 @@ export function recomputeCalculationCost(
       ...busFlags,
       ...(engine.incomplete.length ? ["requires_manual_check"] : []),
     ];
+    markMissingCommercialCost(item);
+    attachReferenceReprice(item, data, patch);
+    assignCommitteeSnapshot(item, data);
     item.changeLog = [
       ...(item.changeLog ?? []),
       {

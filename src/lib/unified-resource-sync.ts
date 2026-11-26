@@ -3,6 +3,7 @@
  * Dimensions come from shared resolveResourceDimensions (tree / export / sync).
  */
 import { roundMoney } from "@/lib/calc-math";
+import { bucketsFromPositions } from "@/lib/cost-engine";
 import {
   resolveResourceDimensions,
 } from "@/lib/resource-dimensions";
@@ -188,8 +189,10 @@ export function positionsFromStages(
   previous: CalcPosition[] = [],
   params: ResourceScheduleParams = EXCEL_RESOURCE_SCHEDULE_DEFAULTS
 ): CalcPosition[] {
+  const statement = previous.filter((position) => position.costRole === "customer_source");
+  const pool = previous.filter((position) => position.costRole !== "customer_source");
   const prevByName = new Map<string, CalcPosition[]>();
-  for (const position of previous) {
+  for (const position of pool) {
     if (position.code === "НР" || position.code === "СП") continue;
     const key = resourceNameKey(position.name);
     prevByName.set(key, [...(prevByName.get(key) ?? []), position]);
@@ -205,7 +208,7 @@ export function positionsFromStages(
       // A volume line with the same name is this resource, not a second row.
       const candidates = prevByName.get(resourceNameKey(r.name)) ?? [];
       const linkedBySource = r.sourceKey
-        ? previous.find((position) => position.id === r.sourceKey && !usedPreviousIds.has(position.id))
+        ? pool.find((position) => position.id === r.sourceKey && !usedPreviousIds.has(position.id))
         : undefined;
       const prev =
         linkedBySource ??
@@ -248,13 +251,14 @@ export function positionsFromStages(
         rateSourceDirectoryId: prev?.rateSourceDirectoryId,
         normId: prev?.normId,
         priceId: prev?.priceId,
+        ...(prev?.costRole ? { costRole: prev.costRole } : prev ? {} : { costRole: "commercial" as const }),
       });
     }
   }
   // Keep cost-draft positions that are not linked to a GPR resource. The
   // customer's immutable estimate is a separate Calculation and never enters
   // this sync. Old generated positions are recognized by their legacy id.
-  const manual = previous.filter(
+  const manual = pool.filter(
     (position) =>
       position.code !== "НР" &&
       position.code !== "СП" &&
@@ -262,7 +266,7 @@ export function positionsFromStages(
       !position.id.startsWith("urp-") &&
       !usedPreviousIds.has(position.id)
   );
-  return [...out, ...manual];
+  return [...out, ...manual, ...statement];
 }
 
 export function applyRollupToCostSummary(
@@ -309,6 +313,22 @@ export function applyRollupToCostSummary(
   };
 }
 
+/**
+ * Stage resources built from customer-source rows do not enter the official
+ * cost rollup. A legacy seeded draft keeps the previous path.
+ */
+export function stagesForOfficialCost(calc: Calculation, stages: GprStage[]): GprStage[] {
+  if ((calc.dataFlags ?? []).includes("legacy_estimate_seeded_cost")) return stages;
+  const blocked = new Set(
+    calc.positions.filter((position) => position.costRole === "customer_source").map((position) => position.id),
+  );
+  if (blocked.size === 0) return stages;
+  return stages.map((stage) => ({
+    ...stage,
+    resources: (stage.resources ?? []).filter((resource) => !resource.sourceKey || !blocked.has(resource.sourceKey)),
+  }));
+}
+
 export function syncDraftFromStages(
   calc: Calculation,
   stages: GprStage[],
@@ -319,12 +339,16 @@ export function syncDraftFromStages(
   rollup: ResourceScheduleResult;
 } {
   const params = calc.resourceScheduleParams ?? EXCEL_RESOURCE_SCHEDULE_DEFAULTS;
-  const build = stagesToResourceLines(stages, params);
+  const officialStages = stagesForOfficialCost(calc, stages);
+  const build = stagesToResourceLines(officialStages, params);
   const replacePositions =
     opts?.replacePositions ?? isResourceLinkedDraft(calc);
   const positions = replacePositions
-    ? positionsFromStages(stages, calc.positions, params)
+    ? positionsFromStages(officialStages, calc.positions, params)
     : calc.positions;
+  const statementOnly = officialStages.every((stage) => (stage.resources ?? []).length === 0)
+    && calc.positions.some((position) => position.costRole === "customer_source")
+    && !(calc.dataFlags ?? []).includes("legacy_estimate_seeded_cost");
   const rollup = rollupResourceSchedule({
     params,
     lines: build.lines,
@@ -345,11 +369,28 @@ export function syncDraftFromStages(
         return s + h;
       }, 0)
   );
+  const summary = applyRollupToCostSummary(rollup, incomplete, knownHours);
+  foldUnlinkedCommercial(positions, params, summary);
+  const pricedOfficial = positions.some((position) =>
+    position.costRole !== "customer_source"
+    && !position.isWorkItem
+    && position.code !== "НР"
+    && position.code !== "СП"
+    && !position.rateMissing
+    && position.rate > 0
+    && position.quantity !== 0
+  );
+  if (statementOnly && !pricedOfficial) {
+    summary.totalsIncomplete = true;
+    if (!summary.incomplete.includes("no_commercial_rows")) {
+      summary.incomplete = [...summary.incomplete, "no_commercial_rows"];
+    }
+  }
   const next: Calculation = {
     ...calc,
     positions,
     resourceScheduleParams: params,
-    costSummary: applyRollupToCostSummary(rollup, incomplete, knownHours),
+    costSummary: summary,
     dataFlags: replacePositions
       ? [
           ...(calc.dataFlags ?? []).filter(
@@ -363,6 +404,49 @@ export function syncDraftFromStages(
     updatedAt: new Date().toISOString(),
   };
   return { calc: next, build, rollup };
+}
+
+/**
+ * Commercial and volume-sheet rows that are not stage resources still belong
+ * in the official total. Customer-source rows stay out.
+ */
+function foldUnlinkedCommercial(
+  positions: CalcPosition[],
+  params: ResourceScheduleParams,
+  summary: CostSummarySnapshot,
+): void {
+  const covered = new Set(
+    positions.filter((position) => position.sourceResourceId).map((position) => resourceNameKey(position.name)),
+  );
+  const extra = bucketsFromPositions(positions.filter((position) =>
+    !position.sourceResourceId
+    && !position.isWorkItem
+    && position.costRole !== "customer_source"
+    && (position.code === "ВОР" || position.costRole === "commercial")
+    && !covered.has(resourceNameKey(position.name))
+  ));
+  const direct = roundMoney(extra.labor + extra.materials + extra.equipment + extra.other);
+  if (!direct) return;
+  const overhead = roundMoney(direct * (params.overheadRate ?? 0));
+  const added = roundMoney(direct + overhead);
+  const extraProfit = roundMoney(added * (params.profitMarkupOnCostWithOh ?? 0));
+  summary.C0 = roundMoney(summary.C0 + added);
+  summary.C = roundMoney(summary.C + added);
+  summary.profit = roundMoney((summary.profit ?? 0) + extraProfit);
+  summary.priceExVat = roundMoney((summary.priceExVat ?? 0) + added + extraProfit);
+  if (summary.resourceSlices) {
+    summary.resourceSlices = {
+      ...summary.resourceSlices,
+      labor: roundMoney((summary.resourceSlices.labor ?? 0) + extra.labor),
+      materials: roundMoney((summary.resourceSlices.materials ?? 0) + extra.materials),
+      equipment: roundMoney((summary.resourceSlices.equipment ?? 0) + extra.equipment),
+      direct: roundMoney((summary.resourceSlices.direct ?? 0) + direct),
+      overhead: roundMoney((summary.resourceSlices.overhead ?? 0) + overhead),
+      costWithOh: roundMoney((summary.resourceSlices.costWithOh ?? 0) + added),
+      profit: roundMoney((summary.resourceSlices.profit ?? 0) + extraProfit),
+      total: roundMoney((summary.resourceSlices.total ?? 0) + added + extraProfit),
+    };
+  }
 }
 
 export function patchStageResource(

@@ -389,7 +389,8 @@ export function missingRatesInBucket(
 /** Split calc positions into cost buckets without double-counting НР/СП rows. */
 export function bucketsFromPositions(
   positions: CalcPosition[],
-  factor = 1
+  factor = 1,
+  opts?: { includeCustomerSource?: boolean },
 ): {
   labor: number;
   materials: number;
@@ -406,6 +407,7 @@ export function bucketsFromPositions(
   let other = 0;
   let hasMaterialPositions = false;
   for (const p of positions) {
+    if (!opts?.includeCustomerSource && p.costRole === "customer_source") continue;
     if (p.code === "НР" || p.code === "СП" || p.isWorkItem) continue;
     const bucket = positionCostBucket(p);
     if (bucket === "materials") hasMaterialPositions = true;

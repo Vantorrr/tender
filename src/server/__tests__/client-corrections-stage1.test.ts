@@ -228,6 +228,7 @@ describe("client corrections stage 1", () => {
       sourceRows: 2,
       matchedRates: 1,
       missingRates: 1,
+      note: "matchedRates — сколько строк ведомости получило ставку справочника для справочной переоценки. Это не готовая себестоимость.",
     });
     const after = readAppData();
     const updatedProcurement = after.procurements.find((item) => item.id === procurement.id)!;
@@ -258,12 +259,16 @@ describe("client corrections stage 1", () => {
       sourceDocumentId: doc.documentId,
     });
     expect(draft.assumptions.join(" ")).toMatch(/цена заказчика не копировалась/i);
-    expect(draft.dataFlags).toContain("seeded_from_customer_estimate");
+    expect(draft.assumptions.join(" ")).not.toMatch(/черновик заполнен/i);
+    expect(draft.dataFlags).toContain("estimate_rows_as_source_sheet");
+    expect(draft.positions.every((position) => position.costRole === "customer_source")).toBe(true);
+    expect(rockDraftPosition.rate).not.toBe(900);
     expect(draft.resourceScheduleParams?.overheadRate).toBe(0.43);
     expect(draft.resourceScheduleParams?.profitMarkupOnCostWithOh).toBe(0.4);
-    expect(draft.costSummary?.priceExVat).toBeGreaterThan(0);
-    expect(draft.costSummary?.totalsIncomplete).toBe(true);
-    expect(draft.costSummary?.incomplete).toContain("rate:Арматура");
+    expect(draft.referenceReprice?.priceExVat).toBeGreaterThan(0);
+    expect(draft.referenceReprice?.totalsIncomplete).toBe(true);
+    expect(draft.referenceReprice?.incomplete).toContain("rate:Арматура");
+    expect(draft.costSummary?.C0 ?? 0).not.toBe(draft.referenceReprice?.C0);
     expect(schedule.stages.map((stage) => stage.name)).toEqual([
       "Раздел 1. Земляные работы",
       "Раздел 2. Монтаж конструкций",
@@ -278,7 +283,8 @@ describe("client corrections stage 1", () => {
     recomputeCalculationCost("u-smet", draft.id, { vatPercent: 20, useResourceScheduleEconomics: true });
     const recalculated = readAppData().calculations.find((item) => item.id === draft.id)!;
     expect(recalculated.vatPercent).toBe(20);
-    expect(recalculated.costSummary?.priceIncVat).toBeCloseTo((recalculated.costSummary?.priceExVat ?? 0) * 1.2, 2);
+    expect(recalculated.referenceReprice?.priceIncVat).toBeCloseTo((recalculated.referenceReprice?.priceExVat ?? 0) * 1.2, 2);
+    expect(recalculated.costSummary?.C0 ?? 0).not.toBeCloseTo(recalculated.referenceReprice?.C0 ?? -1, 2);
   });
 
   it("turns a text-layer estimate PDF into resource draft rows and GPR stages", () => {

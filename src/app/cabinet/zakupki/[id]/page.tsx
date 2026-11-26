@@ -26,6 +26,7 @@ import { formatDate, formatDateTime, formatMoney, formatNumber, formatQuantity, 
 import { citationTopicLabel, isShownConfirmation, readableCitations, regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
 import { SUMMARY_FRESH, SUMMARY_UNCHANGED } from "@/lib/summary-notice";
 import { calcMemoState, citationHref, costIsPartial, costIsUncalculated, draftCostPhrase, honestReadinessText, matchDirectorySuppliers, moneyRu, rowCountNominative } from "@/lib/wave23";
+import { COMMITTEE_UNSET, buildCommitteeSnapshot, committeeValueText, positionFeedsOfficialCost } from "@/lib/tender-logic-settings";
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_CHECKLIST } from "@/lib/ai-topics";
 import { buildProjectAnalytics, filledOverviewBlocks, PARTICIPATE_LABELS, visibleCheckItems } from "@/lib/project-analytics";
@@ -855,11 +856,11 @@ export default function ZakupkaDetailPage() {
                     const summary = await sendToCalculation(procurement.id);
                     if (summary.sourceRows > 0 && summary.missingRates > 0) {
                       toast.warning(
-                        `Черновик создан из «${summary.sourceFile}»: ${rowCountNominative(summary.sourceRows)}, ставок найдено ${summary.matchedRates}, без ставки ${summary.missingRates}. Проверьте неполные позиции.`
+                        `Ведомость из «${summary.sourceFile}»: ${rowCountNominative(summary.sourceRows)}. Ставок справочника для переоценки: ${summary.matchedRates}, без ставки: ${summary.missingRates}. Это не себестоимость.`
                       );
                     } else if (summary.sourceRows > 0) {
                       toast.success(
-                        `Черновик создан из «${summary.sourceFile}»: ${rowCountNominative(summary.sourceRows)}, ставки сопоставлены по коду и единице.`
+                        `Ведомость из «${summary.sourceFile}»: ${rowCountNominative(summary.sourceRows)}. Сопоставленные ставки относятся к справочной переоценке, это не себестоимость.`
                       );
                     } else {
                       toast.warning(
@@ -875,7 +876,7 @@ export default function ZakupkaDetailPage() {
                 }
               }}
             >
-              Сформировать расчёт (расчёт по формулам, без ИИ)
+              Отправить в расчёт
             </Button>
             {canGpr ? <Button
               variant="outline"
@@ -1511,9 +1512,11 @@ export default function ZakupkaDetailPage() {
                         const cost = memoState ? memoState.cost : (analytics.economics?.cost ?? null);
                         const partial = costIsPartial(cost, missingRates);
                         const uncalculated = costIsUncalculated(cost, missingRates);
-                        const shown = label === "Себестоимость" && (uncalculated || partial || cost === 0)
+                        const shown = !filled
+                          ? "Расчёт не заполнен"
+                          : label === "Себестоимость" && (cost == null || uncalculated || partial || cost === 0)
                           ? draftCostPhrase(cost, missingRates)
-                          : uncalculated
+                          : uncalculated || (memoState && cost == null)
                             ? "не рассчитана"
                             : !filled || value == null
                               ? "Расчёт не заполнен"
@@ -1696,7 +1699,7 @@ export default function ZakupkaDetailPage() {
               </Link>
             ) : (
               <p className="text-sm text-[var(--tk-muted)]">
-                Черновика нет — нажмите «Сформировать расчёт (расчёт по формулам, без ИИ)».
+                Черновика нет — нажмите «Отправить в расчёт». Смета заказчика сама по себе себестоимостью не становится.
               </p>
             )}
             {original ? (
@@ -1705,8 +1708,51 @@ export default function ZakupkaDetailPage() {
                   className="text-[var(--tk-copper-deep)] underline"
                   href={`/cabinet/raschety/${original.id}`}
                 >
-                  Оригинал сметы (только чтение)
+                  Оригинал сметы
                 </Link>
+                <p className="mt-1 text-xs text-[var(--tk-muted)]">Ориентир цены / НМЦК. Это не себестоимость компании.</p>
+              </div>
+            ) : null}
+            {calc ? (
+              <div className="grid gap-2 sm:grid-cols-4" data-testid="procurement-committee-frame">
+                {(() => {
+                  const commercial = calc.positions.filter((position) => position.costRole !== "customer_source" && !position.isWorkItem && position.code !== "НР" && position.code !== "СП");
+                  const confirmed = Boolean(
+                    calc.costSummary
+                    && commercial.some((position) => positionFeedsOfficialCost(position))
+                    && commercial.every((position) => !position.rateMissing)
+                    && calc.costSummary.C0 > 0,
+                  );
+                  const frame = calc.committeeSnapshot ?? buildCommitteeSnapshot({
+                    nmck: procurement.nmck,
+                    officialCost: calc.costSummary?.C0,
+                    officialConfirmed: confirmed,
+                  });
+                  const policy = data.organizations.find((org) => org.id === user?.orgId)?.tenderLogic?.nmckAtOrBelowCostPolicy ?? "warn";
+                  const cells: Array<[string, string]> = [
+                    ["НМЦК", frame.nmck == null ? COMMITTEE_UNSET : formatMoney(frame.nmck)],
+                    ["Полная себестоимость", committeeValueText(frame.fullCost, true)],
+                    ["Целевая маржа", COMMITTEE_UNSET],
+                    ["Дно", COMMITTEE_UNSET],
+                  ];
+                  return (
+                    <>
+                      {cells.map(([label, value]) => (
+                        <div key={label} className="rounded-lg border border-[var(--tk-line)] bg-stone-50 p-3">
+                          <div className="text-xs text-[var(--tk-muted)]">{label}</div>
+                          <div className="mt-1 text-sm font-semibold">{value}</div>
+                        </div>
+                      ))}
+                      {frame.nmckVsCost === "at_or_below_cost" ? (
+                        <p className="sm:col-span-4 text-sm text-amber-950">
+                          {policy === "block"
+                            ? "НМЦК не выше полной себестоимости. Политика компании — не продолжать подачу. Решение об участии само не меняется."
+                            : "НМЦК не выше полной себестоимости. Это предупреждение. Решение об участии само не меняется."}
+                        </p>
+                      ) : null}
+                    </>
+                  );
+                })()}
               </div>
             ) : null}
           </div>

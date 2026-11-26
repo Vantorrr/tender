@@ -48,6 +48,8 @@ type CalculationSummary = {
   sourceRows: number;
   matchedRates: number;
   missingRates: number;
+  /** Directory matches on the customer statement. Not a finished cost. */
+  note?: string;
 };
 
 interface StoreContextValue {

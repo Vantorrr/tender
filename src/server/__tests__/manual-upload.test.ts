@@ -185,7 +185,8 @@ describe("manual procurement file upload", () => {
     expect(sawPositions.every((position) => position.rateMissing)).toBe(true);
     const tree = buildHierarchicalEstimate({ stages: schedule.stages, positions: draft.positions, params: draft.resourceScheduleParams });
     expect(tree.some((node) => node.id === "_unbound")).toBe(false);
-    expect(tree.some((node) => node.groups.some((group) => group.leaves.some((leaf) => leaf.name === saw?.name)))).toBe(true);
+    expect(sawPositions.every((position) => position.costRole === "customer_source")).toBe(true);
+    expect(tree.some((node) => node.groups.some((group) => group.leaves.some((leaf) => leaf.name === saw?.name)))).toBe(false);
     const displayedLeaves = tree.flatMap((node) => node.groups.flatMap((group) => group.leaves));
     expect(displayedLeaves.every((leaf) => !/^(?:ЕНИР|ФЕР|ТЕР|ГЭСН)/iu.test(leaf.name))).toBe(true);
 

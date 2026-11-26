@@ -130,7 +130,9 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
   ws.getRow(1).font = { bold: true };
 
   const factor = calc.scenarioFactor || 1;
+  const statementRows = calc.positions.filter((position) => position.costRole === "customer_source");
   for (const p of calc.positions) {
+    if (p.costRole === "customer_source") continue;
     if (p.isWorkItem && calc.kind !== "customer_original") {
       ws.addRow({
         code: visiblePositionCode(p.code),
@@ -204,13 +206,22 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
     const totals = calc.kind === "customer_original" || calc.immutable
       ? sourceEstimateTotals(calc.positions)
       : calculationTotals(calc);
+    const officialUnpriced = Boolean(calc.costSummary?.totalsIncomplete) && !(totals.total > 0);
     ws.addRow({
       code: "Итого",
       name:
         calc.kind === "customer_original" || calc.immutable
           ? "Итого исходной сметы"
-          : "Итого",
-      sum: totals.total,
+          : officialUnpriced
+            ? "Итого не рассчитано: нет коммерческих строк со ставками"
+            : "Итого",
+      sum: officialUnpriced ? null : totals.total,
+    });
+  }
+  if (statementRows.length) {
+    ws.addRow({
+      code: "Ведомость",
+      name: "Строки сметы заказчика вынесены на лист «Ведомость из сметы» и не входят в официальный итог.",
     });
   }
   ws.addRow({
@@ -230,6 +241,31 @@ export async function buildCalculationXlsx(calcId: string): Promise<Buffer> {
   ws.addRow({ code: "Версия расчёта", name: String(calc.version ?? 1) });
 
   formatWorksheet(ws, { currencyColumns: [5, 6], numberColumns: [4] });
+
+  if (statementRows.length) {
+    const statement = wb.addWorksheet("Ведомость из сметы");
+    statement.addRow(["Код", "Наименование", "Ед.", "Кол-во", "Ставка справочника для переоценки"]);
+    for (const position of statementRows) {
+      statement.addRow([
+        position.code,
+        position.name,
+        position.unit,
+        position.quantity,
+        position.rateMissing ? "нет ставки" : position.rate,
+      ]);
+    }
+    statement.addRow([]);
+    statement.addRow(["Пояснение", "Ведомость к перекладке. Ставка заказчика не копировалась. Сумма этих строк не является официальным итогом."]);
+    formatWorksheet(statement, { numberColumns: [4] });
+  }
+  if (calc.referenceReprice) {
+    const reprice = wb.addWorksheet("Справочная переоценка");
+    reprice.addRow(["Пояснение", "Справочная переоценка ресурсов сметы заказчика по ставкам компании. Это не черновая себестоимость."]);
+    reprice.addRow(["Прямые с накладными", calc.referenceReprice.C0]);
+    reprice.addRow(["Цена без НДС", calc.referenceReprice.priceExVat]);
+    reprice.addRow(["Полнота", calc.referenceReprice.totalsIncomplete ? "итог неполный" : "ставки ведомости найдены"]);
+    formatWorksheet(reprice);
+  }
 
   const linkedSchedules = data.schedules.filter((schedule) => schedule.calculationId === calc.id);
   const resources = wb.addWorksheet("Ресурсный состав");

@@ -50,7 +50,7 @@ export function compareCalculations(
   if (!draft) notes.push("Собственный черновик отсутствует");
 
   const originalPositions = (original?.positions ?? []).filter((p) => p.code !== "НР" && p.code !== "СП" && !p.isWorkItem);
-  const draftPositions = (draft?.positions ?? []).filter((p) => p.code !== "НР" && p.code !== "СП" && !p.isWorkItem);
+  const draftPositions = (draft?.positions ?? []).filter((p) => p.code !== "НР" && p.code !== "СП" && !p.isWorkItem && p.costRole !== "customer_source");
   const usedOriginal = new Set<number>();
   const usedDraft = new Set<number>();
   const pairs: Array<{ original?: CalcPosition; draft?: CalcPosition; method?: "code" | "name" }> = [];
@@ -188,7 +188,7 @@ export function compareCalculations(
   }
 
   const originalHasMissingRates = Boolean(original?.positions.some((position) => position.rateMissing && !position.isWorkItem));
-  const draftHasMissingRates = Boolean(draft?.positions.some((position) => position.rateMissing && !position.isWorkItem));
+  const draftHasMissingRates = Boolean(draft?.positions.some((position) => position.costRole !== "customer_source" && position.rateMissing && !position.isWorkItem));
   const oTot = original && !originalHasMissingRates ? sourceEstimateTotals(original.positions) : null;
   const dTot = draft && !draftHasMissingRates ? calculationTotals(draft) : null;
   if (originalHasMissingRates || draftHasMissingRates) {
@@ -206,4 +206,18 @@ export function compareCalculations(
     },
     notes,
   };
+}
+
+/** Row compare of the immutable customer estimate against the reference reprice sheet. Not a cost compare. */
+export function compareOriginalToReferenceReprice(
+  original: Calculation | null | undefined,
+  draft: Calculation | null | undefined,
+) {
+  const source = (draft?.positions ?? [])
+    .filter((position) => position.costRole === "customer_source")
+    .map((position) => ({ ...position, costRole: undefined }));
+  if (!draft || source.length === 0) return null;
+  const report = compareCalculations(original, { ...draft, positions: source });
+  report.notes.unshift("Сравнение оригинала сметы со справочной переоценкой по ставкам компании. Это не сравнение с себестоимостью.");
+  return report;
 }
