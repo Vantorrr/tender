@@ -1,0 +1,1985 @@
+{
+  "id": "03-kalkulyator-t-km-tehnika",
+  "title": "Калькулятор стоимости т·км и часа техники",
+  "source": {
+    "localCopy": "client-files/03-kalkulyator-t-km-tehnika.xlsx",
+    "creator": "User GMK NN",
+    "lastModifiedBy": "Репин Денис Викторович",
+    "created": "2016-11-18T02:38:43",
+    "modified": "2025-07-22T10:29:23",
+    "sheets": [
+      "Cognos_Office_Connection_Cache",
+      "Лист3"
+    ]
+  },
+  "sheets": [
+    {
+      "name": "Cognos_Office_Connection_Cache",
+      "dimensions": "A1:A1",
+      "maxRow": 1,
+      "maxCol": 1,
+      "merged": [],
+      "cells": []
+    },
+    {
+      "name": "Лист3",
+      "dimensions": "A1:G42",
+      "maxRow": 42,
+      "maxCol": 7,
+      "merged": [
+        "A4:B4",
+        "A2:B2",
+        "A7:B7",
+        "A5:B5",
+        "A1:B1"
+      ],
+      "cells": [
+        {
+          "addr": "A1",
+          "row": 1,
+          "col": 1,
+          "value": "Показатель"
+        },
+        {
+          "addr": "C1",
+          "row": 1,
+          "col": 3,
+          "value": "Максимальный тоннаж перевозки"
+        },
+        {
+          "addr": "D1",
+          "row": 1,
+          "col": 4,
+          "value": "Коэфициент загрузки"
+        },
+        {
+          "addr": "E1",
+          "row": 1,
+          "col": 5,
+          "value": "Итог "
+        },
+        {
+          "addr": "A2",
+          "row": 2,
+          "col": 1,
+          "value": "Грузоподъемность"
+        },
+        {
+          "addr": "C2",
+          "row": 2,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D2",
+          "row": 2,
+          "col": 4,
+          "value": 0.9
+        },
+        {
+          "addr": "E2",
+          "row": 2,
+          "col": 5,
+          "formula": "=C2*D2",
+          "computed": 27
+        },
+        {
+          "addr": "A4",
+          "row": 4,
+          "col": 1,
+          "value": "Показатель"
+        },
+        {
+          "addr": "C4",
+          "row": 4,
+          "col": 3,
+          "value": "Тариф"
+        },
+        {
+          "addr": "D4",
+          "row": 4,
+          "col": 4,
+          "value": "НР"
+        },
+        {
+          "addr": "E4",
+          "row": 4,
+          "col": 5,
+          "value": "Прибыль"
+        },
+        {
+          "addr": "F4",
+          "row": 4,
+          "col": 6,
+          "value": "Итог "
+        },
+        {
+          "addr": "A5",
+          "row": 5,
+          "col": 1,
+          "value": "Стоимость часа техники"
+        },
+        {
+          "addr": "C5",
+          "row": 5,
+          "col": 3,
+          "value": 2878.571428571429
+        },
+        {
+          "addr": "D5",
+          "row": 5,
+          "col": 4,
+          "value": 0.4
+        },
+        {
+          "addr": "E5",
+          "row": 5,
+          "col": 5,
+          "value": 0.2
+        },
+        {
+          "addr": "F5",
+          "row": 5,
+          "col": 6,
+          "formula": "=C5+C5*D5+(C5+D5)*E5",
+          "computed": 4605.794285714286
+        },
+        {
+          "addr": "A7",
+          "row": 7,
+          "col": 1,
+          "value": "Колличество рабочих часов в смену"
+        },
+        {
+          "addr": "C7",
+          "row": 7,
+          "col": 3,
+          "value": 11
+        },
+        {
+          "addr": "A9",
+          "row": 9,
+          "col": 1,
+          "value": "Плечо, км"
+        },
+        {
+          "addr": "B9",
+          "row": 9,
+          "col": 2,
+          "value": "Кол-во рейсов в смену"
+        },
+        {
+          "addr": "C9",
+          "row": 9,
+          "col": 3,
+          "value": "Средняя скорость, км/ч"
+        },
+        {
+          "addr": "D9",
+          "row": 9,
+          "col": 4,
+          "value": "Погрузка, мин."
+        },
+        {
+          "addr": "E9",
+          "row": 9,
+          "col": 5,
+          "value": "Разгрузка, мин."
+        },
+        {
+          "addr": "F9",
+          "row": 9,
+          "col": 6,
+          "value": "Тонн в смену"
+        },
+        {
+          "addr": "G9",
+          "row": 9,
+          "col": 7,
+          "value": "Стоимость т*км."
+        },
+        {
+          "addr": "A10",
+          "row": 10,
+          "col": 1,
+          "value": 1
+        },
+        {
+          "addr": "B10",
+          "row": 10,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A10/C10)+D10/60+E10/60)),0)",
+          "computed": 36
+        },
+        {
+          "addr": "C10",
+          "row": 10,
+          "col": 3,
+          "value": 20
+        },
+        {
+          "addr": "D10",
+          "row": 10,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E10",
+          "row": 10,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F10",
+          "row": 10,
+          "col": 6,
+          "formula": "=$E$2*B10",
+          "computed": 972
+        },
+        {
+          "addr": "G10",
+          "row": 10,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F10/A10,2)",
+          "computed": 52.129999999999995
+        },
+        {
+          "addr": "A11",
+          "row": 11,
+          "col": 1,
+          "value": 2
+        },
+        {
+          "addr": "B11",
+          "row": 11,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A11/C11)+D11/60+E11/60)),0)",
+          "computed": 27
+        },
+        {
+          "addr": "C11",
+          "row": 11,
+          "col": 3,
+          "value": 20
+        },
+        {
+          "addr": "D11",
+          "row": 11,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E11",
+          "row": 11,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F11",
+          "row": 11,
+          "col": 6,
+          "formula": "=$E$2*B11",
+          "computed": 729
+        },
+        {
+          "addr": "G11",
+          "row": 11,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F11/A11,2)",
+          "computed": 34.75
+        },
+        {
+          "addr": "A12",
+          "row": 12,
+          "col": 1,
+          "value": 3
+        },
+        {
+          "addr": "B12",
+          "row": 12,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A12/C12)+D12/60+E12/60)),0)",
+          "computed": 27
+        },
+        {
+          "addr": "C12",
+          "row": 12,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D12",
+          "row": 12,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E12",
+          "row": 12,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F12",
+          "row": 12,
+          "col": 6,
+          "formula": "=$E$2*B12",
+          "computed": 729
+        },
+        {
+          "addr": "G12",
+          "row": 12,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F12/A12,2)",
+          "computed": 23.17
+        },
+        {
+          "addr": "A13",
+          "row": 13,
+          "col": 1,
+          "value": 4
+        },
+        {
+          "addr": "B13",
+          "row": 13,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A13/C13)+D13/60+E13/60)),0)",
+          "computed": 23
+        },
+        {
+          "addr": "C13",
+          "row": 13,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D13",
+          "row": 13,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E13",
+          "row": 13,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F13",
+          "row": 13,
+          "col": 6,
+          "formula": "=$E$2*B13",
+          "computed": 621
+        },
+        {
+          "addr": "G13",
+          "row": 13,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F13/A13,2)",
+          "computed": 20.400000000000002
+        },
+        {
+          "addr": "A14",
+          "row": 14,
+          "col": 1,
+          "value": 5
+        },
+        {
+          "addr": "B14",
+          "row": 14,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A14/C14)+D14/60+E14/60)),0)",
+          "computed": 20
+        },
+        {
+          "addr": "C14",
+          "row": 14,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D14",
+          "row": 14,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E14",
+          "row": 14,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F14",
+          "row": 14,
+          "col": 6,
+          "formula": "=$E$2*B14",
+          "computed": 540
+        },
+        {
+          "addr": "G14",
+          "row": 14,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F14/A14,2)",
+          "computed": 18.770000000000003
+        },
+        {
+          "addr": "A15",
+          "row": 15,
+          "col": 1,
+          "value": 6
+        },
+        {
+          "addr": "B15",
+          "row": 15,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A15/C15)+D15/60+E15/60)),0)",
+          "computed": 18
+        },
+        {
+          "addr": "C15",
+          "row": 15,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D15",
+          "row": 15,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E15",
+          "row": 15,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F15",
+          "row": 15,
+          "col": 6,
+          "formula": "=$E$2*B15",
+          "computed": 486
+        },
+        {
+          "addr": "G15",
+          "row": 15,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F15/A15,2)",
+          "computed": 17.380000000000003
+        },
+        {
+          "addr": "A16",
+          "row": 16,
+          "col": 1,
+          "value": 7
+        },
+        {
+          "addr": "B16",
+          "row": 16,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A16/C16)+D16/60+E16/60)),0)",
+          "computed": 16
+        },
+        {
+          "addr": "C16",
+          "row": 16,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D16",
+          "row": 16,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E16",
+          "row": 16,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F16",
+          "row": 16,
+          "col": 6,
+          "formula": "=$E$2*B16",
+          "computed": 432
+        },
+        {
+          "addr": "G16",
+          "row": 16,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F16/A16,2)",
+          "computed": 16.76
+        },
+        {
+          "addr": "A17",
+          "row": 17,
+          "col": 1,
+          "value": 8
+        },
+        {
+          "addr": "B17",
+          "row": 17,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A17/C17)+D17/60+E17/60)),0)",
+          "computed": 15
+        },
+        {
+          "addr": "C17",
+          "row": 17,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D17",
+          "row": 17,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E17",
+          "row": 17,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F17",
+          "row": 17,
+          "col": 6,
+          "formula": "=$E$2*B17",
+          "computed": 405
+        },
+        {
+          "addr": "G17",
+          "row": 17,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F17/A17,2)",
+          "computed": 15.64
+        },
+        {
+          "addr": "A18",
+          "row": 18,
+          "col": 1,
+          "value": 9
+        },
+        {
+          "addr": "B18",
+          "row": 18,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A18/C18)+D18/60+E18/60)),0)",
+          "computed": 13
+        },
+        {
+          "addr": "C18",
+          "row": 18,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D18",
+          "row": 18,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E18",
+          "row": 18,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F18",
+          "row": 18,
+          "col": 6,
+          "formula": "=$E$2*B18",
+          "computed": 351
+        },
+        {
+          "addr": "G18",
+          "row": 18,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F18/A18,2)",
+          "computed": 16.040000000000003
+        },
+        {
+          "addr": "A19",
+          "row": 19,
+          "col": 1,
+          "value": 10
+        },
+        {
+          "addr": "B19",
+          "row": 19,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A19/C19)+D19/60+E19/60)),0)",
+          "computed": 12
+        },
+        {
+          "addr": "C19",
+          "row": 19,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D19",
+          "row": 19,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E19",
+          "row": 19,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F19",
+          "row": 19,
+          "col": 6,
+          "formula": "=$E$2*B19",
+          "computed": 324
+        },
+        {
+          "addr": "G19",
+          "row": 19,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F19/A19,2)",
+          "computed": 15.64
+        },
+        {
+          "addr": "A20",
+          "row": 20,
+          "col": 1,
+          "value": 11
+        },
+        {
+          "addr": "B20",
+          "row": 20,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A20/C20)+D20/60+E20/60)),0)",
+          "computed": 11
+        },
+        {
+          "addr": "C20",
+          "row": 20,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D20",
+          "row": 20,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E20",
+          "row": 20,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F20",
+          "row": 20,
+          "col": 6,
+          "formula": "=$E$2*B20",
+          "computed": 297
+        },
+        {
+          "addr": "G20",
+          "row": 20,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F20/A20,2)",
+          "computed": 15.51
+        },
+        {
+          "addr": "A21",
+          "row": 21,
+          "col": 1,
+          "value": 12
+        },
+        {
+          "addr": "B21",
+          "row": 21,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A21/C21)+D21/60+E21/60)),0)",
+          "computed": 11
+        },
+        {
+          "addr": "C21",
+          "row": 21,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D21",
+          "row": 21,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E21",
+          "row": 21,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F21",
+          "row": 21,
+          "col": 6,
+          "formula": "=$E$2*B21",
+          "computed": 297
+        },
+        {
+          "addr": "G21",
+          "row": 21,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F21/A21,2)",
+          "computed": 14.22
+        },
+        {
+          "addr": "A22",
+          "row": 22,
+          "col": 1,
+          "value": 13
+        },
+        {
+          "addr": "B22",
+          "row": 22,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A22/C22)+D22/60+E22/60)),0)",
+          "computed": 10
+        },
+        {
+          "addr": "C22",
+          "row": 22,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D22",
+          "row": 22,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E22",
+          "row": 22,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F22",
+          "row": 22,
+          "col": 6,
+          "formula": "=$E$2*B22",
+          "computed": 270
+        },
+        {
+          "addr": "G22",
+          "row": 22,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F22/A22,2)",
+          "computed": 14.44
+        },
+        {
+          "addr": "A23",
+          "row": 23,
+          "col": 1,
+          "value": 14
+        },
+        {
+          "addr": "B23",
+          "row": 23,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A23/C23)+D23/60+E23/60)),0)",
+          "computed": 9
+        },
+        {
+          "addr": "C23",
+          "row": 23,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D23",
+          "row": 23,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E23",
+          "row": 23,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F23",
+          "row": 23,
+          "col": 6,
+          "formula": "=$E$2*B23",
+          "computed": 243
+        },
+        {
+          "addr": "G23",
+          "row": 23,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F23/A23,2)",
+          "computed": 14.9
+        },
+        {
+          "addr": "A24",
+          "row": 24,
+          "col": 1,
+          "value": 15
+        },
+        {
+          "addr": "B24",
+          "row": 24,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A24/C24)+D24/60+E24/60)),0)",
+          "computed": 9
+        },
+        {
+          "addr": "C24",
+          "row": 24,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D24",
+          "row": 24,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E24",
+          "row": 24,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F24",
+          "row": 24,
+          "col": 6,
+          "formula": "=$E$2*B24",
+          "computed": 243
+        },
+        {
+          "addr": "G24",
+          "row": 24,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F24/A24,2)",
+          "computed": 13.9
+        },
+        {
+          "addr": "A25",
+          "row": 25,
+          "col": 1,
+          "value": 16
+        },
+        {
+          "addr": "B25",
+          "row": 25,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A25/C25)+D25/60+E25/60)),0)",
+          "computed": 8
+        },
+        {
+          "addr": "C25",
+          "row": 25,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D25",
+          "row": 25,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E25",
+          "row": 25,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F25",
+          "row": 25,
+          "col": 6,
+          "formula": "=$E$2*B25",
+          "computed": 216
+        },
+        {
+          "addr": "G25",
+          "row": 25,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F25/A25,2)",
+          "computed": 14.66
+        },
+        {
+          "addr": "A26",
+          "row": 26,
+          "col": 1,
+          "value": 17
+        },
+        {
+          "addr": "B26",
+          "row": 26,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A26/C26)+D26/60+E26/60)),0)",
+          "computed": 8
+        },
+        {
+          "addr": "C26",
+          "row": 26,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D26",
+          "row": 26,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E26",
+          "row": 26,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F26",
+          "row": 26,
+          "col": 6,
+          "formula": "=$E$2*B26",
+          "computed": 216
+        },
+        {
+          "addr": "G26",
+          "row": 26,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F26/A26,2)",
+          "computed": 13.799999999999999
+        },
+        {
+          "addr": "A27",
+          "row": 27,
+          "col": 1,
+          "value": 18
+        },
+        {
+          "addr": "B27",
+          "row": 27,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A27/C27)+D27/60+E27/60)),0)",
+          "computed": 7
+        },
+        {
+          "addr": "C27",
+          "row": 27,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D27",
+          "row": 27,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E27",
+          "row": 27,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F27",
+          "row": 27,
+          "col": 6,
+          "formula": "=$E$2*B27",
+          "computed": 189
+        },
+        {
+          "addr": "G27",
+          "row": 27,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F27/A27,2)",
+          "computed": 14.9
+        },
+        {
+          "addr": "A28",
+          "row": 28,
+          "col": 1,
+          "value": 19
+        },
+        {
+          "addr": "B28",
+          "row": 28,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A28/C28)+D28/60+E28/60)),0)",
+          "computed": 7
+        },
+        {
+          "addr": "C28",
+          "row": 28,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D28",
+          "row": 28,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E28",
+          "row": 28,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F28",
+          "row": 28,
+          "col": 6,
+          "formula": "=$E$2*B28",
+          "computed": 189
+        },
+        {
+          "addr": "G28",
+          "row": 28,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F28/A28,2)",
+          "computed": 14.11
+        },
+        {
+          "addr": "A29",
+          "row": 29,
+          "col": 1,
+          "value": 20
+        },
+        {
+          "addr": "B29",
+          "row": 29,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A29/C29)+D29/60+E29/60)),0)",
+          "computed": 7
+        },
+        {
+          "addr": "C29",
+          "row": 29,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D29",
+          "row": 29,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E29",
+          "row": 29,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F29",
+          "row": 29,
+          "col": 6,
+          "formula": "=$E$2*B29",
+          "computed": 189
+        },
+        {
+          "addr": "G29",
+          "row": 29,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F29/A29,2)",
+          "computed": 13.41
+        },
+        {
+          "addr": "A30",
+          "row": 30,
+          "col": 1,
+          "value": 21
+        },
+        {
+          "addr": "B30",
+          "row": 30,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A30/C30)+D30/60+E30/60)),0)",
+          "computed": 6
+        },
+        {
+          "addr": "C30",
+          "row": 30,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D30",
+          "row": 30,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E30",
+          "row": 30,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F30",
+          "row": 30,
+          "col": 6,
+          "formula": "=$E$2*B30",
+          "computed": 162
+        },
+        {
+          "addr": "G30",
+          "row": 30,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F30/A30,2)",
+          "computed": 14.9
+        },
+        {
+          "addr": "A31",
+          "row": 31,
+          "col": 1,
+          "value": 22
+        },
+        {
+          "addr": "B31",
+          "row": 31,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A31/C31)+D31/60+E31/60)),0)",
+          "computed": 6
+        },
+        {
+          "addr": "C31",
+          "row": 31,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D31",
+          "row": 31,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E31",
+          "row": 31,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F31",
+          "row": 31,
+          "col": 6,
+          "formula": "=$E$2*B31",
+          "computed": 162
+        },
+        {
+          "addr": "G31",
+          "row": 31,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F31/A31,2)",
+          "computed": 14.22
+        },
+        {
+          "addr": "A32",
+          "row": 32,
+          "col": 1,
+          "value": 23
+        },
+        {
+          "addr": "B32",
+          "row": 32,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A32/C32)+D32/60+E32/60)),0)",
+          "computed": 6
+        },
+        {
+          "addr": "C32",
+          "row": 32,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D32",
+          "row": 32,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E32",
+          "row": 32,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F32",
+          "row": 32,
+          "col": 6,
+          "formula": "=$E$2*B32",
+          "computed": 162
+        },
+        {
+          "addr": "G32",
+          "row": 32,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F32/A32,2)",
+          "computed": 13.6
+        },
+        {
+          "addr": "A33",
+          "row": 33,
+          "col": 1,
+          "value": 24
+        },
+        {
+          "addr": "B33",
+          "row": 33,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A33/C33)+D33/60+E33/60)),0)",
+          "computed": 6
+        },
+        {
+          "addr": "C33",
+          "row": 33,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D33",
+          "row": 33,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E33",
+          "row": 33,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F33",
+          "row": 33,
+          "col": 6,
+          "formula": "=$E$2*B33",
+          "computed": 162
+        },
+        {
+          "addr": "G33",
+          "row": 33,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F33/A33,2)",
+          "computed": 13.04
+        },
+        {
+          "addr": "A34",
+          "row": 34,
+          "col": 1,
+          "value": 25
+        },
+        {
+          "addr": "B34",
+          "row": 34,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A34/C34)+D34/60+E34/60)),0)",
+          "computed": 5
+        },
+        {
+          "addr": "C34",
+          "row": 34,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D34",
+          "row": 34,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E34",
+          "row": 34,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F34",
+          "row": 34,
+          "col": 6,
+          "formula": "=$E$2*B34",
+          "computed": 135
+        },
+        {
+          "addr": "G34",
+          "row": 34,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F34/A34,2)",
+          "computed": 15.02
+        },
+        {
+          "addr": "A35",
+          "row": 35,
+          "col": 1,
+          "value": 26
+        },
+        {
+          "addr": "B35",
+          "row": 35,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A35/C35)+D35/60+E35/60)),0)",
+          "computed": 5
+        },
+        {
+          "addr": "C35",
+          "row": 35,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D35",
+          "row": 35,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E35",
+          "row": 35,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F35",
+          "row": 35,
+          "col": 6,
+          "formula": "=$E$2*B35",
+          "computed": 135
+        },
+        {
+          "addr": "G35",
+          "row": 35,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F35/A35,2)",
+          "computed": 14.44
+        },
+        {
+          "addr": "A36",
+          "row": 36,
+          "col": 1,
+          "value": 27
+        },
+        {
+          "addr": "B36",
+          "row": 36,
+          "col": 2,
+          "formula": "=ROUNDDOWN(($C$7/((2*A36/C36)+D36/60+E36/60)),0)",
+          "computed": 5
+        },
+        {
+          "addr": "C36",
+          "row": 36,
+          "col": 3,
+          "value": 30
+        },
+        {
+          "addr": "D36",
+          "row": 36,
+          "col": 4,
+          "value": 6
+        },
+        {
+          "addr": "E36",
+          "row": 36,
+          "col": 5,
+          "value": 6
+        },
+        {
+          "addr": "F36",
+          "row": 36,
+          "col": 6,
+          "formula": "=$E$2*B36",
+          "computed": 135
+        },
+        {
+          "addr": "G36",
+          "row": 36,
+          "col": 7,
+          "formula": "=ROUNDUP($F$5*11/F36/A36,2)",
+          "computed": 13.9
+        }
+      ]
+    }
+  ],
+  "calculator": {
+    "sheet": "Лист3",
+    "payloadTonnes": {
+      "label": "Грузоподъемность",
+      "capacityTonnes": 30,
+      "loadFactor": 0.9,
+      "resultTonnes": {
+        "formula": "=C2*D2",
+        "computed": 27
+      }
+    },
+    "equipmentHourCost": {
+      "label": "Стоимость часа техники",
+      "tariff": 2878.571428571429,
+      "overheadRateInFile": 0.4,
+      "profitRateInFile": 0.2,
+      "total": {
+        "formula": "=C5+C5*D5+(C5+D5)*E5",
+        "computed": 4605.794285714286
+      },
+      "hoursPerShift": 11
+    },
+    "haulTableColumns": [
+      "Плечо, км",
+      "Кол-во рейсов в смену",
+      "Средняя скорость, км/ч",
+      "Погрузка, мин.",
+      "Разгрузка, мин.",
+      "Тонн в смену",
+      "Стоимость т*км."
+    ],
+    "hauls": [
+      {
+        "excelRow": 10,
+        "shoulderKm": 1,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A10/C10)+D10/60+E10/60)),0)",
+          "computed": 36
+        },
+        "avgSpeedKmh": 20,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B10",
+          "computed": 972
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F10/A10,2)",
+          "computed": 52.129999999999995
+        }
+      },
+      {
+        "excelRow": 11,
+        "shoulderKm": 2,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A11/C11)+D11/60+E11/60)),0)",
+          "computed": 27
+        },
+        "avgSpeedKmh": 20,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B11",
+          "computed": 729
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F11/A11,2)",
+          "computed": 34.75
+        }
+      },
+      {
+        "excelRow": 12,
+        "shoulderKm": 3,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A12/C12)+D12/60+E12/60)),0)",
+          "computed": 27
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B12",
+          "computed": 729
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F12/A12,2)",
+          "computed": 23.17
+        }
+      },
+      {
+        "excelRow": 13,
+        "shoulderKm": 4,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A13/C13)+D13/60+E13/60)),0)",
+          "computed": 23
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B13",
+          "computed": 621
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F13/A13,2)",
+          "computed": 20.400000000000002
+        }
+      },
+      {
+        "excelRow": 14,
+        "shoulderKm": 5,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A14/C14)+D14/60+E14/60)),0)",
+          "computed": 20
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B14",
+          "computed": 540
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F14/A14,2)",
+          "computed": 18.770000000000003
+        }
+      },
+      {
+        "excelRow": 15,
+        "shoulderKm": 6,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A15/C15)+D15/60+E15/60)),0)",
+          "computed": 18
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B15",
+          "computed": 486
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F15/A15,2)",
+          "computed": 17.380000000000003
+        }
+      },
+      {
+        "excelRow": 16,
+        "shoulderKm": 7,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A16/C16)+D16/60+E16/60)),0)",
+          "computed": 16
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B16",
+          "computed": 432
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F16/A16,2)",
+          "computed": 16.76
+        }
+      },
+      {
+        "excelRow": 17,
+        "shoulderKm": 8,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A17/C17)+D17/60+E17/60)),0)",
+          "computed": 15
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B17",
+          "computed": 405
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F17/A17,2)",
+          "computed": 15.64
+        }
+      },
+      {
+        "excelRow": 18,
+        "shoulderKm": 9,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A18/C18)+D18/60+E18/60)),0)",
+          "computed": 13
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B18",
+          "computed": 351
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F18/A18,2)",
+          "computed": 16.040000000000003
+        }
+      },
+      {
+        "excelRow": 19,
+        "shoulderKm": 10,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A19/C19)+D19/60+E19/60)),0)",
+          "computed": 12
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B19",
+          "computed": 324
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F19/A19,2)",
+          "computed": 15.64
+        }
+      },
+      {
+        "excelRow": 20,
+        "shoulderKm": 11,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A20/C20)+D20/60+E20/60)),0)",
+          "computed": 11
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B20",
+          "computed": 297
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F20/A20,2)",
+          "computed": 15.51
+        }
+      },
+      {
+        "excelRow": 21,
+        "shoulderKm": 12,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A21/C21)+D21/60+E21/60)),0)",
+          "computed": 11
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B21",
+          "computed": 297
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F21/A21,2)",
+          "computed": 14.22
+        }
+      },
+      {
+        "excelRow": 22,
+        "shoulderKm": 13,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A22/C22)+D22/60+E22/60)),0)",
+          "computed": 10
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B22",
+          "computed": 270
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F22/A22,2)",
+          "computed": 14.44
+        }
+      },
+      {
+        "excelRow": 23,
+        "shoulderKm": 14,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A23/C23)+D23/60+E23/60)),0)",
+          "computed": 9
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B23",
+          "computed": 243
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F23/A23,2)",
+          "computed": 14.9
+        }
+      },
+      {
+        "excelRow": 24,
+        "shoulderKm": 15,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A24/C24)+D24/60+E24/60)),0)",
+          "computed": 9
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B24",
+          "computed": 243
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F24/A24,2)",
+          "computed": 13.9
+        }
+      },
+      {
+        "excelRow": 25,
+        "shoulderKm": 16,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A25/C25)+D25/60+E25/60)),0)",
+          "computed": 8
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B25",
+          "computed": 216
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F25/A25,2)",
+          "computed": 14.66
+        }
+      },
+      {
+        "excelRow": 26,
+        "shoulderKm": 17,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A26/C26)+D26/60+E26/60)),0)",
+          "computed": 8
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B26",
+          "computed": 216
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F26/A26,2)",
+          "computed": 13.799999999999999
+        }
+      },
+      {
+        "excelRow": 27,
+        "shoulderKm": 18,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A27/C27)+D27/60+E27/60)),0)",
+          "computed": 7
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B27",
+          "computed": 189
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F27/A27,2)",
+          "computed": 14.9
+        }
+      },
+      {
+        "excelRow": 28,
+        "shoulderKm": 19,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A28/C28)+D28/60+E28/60)),0)",
+          "computed": 7
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B28",
+          "computed": 189
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F28/A28,2)",
+          "computed": 14.11
+        }
+      },
+      {
+        "excelRow": 29,
+        "shoulderKm": 20,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A29/C29)+D29/60+E29/60)),0)",
+          "computed": 7
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B29",
+          "computed": 189
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F29/A29,2)",
+          "computed": 13.41
+        }
+      },
+      {
+        "excelRow": 30,
+        "shoulderKm": 21,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A30/C30)+D30/60+E30/60)),0)",
+          "computed": 6
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B30",
+          "computed": 162
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F30/A30,2)",
+          "computed": 14.9
+        }
+      },
+      {
+        "excelRow": 31,
+        "shoulderKm": 22,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A31/C31)+D31/60+E31/60)),0)",
+          "computed": 6
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B31",
+          "computed": 162
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F31/A31,2)",
+          "computed": 14.22
+        }
+      },
+      {
+        "excelRow": 32,
+        "shoulderKm": 23,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A32/C32)+D32/60+E32/60)),0)",
+          "computed": 6
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B32",
+          "computed": 162
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F32/A32,2)",
+          "computed": 13.6
+        }
+      },
+      {
+        "excelRow": 33,
+        "shoulderKm": 24,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A33/C33)+D33/60+E33/60)),0)",
+          "computed": 6
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B33",
+          "computed": 162
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F33/A33,2)",
+          "computed": 13.04
+        }
+      },
+      {
+        "excelRow": 34,
+        "shoulderKm": 25,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A34/C34)+D34/60+E34/60)),0)",
+          "computed": 5
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B34",
+          "computed": 135
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F34/A34,2)",
+          "computed": 15.02
+        }
+      },
+      {
+        "excelRow": 35,
+        "shoulderKm": 26,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A35/C35)+D35/60+E35/60)),0)",
+          "computed": 5
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B35",
+          "computed": 135
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F35/A35,2)",
+          "computed": 14.44
+        }
+      },
+      {
+        "excelRow": 36,
+        "shoulderKm": 27,
+        "tripsPerShift": {
+          "formula": "=ROUNDDOWN(($C$7/((2*A36/C36)+D36/60+E36/60)),0)",
+          "computed": 5
+        },
+        "avgSpeedKmh": 30,
+        "loadMinutes": 6,
+        "unloadMinutes": 6,
+        "tonnesPerShift": {
+          "formula": "=$E$2*B36",
+          "computed": 135
+        },
+        "costPerTonneKm": {
+          "formula": "=ROUNDUP($F$5*11/F36/A36,2)",
+          "computed": 13.9
+        }
+      }
+    ]
+  },
+  "formulaIssue": {
+    "cell": "F5",
+    "writtenFormula": "=C5+C5*D5+(C5+D5)*E5",
+    "computedInFile": 4605.794285714286,
+    "recomputedFromWrittenFormula": 4605.794285714286,
+    "problem": "Прибыль считается как (C5+D5)*E5, то есть (тариф + 0,4) × 0,2, а не от (тариф + накладные) = (C5+C5*D5)*E5 и не как C5*(1+D5)*(1+E5).",
+    "ifProfitOnTariffPlusOverhead": 4836.000000000001,
+    "ifCompoundC5_times_1plusOH_times_1plusProfit": 4836.0,
+    "doNotTreatFileRatesAsCompanyPolicy": "Коэффициенты НР 0,40 и прибыли 0,20 на этом листе не являются общефирменной формулой. По ответам клиента: НР 43% от прямых, непредвиденные 10% от (прямые+НР), прибыль 40% от (прямые+НР)."
+  },
+  "counts": {
+    "sheets": 2,
+    "haulRows": 27,
+    "list3NonEmptyCells": 216
+  },
+  "notes": [
+    "Лист Cognos_Office_Connection_Cache — пустой служебный кэш, в расчёт не входит.",
+    "Смена в калькуляторе — 11 часов (C7)."
+  ]
+}

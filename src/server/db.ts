@@ -24,13 +24,16 @@ import { modelConfigured, setLlmTelemetrySink, type LlmCallTelemetry } from "@/s
 import { hashPassword } from "@/server/passwords";
 import { procurementSourceStatus } from "@/server/procurement-source";
 import { sanitizeSyncDetail } from "@/lib/wave23";
+import { ensureClientNormCatalogs } from "@/server/client-norms";
 
 /**
  * 21: legacy resource drafts that priced the customer estimate keep their saved
  * totals. The migration only adds legacy_estimate_seeded_cost. It does not
  * recompute, rewrite positions, or touch customer_original.
+ * 22: client reference catalogs live in their own tables. Moving 21 → 22 does
+ * not rewrite the blob, so saved calculations, directories and GPR stay.
  */
-const SCHEMA_VERSION = "21";
+const SCHEMA_VERSION = "22";
 
 declare global {
   var __tkDb: DatabaseSync | undefined;
@@ -398,11 +401,16 @@ function migrate(db: DatabaseSync) {
       now,
       now
     );
+    ensureClientNormCatalogs(db);
     return;
   }
 
   const version = metaGet(db, "schema_version") ?? "1";
   if (version !== SCHEMA_VERSION) {
+    const versionNum = Number(version);
+    // Historical blob steps stay behind this gate. A database already at 21
+    // keeps its directories, calculations and saved totals.
+    if (!Number.isFinite(versionNum) || versionNum < 21) {
     const data = hashSeedUsers(JSON.parse(row.payload) as AppData);
     // v4: orgId на обменах со сметным ПО
     data.smetaExchanges = (data.smetaExchanges ?? []).map((sx) => {
@@ -492,6 +500,7 @@ function migrate(db: DatabaseSync) {
     db.prepare(
       "UPDATE app_blob SET payload = ?, updated_at = ? WHERE id = 1"
     ).run(JSON.stringify(data), new Date().toISOString());
+    } // versions before 21 only; a database already at 21 is left intact
     metaSet(db, "schema_version", SCHEMA_VERSION);
     metaSet(db, "migrated_at", new Date().toISOString());
   }
@@ -500,6 +509,7 @@ function migrate(db: DatabaseSync) {
   db.prepare("DELETE FROM sessions WHERE expires_at < ?").run(
     new Date().toISOString()
   );
+  ensureClientNormCatalogs(db);
 }
 
 export function readAppData(): AppData {
@@ -869,6 +879,7 @@ export function ensureReady() {
   }
   ensureRecoveryTable(db);
   ensureClientDirectoriesPresent(db);
+  ensureClientNormCatalogs(db);
   return healthSnapshot();
 }
 
