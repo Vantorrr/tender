@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
@@ -126,6 +127,12 @@ export default function SpravochnikiPage() {
             >
               Импорт Excel
             </Button>
+            <Link
+              href="/cabinet/spravochniki/normy-klienta"
+              className="inline-flex h-9 items-center rounded-lg border border-[var(--tk-line)] bg-white px-3 text-sm font-medium"
+            >
+              Нормы выработки и справочники клиента
+            </Link>
             <a
               href="/cabinet/obmen"
               className="inline-flex h-9 items-center rounded-lg bg-secondary px-3 text-sm font-medium"
@@ -146,7 +153,9 @@ export default function SpravochnikiPage() {
       ) : (
         <div className="mb-4 rounded-xl border border-[var(--tk-line)] bg-white/80 px-4 py-3 text-sm text-[var(--tk-muted)]">
           Импорт Excel создаёт новую версию справочника и делает её текущей для
-          расчётов. Результат импорта отображается здесь же.
+          расчётов. Результат импорта отображается здесь же. Нормы выработки,
+          металлоконструкции, т·км и составы участков 0-68 / 88-127 лежат отдельно
+          и в эти расчёты не подставляются.
         </div>
       )}
 

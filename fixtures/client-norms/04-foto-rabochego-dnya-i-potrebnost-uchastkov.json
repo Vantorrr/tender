@@ -1,0 +1,813 @@
+{
+  "id": "04-foto-rabochego-dnya-i-potrebnost-uchastkov",
+  "title": "Фото рабочего дня (ОРЧ) и потребность участков, шифры 0-68 и 88-127",
+  "source": {
+    "localCopy": "client-files/04-foto-rabochego-dnya-i-potrebnost-uchastkov.xlsx",
+    "creator": "user",
+    "lastModifiedBy": "Подставкин Егор Александрович",
+    "created": "2022-10-16T11:11:59",
+    "modified": "2026-10-20T06:40:55",
+    "sheets": [
+      "Фото рабочего дня и резолюция",
+      "Потребность участков"
+    ]
+  },
+  "timeStudy": {
+    "sheet": "Фото рабочего дня и резолюция",
+    "title": "Лист фотографии рабочего времени аналитика",
+    "headerFields": {
+      "organization": {
+        "label": "Организация",
+        "value": null
+      },
+      "department": {
+        "label": "Подразделение",
+        "value": null
+      },
+      "observedPosition": {
+        "label": "Должность наблюдаемого",
+        "value": null
+      },
+      "observedName": {
+        "label": "ФИО наблюдаемого",
+        "value": null
+      },
+      "observerName": {
+        "label": "ФИО наблюдателя",
+        "value": null
+      },
+      "note": "Поля организации, подразделения, должности и ФИО в исходнике не заполнены."
+    },
+    "brigades": {
+      "brigade1_DES1": {
+        "title": "Бригада № 1 ( ДЭС №1)",
+        "composition": [
+          {
+            "role": "Монтажники ",
+            "zveno1": 2,
+            "zveno2": 1
+          },
+          {
+            "role": "Сварщики",
+            "zveno1": 1,
+            "zveno2": 1
+          }
+        ]
+      },
+      "brigade2_DES2": {
+        "title": "Бригада № 2 ( ДЭС №2)",
+        "composition": [
+          {
+            "role": "Монтажники ",
+            "zveno1": 1,
+            "zveno2": 1
+          },
+          {
+            "role": "Сварщики",
+            "zveno1": 1,
+            "zveno2": 1
+          },
+          {
+            "role": "Дорожники",
+            "zveno1": 1,
+            "zveno2": 1
+          }
+        ]
+      }
+    },
+    "subject": "Полная поэтапная сборка 1-й ОРЧ, шифр 0-68",
+    "brigade1_zveno1_operations": {
+      "headers": {
+        "itemNo": "№ п/п",
+        "name": "Наименование выполненной работы Бригада №1,  Звено 1",
+        "quantityPcs": "Объем выполненной работы ( шт.)",
+        "deltaMinutes": "∆ времени, мин.",
+        "note": "Примечание"
+      },
+      "rows": [
+        {
+          "excelRow": 22,
+          "itemNo": 1,
+          "name": "Резка катушки Ду219 ",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G22",
+            "formula": "=9*2",
+            "computed": 18
+          },
+          "note": "Монтажник №1, Монтажник №2"
+        },
+        {
+          "excelRow": 23,
+          "itemNo": 2,
+          "name": "Резка заглушки ДУ 219",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G23",
+            "formula": "=8*2",
+            "computed": 16
+          },
+          "note": "Монтажник №1"
+        },
+        {
+          "excelRow": 24,
+          "itemNo": 3,
+          "name": "Разболтовка существующего узла крепления на старой опоре",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G24",
+            "formula": "=8*2",
+            "computed": 16
+          },
+          "note": "Монтажник №1"
+        },
+        {
+          "excelRow": 25,
+          "itemNo": 4,
+          "name": "Монтаж заглушки ",
+          "quantityPcs": null,
+          "deltaMinutes": {
+            "addr": "G25",
+            "value": null
+          },
+          "note": null
+        },
+        {
+          "excelRow": 26,
+          "itemNo": "4,1",
+          "name": "Очистка кромок катушки",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G26",
+            "formula": "=4*2",
+            "computed": 8
+          },
+          "note": "Сварщик №1, Монтажник №2"
+        },
+        {
+          "excelRow": 27,
+          "itemNo": "4,2",
+          "name": "Очистка краски катушки",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G27",
+            "formula": "=4*2",
+            "computed": 8
+          },
+          "note": "Сварщик №1, Монтажник №2"
+        },
+        {
+          "excelRow": 28,
+          "itemNo": "4,3",
+          "name": "Очистка кромок заглушки",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G28",
+            "formula": "=3*2",
+            "computed": 6
+          },
+          "note": "Сварщик №1, Монтажник №2"
+        },
+        {
+          "excelRow": 29,
+          "itemNo": "4,4",
+          "name": "Сварка заглушки",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G29",
+            "formula": "=5*2",
+            "computed": 10
+          },
+          "note": "Сварщик №1, Монтажник №2"
+        },
+        {
+          "excelRow": 30,
+          "itemNo": "4,5",
+          "name": "Очистка сварных швов заглушки",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G30",
+            "formula": "=3*2",
+            "computed": 6
+          },
+          "note": "Сварщик №1, Монтажник №2"
+        },
+        {
+          "excelRow": 31,
+          "itemNo": 5,
+          "name": "Монтаж катушки",
+          "quantityPcs": null,
+          "deltaMinutes": {
+            "addr": "G31",
+            "value": null
+          },
+          "note": null
+        },
+        {
+          "excelRow": 32,
+          "itemNo": 5.1,
+          "name": "Выставление стык в стык",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G32",
+            "formula": "=4*2",
+            "computed": 8
+          },
+          "note": "Сварщик №1, Монтажник №2"
+        },
+        {
+          "excelRow": 33,
+          "itemNo": 5.2,
+          "name": "Чистка кромок",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G33",
+            "formula": "=5*2",
+            "computed": 10
+          },
+          "note": "Сварщик №1, Монтажник №2"
+        },
+        {
+          "excelRow": 34,
+          "itemNo": 5.3,
+          "name": "Сварка 1-й круг",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G34",
+            "formula": "=8*2",
+            "computed": 16
+          },
+          "note": "Сварщик №1, Монтажник №2"
+        },
+        {
+          "excelRow": 35,
+          "itemNo": 5.4,
+          "name": "Зачистка швов 1-й круг",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G35",
+            "formula": "=8*2",
+            "computed": 16
+          },
+          "note": "Сварщик №1, Монтажник №2"
+        },
+        {
+          "excelRow": 36,
+          "itemNo": 5.5,
+          "name": "Сварка 2-й круг",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G36",
+            "formula": "=8*2",
+            "computed": 16
+          },
+          "note": "Сварщик №1, Монтажник №2"
+        },
+        {
+          "excelRow": 37,
+          "itemNo": 5.6,
+          "name": "Зачистка швов 2-й круг",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G37",
+            "formula": "=8*2",
+            "computed": 16
+          },
+          "note": "Сварщик №1, Монтажник №2"
+        }
+      ]
+    },
+    "totals_brigade1": {
+      "extendingOneRigelHoursPerZveno": {
+        "addr": "C38",
+        "formula": "=(G37+G36+G35+G34+G33+G32+G30+G29+G28+G27+G26)/60",
+        "computed": 2
+      },
+      "extendingOneRigelLabel": "Наращивание 1 ригеля на 1 звено (час)",
+      "extendedSupportsPerDay": {
+        "addr": "C39",
+        "value": 4
+      },
+      "extendedSupportsPerDayLabel": "Итого нарощенных опор за день (шт.)"
+    },
+    "brigade2_zveno1_operations": {
+      "headers": {
+        "itemNo": "№ п/п",
+        "name": "Наименование выполненной работы Бригада № 2,  Звено 1",
+        "quantityPcs": "Объем выполненной работы ( шт.)",
+        "deltaMinutes": "∆ времени, мин.",
+        "note": "Примечание"
+      },
+      "rows": [
+        {
+          "excelRow": 41,
+          "itemNo": 6,
+          "name": "Монтаж ригеля",
+          "quantityPcs": null,
+          "deltaMinutes": {
+            "addr": "G41",
+            "value": null
+          },
+          "note": null
+        },
+        {
+          "excelRow": 42,
+          "itemNo": 6.1,
+          "name": "Очистка кромок ригеля и осчистка от краски ригеля",
+          "quantityPcs": 1,
+          "deltaMinutes": {
+            "addr": "G42",
+            "formula": "=8",
+            "computed": 8
+          },
+          "note": " Монтажник №4, Дороник №1"
+        },
+        {
+          "excelRow": 43,
+          "itemNo": 6.2,
+          "name": "Монтаж узла регулировки",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G43",
+            "formula": "=12*2",
+            "computed": 24
+          },
+          "note": " Монтажник №4, Дороник №1"
+        },
+        {
+          "excelRow": 44,
+          "itemNo": 6.3,
+          "name": "Строповка ригеля",
+          "quantityPcs": 1,
+          "deltaMinutes": {
+            "addr": "G44",
+            "value": 8
+          },
+          "note": " Монтажник №4, Дороник №1"
+        },
+        {
+          "excelRow": 45,
+          "itemNo": 6.4,
+          "name": "Разгрузка ригеля",
+          "quantityPcs": 1,
+          "deltaMinutes": {
+            "addr": "G45",
+            "formula": "=4",
+            "computed": 4
+          },
+          "note": " Монтажник №4, Дороник №1"
+        },
+        {
+          "excelRow": 46,
+          "itemNo": 6.5,
+          "name": "Регулировка урочня ригеля",
+          "quantityPcs": 1,
+          "deltaMinutes": {
+            "addr": "G46",
+            "value": 10
+          },
+          "note": " Монтажник №4, Дороник №1"
+        },
+        {
+          "excelRow": 47,
+          "itemNo": 6.6,
+          "name": "Зачистка пластин ригеля",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G47",
+            "formula": "=4*2",
+            "computed": 8
+          },
+          "note": "Монтажник №4"
+        },
+        {
+          "excelRow": 48,
+          "itemNo": 6.7,
+          "name": "Сварка пластин 1--й проход",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G48",
+            "formula": "=4*2",
+            "computed": 8
+          },
+          "note": "Сварщик №3"
+        },
+        {
+          "excelRow": 49,
+          "itemNo": 6.8,
+          "name": "Очистка  сварных швов пластин 1--й проход",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G49",
+            "formula": "=4*2",
+            "computed": 8
+          },
+          "note": "Сварщик №3"
+        },
+        {
+          "excelRow": 50,
+          "itemNo": 6.9,
+          "name": "Сварка пластин 2--й проход",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G50",
+            "formula": "=4*2",
+            "computed": 8
+          },
+          "note": "Сварщик №3"
+        },
+        {
+          "excelRow": 51,
+          "itemNo": 6.1,
+          "name": "Очистка  сварных швов пластин 2--й проход",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G51",
+            "formula": "=4*2",
+            "computed": 8
+          },
+          "note": "Монтпжник №4"
+        },
+        {
+          "excelRow": 52,
+          "itemNo": 6.11,
+          "name": "Очистка  сварных швов пластин 2--й проход",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G52",
+            "formula": "=4*2",
+            "computed": 8
+          },
+          "note": "Сварщик №3"
+        },
+        {
+          "excelRow": 53,
+          "itemNo": 6.12,
+          "name": "Очистка  сварных швов пластин 2--й проход",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G53",
+            "formula": "=4*2",
+            "computed": 8
+          },
+          "note": "Монтпжник №4"
+        },
+        {
+          "excelRow": 54,
+          "itemNo": 6.13,
+          "name": "Дозатяжка болтов уровня регулировки",
+          "quantityPcs": 2,
+          "deltaMinutes": {
+            "addr": "G54",
+            "formula": "=4*2",
+            "computed": 8
+          },
+          "note": " Монтажник №4, Дороник №1"
+        }
+      ]
+    },
+    "totals_brigade2": {
+      "mountingOneRigelLabel": "Монтаж 1 ригеля на 1 звено (час)",
+      "mountingOneRigelCell": {
+        "addr": "C55",
+        "formula": "=G54+G53+G52+G51+G50+G49+G48+G47+G46+G45+G44+G43+G42",
+        "computed": 118
+      },
+      "mountedOrchPerDayLabel": "Итого смонтированных ОРЧ за день (шт.)",
+      "mountedOrchPerDay": {
+        "addr": "C56",
+        "value": 4
+      }
+    },
+    "typo_118_hours_are_minutes": {
+      "cell": "C55",
+      "label": "Монтаж 1 ригеля на 1 звено (час)",
+      "valueInCell": 118,
+      "formula": "=G54+G53+G52+G51+G50+G49+G48+G47+G46+G45+G44+G43+G42",
+      "explanation": "Подпись говорит «(час)», но формула C55 — сумма минут G42:G54 без деления на 60. Значение 118 — это 118 минут (~1,97 ч). Для сравнения C38 корректно делит сумму минут на 60 и даёт 2 часа.",
+      "valueIfDividedBy60Hours": 1.9666666666666666
+    },
+    "resolutions": [
+      {
+        "project": "0-68",
+        "label": "Резолюция по проекту 0-68",
+        "text": "                        На Февраль месяц запланировано смонтировать 678 ОРЧ, на сегодняшний день работают 2 дневные бригады и 1 ночная бригада, которые выдают производительность 16 опор в сутки, при плане 23 штуки в сутки. Необходимо в первую бригаду по монтажу заглушек и наращиваию свай  добавить двух монтажников, чтобы не было простоя у сварщиков, вторую бригаду укомплектовать 2-мя  монтажниками и дополнительно укомплектовать  бригаду состоящую из 2-х сварщиков и 4-х монтажников. Дополнительно необходимо укомплектовать 1 ДЭС для 2-х сварочных постов.  По монтажу трубопровода необходимо сформировать 2 бригады (4 звена) состоящая из 4-х сварщиков , 8-ми монтажников и 2-х подсобных рабочих . Также имеется потребность в 2-х ДЭС для подключения 4-х сварочных постов. На сегодняшний день на площадке работает 1 трубокладчик в ночном режиме , необходимо трубокладчик переводить на круглосуточный режим и добаваить в производство 2-й трубоукладчик. На площадке находится 1 единица КМУ, работающая в дневную смену, необходимо перести в суточный режим. Также необходимо принять на работу дизелиста.                                                                                "
+      },
+      {
+        "project": "88-127",
+        "label": "Резолюция по проекту 88-127",
+        "text": "                        На Февраль месяц запланировано смонтировать 386 ОРЧ, на сегодняшний день на площадке в дневную смену находятся 4 сварщика и 5 монтажников, в ночную смену 3 сварщика 2 монтажника, выработка составляет 13 штук ежесуточно, при плане 13 штук ежесуточно.На следующие месяцы план по ГПР на монтажу ОРЧ увеличивается, необходимо принять на работу 1  сварщика 5 монтажников, 5 разнорабочих . Нобхомость в технике - Экскаватор коматсу 220 , для демонтажа существующих опор и раскопки снега под трубой (да данный момент сварщики и монтажники копают вручную). Необходимо добавать 1 вахтовку, т.к. 1 вахтовка находится на буровом учестве, а на устачтке  монтажа ОРЧ отсутствует пункт обогрева."
+      }
+    ]
+  },
+  "siteNeeds": {
+    "sheet": "Потребность участков",
+    "project_0_68": {
+      "title": "Шифр 0-68",
+      "planHeaders": {
+        "work": "Вид работ",
+        "jan": "Январь",
+        "feb": "Февраль",
+        "mar": "Март",
+        "apr": "Апрель",
+        "may": "Май",
+        "planFeb": "План февраль"
+      },
+      "planRows": [
+        {
+          "name": "Монтаж ОРЧ ГПР",
+          "unit": "шт",
+          "jan": 265,
+          "feb": 593,
+          "mar": 879,
+          "apr": 914,
+          "may": 453,
+          "planFeb": {
+            "addr": "H3",
+            "value": 678
+          }
+        },
+        {
+          "name": "Монтаж трубы ГПР",
+          "unit": "км",
+          "jan": 1,
+          "feb": 3,
+          "mar": 5,
+          "apr": 5,
+          "may": 1,
+          "planFeb": {
+            "addr": "H4",
+            "value": 4
+          }
+        },
+        {
+          "name": "Наращивание трубы  219 ГПР",
+          "unit": "ст",
+          "jan": 840,
+          "feb": 2400,
+          "mar": 2700,
+          "apr": 2700,
+          "may": 800,
+          "planFeb": {
+            "addr": "H5",
+            "formula": "=(C5+D5)-C8",
+            "computed": 2880
+          }
+        },
+        {
+          "name": "Монтаж ОРЧ факт",
+          "unit": "шт",
+          "jan": {
+            "addr": "C6",
+            "value": 180
+          },
+          "note": "факт"
+        },
+        {
+          "name": "Монтаж трубы факт",
+          "unit": "км",
+          "jan": null,
+          "note": "факт, ячейка пуста"
+        },
+        {
+          "name": "Нарщивание свай 219",
+          "unit": "ст",
+          "jan": 360,
+          "note": "факт"
+        }
+      ],
+      "peopleAndEquipmentHeader": {
+        "label": "Люди и оборудование",
+        "fact": "Факт",
+        "needForGpr": "Необходимая потребность для выполнения ГПР"
+      },
+      "orchMounting": {
+        "title": "Монтаж  ОРЧ",
+        "rows": [
+          {
+            "role": "Сварщики",
+            "fact": 8,
+            "need": 2
+          },
+          {
+            "role": "Монтажники ",
+            "fact": 10,
+            "need": {
+              "addr": "C13",
+              "formula": "=4+8",
+              "computed": 12
+            }
+          },
+          {
+            "role": "Дорожные рабочие",
+            "fact": 2,
+            "need": null
+          },
+          {
+            "role": "Подсобные рабочие",
+            "fact": 2,
+            "need": 2
+          },
+          {
+            "role": "Дизельные подстанции",
+            "fact": 2,
+            "need": 1
+          }
+        ]
+      },
+      "pipelines": {
+        "title": "Трубопроводы",
+        "rows": [
+          {
+            "role": "Сварщики",
+            "fact": null,
+            "need": 4,
+            "note": "1 сварщик делает 3 стыка= 30 м, 4 сварщика 12 стыков = 120 м в день"
+          },
+          {
+            "role": "Монтажники ",
+            "fact": null,
+            "need": 10
+          },
+          {
+            "role": "Подсобные рабочие",
+            "fact": null,
+            "need": 2
+          },
+          {
+            "role": "Дизельные подстанции",
+            "fact": null,
+            "need": 2
+          },
+          {
+            "role": "Машиникст КМУ (ночь)",
+            "fact": 1,
+            "need": 1
+          },
+          {
+            "role": "Машинист трубоукладчика ( 2 день, 1 ночь)",
+            "fact": 1,
+            "need": 3
+          },
+          {
+            "role": "Дизелист",
+            "fact": null,
+            "need": 1
+          },
+          {
+            "role": "Трубоукладчик",
+            "fact": 1,
+            "need": 1
+          },
+          {
+            "role": "Бензовоз",
+            "fact": 1,
+            "need": 1
+          }
+        ],
+        "welderDailyNormNote": "1 сварщик делает 3 стыка= 30 м, 4 сварщика 12 стыков = 120 м в день"
+      }
+    },
+    "project_88_127": {
+      "title": "Шифр 88-127",
+      "planHeaders": {
+        "work": "Вид работ",
+        "jan": "Январь",
+        "feb": "Февраль",
+        "mar": "Март",
+        "apr": "Апрель",
+        "may": "Май",
+        "planFeb": "План февраль"
+      },
+      "planRows": [
+        {
+          "name": "Монтаж ОРЧ ГПР",
+          "unit": "шт",
+          "jan": null,
+          "feb": 386,
+          "mar": 428,
+          "apr": 728,
+          "may": 276,
+          "planFeb": {
+            "addr": "H29",
+            "formula": "=D29",
+            "computed": 386
+          }
+        },
+        {
+          "name": "Бурение ГПР",
+          "unit": "шт",
+          "jan": 484,
+          "feb": 796,
+          "mar": 882,
+          "apr": 882,
+          "may": null,
+          "planFeb": {
+            "addr": "H30",
+            "formula": "=D30",
+            "computed": 796
+          }
+        },
+        {
+          "name": "Бурение факт",
+          "unit": "шт",
+          "jan": {
+            "addr": "C31",
+            "formula": "=590-44",
+            "computed": 546
+          },
+          "note": "факт бурения"
+        }
+      ],
+      "peopleAndEquipmentHeader": {
+        "label": "Люди и оборудование",
+        "fact": "Факт",
+        "needForGpr": "Необходимая потребность для выполнения ГПР"
+      },
+      "orch": {
+        "title": " ОРЧ",
+        "rows": [
+          {
+            "role": "Сварщики",
+            "fact": 8,
+            "need": 1
+          },
+          {
+            "role": "Монтажники ",
+            "fact": 7,
+            "need": 5
+          },
+          {
+            "role": "Подсобные рабочие",
+            "fact": null,
+            "need": 5
+          },
+          {
+            "role": "Водитель вахтовки ( день, ночь )",
+            "fact": null,
+            "need": 2
+          },
+          {
+            "role": "Машинист экскаватора ( день, ночь )",
+            "fact": null,
+            "need": 2
+          },
+          {
+            "role": "Вахтовка",
+            "fact": 1,
+            "need": 1
+          },
+          {
+            "role": "Экскаватор",
+            "fact": null,
+            "need": 1
+          }
+        ]
+      }
+    }
+  },
+  "dailyNormsAndCrewBenchmarks": {
+    "orchMountedPerDay_fromTimeStudy": 4,
+    "supportsExtendedPerDay_fromTimeStudy": 4,
+    "extendingOneRigelHoursPerZveno": 2,
+    "pipeline": {
+      "note": "1 сварщик делает 3 стыка= 30 м, 4 сварщика 12 стыков = 120 м в день",
+      "oneWelderJointsPerDay": 3,
+      "oneWelderMetersPerDay": 30,
+      "fourWeldersJointsPerDay": 12,
+      "fourWeldersMetersPerDay": 120
+    },
+    "project_0_68_resolution": {
+      "februaryPlanOrch": 678,
+      "currentOutputOrchPerDay": 16,
+      "planOrchPerDay": 23,
+      "shiftsMentioned": "2 дневные бригады и 1 ночная бригада"
+    },
+    "project_88_127_resolution": {
+      "februaryPlanOrch": 386,
+      "currentOutputOrchPerDay": 13,
+      "planOrchPerDay": 13
+    }
+  },
+  "knownSourceTypos": [
+    {
+      "where": "Фото рабочего дня и резолюция!C55 / B55",
+      "issue": "Подпись «Монтаж 1 ригеля на 1 звено (час)», значение 118 — это сумма минут, не часы. 118 минут ≈ 1,97 ч."
+    },
+    {
+      "where": "Резолюции C57/C58 и отдельные ячейки",
+      "issue": "В исходном тексте есть опечатки автора (нарощенных, Монтпжник, Дороник, урочня, Нобхомость, добавать, перести, учестве, устачтке и т.п.). Текст резолюций сохранён дословно, без правки орфографии."
+    }
+  ],
+  "counts": {
+    "sheets": 2,
+    "brigade1OperationRows": 16,
+    "brigade2OperationRows": 14,
+    "resolutions": 2,
+    "projectsOnNeedsSheet": 2
+  },
+  "notes": [
+    "Это эталон фактической выработки и составов по конкретным шифрам, не универсальный ценник.",
+    "В резолюциях фигурируют дневная и ночная смены и перевод техники на суточный режим — согласуется с профилем 2×11 ч без выходных, не с 7+1."
+  ]
+}
