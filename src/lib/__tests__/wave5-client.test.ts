@@ -8,6 +8,7 @@ import {
   displayedCalculationOwner,
   positionWithoutStaleQuote,
   quoteRateMatches,
+  quoteSelectionState,
   quoteUnitPriceError,
   resolveCalculationOwner,
   suitableQuotesForPosition,
@@ -73,6 +74,17 @@ describe("wave 5 quote hint", () => {
     expect(positionWithoutStaleQuote(quoted, { ...quoted, rate: 777 })).toMatchObject({ rate: 777, baseRate: 777 });
     expect(positionWithoutStaleQuote(quoted, { ...quoted, rate: 777 }).selectedQuoteId).toBeUndefined();
     expect(positionWithoutStaleQuote(quoted, quoted).selectedQuoteId).toBe("q-1");
+    const cancelled = supply(
+      [{ id: "q-dear", supplierName: "Альфа", unitPrice: 400, receivedAt: "2026-11-01T00:00:00Z" }],
+      { status: "cancelled" },
+    );
+    expect(quoteSelectionState({ ...pipe, rate: 400, priceSource: "quote", selectedQuoteId: "q-dear", quoteSupplierName: "Альфа" }, [cancelled])).toEqual({
+      applied: true,
+      quoteId: "q-dear",
+      supplierName: "Альфа",
+    });
+    expect(quoteSelectionState({ ...pipe, rate: 777, priceSource: "quote", selectedQuoteId: "q-dear", quoteUnitPrice: 400 }, [cancelled]).applied).toBe(false);
+    expect(quoteSelectionState({ ...pipe, rate: 400, priceSource: "quote", selectedQuoteId: "q-gone", quoteUnitPrice: 400, quoteSupplierName: "Альфа" }, []).applied).toBe(true);
     expect(quoteUnitPriceError(-1)).toMatch(/отрицательн/);
     expect(quoteUnitPriceError(Number.POSITIVE_INFINITY)).toMatch(/числом/);
     expect(quoteUnitPriceError(1_000_000_001)).toMatch(/слишком больш/);

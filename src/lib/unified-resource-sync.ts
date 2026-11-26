@@ -256,6 +256,7 @@ export function positionsFromStages(
           ? {
               selectedQuoteId: prev.selectedQuoteId,
               ...(prev.quoteSupplierName ? { quoteSupplierName: prev.quoteSupplierName } : {}),
+              ...(prev.quoteUnitPrice != null ? { quoteUnitPrice: prev.quoteUnitPrice } : {}),
               priceSource: prev.priceSource,
               ...(prev.baseRate != null ? { baseRate: prev.baseRate } : {}),
             }

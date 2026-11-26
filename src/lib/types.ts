@@ -456,6 +456,8 @@ export interface CalcPosition {
   selectedQuoteId?: string;
   /** Supplier name shown next to a rate taken from a quote. */
   quoteSupplierName?: string;
+  /** Unit price of the quote written into the rate. Kept so reset still works if the offer leaves the active list. */
+  quoteUnitPrice?: number;
   /** Rate before the quote was applied. Restored by «Сбросить выбор КП». */
   baseRate?: number;
   /** quote — the rate is the chosen quote. manual — base or hand-typed rate. */

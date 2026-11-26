@@ -117,13 +117,14 @@ export function positionWithoutStaleQuote<T extends {
   priceSource?: "quote" | "manual";
   selectedQuoteId?: string;
   quoteSupplierName?: string;
+  quoteUnitPrice?: number;
   baseRate?: number;
 }>(previous: T | undefined, next: T): T {
   if (!previous || previous.priceSource !== "quote") return next;
   const sameRate = roundMoney(previous.rate) === roundMoney(next.rate)
     && Boolean(previous.rateMissing) === Boolean(next.rateMissing);
   if (sameRate) return next;
-  const { selectedQuoteId: _quote, quoteSupplierName: _name, priceSource: _source, ...rest } = next;
+  const { selectedQuoteId: _quote, quoteSupplierName: _name, quoteUnitPrice: _price, priceSource: _source, ...rest } = next;
   return {
     ...rest,
     priceSource: "manual",
@@ -353,6 +354,25 @@ export function displayedCalculationOwner(
 
 export function ownerRoleLabel(role: Role): string {
   return ROLE_LABELS[role];
+}
+
+/**
+ * A quote stays selected while the rate still equals it, even if the supply
+ * was cancelled or the name no longer matches the active list.
+ */
+export function quoteSelectionState(
+  position: Pick<CalcPosition, "priceSource" | "selectedQuoteId" | "quoteSupplierName" | "quoteUnitPrice" | "rate">,
+  supplies: SupplyRequest[],
+): { applied: boolean; quoteId?: string; supplierName?: string } {
+  if (position.priceSource !== "quote" || !position.selectedQuoteId) return { applied: false };
+  const live = findQuoteOnSupplies(supplies, position.selectedQuoteId);
+  const price = live?.quote.unitPrice ?? position.quoteUnitPrice;
+  if (!quoteRateMatches(position.rate, price)) return { applied: false };
+  return {
+    applied: true,
+    quoteId: position.selectedQuoteId,
+    supplierName: position.quoteSupplierName ?? live?.quote.supplierName,
+  };
 }
 
 export function findQuoteOnSupplies(

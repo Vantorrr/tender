@@ -845,9 +845,10 @@ export function updateCalculation(
 }
 
 function selectedQuotePrice(position: Calculation["positions"][number], supplies: AppData["supplyRequests"]): number | null {
-  if (position.priceSource !== "quote" || !position.selectedQuoteId) return null;
-  const found = findQuoteOnSupplies(supplies ?? [], position.selectedQuoteId);
-  return found ? found.quote.unitPrice : null;
+  if (position.priceSource !== "quote" && !position.selectedQuoteId) return null;
+  const found = position.selectedQuoteId ? findQuoteOnSupplies(supplies ?? [], position.selectedQuoteId) : null;
+  if (found) return found.quote.unitPrice;
+  return position.quoteUnitPrice ?? null;
 }
 
 /** Only the resource this commercial line is linked to. A shared name is not enough. */
@@ -907,6 +908,7 @@ export function applyCommercialQuote(
         position.priceSource = "manual";
         delete position.selectedQuoteId;
         delete position.quoteSupplierName;
+        delete position.quoteUnitPrice;
       }
     } else {
       const found = findQuoteOnSupplies(data.supplyRequests ?? [], quoteId);
@@ -932,6 +934,7 @@ export function applyCommercialQuote(
       position.rateMissing = false;
       position.selectedQuoteId = found.quote.id;
       position.quoteSupplierName = found.quote.supplierName;
+      position.quoteUnitPrice = found.quote.unitPrice;
       position.priceSource = "quote";
     }
     if (!item.resourceScheduleParams) {

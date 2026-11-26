@@ -460,4 +460,36 @@ describe("wave 5 client logic", () => {
     applyCommercialQuote("u-ruk", draft.id, edited.id, null);
     expect(readAppData().calculations.find((item) => item.id === draft.id)!.positions.find((position) => position.id === edited.id)?.rate).toBe(777);
   });
+
+  it("restores the base rate after the chosen quote leaves the active list", () => {
+    const created = createManualProcurement("u-ruk", { title: "Снятое КП", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const draft = draftOf(created.id);
+    updateCalculation("u-ruk", draft.id, {
+      positions: [{ id: "pipe", costRole: "commercial", code: "MAT-PIPE", name: "Труба", unit: "м", quantity: 2, rate: 100, resourceKind: "material" }],
+      resourceScheduleParams: PARAMS,
+    });
+    const supply = upsertSupplyRequest("u-ruk", {
+      procurementId: created.id,
+      materialName: "Труба",
+      unit: "м",
+      qtyNeed: 2,
+      needBy: "2026-12-01",
+    });
+    recordSupplierQuote("u-ruk", supply.supplyId, { id: "q-gone", supplierName: "Альфа", unitPrice: 450 });
+    applyCommercialQuote("u-ruk", draft.id, "pipe", "q-gone");
+    mutateAppData((data) => {
+      const row = data.supplyRequests!.find((item) => item.id === supply.supplyId)!;
+      row.status = "cancelled";
+      row.materialName = "Другое имя";
+      return data;
+    });
+    const hidden = readAppData().calculations.find((item) => item.id === draft.id)!.positions.find((position) => position.id === "pipe")!;
+    expect(hidden).toMatchObject({ rate: 450, priceSource: "quote", selectedQuoteId: "q-gone", quoteUnitPrice: 450 });
+    applyCommercialQuote("u-ruk", draft.id, "pipe", null);
+    const restored = readAppData().calculations.find((item) => item.id === draft.id)!.positions.find((position) => position.id === "pipe")!;
+    expect(restored.rate).toBe(100);
+    expect(restored.priceSource).toBe("manual");
+    expect(restored.selectedQuoteId).toBeUndefined();
+  });
 });
