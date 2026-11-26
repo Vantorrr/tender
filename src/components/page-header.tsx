@@ -16,7 +16,7 @@ export function PageHeader({
           {title}
         </h1>
         {description ? (
-          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-[var(--tk-muted)] sm:text-[0.975rem]">
+          <p className="mt-2 max-w-2xl break-words text-sm leading-relaxed text-[var(--tk-muted)] [overflow-wrap:anywhere] sm:text-[0.975rem]">
             {description}
           </p>
         ) : null}

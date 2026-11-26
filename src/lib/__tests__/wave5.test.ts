@@ -106,7 +106,7 @@ describe("wave 5 visible copy and breakdown", () => {
     const cleaned = sanitizeSyncDetail("Контур API: ключ не задан, ID закупки Контура пуст");
     expect(cleaned).not.toMatch(/Контур|\bAPI\b|ID закупки/);
     expect(neutralizeProcurementJargon("Документ API")).toBe("файл");
-    expect(sanitizeSyncDetail("Источник закупок не подключён.")).toBe("Источник закупок не подключён.");
+    expect(sanitizeSyncDetail("Источник закупок не подключён.")).toBe("Поиск закупок не подключён.");
   });
 
   it("keeps live dates in the work table when only the chart filter ids stay the same", () => {

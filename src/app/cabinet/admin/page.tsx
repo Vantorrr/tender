@@ -108,7 +108,7 @@ function IntegrationPanel() {
   const cards = integrations
     ? [
         {
-          title: "Источник закупок",
+          title: "Поиск закупок",
           ready: integrations.procurement.status === "ok",
           status: integrations.procurement.status === "demo" ? "Демо" : integrations.procurement.status === "ok" ? "Работает" : "Не подключён",
           detail: sanitizeSyncDetail(integrations.procurement.detail),

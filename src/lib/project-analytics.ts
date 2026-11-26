@@ -181,8 +181,17 @@ export function visibleCheckItems(items: string[], documents: CheckDocument[]): 
     document.category === "tz"
     || /(?:^|[^а-яёa-z0-9])(?:tz|тз)(?=$|[^а-яёa-z0-9])|извещ|техническ.{0,12}задан/iu.test(`${document.fileName} ${document.title ?? ""} ${document.analyticalNote ?? ""}`)
   );
+  const scopeInPackage = documents.some((document) => {
+    const label = `${document.fileName} ${document.title ?? ""}`;
+    if (document.category === "estimate" || /смет|лс[-_\s]?\d/iu.test(label)) return true;
+    return (document.citations ?? []).some((citation) =>
+      /(?:объ[её]м работ|предмет закупки|перечень работ)\s*[:—-]?\s*\S{0,160}\d/iu.test(citation.text)
+    );
+  });
+  const laterEdition = documents.some((document) => /редакц/iu.test(`${document.fileName} ${document.title ?? ""}`));
   let next = items.filter((item) => {
-    if (hasTz && /не найдено ТЗ|нет ТЗ/iu.test(item)) return false;
+    if ((hasTz || scopeInPackage) && /не найдено ТЗ|нет ТЗ|не найдено извещен/iu.test(item)) return false;
+    if (laterEdition && /01-02-01/u.test(item) && /редакц|дважды|обе\b|дубл/iu.test(item)) return false;
     if (/минстро/iu.test(item)) {
       if (!/минстро/iu.test(corpus)) return false;
       if (/реквизит\p{L}*\s+письма\s+минстроя[^\n]{0,120}\d/iu.test(corpus)) return false;
@@ -198,13 +207,23 @@ export function visibleCheckItems(items: string[], documents: CheckDocument[]): 
       : costs[0]);
   }
   const seen = new Set<string>();
-  return next.filter((item) => {
+  const unique = next.filter((item) => {
     const text = item.toLocaleLowerCase("ru-RU").replace(/ё/g, "е").replace(/\s+/g, " ").trim();
     const key = /минстро/u.test(text) && /реквизит|пуст|письм/u.test(text) ? "minstroy-letter" : text;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
+  }).map((item) => {
+    const clean = item.replace(/\s+/g, " ").trim();
+    if (clean.length <= 180) return clean;
+    const sentence = clean.split(/(?<=[.!?])\s+/u)[0] ?? clean;
+    return sentence.length > 180 ? `${sentence.slice(0, 160).replace(/\s+\S*$/u, "")}.` : sentence;
   });
+  if (unique.length <= 5) return unique;
+  const kept = unique.slice(0, 5);
+  const cost = unique.find((item) => /сметн\p{L}*\s+стоимост|различается/iu.test(item));
+  if (cost && !kept.includes(cost)) kept[kept.length - 1] = cost;
+  return kept;
 }
 
 const OVERVIEW_TITLES = ["Паспорт закупки и тайминг", "Объёмы", "Экономика", "Риски", "Что проверить"] as const;

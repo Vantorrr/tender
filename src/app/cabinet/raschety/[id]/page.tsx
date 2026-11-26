@@ -180,7 +180,7 @@ function NorthernCostEditor({
         overheadRate: (Number(overhead) || 43) / 100,
       });
       const added = lines.reduce((sum, item) => sum + item.amount, 0);
-      const line = `${lines.map((item) => `${item.what} — ${item.amount.toLocaleString("ru-RU")} ₽ (${item.why})`).join("; ")}. Итого добавлено ${added.toLocaleString("ru-RU")} ₽`;
+      const line = `${lines.map((item) => `${item.what} — ${formatMoney(item.amount)} (${item.why})`).join("; ")}. Итого добавлено ${formatMoney(added)}`;
       setSavedLine(line);
       toast.success(`Сохранено. ${line}`);
     } catch (error) {
@@ -207,7 +207,7 @@ function NorthernCostEditor({
                 const amount = raw ? Number(raw.replace(",", ".")) : null;
                 patchItem(item.id, { amount: amount != null && Number.isFinite(amount) && amount >= 0 ? amount : null });
               }} />
-              <span className="self-center text-xs text-[var(--tk-muted)]">{item.amount != null ? `Добавлено ${item.amount} ₽` : "Сумма не задана"}</span>
+              <span className="self-center text-xs text-[var(--tk-muted)]">{item.amount != null ? `Добавлено ${formatMoney(item.amount)}` : "Сумма не задана"}</span>
               <Button variant="ghost" size="sm" aria-label={`Удалить · ${item.name}`} onClick={() => setItems((current) => current.filter((row) => row.id !== item.id))}>Удалить</Button>
             </div>
           ))}
@@ -1619,7 +1619,7 @@ export default function RaschetDetailPage() {
           </h2>
           <p className="mt-1 text-sm text-[var(--tk-muted)]">
             Вносите только подтверждённые расходы и указывайте источник суммы. {northernSummary}
-            {calc.positions.some((position) => position.rateBasis === "person_hour") ? ` Ставка персонала ${new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(calc.resourceScheduleParams?.personHourRate ?? 1400).replace(/\u00a0/g, " ")} ₽/чел.-ч из параметров расчёта.` : ""}
+            {calc.positions.some((position) => position.rateBasis === "person_hour") ? ` Ставка персонала ${formatMoney(calc.resourceScheduleParams?.personHourRate ?? 1400)}/чел.-ч из параметров расчёта.` : ""}
             {northernApplied && calc.costSummary?.northernAdjustments && (calc.costSummary.northernAdjustments.district > 0 || calc.costSummary.northernAdjustments.allowance > 0) ? ` Что добавлено: районный коэффициент ${formatMoney(calc.costSummary.northernAdjustments.district)}; северная надбавка ${formatMoney(calc.costSummary.northernAdjustments.allowance)}; накладные ${formatMoney(calc.costSummary.northernAdjustments.overhead)}` : ""}
           </p>
           <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-[var(--tk-muted)]">

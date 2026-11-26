@@ -6,7 +6,7 @@ export function plainUserMessage(message: string, fallback = "Не удалос�
     return "Для этой карточки нет внешнего номера закупки";
   }
   if (/не задан|не подключ|not_configured/iu.test(text)) {
-    return "Источник закупок не подключён";
+    return "Поиск закупок не подключён";
   }
   if (/контур|api[-\s]?ключ|замаскир|\bapi\b|purchase|openrouter/iu.test(text)) {
     return "Поиск закупок сейчас недоступен";

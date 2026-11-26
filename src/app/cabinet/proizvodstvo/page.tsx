@@ -38,6 +38,7 @@ import { humanizeIssues } from "@/lib/issue-text";
 import { userHasSection } from "@/lib/acl";
 import { visibleProcurementNumber } from "@/lib/pipeline";
 import { matchDirectorySuppliers, mergeQuantities, planWorksOnDate, splitEmbeddedUnit } from "@/lib/wave23";
+import { EXTERNAL_SUPPLIER_SEARCH, searchSupplierDirectory } from "@/lib/supplier-directory";
 import {
   entryDisplayFact,
   entryDisplayRemain,
@@ -143,17 +144,14 @@ function SupplierHints({
   suppliers: Array<{ name: string; materialKeywords: string[] }>;
   hints: Array<{ name: string; sourceUrl: string }>;
 }) {
-  const matched = matchDirectorySuppliers(material, suppliers);
-  const search = `https://duckduckgo.com/?q=${encodeURIComponent(`${material} поставщик`)}`;
+  const matched = searchSupplierDirectory(material, suppliers);
   return (
     <div className="mt-2 space-y-1 text-xs" data-testid="supply-hints">
       <p data-testid="directory-suppliers">Справочник: {matched.length ? matched.map((supplier) => supplier.name).join(", ") : "подходящих поставщиков нет"}</p>
-      <p>
-        <a className="underline" href={search} target="_blank" rel="noreferrer">Искать в открытых источниках</a>
-        {hints.map((hint) => (
-          <a key={hint.sourceUrl} className="ml-3 underline" href={hint.sourceUrl} target="_blank" rel="noreferrer">{hint.name}</a>
-        ))}
-      </p>
+      <p className="text-[var(--tk-muted)]">{EXTERNAL_SUPPLIER_SEARCH}</p>
+      {hints.length ? <p>{hints.map((hint) => (
+        <a key={hint.sourceUrl} className="mr-3 underline" href={hint.sourceUrl} target="_blank" rel="noreferrer">{hint.name}</a>
+      ))}</p> : null}
     </div>
   );
 }
