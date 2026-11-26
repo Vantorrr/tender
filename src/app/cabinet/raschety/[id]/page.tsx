@@ -28,6 +28,7 @@ import {
 import { api, downloadUrl } from "@/lib/api";
 import { EconomicsLinesEditor } from "@/components/economics-lines-editor";
 import { VorWorkplace } from "@/components/vor-workplace";
+import { BddsFrameCard, CalculationOwnerBar, DirectorCostGap, QuoteRatePicker } from "@/components/wave5-panels";
 import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-panel";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
 import { labourLineEconomicsNote, NORTH_DEFAULTS, northernAdditionLines, northernEconomicsApplied, northernStatusText, refreshRateAssumption } from "@/lib/wave23";
@@ -864,6 +865,15 @@ export default function RaschetDetailPage() {
         }
       />
 
+      {calc.kind !== "customer_original" ? (
+        <CalculationOwnerBar
+          calculation={calc}
+          users={data.users}
+          locked={locked}
+          onChanged={refresh}
+        />
+      ) : null}
+
       {isTest ? (
         <div
           className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-2 text-sm text-amber-950"
@@ -1204,11 +1214,36 @@ export default function RaschetDetailPage() {
                     {nmckAtOrBelowCostWarning(policy)}
                   </p>
                 ) : null}
+                <DirectorCostGap
+                  calculation={calc}
+                  nmck={frame.nmck}
+                  fullCost={frame.nmckVsCost === "at_or_below_cost" ? frame.fullCost : null}
+                  locked={locked}
+                  onChanged={refresh}
+                />
               </>
             );
           })()}
         </section>
       ) : null}
+
+      {calc.kind !== "customer_original" ? (
+        <QuoteRatePicker
+          calculation={calc}
+          supplies={data.supplyRequests ?? []}
+          locked={locked}
+          onChanged={refresh}
+        />
+      ) : null}
+
+      <div className="mb-6">
+        <BddsFrameCard
+          calculation={calc}
+          stages={data.schedules
+            .filter((item) => item.procurementId === calc.procurementId && item.orgId === calc.orgId)
+            .flatMap((item) => item.stages)}
+        />
+      </div>
 
       {calc.kind !== "customer_original" ? (
         <div className="mb-6 grid gap-3">

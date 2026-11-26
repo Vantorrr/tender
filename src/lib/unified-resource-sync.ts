@@ -252,6 +252,10 @@ export function positionsFromStages(
         normId: prev?.normId,
         priceId: prev?.priceId,
         ...(prev?.costRole ? { costRole: prev.costRole } : prev ? {} : { costRole: "commercial" as const }),
+        ...(prev?.selectedQuoteId ? { selectedQuoteId: prev.selectedQuoteId } : {}),
+        ...(prev?.quoteSupplierName ? { quoteSupplierName: prev.quoteSupplierName } : {}),
+        ...(prev?.priceSource ? { priceSource: prev.priceSource } : {}),
+        ...(prev?.baseRate != null ? { baseRate: prev.baseRate } : {}),
       });
     }
   }

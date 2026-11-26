@@ -6,6 +6,7 @@ import { PageHeader } from "@/components/page-header";
 import { calculationTotals, sourceEstimateTotals } from "@/lib/calc-math";
 import { formatMoney } from "@/lib/format";
 import { officialMoneyText } from "@/lib/tender-logic-settings";
+import { displayedCalculationOwner, ownerRoleLabel } from "@/lib/wave5-client";
 import { visibleProcurementNumber } from "@/lib/pipeline";
 import { SCENARIO_LABELS } from "@/lib/roles";
 import { useStore } from "@/lib/store";
@@ -60,6 +61,12 @@ export default function RaschetyPage() {
                     meta={
                       <div className="space-y-1">
                         <div>Позиций: {c.positions.length}</div>
+                        {(() => {
+                          const owner = displayedCalculationOwner(c, data.users);
+                          return owner ? (
+                            <div>Ответственный за сбор: {owner.name} · {ownerRoleLabel(owner.role)}</div>
+                          ) : null;
+                        })()}
                         <div className="font-semibold text-[var(--tk-ink)]">
                           Итого {totalText}
                         </div>

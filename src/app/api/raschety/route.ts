@@ -1,12 +1,16 @@
 import {
   addCalcPositionFromDirectory,
+  applyCommercialQuote,
+  assignCalculationOwner,
   getBootstrap,
   recalcCalculation,
   recomputeCalculationCost,
+  saveDirectorDecision,
   updateCalculation,
   updateLinkedResourcesFromCalculation,
   updateVorVolume,
 } from "@/server/repo";
+import type { DirectorDecisionChoice } from "@/lib/wave5-client";
 import { withSection, json } from "@/server/http";
 import type { Calculation, GprStage } from "@/lib/types";
 import { analyzeCalculationComparisonWithAI } from "@/server/calc-compare-ai";
@@ -69,6 +73,15 @@ export async function POST(req: Request) {
       positionId?: string;
       volume?: number;
       status?: "unconfirmed" | "confirmed";
+      quoteId?: string | null;
+      ownerUserId?: string;
+      choice?: DirectorDecisionChoice;
+      comment?: string;
+    };
+    const refuse = (error: unknown, fallback: string) => {
+      const message = error instanceof Error ? error.message : fallback;
+      if (message.includes("Недостаточно прав") || message.startsWith("Нет доступа")) throw error;
+      return json({ error: message }, 400);
     };
     if (body.action === "draftVolumes") {
       if (!body.calculationId) return json({ error: "Укажите расчёт" }, 400);
@@ -86,6 +99,33 @@ export async function POST(req: Request) {
         const message = error instanceof Error ? error.message : "Не удалось сохранить ведомость";
         if (message.includes("Недостаточно прав") || message.startsWith("Нет доступа")) throw error;
         return json({ error: message }, 400);
+      }
+      return json(getBootstrap(user));
+    }
+    if (body.action === "applyQuote") {
+      if (!body.calculationId || !body.positionId) return json({ error: "Укажите строку и расчёт" }, 400);
+      try {
+        applyCommercialQuote(user.id, body.calculationId, body.positionId, body.quoteId ?? null);
+      } catch (error) {
+        return refuse(error, "Не удалось записать КП в ставку");
+      }
+      return json(getBootstrap(user));
+    }
+    if (body.action === "assignOwner") {
+      if (!body.calculationId || !body.ownerUserId) return json({ error: "Укажите ответственного" }, 400);
+      try {
+        assignCalculationOwner(user.id, body.calculationId, body.ownerUserId);
+      } catch (error) {
+        return refuse(error, "Не удалось назначить ответственного");
+      }
+      return json(getBootstrap(user));
+    }
+    if (body.action === "saveDirectorDecision") {
+      if (!body.calculationId || !body.choice) return json({ error: "Укажите решение директора" }, 400);
+      try {
+        saveDirectorDecision(user.id, body.calculationId, { choice: body.choice, comment: body.comment ?? "" });
+      } catch (error) {
+        return refuse(error, "Не удалось сохранить решение директора");
       }
       return json(getBootstrap(user));
     }
