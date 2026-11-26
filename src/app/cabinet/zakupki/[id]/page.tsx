@@ -25,7 +25,7 @@ import { visibleProcurementSource } from "@/lib/display";
 import { formatDate, formatDateTime, formatMoney, formatNumber, formatQuantity, needByPhrase, roundQuantity, sameRoundedQuantity } from "@/lib/format";
 import { citationTopicLabel, isShownConfirmation, readableCitations, regionFromCitations, submissionDeadlineFromCitations } from "@/lib/citation-display";
 import { SUMMARY_FRESH, SUMMARY_UNCHANGED } from "@/lib/summary-notice";
-import { calcMemoState, citationHref, costIsPartial, costIsUncalculated, draftCostPhrase, honestReadinessText, matchDirectorySuppliers, moneyRu, rowCountNominative } from "@/lib/wave23";
+import { calcMemoState, citationHref, costIsPartial, costIsUncalculated, draftCostPhrase, honestReadinessText, moneyRu, rowCountNominative } from "@/lib/wave23";
 import { COMMITTEE_UNSET, buildCommitteeSnapshot, committeeValueText, positionFeedsOfficialCost } from "@/lib/tender-logic-settings";
 import { pickLastExchangeForProcurement } from "@/lib/obmen-for-procurement";
 import { ANALYSIS_IMPORTANCE_LABELS, ANALYSIS_TOPIC_CHECKLIST } from "@/lib/ai-topics";
@@ -36,7 +36,8 @@ import { userHasSection } from "@/lib/acl";
 import { plainExchangeTitle } from "@/lib/exchange-label";
 import { gprStageLabel } from "@/lib/gpr-stage-label";
 import { procurementBoardLabel, visibleProcurementNumber } from "@/lib/pipeline";
-import { STATUS_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
+import { REVIEW_LABELS, STATUS_LABELS, SYNC_STATUS_LABELS } from "@/lib/roles";
+import { EXTERNAL_SUPPLIER_SEARCH, NO_UNDO, collectSuppliersMessage, gprNeedNextStep, gprPathAfterUndo, searchSupplierDirectory, showEmptyExternalSupplierLine } from "@/lib/supplier-directory";
 import type { Citation, DocumentCategory, ReviewStatus, SupplyRequest, SupplyStatus, SupplierDirectoryEntry, OrganizationCompanyCard } from "@/lib/types";
 import type { SupplierSearchCandidate } from "@/server/supplier-discovery";
 import { useStore } from "@/lib/store";
@@ -100,12 +101,11 @@ function DirectoryNeedHints({
   material: string;
   suppliers: SupplierDirectoryEntry[];
 }) {
-  const matched = matchDirectorySuppliers(material, suppliers);
-  const search = `https://duckduckgo.com/?q=${encodeURIComponent(`${material} поставщик`)}`;
+  const matched = searchSupplierDirectory(material, suppliers);
   return (
     <div className="mt-2 space-y-1 text-xs" data-testid="supply-directory-hints">
       <p data-testid="directory-suppliers">Справочник: {matched.length ? matched.map((supplier) => supplier.name).join(", ") : "подходящих поставщиков нет"}</p>
-      <a className="underline" href={search} target="_blank" rel="noreferrer">Искать в открытых источниках</a>
+      <p className="text-[var(--tk-muted)]">{EXTERNAL_SUPPLIER_SEARCH}</p>
     </div>
   );
 }
@@ -361,9 +361,12 @@ export default function ZakupkaDetailPage() {
   const [companyCardBusy, setCompanyCardBusy] = useState(false);
   const [companyCard, setCompanyCard] = useState<OrganizationCompanyCard | null>(null);
   const [supplyMailReady, setSupplyMailReady] = useState(false);
-  const [supplyMailDetail, setSupplyMailDetail] = useState("Проверяем почтовую настройку…");
   const [supplierSearchBusyId, setSupplierSearchBusyId] = useState<string | null>(null);
   const [supplierSearchResults, setSupplierSearchResults] = useState<Record<string, SupplierSearchCandidate[]>>({});
+  const [supplierCollectNote, setSupplierCollectNote] = useState<Record<string, string>>({});
+  const [supplierAddedName, setSupplierAddedName] = useState("");
+  const [gprPath, setGprPath] = useState({ notice: "", highlightedId: "" });
+  const [supplierLookup, setSupplierLookup] = useState("");
   const [supplierSearchErrors, setSupplierSearchErrors] = useState<Record<string, string>>({});
   const companyCardInput = useRef<HTMLInputElement>(null);
 
@@ -374,9 +377,8 @@ export default function ZakupkaDetailPage() {
         if (!active) return;
         setCompanyCard(result.companyCard);
         setSupplyMailReady(result.mail.live);
-        setSupplyMailDetail(result.mail.detail);
       })
-      .catch(() => { if (active) setSupplyMailDetail("Не удалось проверить SMTP"); });
+      .catch(() => { if (active) setSupplyMailReady(false); });
     return () => { active = false; };
   }, []);
 
@@ -623,8 +625,10 @@ export default function ZakupkaDetailPage() {
         supplier: { name: supplierNameNew, email: supplierEmailNew, materialKeywords: keywords, regions: supplierRegionsNew.split(/[;,\n]/).map((value) => value.trim()).filter(Boolean), website: supplierWebsiteNew },
       }) });
       await refresh();
+      const added = supplierNameNew.trim();
       setSupplierNameNew(""); setSupplierEmailNew(""); setSupplierMaterialsNew(""); setSupplierRegionsNew(""); setSupplierWebsiteNew("");
-      toast.success("Поставщик добавлен в справочник");
+      setSupplierAddedName(added);
+      toast.success(`Поставщик «${added}» добавлен и виден в списке ниже`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось сохранить поставщика");
     } finally { setSupplierSaving(false); }
@@ -683,14 +687,37 @@ export default function ZakupkaDetailPage() {
   async function searchPublicSuppliers(supply: SupplyRequest) {
     setSupplierSearchBusyId(supply.id);
     setSupplierSearchErrors((current) => ({ ...current, [supply.id]: "" }));
+    const local = searchSupplierDirectory(supply.materialName, suppliers);
+    setSupplierCollectNote((current) => ({ ...current, [supply.id]: "Собираю поставщиков из справочника…" }));
     try {
       const result = await api<{ candidates: SupplierSearchCandidate[] }>("/api/supply", {
         method: "POST", body: JSON.stringify({ action: "discoverSuppliers", id: supply.id }),
       });
-      setSupplierSearchResults((current) => ({ ...current, [supply.id]: result.candidates }));
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : "поиск не ответил";
-      setSupplierSearchErrors((current) => ({ ...current, [supply.id]: `Поставщиков найти не удалось: ${reason}` }));
+      const external = result.candidates ?? [];
+      setSupplierSearchResults((current) => {
+        const next = { ...current };
+        if (external.length) next[supply.id] = external;
+        else if (showEmptyExternalSupplierLine(local.length, 0)) next[supply.id] = [];
+        else delete next[supply.id];
+        return next;
+      });
+      setSupplierCollectNote((current) => ({
+        ...current,
+        [supply.id]: external.length
+          ? `В справочнике: ${local.length ? local.map((item) => item.name).join(", ") : "никого нет"}. Дополнительно найдено: ${external.length}. Проверьте контакты перед отправкой.`
+          : collectSuppliersMessage(local.map((item) => item.name)),
+      }));
+    } catch {
+      setSupplierSearchResults((current) => {
+        const next = { ...current };
+        if (showEmptyExternalSupplierLine(local.length, 0)) next[supply.id] = [];
+        else delete next[supply.id];
+        return next;
+      });
+      setSupplierCollectNote((current) => ({
+        ...current,
+        [supply.id]: collectSuppliersMessage(local.map((item) => item.name)),
+      }));
     } finally { setSupplierSearchBusyId(null); }
   }
 
@@ -1010,9 +1037,6 @@ export default function ZakupkaDetailPage() {
                     ) : null}
                     <p className="text-xs text-[var(--tk-muted)]">Документов: {analytics?.quality?.sourceDocuments ?? docs.length}. Фрагментов: {overviewCitations.length}</p>
                     {analytics ? <p className="text-xs text-[var(--tk-muted)]">Оценка по документам: {PARTICIPATE_LABELS[analytics.recommendation]}</p> : null}
-                    {analytics?.answeredByModel ? (
-                      <p className="text-xs text-[var(--tk-muted)]">Модель ответа: {analytics.answeredByModel}</p>
-                    ) : null}
                   </div>
                 ) : (
                   <p className="mt-3 text-sm text-[var(--tk-muted)]">Сводки пока нет. После загрузки документа она появится здесь.</p>
@@ -1172,8 +1196,11 @@ export default function ZakupkaDetailPage() {
                   value={procurement.reviewStatus}
                   onValueChange={(v) => {
                     if (!v) return;
-                    setProcurementReview(procurement.id, v as ReviewStatus);
-                    toast.success("Статус рассмотрения обновлён");
+                    const next = v as ReviewStatus;
+                    if (next === procurement.reviewStatus) return;
+                    void setProcurementReview(procurement.id, next)
+                      .then(() => toast.success(`Статус: ${REVIEW_LABELS[next]}`))
+                      .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось обновить статус"));
                   }}
                 >
                   <SelectTrigger className="mt-3 w-full">
@@ -1189,6 +1216,7 @@ export default function ZakupkaDetailPage() {
                     <SelectItem value="dublirovana">Дубликат</SelectItem>
                   </SelectContent>
                 </Select>
+                <p className="mt-2 text-xs text-[var(--tk-muted)]">{NO_UNDO}</p>
               </div>
               <div className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-5">
                 <h2 className="font-[family-name:var(--font-display)] text-base">
@@ -1421,9 +1449,6 @@ export default function ZakupkaDetailPage() {
                   <p className="text-xs text-[var(--tk-muted)]">
                     Оценка по документам: {PARTICIPATE_LABELS[analytics.recommendation]}
                   </p>
-                  {analytics.answeredByModel ? (
-                    <p className="mt-1 text-xs text-[var(--tk-muted)]">Модель ответа: {analytics.answeredByModel}</p>
-                  ) : null}
                   <div className="mt-2 space-y-1 text-sm leading-relaxed text-[var(--tk-foreground)]">
                     {shownSummary.split("\n").filter((line) => line.trim()).map((line, index) => (
                       <p key={`${index}-${line}`} className={index === 0 ? "font-medium" : "text-[var(--tk-muted)]"}>{line}</p>
@@ -2027,13 +2052,13 @@ export default function ZakupkaDetailPage() {
               </div>
               <input ref={companyCardInput} type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" className="sr-only" aria-label="Файл карточки предприятия" onChange={(event) => { const file = event.target.files?.[0]; void uploadCompanyCard(file); event.target.value = ""; }} />
               <Button variant="outline" disabled={companyCardBusy} onClick={() => companyCardInput.current?.click()}>{companyCardBusy ? "Загружаю…" : companyCard ? "Заменить карточку" : "Загрузить карточку предприятия"}</Button>
-              <p className={`w-full text-xs ${supplyMailReady ? "text-emerald-800" : "text-amber-800"}`} data-testid="supply-mail-readiness">{supplyMailReady ? "Почта готова к отправке" : `Отправка писем недоступна: ${supplyMailDetail}`}</p>
+              <p className={`w-full text-xs ${supplyMailReady ? "text-emerald-800" : "text-amber-800"}`} data-testid="supply-mail-readiness">{supplyMailReady ? "Почта готова к отправке" : "Отправка писем недоступна: почта не подключена. Файл запроса можно скачать."}</p>
             </section>
 
             <section className="rounded-lg border border-[var(--tk-line)] p-3" data-testid="supplier-directory">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div><h4 className="font-medium">Наши поставщики</h4><p className="mt-1 text-xs text-[var(--tk-muted)]">Добавьте email и ключевые слова ассортимента. По ним система подберёт адресатов к материалам.</p></div>
-                <a className="text-xs text-sky-800 underline" target="_blank" rel="noreferrer" href={`https://duckduckgo.com/?q=${encodeURIComponent(`${procurement.region} поставщик ${matName || "строительные материалы"}`)}`}>Искать в открытых источниках ↗</a>
+              <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
+                <div className="min-w-0"><h4 className="font-medium">Наши поставщики</h4><p className="mt-1 text-xs text-[var(--tk-muted)]">Добавьте email и ключевые слова ассортимента. По ним система подберёт адресатов к материалам. {EXTERNAL_SUPPLIER_SEARCH}</p></div>
+                <Input className="w-full sm:max-w-xs" aria-label="Искать в справочнике поставщиков" placeholder="Искать в справочнике" value={supplierLookup} onChange={(event) => setSupplierLookup(event.target.value)} />
               </div>
               <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                 <Input placeholder="Название поставщика" value={supplierNameNew} onChange={(event) => setSupplierNameNew(event.target.value)} />
@@ -2043,7 +2068,9 @@ export default function ZakupkaDetailPage() {
                 <Input placeholder="Сайт (необязательно)" value={supplierWebsiteNew} onChange={(event) => setSupplierWebsiteNew(event.target.value)} />
                 <Button disabled={supplierSaving} onClick={() => void saveSupplierDirectoryEntry()}>{supplierSaving ? "Сохраняю…" : "Добавить поставщика"}</Button>
               </div>
-              {suppliers.length ? <ul className="mt-3 grid gap-2 md:grid-cols-2">{suppliers.map((supplier) => <li key={supplier.id} className="flex items-start justify-between gap-2 rounded-md bg-stone-50 px-3 py-2 text-xs" data-testid={`supplier-directory-${supplier.id}`}><div><span className="font-medium">{supplier.name}</span> · {supplier.email}<div className="mt-1 text-[var(--tk-muted)]">Ассортимент: {supplier.materialKeywords.join(", ")}{supplier.regions.length ? ` · Регион: ${supplier.regions.join(", ")}` : ""}</div></div><Button size="sm" variant="ghost" onClick={() => setAsk({ kind: "supplier", id: supplier.id, name: supplier.name })}>Удалить</Button></li>)}</ul> : <p className="mt-3 text-xs text-[var(--tk-muted)]">Справочник пока пуст. Добавьте поставщиков и укажите их ассортимент.</p>}
+              {supplierAddedName ? <p className="mt-3 text-sm text-emerald-800" role="status" data-testid="supplier-added">Добавлен поставщик «{supplierAddedName}». Он в списке ниже.</p> : null}
+              {suppliers.length ? <ul className="mt-3 grid gap-2 md:grid-cols-2">{(supplierLookup.trim().length >= 2 ? searchSupplierDirectory(supplierLookup, suppliers) : suppliers).map((supplier) => <li key={supplier.id} className="flex min-w-0 items-start justify-between gap-2 rounded-md bg-stone-50 px-3 py-2 text-xs" data-testid={`supplier-directory-${supplier.id}`}><div className="min-w-0 break-words [overflow-wrap:anywhere]"><span className="font-medium">{supplier.name}</span> · {supplier.email}<div className="mt-1 text-[var(--tk-muted)]">Ассортимент: {supplier.materialKeywords.join(", ")}{supplier.regions.length ? ` · Регион: ${supplier.regions.join(", ")}` : ""}</div></div><Button size="sm" variant="ghost" onClick={() => setAsk({ kind: "supplier", id: supplier.id, name: supplier.name })}>Удалить</Button></li>)}</ul> : <p className="mt-3 text-xs text-[var(--tk-muted)]">Справочник пока пуст. Добавьте поставщиков и укажите их ассортимент.</p>}
+              {suppliers.length > 0 && supplierLookup.trim().length >= 2 && searchSupplierDirectory(supplierLookup, suppliers).length === 0 ? <p className="mt-3 text-xs text-[var(--tk-muted)]" role="status">В справочнике ничего не найдено. {EXTERNAL_SUPPLIER_SEARCH}</p> : null}
             </section>
 
             <Button data-testid="generate-material-manifest" disabled={manifestBusy} onClick={() => void generateMaterialManifest()}>{manifestBusy ? "Собираю ведомость…" : "Сформировать ведомость материалов"}</Button>
@@ -2056,6 +2083,7 @@ export default function ZakupkaDetailPage() {
               <p className="mt-1 text-xs text-[var(--tk-muted)]">
                 Что / сколько / когда — по материалам этапов графика.
               </p>
+              {gprPath.notice ? <p className="mt-2 text-sm text-emerald-800" role="status" data-testid="gpr-need-path">{gprPath.notice}</p> : null}
               {gprBuyList.length === 0 ? (
                 <p className="mt-2 text-sm text-[var(--tk-muted)]">
                   {gpr
@@ -2103,13 +2131,20 @@ export default function ZakupkaDetailPage() {
                               return;
                             }
                             const createdId = boot.supplyId;
-                            toast.success("Потребность создана из ГПР", {
+                            setGprPath({ notice: gprNeedNextStep(need.materialName), highlightedId: createdId });
+                            requestAnimationFrame(() => {
+                              document.getElementById(`supply-${createdId}`)?.scrollIntoView({ block: "nearest" });
+                            });
+                            toast.success(gprNeedNextStep(need.materialName), {
                               duration: 10_000,
                               action: {
                                 label: "Отменить",
                                 onClick: () => {
                                   void api("/api/supply", { method: "POST", body: JSON.stringify({ action: "deleteSupply", id: createdId }) })
-                                    .then(() => refresh())
+                                    .then(() => {
+                                      setGprPath((path) => gprPathAfterUndo(path, createdId));
+                                      return refresh();
+                                    })
                                     .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Не удалось отменить"));
                                 },
                               },
@@ -2192,7 +2227,7 @@ export default function ZakupkaDetailPage() {
                   }
                   setMatQuote(text);
                   downloadKpFile(text, matName.trim() || "material");
-                  toast.success("Файл запроса КП готов (SMTP не используется)");
+                  toast.success("Файл запроса КП готов. Письмо само не отправляется.");
                 }}
               >
                 Скачать файл запроса КП
@@ -2257,11 +2292,12 @@ export default function ZakupkaDetailPage() {
                 supplies.map((s) => (
                   <li
                     key={s.id}
-                    className="rounded-lg border px-3 py-2"
+                    id={`supply-${s.id}`}
+                    className={`min-w-0 rounded-lg border px-3 py-2 ${gprPath.highlightedId === s.id ? "ring-2 ring-[var(--tk-copper)]" : ""}`}
                     data-testid={`supply-${s.id}`}
                   >
                     <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div className="font-medium">
+                      <div className="min-w-0 break-words font-medium [overflow-wrap:anywhere]">
                         {s.materialName} · {formatQuantity(s.qtyNeed, s.unit)} · {needByPhrase(s.needBy)}
                       </div>
                       <Button size="sm" variant="ghost" onClick={() => {
@@ -2287,14 +2323,16 @@ export default function ZakupkaDetailPage() {
                     <div className="mt-2 rounded-md bg-stone-50 px-3 py-2" data-testid={`supply-matches-${s.id}`}>
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="text-xs font-medium">Подходящие поставщики</div>
-                        <Button size="sm" variant="outline" disabled={supplierSearchBusyId === s.id} onClick={() => void searchPublicSuppliers(s)}>{supplierSearchBusyId === s.id ? "Идёт поиск…" : "Собрать"}</Button>
+                        <Button size="sm" variant="outline" disabled={supplierSearchBusyId === s.id} onClick={() => void searchPublicSuppliers(s)}>{supplierSearchBusyId === s.id ? "Собираю…" : "Собрать"}</Button>
                       </div>
+                      {supplierSearchBusyId === s.id ? <p className="mt-2 text-xs" role="status">Собираю поставщиков из справочника…</p> : null}
+                      {supplierCollectNote[s.id] ? <p className="mt-2 text-xs" role="status" data-testid={`supply-collect-${s.id}`}>{supplierCollectNote[s.id]}</p> : null}
                       {(s.supplierIds ?? []).length ? <div className="mt-1 flex flex-wrap gap-2">{(s.supplierIds ?? []).map((supplierId) => {
                         const supplier = suppliers.find((item) => item.id === supplierId);
                         if (!supplier) return null;
                         const alreadySent = (s.sentToSupplierIds ?? []).includes(supplierId);
                         return <div key={supplierId} className="flex flex-wrap items-center gap-2 rounded border bg-white px-2 py-1 text-xs"><span>{supplier.name} · {supplier.email}</span>{alreadySent ? <span className="text-emerald-800">Запрос отправлен</span> : <Button size="sm" variant="outline" disabled={!supplyMailReady && !supplier.email} title={supplyMailReady ? undefined : "Почта не подключена: будет сохранён файл запроса"} onClick={() => setAsk({ kind: "rfq", supply: s, supplier })}>Отправить запрос КП</Button>}</div>;
-                      })}</div> : <p className="mt-1 text-xs text-[var(--tk-muted)]">В справочнике нет поставщика с подходящим ассортиментом.</p>}
+                      })}</div> : <p className="mt-1 text-xs text-[var(--tk-muted)]">К потребности пока никто не привязан. Совпадения из справочника показаны выше.</p>}
                       {supplierSearchErrors[s.id] ? <p className="mt-2 text-xs text-amber-800" role="alert">{supplierSearchErrors[s.id]}</p> : null}
                       {(supplierSearchResults[s.id]?.length ?? 0) > 0 ? <ul className="mt-2 space-y-2">{supplierSearchResults[s.id].map((candidate) => <li key={candidate.sourceUrl} className="rounded border bg-white p-2 text-xs" data-testid={`supplier-search-result-${s.id}`}>
                         <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium">{candidate.name}</span>{candidate.email ? <Button size="sm" variant="outline" onClick={() => void addDiscoveredSupplier(s, candidate)}>Добавить в поставщики</Button> : <a className="text-sky-800 underline" href={candidate.sourceUrl} target="_blank" rel="noreferrer">Проверить контакты ↗</a>}</div>
@@ -2303,7 +2341,7 @@ export default function ZakupkaDetailPage() {
                         <p className="mt-1 text-[var(--tk-muted)]">{candidate.evidence}</p>
                         <a className="mt-1 inline-block text-sky-800 underline" href={candidate.sourceUrl} target="_blank" rel="noreferrer">Источник ↗</a>
                       </li>)}</ul> : null}
-                      {supplierSearchResults[s.id] && supplierSearchResults[s.id].length === 0 ? <p className="mt-2 text-xs text-[var(--tk-muted)]">Подтверждённых поставщиков не найдено. Попробуйте уточнить название материала.</p> : null}
+                      {showEmptyExternalSupplierLine(searchSupplierDirectory(s.materialName, suppliers).length, supplierSearchResults[s.id] ? supplierSearchResults[s.id].length : null) ? <p className="mt-2 text-xs text-[var(--tk-muted)]">Подтверждённых поставщиков не найдено. Попробуйте уточнить название материала.</p> : null}
                       <p className="mt-2 text-[10px] text-[var(--tk-muted)]">Результаты ИИ-поиска требуют проверки на сайте поставщика. Письмо отправляется только поставщику из вашего справочника и только после нажатия кнопки отправки.</p>
                     </div>
                     <details className="mt-2 text-xs">
@@ -2559,9 +2597,9 @@ export default function ZakupkaDetailPage() {
             </DialogTitle>
             <DialogDescription>
               {ask?.kind === "payment"
-                ? `Платёж «${ask.title}» будет удалён.`
+                ? `Платёж «${ask.title}» будет удалён. ${NO_UNDO}`
                 : ask?.kind === "supplier"
-                  ? `Поставщик «${ask.name}» будет удалён из справочника.`
+                  ? `Поставщик «${ask.name}» будет удалён из справочника. ${NO_UNDO}`
                   : ask?.kind === "rfq"
                     ? `Отправить запрос КП на ${ask.supply.materialName} поставщику «${ask.supplier.name}» (${ask.supplier.email})? К письму будет приложена карточка предприятия.`
                     : ""}

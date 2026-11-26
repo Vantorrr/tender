@@ -118,7 +118,7 @@ describe("grounded project analysis", () => {
     expect(draftCostPhrase(0, 11)).toBe("Себестоимость не рассчитана: нет ставок для 11 строк");
     expect(draftCostPhrase(0, 21)).toBe("Себестоимость не рассчитана: нет ставок для 21 строки");
     expect(draftCostPhrase(280939759.9, 16)).toBe("Себестоимость по найденным ставкам: 280 939 759,90 ₽ (без 16 строк без ставок)");
-    expect(draftCostPhrase(1500, 0)).toBe("1500 ₽");
+    expect(draftCostPhrase(1500, 0)).toBe("1 500,00 ₽");
     expect(draftCostPhrase(0, 0)).toBe("Себестоимость 0 ₽: проверьте объёмы и ставки");
     expect(draftCostPhrase(0, 0)).not.toContain("нет ставок");
     const partial = profitAndMarginPhrase({

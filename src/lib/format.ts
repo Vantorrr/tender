@@ -1,10 +1,11 @@
+/** Grouped rubles with kopecks: `7 677 127,06 ₽`. Display only. */
 export function formatMoney(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "Не указано";
-  return new Intl.NumberFormat("ru-RU", {
-    style: "currency",
-    currency: "RUB",
-    maximumFractionDigits: 0,
-  }).format(value);
+  const formatted = new Intl.NumberFormat("ru-RU", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value).replace(/[\u00a0\u202f]/g, " ");
+  return `${formatted} ₽`;
 }
 
 /** Drop binary float noise, then keep a fixed number of decimal places. */

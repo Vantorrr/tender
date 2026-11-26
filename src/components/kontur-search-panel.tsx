@@ -65,7 +65,7 @@ export function KonturSearchPanel({ busy, onSearch }: Props) {
     { checked: advance223, onChange: setAdvance223, label: "Аванс по 223-ФЗ" },
     { checked: nonAdvance, onChange: setNonAdvance, label: "Без аванса в других торгах" },
     { checked: foreignCurrency, onChange: setForeignCurrency, label: "Разрешить валютные закупки" },
-    { checked: participantsFromDocs, onChange: setParticipantsFromDocs, label: "Искать участников в документах · тариф Поиск 2.0" },
+    { checked: participantsFromDocs, onChange: setParticipantsFromDocs, label: "Искать участников в документах" },
   ];
 
   function submit(event: FormEvent<HTMLFormElement>) {

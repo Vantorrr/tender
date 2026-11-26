@@ -1,3 +1,4 @@
+import { formatMoney } from "@/lib/format";
 import type { Citation, GprStage } from "@/lib/types";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS, type ResourceScheduleParams } from "@/lib/resource-schedule-model";
 
@@ -29,11 +30,7 @@ export function recognizedRowsPhrase(count: number): string {
 }
 
 export function moneyRu(value: number): string {
-  const formatted = new Intl.NumberFormat("ru-RU", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value).replace(/\u00a0/g, " ");
-  return `${formatted} ₽`;
+  return formatMoney(value);
 }
 
 /** A positive total with some rates still missing is a partial cost, not a blank. */
@@ -59,7 +56,7 @@ export function draftCostPhrase(cost: number | null, missingRates: number): stri
   if (missing > 0) return `Себестоимость не рассчитана: нет ставок для ${rowCountGenitive(missing)}`;
   if (cost === 0) return "Себестоимость 0 ₽: проверьте объёмы и ставки";
   if (cost == null) return "нет подтверждённого итога";
-  return `${cost} ₽`;
+  return moneyRu(cost);
 }
 
 /** Current draft used only to phrase a stored memo. Numbers stay on the calculation. */
@@ -664,7 +661,9 @@ export function neutralizeProcurementJargon(detail: string): string {
     .replace(/Контур(?:\.Закупки)?\s*API/giu, "поиск закупок")
     .replace(/API-ключ\w*/giu, "ключ доступа")
     .replace(/Ключ Контура/giu, "Поиск закупок")
-    .replace(/Контур(?:а|у|ом|е)?/giu, "источник закупок")
+    .replace(/Контур(?:а|у|ом|е)?/giu, "поиск закупок")
+    .replace(/Источник закупок/giu, "Поиск закупок")
+    .replace(/источник закупок/giu, "поиск закупок")
     .replace(/\bAPI\b[-\s]*/giu, "")
     .replace(/\s{2,}/g, " ")
     .replace(/\s+([.,])/g, "$1")

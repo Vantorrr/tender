@@ -42,7 +42,7 @@ function NoteEditor({
       </h2>
       <p className="mt-1 text-xs text-[var(--tk-muted)]">
         Можно править вручную — сохранится новая версия документа. Неподтверждённое
-        оставляйте как «нет данных».
+        оставляйте как «нет данных». Отмены нет: верните текст вручную.
       </p>
       <textarea
         className="mt-3 min-h-[160px] w-full rounded-lg border border-[var(--tk-line)] bg-white px-3 py-2 text-sm leading-relaxed text-[var(--tk-ink-soft)]"

@@ -1,3 +1,4 @@
+import { repairDisplayedProse } from "@/lib/analytical-note";
 import type { Citation } from "@/lib/types";
 
 const MISSING_VALUE = /^(?:нет данных|не указан(?:а|о|ы)?(?: в файле| в документе)?|не найден(?:а|о|ы)?|—|-|n\/?a)$/iu;
@@ -21,14 +22,29 @@ export function citationTextForDisplay(citation: Citation): string | null {
   // Grand-Smeta codes are useful for an estimator but obscure the meaning for
   // a procurement manager. Keep the item name and quantity in the short view.
   text = text.replace(/^(?:ФЕР|ТЕР|ГЭСН|ФССЦ|ФСБЦ|ФЕРм|ФЕРр|ФЕРп)\s*[-\w.]+\s+/iu, "");
-  return text || null;
+  text = repairDisplayedProse(text);
+  if (!text || isBareBasisText(text)) return null;
+  return text;
 }
 
-/** Extra confirmations: no bare basis line and no fragment from another file such as an invoice. */
+/** A basis label with nothing after it. A filled line such as «Основание: Дефектная ведомость №1.2» stays. */
+export function isBareBasisText(text: string): boolean {
+  return /^основание\s*:?\s*$/iu.test(text.replace(/\s+/gu, " ").trim());
+}
+
+/** Extra confirmations: no bare basis line, no cut scrap, no fragment of another contract. */
 export function isShownConfirmation(citation: { text: string; sourceFile: string }): boolean {
-  const text = citation.text.replace(/\s+/gu, " ").trim();
-  if (/^основание\s*:/iu.test(text)) return false;
+  const raw = citation.text.replace(/\s+/gu, " ").trim();
+  const text = repairDisplayedProse(raw);
+  if (!text) return false;
+  if (/^основание(?:\s*:|\s|$)/iu.test(raw) || /^основание(?:\s*:|\s|$)/iu.test(text)) return false;
   if (/invoice|инвойс/iu.test(citation.sourceFile)) return false;
+  if (/(?:^|[^\p{L}])стес(?:$|[^\p{L}])|потранспиляц/iu.test(text)) return false;
+  const estimateFile = /\.xlsx|\.xls|смет|лс[-_\s]?\d/iu.test(citation.sourceFile);
+  const foreignContractScrap = estimateFile
+    && /договор|контракт/iu.test(text)
+    && (/^[а-яё]/u.test(raw) || (text.length < 90 && !/[.!?]$/u.test(text)));
+  if (foreignContractScrap) return false;
   return true;
 }
 

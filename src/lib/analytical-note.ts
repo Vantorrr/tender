@@ -39,6 +39,47 @@ function repairCutLine(line: string): string {
   return kept.length >= 12 ? kept : "";
 }
 
+const KEEP_SHORT = new Set([
+  "шт", "км", "мм", "см", "м", "м2", "м3", "т", "г", "год", "руб", "пр", "п",
+  "дн", "ч", "лс", "тз", "ндс", "смр", "и", "или", "не", "на", "по", "из", "от",
+  "до", "за", "со", "во", "об", "к", "с", "в", "а", "но", "край",
+]);
+
+const CUT_STEMS = new Set(["стес", "разве"]);
+
+function repairDisplayedPiece(piece: string): string {
+  let next = piece.replace(/\s+/gu, " ").trim();
+  next = next.replace(/\s+-\s+[а-яё]{2,8}\.?(?=\s*$)/iu, "");
+  if (next.length >= 160) {
+    const match = next.match(/^(.*\s)([а-яё]{2,5})\.?$/iu);
+    if (match) {
+      const tail = match[2].toLocaleLowerCase("ru-RU");
+      const cut = CUT_STEMS.has(tail) || (!KEEP_SHORT.has(tail) && !/[аеёиоуыэюяйь]$/iu.test(tail));
+      if (cut) {
+        const kept = match[1].replace(/[;\s,:-]+$/u, "").trim();
+        if (kept.length >= 12) next = kept;
+      }
+    }
+  }
+  return next.replace(/[;\s,:-]+$/u, "").trim();
+}
+
+/**
+ * Display-only cleanup. The stored note is not rewritten: callers pass a copy
+ * and render the return value.
+ */
+export function repairDisplayedProse(text: string): string {
+  return text
+    .replace(/потранспиляц\p{L}*/giu, " ")
+    .split("\n")
+    .map((line) => line.split(/\s+\|\s+/u).map(repairDisplayedPiece).filter(Boolean).join(" | "))
+    .filter((line) => line.trim())
+    .join("\n")
+    .replace(/[ \t]{2,}/gu, " ")
+    .replace(/[ \t]+\n/gu, "\n")
+    .trim();
+}
+
 function isOcrWall(line: string): boolean {
   const text = line.trim();
   if (text.length < 400) return false;
@@ -57,14 +98,15 @@ export function presentAnalyticalNote(note: string, economics?: MemoCalcState | 
   clipped: boolean;
 } {
   const recognized = /OCR\s*\(|Текст распознан автоматически/u.test(note);
-  const text = honestReadinessText(normalizeOcrText(note), economics)
-    .split("\n")
-    .map(repairCutLine)
-    .filter((line) => !/^OCR\s*\(/u.test(line.trim()))
-    .filter((line) => line.trim() !== RECOGNIZED)
-    .filter((line) => !isOcrWall(line))
-    .join("\n")
-    .trim();
+  const text = repairDisplayedProse(
+    honestReadinessText(normalizeOcrText(note), economics)
+      .split("\n")
+      .map(repairCutLine)
+      .filter((line) => !/^OCR\s*\(/u.test(line.trim()))
+      .filter((line) => line.trim() !== RECOGNIZED)
+      .filter((line) => !isOcrWall(line))
+      .join("\n"),
+  );
   const preview = text.length > 900 ? clipAtSentence(text, 700).text : text;
   return { text, recognized, preview, clipped: preview !== text };
 }

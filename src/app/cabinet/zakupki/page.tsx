@@ -381,7 +381,7 @@ export default function ZakupkiPage() {
                     <div className="flex items-start justify-between gap-2">
                     <Link
                       href={`/cabinet/zakupki/${p.id}`}
-                      className="font-medium text-sm leading-snug text-[var(--tk-ink)] hover:underline"
+                      className="min-w-0 flex-1 break-words text-sm font-medium leading-snug text-[var(--tk-ink)] [overflow-wrap:anywhere] hover:underline"
                     >
                       {p.title}
                     </Link>

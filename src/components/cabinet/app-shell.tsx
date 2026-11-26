@@ -174,7 +174,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                 </div>
               </SheetContent>
             </Sheet>
-            <div className="tk-glass-chip hidden rounded-full px-3 py-1 text-[13px] text-[var(--tk-ink-soft)] sm:block">
+            <div className="tk-glass-chip hidden max-w-[min(42vw,18rem)] truncate rounded-full px-3 py-1 text-[13px] text-[var(--tk-ink-soft)] sm:block" title={data.organizations.find((o) => o.id === user.orgId)?.name}>
               {data.organizations.find((o) => o.id === user.orgId)?.name}
             </div>
           </div>
