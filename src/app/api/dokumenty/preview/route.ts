@@ -54,9 +54,18 @@ export async function GET(req: Request) {
       return json({ kind: "docx", paragraphs: parsed.paragraphs.slice(0, 1000) });
     }
 
-    if (doc.fileType === "xlsx") {
+    if (doc.fileType === "xlsx" || doc.fileType === "xls" || doc.fileName.toLowerCase().endsWith(".xls")) {
+      let workbookBytes = bytes;
+      if (doc.fileType === "xls" || (doc.fileName.toLowerCase().endsWith(".xls") && !doc.fileName.toLowerCase().endsWith(".xlsx"))) {
+        const { convertXlsToXlsx } = await import("@/server/xls-workbook");
+        try {
+          workbookBytes = convertXlsToXlsx(bytes);
+        } catch (error) {
+          return json({ error: error instanceof Error ? error.message : "Не удалось прочитать .xls" }, 422);
+        }
+      }
       const workbook = new ExcelJS.Workbook();
-      await workbook.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+      await workbook.xlsx.load(workbookBytes as unknown as ExcelJS.Buffer);
       const sheets = workbook.worksheets.slice(0, 20).map((sheet) => {
         const lastRow = Math.min(sheet.rowCount, 500);
         const usedVisibleColumns = new Set<number>();

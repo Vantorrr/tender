@@ -35,11 +35,13 @@ import { cn } from "@/lib/utils";
 import { plainUserMessage } from "@/lib/plain-user-message";
 import { sanitizeSyncDetail } from "@/lib/wave23";
 import { KonturSearchPanel } from "@/components/kontur-search-panel";
+import { BatchUploadZone } from "@/components/batch-upload-zone";
+import { runUploadQueue } from "@/lib/upload-queue";
 import type { KonturSearchFilters } from "@/server/procurement-source";
 
 export default function ZakupkiPage() {
   const router = useRouter();
-  const { orgProcurements, runSyncJob, refresh } = useStore();
+  const { orgProcurements, runSyncJob, refresh, createDocumentUpload } = useStore();
   const [q, setQ] = useState("");
   const [region, setRegion] = useState<string>("all");
   const [workType, setWorkType] = useState<string>("all");
@@ -57,6 +59,9 @@ export default function ZakupkiPage() {
   const [manualRegion, setManualRegion] = useState("");
   const [manualNmck, setManualNmck] = useState("");
   const [manualDeadline, setManualDeadline] = useState("");
+  const [manualFiles, setManualFiles] = useState<File[]>([]);
+  const [manualProgress, setManualProgress] = useState<{ done: number; total: number } | null>(null);
+  const [manualFailures, setManualFailures] = useState<Array<{ name: string; message: string }>>([]);
   const [sourceHealth, setSourceHealth] = useState<{ status?: string; detail?: string; lastSuccessAt?: string | null } | null>(null);
   useEffect(() => {
     void fetch("/api/health")
@@ -185,9 +190,31 @@ export default function ZakupkiPage() {
           },
         }),
       });
+      if (manualFiles.length) {
+        setManualProgress({ done: 0, total: manualFiles.length });
+        const uploaded = await runUploadQueue(manualFiles, async (file) => {
+          const warning = await createDocumentUpload({
+            procurementId: result.createdProcurementId,
+            title: file.name.replace(/\.[^.]+$/, ""),
+            file,
+            silent: true,
+          });
+          if (warning) throw new Error(warning);
+        }, {
+          concurrency: 4,
+          onProgress: (done, total) => setManualProgress({ done, total }),
+        });
+        setManualFailures(uploaded.errors);
+        if (uploaded.errors.length) {
+          toast.warning(`Закупка создана. Загружено ${uploaded.uploaded} из ${uploaded.uploaded + uploaded.errors.length}`);
+        } else {
+          toast.success(`Закупка создана. Загружено ${uploaded.uploaded} из ${uploaded.uploaded}`);
+        }
+      } else {
+        toast.success("Закупка создана. Добавьте документы в карточку.");
+      }
       await refresh();
       router.push(`/cabinet/zakupki/${result.createdProcurementId}`);
-      toast.success("Закупка создана. Добавьте документы в карточку.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Не удалось создать закупку");
     } finally {
@@ -246,6 +273,21 @@ export default function ZakupkiPage() {
             <Input required aria-label="Регион закупки" placeholder="Регион / площадка" value={manualRegion} onChange={(event) => setManualRegion(event.target.value)} />
             <Input aria-label="НМЦК" type="number" min="0" step="0.01" placeholder="НМЦК, ₽" value={manualNmck} onChange={(event) => setManualNmck(event.target.value)} />
             <Input aria-label="Срок подачи заявки" type="date" value={manualDeadline} onChange={(event) => setManualDeadline(event.target.value)} />
+          </div>
+          <div className="mt-3">
+            <BatchUploadZone
+              testId="manual-procurement-upload"
+              disabled={manualCreating}
+              accept=".pdf,.doc,.docx,.xlsx,.xls,.zip,.rar,.7z,.png,.jpg,.jpeg,.webp"
+              hint={manualFiles.length ? `Выбрано файлов: ${manualFiles.length}. Они загрузятся пакетом после создания карточки.` : "Можно сразу выбрать папку или десятки файлов — они загрузятся после создания закупки."}
+              onFiles={(files) => setManualFiles(files)}
+            />
+            {manualProgress ? <p className="mt-2 text-sm" role="status" data-testid="manual-upload-progress">Загружено {manualProgress.done} из {manualProgress.total}</p> : null}
+            {manualFailures.length ? (
+              <ul className="mt-2 space-y-1 text-sm text-rose-900">
+                {manualFailures.map((failure) => <li key={`${failure.name}-${failure.message}`}>{failure.name}: {failure.message}</li>)}
+              </ul>
+            ) : null}
           </div>
           <div className="mt-3 flex justify-end">
             <Button type="submit" disabled={manualCreating || !manualTitle.trim() || !manualRegion.trim()}>

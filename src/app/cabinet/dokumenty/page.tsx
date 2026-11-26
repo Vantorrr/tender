@@ -10,34 +10,54 @@ import { Input } from "@/components/ui/input";
 import { formatDateTime } from "@/lib/format";
 import { visibleProcurementNumber } from "@/lib/pipeline";
 import { useStore } from "@/lib/store";
+import { BatchUploadZone } from "@/components/batch-upload-zone";
+import { runUploadQueue } from "@/lib/upload-queue";
 
 export default function DokumentyPage() {
-  const { orgDocuments, user, createDocumentUpload, orgProcurements } =
+  const { orgDocuments, user, createDocumentUpload, orgProcurements, refresh } =
     useStore();
   const [q, setQ] = useState("");
   const [pickedId, setPickedId] = useState("");
   const procurementId = pickedId || orgProcurements[0]?.id || "";
   const inputRef = useRef<HTMLInputElement>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [failures, setFailures] = useState<Array<{ name: string; message: string }>>([]);
+  const [uploading, setUploading] = useState(false);
 
   const filtered = orgDocuments.filter((d) => {
     if (!q) return true;
     return `${d.title} ${d.fileName}`.toLowerCase().includes(q.toLowerCase());
   });
 
-  async function handleFile(file: File) {
+  async function handleFiles(files: File[]) {
     if (!procurementId) {
       toast.error("Сначала выберите закупку");
       return;
     }
+    setUploading(true);
+    setFailures([]);
+    setProgress({ done: 0, total: files.length });
     try {
-      await createDocumentUpload({
-        procurementId,
-        title: file.name.replace(/\.[^.]+$/, ""),
-        file,
+      const result = await runUploadQueue(files, async (file) => {
+        const warning = await createDocumentUpload({
+          procurementId,
+          title: file.name.replace(/\.[^.]+$/, ""),
+          file,
+          silent: true,
+        });
+        if (warning) throw new Error(warning);
+      }, {
+        concurrency: 4,
+        onProgress: (done, total) => setProgress({ done, total }),
       });
-      toast.success(`Файл «${file.name}» сохранён на сервере`);
+      await refresh();
+      setFailures(result.errors);
+      if (result.errors.length) toast.warning(`Загружено ${result.uploaded} из ${result.uploaded + result.errors.length}`);
+      else toast.success(`Загружено ${result.uploaded} из ${result.uploaded}`);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка загрузки");
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -70,12 +90,12 @@ export default function DokumentyPage() {
               id="doc-file-input"
               data-testid="doc-file-input"
               type="file"
-              accept=".pdf,.doc,.docx,.xlsx,.txt"
+              multiple
+              accept=".pdf,.doc,.docx,.xlsx,.xls,.zip,.rar,.7z,.txt"
               className="sr-only"
               onChange={async (e) => {
-                const file = e.target.files?.[0];
-                if (!file) return;
-                await handleFile(file);
+                const files = [...(e.target.files ?? [])];
+                if (files.length) await handleFiles(files);
                 e.target.value = "";
               }}
             />
@@ -101,6 +121,22 @@ export default function DokumentyPage() {
           </>
         }
       />
+
+      <div className="mb-4">
+        <BatchUploadZone
+          testId="documents-batch-upload"
+          disabled={!procurementId || uploading}
+          accept=".pdf,.doc,.docx,.xlsx,.xls,.zip,.rar,.7z,.txt"
+          hint="Можно выбрать папку или сразу много файлов. Прогресс — «Загружено X из N»."
+          onFiles={(files) => void handleFiles(files)}
+        />
+        {progress ? <p className="mt-2 text-sm" role="status" data-testid="documents-upload-progress">Загружено {progress.done} из {progress.total}</p> : null}
+        {failures.length ? (
+          <ul className="mt-2 space-y-1 text-sm text-rose-900" data-testid="documents-upload-failures">
+            {failures.map((failure) => <li key={`${failure.name}-${failure.message}`}>{failure.name}: {failure.message}</li>)}
+          </ul>
+        ) : null}
+      </div>
 
       <Input
         className="mb-6 max-w-md"

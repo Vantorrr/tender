@@ -30,6 +30,7 @@ import { EconomicsLinesEditor } from "@/components/economics-lines-editor";
 import { VorWorkplace } from "@/components/vor-workplace";
 import { BddsFrameCard, CalculationOwnerBar, DirectorCostGap, QuoteRatePicker } from "@/components/wave5-panels";
 import { HierarchicalEstimatePanel } from "@/components/hierarchical-estimate-panel";
+import { OfficialModelCard } from "@/components/official-model-card";
 import { EXCEL_RESOURCE_SCHEDULE_DEFAULTS } from "@/lib/resource-schedule-model";
 import { labourLineEconomicsNote, NORTH_DEFAULTS, northernAdditionLines, northernEconomicsApplied, northernStatusText, refreshRateAssumption } from "@/lib/wave23";
 import { isT25uTestId, isT25uTestTitle } from "@/lib/t25u-test-fixture";
@@ -429,6 +430,7 @@ export default function RaschetDetailPage() {
     updateCalculation,
     saveCalculationResources,
     recalcCalculation,
+    upgradeOfficialLogic,
     addCalcFromDirectory,
     refresh,
   } = useStore();
@@ -821,14 +823,9 @@ export default function RaschetDetailPage() {
                             // Excel Ресурсный_график: НР 43% от прямых, прибыль = наценка 40% на с/с с НР
                             useResourceScheduleEconomics: true,
                             profitRate: 0.4,
-                            resourceScheduleParams: calc.resourceScheduleParams ?? {
-                              personHourRate: 1400,
-                              personnelShiftsPerDay: 2,
-                              hoursPerShift: 11,
-                              equipmentShiftsPerDay: 1,
-                              overheadRate: 0.43,
-                              profitMarkupOnCostWithOh: 0.4,
-                            },
+                            ...(calc.resourceScheduleParams
+                              ? { resourceScheduleParams: calc.resourceScheduleParams }
+                              : {}),
                           },
                         }),
                       });
@@ -864,6 +861,10 @@ export default function RaschetDetailPage() {
           </>
         }
       />
+
+      {calc.kind !== "customer_original" ? (
+        <OfficialModelCard params={calc.resourceScheduleParams} stages={linkedSchedule?.stages} />
+      ) : null}
 
       {calc.kind !== "customer_original" ? (
         <CalculationOwnerBar
@@ -1057,6 +1058,20 @@ export default function RaschetDetailPage() {
         <section className="mb-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950" role="status" data-testid="legacy-estimate-cost-banner">
           <h2 className="font-semibold">Старая логика себестоимости</h2>
           <p className="mt-1">{LEGACY_ESTIMATE_COST_BANNER}</p>
+          <Button
+            className="mt-3"
+            data-testid="upgrade-official-logic"
+            onClick={async () => {
+              try {
+                await upgradeOfficialLogic(calc.id);
+                toast.success("Черновик пересчитан: 43/10/40 и профиль 2×11. ГПР без длительности пересобран от выработки.");
+              } catch (error) {
+                toast.error(error instanceof Error ? error.message : "Не удалось пересчитать");
+              }
+            }}
+          >
+            Пересчитать по новой логике (43/10/40 и 2×11)
+          </Button>
         </section>
       ) : null}
 

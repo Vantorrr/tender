@@ -6,6 +6,7 @@ import {
   recalcCalculation,
   recomputeCalculationCost,
   saveDirectorDecision,
+  upgradeCalculationToOfficialLogic,
   updateCalculation,
   updateLinkedResourcesFromCalculation,
   updateVorVolume,
@@ -126,6 +127,15 @@ export async function POST(req: Request) {
         saveDirectorDecision(user.id, body.calculationId, { choice: body.choice, comment: body.comment ?? "" });
       } catch (error) {
         return refuse(error, "Не удалось сохранить решение директора");
+      }
+      return json(getBootstrap(user));
+    }
+    if (body.action === "upgradeOfficialLogic") {
+      if (!body.calculationId) return json({ error: "Укажите расчёт" }, 400);
+      try {
+        upgradeCalculationToOfficialLogic(user.id, body.calculationId);
+      } catch (error) {
+        return refuse(error, "Не удалось пересчитать по новой логике");
       }
       return json(getBootstrap(user));
     }

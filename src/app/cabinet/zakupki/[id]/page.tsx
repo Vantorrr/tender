@@ -44,6 +44,9 @@ import { useStore } from "@/lib/store";
 import { Input } from "@/components/ui/input";
 import { QuantityCommitField } from "@/components/quantity-commit-field";
 import { ProjectAiChat } from "@/components/project-ai-chat";
+import { BatchUploadZone } from "@/components/batch-upload-zone";
+import { OfficialModelCard } from "@/components/official-model-card";
+import { runUploadQueue } from "@/lib/upload-queue";
 
 const SUPPLY_RU: Record<SupplyStatus, string> = {
   need: "Потребность",
@@ -302,6 +305,7 @@ export default function ZakupkaDetailPage() {
     setProcurementReview,
     ensureChain,
     sendToCalculation,
+    makeOfficialPackage,
     analyzeProjectWithAI,
     refreshAnalytics,
     reanalyzeDocument,
@@ -327,6 +331,8 @@ export default function ZakupkaDetailPage() {
   const requestedTab = searchParams.get("tab");
   const activeTab = selectedTab ?? (requestedTab && ["overview", "docs", "analytics", "calc", "gpr", "money", "supply", "risks"].includes(requestedTab) ? requestedTab : "overview");
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
+  const [uploadFailures, setUploadFailures] = useState<Array<{ name: string; message: string }>>([]);
   const [payTitle, setPayTitle] = useState("");
   const [payType, setPayType] = useState<PaymentBucket>("postuplenie");
   const [payAmount, setPayAmount] = useState("");
@@ -465,33 +471,6 @@ export default function ZakupkaDetailPage() {
         }))
     );
   }, [gpr?.stages, supplies]);
-
-  async function onAttachCustomerEstimate(file: File) {
-    setUploadError(null);
-    try {
-      await createDocumentUpload({
-        procurementId: procurement!.id,
-        title: `Смета заказчика — ${file.name}`,
-        file,
-        category: "estimate",
-      });
-      await api("/api/zakupki", {
-        method: "POST",
-        body: JSON.stringify({
-          action: "attachCustomerEstimate",
-          id: procurement!.id,
-          fileName: file.name,
-        }),
-      });
-      await refresh();
-      toast.success("Смета заказчика прикреплена как исходный оригинал");
-    } catch (error) {
-      const message =
-        error instanceof Error ? error.message : "Не удалось добавить смету";
-      setUploadError(message);
-      toast.error(message);
-    }
-  }
 
   function downloadKpFile(text: string, materialName: string) {
     const body =
@@ -739,32 +718,64 @@ export default function ZakupkaDetailPage() {
     } catch (error) { toast.error(error instanceof Error ? error.message : "Не удалось добавить поставщика"); }
   }
 
-  async function onUpload(file: File) {
+  async function onUploadMany(files: File[], category: DocumentCategory = uploadCategory) {
+    if (!procurement || files.length === 0) return;
     setBusy(true);
     setUploadError(null);
+    setUploadFailures([]);
+    setUploadProgress({ done: 0, total: files.length });
     try {
-      const warning = await createDocumentUpload({
-        procurementId: procurement!.id,
-        title: file.name.replace(/\.[^.]+$/, ""),
-        file,
-        category: uploadCategory,
-      });
-      if (uploadCategory === "estimate") {
-        await api("/api/zakupki", {
-          method: "POST",
-          body: JSON.stringify({ action: "attachCustomerEstimate", id: procurement!.id, fileName: file.name }),
+      const result = await runUploadQueue(files, async (file) => {
+        const warning = await createDocumentUpload({
+          procurementId: procurement.id,
+          title: file.name.replace(/\.[^.]+$/, ""),
+          file,
+          category,
+          silent: true,
         });
-      }
-      if (warning) toast.warning(warning);
-      else toast.success(uploadCategory === "estimate" ? "Смета заказчика добавлена" : `Файл «${file.name}» добавлен в закупку`);
+        if (category === "estimate") {
+          await api("/api/zakupki", {
+            method: "POST",
+            body: JSON.stringify({ action: "attachCustomerEstimate", id: procurement.id, fileName: file.name }),
+          });
+        }
+        if (warning) throw new Error(warning);
+      }, {
+        concurrency: 4,
+        onProgress: (done, total) => setUploadProgress({ done, total }),
+      });
       await refresh();
+      setUploadFailures(result.errors);
+      if (result.errors.length) {
+        const message = `Загружено ${result.uploaded} из ${result.uploaded + result.errors.length}. Ошибок: ${result.errors.length}.`;
+        setUploadError(message);
+        toast.warning(message);
+      } else {
+        toast.success(`Загружено ${result.uploaded} из ${result.uploaded}`);
+      }
     } catch (e) {
-      const msg =
-        e instanceof Error
-          ? e.message
-          : "Ошибка загрузки (неподдерживаемый или повреждённый файл)";
+      const msg = e instanceof Error ? e.message : "Ошибка загрузки";
       setUploadError(msg);
       toast.error(msg);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onMakeOfficialPackage() {
+    if (!procurement) return;
+    setBusy(true);
+    try {
+      const result = await makeOfficialPackage(procurement.id);
+      const text = result.outcome === "estimate"
+        ? "Расчёт и ГПР созданы: формула 43/10/40, профиль 2×11, длительность от выработки"
+        : result.outcome === "placeholder"
+          ? "Расчёт создан по формуле 43/10/40 и профилю 2×11. В смете нет объёма для выработки — срок ТЗ по строкам не нарезан"
+          : "Расчёт и график обновлены по официальной модели";
+      if (result.upgraded) toast.success(`Старый черновик пересчитан. ${text}`);
+      else toast.success(text);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Не удалось создать расчёт и ГПР");
     } finally {
       setBusy(false);
     }
@@ -905,6 +916,22 @@ export default function ZakupkaDetailPage() {
             >
               Отправить в расчёт
             </Button>
+            <Button
+              variant="outline"
+              data-testid="compose-analytical-note"
+              disabled={busy || aiAnalyzing || docs.length === 0}
+              onClick={() => void analyzeProjectPackage()}
+            >
+              Составить аналитическую записку
+            </Button>
+            <Button
+              data-testid="make-calc-with-gpr"
+              disabled={busy || !canGpr}
+              title={canGpr ? "Новый расчёт сразу с формулой 43/10/40 и профилем 2×11, ГПР от выработки" : "Нужен раздел ГПР"}
+              onClick={() => void onMakeOfficialPackage()}
+            >
+              Сделать расчёт с ГПР
+            </Button>
             {canGpr ? <Button
               variant="outline"
               data-testid="create-gpr"
@@ -940,28 +967,43 @@ export default function ZakupkaDetailPage() {
       <input
         ref={fileRef}
         type="file"
+        multiple
         className="sr-only"
-        accept=".pdf,.doc,.docx,.xlsx,.zip,.rar,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp"
+        accept=".pdf,.doc,.docx,.xlsx,.xls,.zip,.rar,.7z,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp"
         aria-label="Выберите документы для загрузки в закупку"
         onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) void onUpload(f);
+          const files = [...(e.target.files ?? [])];
+          if (files.length) void onUploadMany(files);
           e.target.value = "";
         }}
       />
       <input
         ref={customerEstimateRef}
         type="file"
+        multiple
         className="sr-only"
         accept=".pdf,.xlsx,.xls,.xml,.gsfx,.gge"
         aria-label="Добавить смету заказчика"
         data-testid="customer-estimate-input"
         onChange={(e) => {
-          const f = e.target.files?.[0];
-          if (f) void onAttachCustomerEstimate(f);
+          const files = [...(e.target.files ?? [])];
+          if (files.length) void onUploadMany(files, "estimate");
           e.target.value = "";
         }}
       />
+      <OfficialModelCard params={calc?.resourceScheduleParams} stages={gpr?.stages} />
+      {uploadProgress ? (
+        <p className="mb-3 text-sm" role="status" data-testid="upload-progress">
+          Загружено {uploadProgress.done} из {uploadProgress.total}
+        </p>
+      ) : null}
+      {uploadFailures.length ? (
+        <ul className="mb-3 space-y-1 text-sm text-rose-900" data-testid="upload-failures">
+          {uploadFailures.map((failure) => (
+            <li key={`${failure.name}-${failure.message}`}>{failure.name}: {failure.message}</li>
+          ))}
+        </ul>
+      ) : null}
 
       {(() => {
         const failedDocument = docs.find((document) => document.aiFailure);
@@ -1317,11 +1359,20 @@ export default function ZakupkaDetailPage() {
               data-testid="upload-to-procurement"
               onClick={() => fileRef.current?.click()}
             >
-              Добавить файл вручную
+              Добавить файлы
             </Button>
             <p className="text-xs text-[var(--tk-muted)]">
-              PDF / DOC / DOCX / XLSX / ZIP / RAR. Ошибки распаковки показываются в карточке.
+              PDF / DOC / DOCX / XLS / XLSX / ZIP / RAR / 7Z. Можно выбрать сразу десятки файлов.
             </p>
+          </div>
+          <div className="mb-4">
+            <BatchUploadZone
+              testId="procurement-batch-upload"
+              disabled={busy}
+              accept=".pdf,.doc,.docx,.xlsx,.xls,.zip,.rar,.7z,.png,.jpg,.jpeg,.webp,.tif,.tiff,.bmp"
+              hint="Файлы уходят по очереди, по 4 одновременно. Ошибка показывается только у проблемного файла."
+              onFiles={(files) => void onUploadMany(files)}
+            />
           </div>
           <ul className="space-y-2">
             {docs.length === 0 ? (

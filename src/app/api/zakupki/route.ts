@@ -12,6 +12,7 @@ import {
   recomputeCalculationCost,
   refreshProcurementAnalytics,
   createProcurementSchedule,
+  makeOfficialCalculationAndSchedule,
   saveCustomerAnswer,
   sendProcurementToCalculation,
   setProcurementReview,
@@ -71,6 +72,7 @@ export async function POST(req: Request) {
         | "createManual"
         | "sendToCalculation"
         | "createGpr"
+        | "makeOfficialPackage"
         | "attachCustomerEstimate"
         | "refreshAnalytics"
         | "analyzeProject"
@@ -161,6 +163,14 @@ export async function POST(req: Request) {
     if (body.action === "createGpr") {
       const schedule = createProcurementSchedule(user.id, body.id!);
       return json({ ...getBootstrap(user), scheduleOutcome: schedule.outcome });
+    }
+    if (body.action === "makeOfficialPackage") {
+      const official = makeOfficialCalculationAndSchedule(user.id, body.id!);
+      return json({
+        ...getBootstrap(user),
+        scheduleOutcome: official.outcome,
+        officialModel: official,
+      });
     }
     if (body.action === "sendToCalculation") {
       sendProcurementToCalculation(user.id, body.id!);

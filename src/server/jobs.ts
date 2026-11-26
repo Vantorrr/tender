@@ -2,6 +2,7 @@ import { shouldRetrySync } from "@/lib/wave23";
 import { assertOrgAccess } from "@/server/acl";
 import { insertJob, listJobs, mutateAppData, readAppData, saveProcurementSyncStatus, updateJob } from "@/server/db";
 import { analyzeUpload } from "@/server/grand-smeta";
+import { detectArchiveFormat } from "@/server/safe-archive";
 import {
   getProcurementSource,
   type KonturSearchFilters,
@@ -267,6 +268,20 @@ export async function runReanalyzePipeline(
     // Org ACL BEFORE readUpload / analyzeUpload / any paid model call.
     assertOrgAccess(actor, existing.orgId, "документа");
     const buf = existing.storedPath ? readUpload(existing.storedPath) : null;
+    const archiveFormat = buf ? detectArchiveFormat(existing.fileName ?? "file", buf) : "none";
+    if (buf && archiveFormat !== "none") {
+      const { reextractStoredArchive } = await import("@/server/archive-ingest");
+      await reextractStoredArchive(actorId, documentId);
+      if (existing.procurementId) {
+        refreshProcurementAnalytics(actorId, existing.procurementId);
+      }
+      updateJob(id, {
+        status: "done",
+        detail: `Архив ${documentId} распакован повторно`,
+        finishedAt: new Date().toISOString(),
+      });
+      return { jobId: id, data: readAppData(), jobs: listJobs() };
+    }
     const prepared = buf
       ? await analyzeUpload(
           existing.fileName ?? "file",

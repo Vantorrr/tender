@@ -14,8 +14,9 @@ export async function POST(req: Request) {
     if (!(file instanceof File) || !scheduleId) {
       return json({ error: "Передайте XLSX и ГПР" }, 400);
     }
-    if (!file.name.toLowerCase().endsWith(".xlsx")) {
-      return json({ error: "Нужен файл XLSX из клиентского шаблона" }, 415);
+    const lowerName = file.name.toLowerCase();
+    if (!lowerName.endsWith(".xlsx") && !lowerName.endsWith(".xls")) {
+      return json({ error: "Нужен файл XLSX или .xls из клиентского шаблона" }, 415);
     }
     if (file.size > config.maxUploadBytes) {
       return json({ error: `Файл слишком большой (лимит ${Math.round(config.maxUploadBytes / (1024 * 1024))} МБ)` }, 413);
@@ -25,7 +26,12 @@ export async function POST(req: Request) {
 
     let rows;
     try {
-      rows = await parseClientMaterialsXlsx(Buffer.from(await file.arrayBuffer()));
+      let bytes = Buffer.from(await file.arrayBuffer());
+      if (lowerName.endsWith(".xls")) {
+        const { convertXlsToXlsx } = await import("@/server/xls-workbook");
+        bytes = convertXlsToXlsx(bytes) as typeof bytes;
+      }
+      rows = await parseClientMaterialsXlsx(bytes);
     } catch (error) {
       return json({ error: error instanceof Error ? error.message : "Не удалось прочитать лист «Материалы»" }, 422);
     }
