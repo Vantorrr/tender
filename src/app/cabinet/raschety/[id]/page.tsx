@@ -1342,7 +1342,7 @@ export default function RaschetDetailPage() {
         stages={linkedSchedule?.stages ?? []}
         locked={locked}
         onVolume={(positionId, volume) => {
-          if (locked) return;
+          if (locked) return Promise.reject(new Error("Расчёт нельзя изменять"));
           return api("/api/raschety", {
             method: "POST",
             body: JSON.stringify({ action: "updateVolume", calculationId: calc.id, positionId, volume }),
@@ -1353,7 +1353,7 @@ export default function RaschetDetailPage() {
           });
         }}
         onStatus={(positionId, status) => {
-          if (locked) return;
+          if (locked) return Promise.reject(new Error("Расчёт нельзя изменять"));
           return api("/api/raschety", {
             method: "POST",
             body: JSON.stringify({ action: "updateVolume", calculationId: calc.id, positionId, status }),

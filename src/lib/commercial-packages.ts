@@ -425,37 +425,62 @@ function addDays(iso: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-function isWeekend(iso: string, weekendDays: number[]): boolean {
-  return weekendDays.includes(new Date(`${iso}T12:00:00Z`).getUTCDay());
-}
-
-/** A stage longer than this is rejected instead of walking the calendar day by day. */
+/** A stage longer than this is rejected. The date itself is not walked day by day. */
 export const MAX_SCHEDULE_DAYS = 20_000;
 
+/** Physical VOR quantity above this is a validation error, not a schedule. */
+export const MAX_VOR_VOLUME = 1e12;
+
+function weekday(iso: string): number {
+  return new Date(`${iso}T12:00:00Z`).getUTCDay();
+}
+
+function uniqueWeekdays(weekendDays: number[]): number[] {
+  return [...new Set(weekendDays.filter((day) => day >= 0 && day <= 6))];
+}
+
 function alignToWorkday(iso: string, weekendDays: number[]): string {
+  const weekend = uniqueWeekdays(weekendDays);
+  if (weekend.length >= 7) throw new Error("Календарь не содержит рабочих дней");
   let cursor = iso;
-  for (let step = 0; step < 14; step += 1) {
-    if (!isWeekend(cursor, weekendDays)) return cursor;
+  for (let step = 0; step < 7; step += 1) {
+    if (!weekend.includes(weekday(cursor))) return cursor;
     cursor = addDays(cursor, 1);
   }
   throw new Error("Календарь не содержит рабочих дней");
 }
 
-/** Inclusive working-day end. A partial day occupies the next whole working day. */
+/**
+ * Inclusive working-day end in constant time.
+ * No weekends: start plus ceil(days) − 1.
+ * Saturday and Sunday off: full weeks of 7 calendar days plus a remainder of 0–4,
+ * with the remainder pushed past the weekend when it would land there.
+ */
 export function endAfterWorkingDays(start: string, days: number, weekendDays: number[]): string {
   const need = Math.max(1, Math.ceil(days - 1e-9));
   if (!Number.isFinite(need) || need > MAX_SCHEDULE_DAYS) {
     throw new Error("Срок этапа слишком большой. Уменьшите объём или добавьте выработку.");
   }
-  let cursor = alignToWorkday(start, weekendDays);
-  let counted = 1;
-  let steps = 0;
-  while (counted < need) {
-    cursor = addDays(cursor, 1);
-    steps += 1;
-    if (steps > need + 14) throw new Error("Календарь не содержит рабочих дней");
-    if (!isWeekend(cursor, weekendDays)) counted += 1;
+  const aligned = alignToWorkday(start, weekendDays);
+  const weekend = uniqueWeekdays(weekendDays);
+  const extra = need - 1;
+  if (weekend.length === 0) return addDays(aligned, extra);
+  const workdaysPerWeek = 7 - weekend.length;
+  if (workdaysPerWeek <= 0) throw new Error("Календарь не содержит рабочих дней");
+  const weeks = Math.floor(extra / workdaysPerWeek);
+  let remainder = extra % workdaysPerWeek;
+  if (weekend.length === 2 && weekend.includes(0) && weekend.includes(6)) {
+    const startDow = weekday(aligned);
+    if (startDow + remainder > 5) remainder += 2;
+    return addDays(aligned, weeks * 7 + remainder);
   }
+  let cursor = addDays(aligned, weeks * 7);
+  let left = remainder;
+  for (let step = 0; left > 0 && step < 14; step += 1) {
+    cursor = addDays(cursor, 1);
+    if (!weekend.includes(weekday(cursor))) left -= 1;
+  }
+  if (left > 0) throw new Error("Календарь не содержит рабочих дней");
   return cursor;
 }
 
@@ -499,15 +524,33 @@ export interface DeadlineView {
   message: string;
 }
 
+/**
+ * Shifts that the deadline lever should trust.
+ * A stage that already stored durationShifts wins over a missing calendar.
+ * A missing calendar is 2, the same default a new package is planned with.
+ */
+export function shiftsForDeadline(
+  stages: Array<{ durationShifts?: number | null }>,
+  calendarShifts?: number | null,
+): number {
+  const planned = stages
+    .map((stage) => stage.durationShifts)
+    .filter((value): value is number => value != null && Number.isFinite(value) && value > 0);
+  if (planned.length) return Math.min(...planned);
+  if (calendarShifts != null && Number.isFinite(calendarShifts) && calendarShifts > 0) return calendarShifts;
+  return 2;
+}
+
 export function deadlineView(input: {
   stages: Array<{
     start: string;
     end: string;
     durationBasis?: DurationBasis | null;
     durationDays?: number | null;
+    durationShifts?: number | null;
   }>;
   deadline: { start: string; end: string } | null;
-  shiftsPerDay: number;
+  shiftsPerDay?: number | null;
 }): DeadlineView {
   const tagged = input.stages.some((stage) => stage.durationBasis != null);
   if (!tagged) {
@@ -544,7 +587,7 @@ export function deadlineView(input: {
   const pathDays = inclusiveCalendarDays(start, end);
   const overrunDays = deadlineDays == null ? null : Math.max(0, pathDays - deadlineDays);
   const exceeds = overrunDays != null && overrunDays > 0;
-  const shiftAvailable = exceeds && input.shiftsPerDay < 2;
+  const shiftAvailable = exceeds && shiftsForDeadline(input.stages, input.shiftsPerDay) < 2;
   const mechanismAvailable = exceeds;
   let message: string;
   if (deadlineDays == null) {
@@ -573,6 +616,64 @@ export function volumeStatusLabel(status: "unconfirmed" | "confirmed" | undefine
 }
 
 export function scaleFormulaVolume(previous: number | null | undefined, previousQty: number, nextQty: number): number | null {
-  if (previous == null || !(previousQty > 0) || !(nextQty > 0)) return previous ?? null;
+  if (!(nextQty > 0)) return 0;
+  if (previous == null || !(previousQty > 0)) return previous ?? null;
   return previous * (nextQty / previousQty);
+}
+
+/** A stage belongs to this VOR row, not to a same-named work in another section. */
+export function stageTracksVolumeRow(
+  stage: {
+    volumeRowIds?: string[] | null;
+    volumeSource?: "vor" | "estimate" | null;
+    sectionName?: string | null;
+    workName?: string | null;
+    name: string;
+  },
+  position: { id: string; name: string; sourceSectionName?: string | null },
+): boolean {
+  if (stage.volumeSource === "estimate") return false;
+  if (stage.volumeRowIds?.length) return stage.volumeRowIds.includes(position.id);
+  if (foldNormSearch(stage.workName ?? stage.name) !== foldNormSearch(position.name)) return false;
+  const stageSection = foldNormSearch(stage.sectionName ?? "");
+  const rowSection = foldNormSearch(position.sourceSectionName ?? "");
+  if (stageSection || rowSection) return stageSection === rowSection;
+  return true;
+}
+
+/**
+ * New formula volume for one physical quantity.
+ * Zero clears the length and keeps the per-unit factor.
+ * A later positive quantity rebuilds the numerator from that factor.
+ */
+export function formulaAfterVolumeChange(
+  stage: {
+    durationBasis?: DurationBasis | null;
+    formulaVolume?: number | null;
+    planVolume?: number | null;
+    formulaPerPhysical?: number | null;
+    outputPerShift11h?: number | null;
+    dailyOutput?: number | null;
+    statedLinks?: number | null;
+    statedShifts?: number | null;
+    mechanismCount?: number | null;
+    durationShifts?: number | null;
+  },
+  nextPhysical: number,
+): { formulaVolume: number; durationDays: number | null; formulaPerPhysical: number | null; planVolume: number } {
+  const stored = stage.formulaPerPhysical;
+  const derived = stage.planVolume != null && stage.planVolume > 0 && stage.formulaVolume != null
+    ? stage.formulaVolume / stage.planVolume
+    : null;
+  const per = stored != null && stored > 0 ? stored : derived;
+  if (!(nextPhysical > 0)) {
+    return { formulaVolume: 0, durationDays: 0, formulaPerPhysical: per, planVolume: 0 };
+  }
+  const formulaVolume = per != null ? nextPhysical * per : nextPhysical;
+  return {
+    formulaVolume,
+    durationDays: durationFromStored({ ...stage, formulaVolume }),
+    formulaPerPhysical: per,
+    planVolume: nextPhysical,
+  };
 }

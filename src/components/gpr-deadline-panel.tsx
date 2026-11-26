@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { deadlineView, type AccelerationLever } from "@/lib/commercial-packages";
+import { deadlineView, shiftsForDeadline, type AccelerationLever } from "@/lib/commercial-packages";
 import type { GprSchedule } from "@/lib/types";
 
 export function GprDeadlinePanel({
@@ -16,7 +16,7 @@ export function GprDeadlinePanel({
   const view = deadlineView({
     stages: schedule.stages,
     deadline: schedule.deadline ?? null,
-    shiftsPerDay: schedule.calendar?.shiftsPerDay ?? 1,
+    shiftsPerDay: shiftsForDeadline(schedule.stages, schedule.calendar?.shiftsPerDay),
   });
   if (!view.applicable) return null;
   const tagged = schedule.stages.filter((stage) => stage.durationBasis);

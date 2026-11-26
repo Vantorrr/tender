@@ -2,8 +2,7 @@
 
 import { QuantityCommitField } from "@/components/quantity-commit-field";
 import { Button } from "@/components/ui/button";
-import { volumeStatusLabel } from "@/lib/commercial-packages";
-import { foldNormSearch } from "@/lib/client-norms";
+import { stageTracksVolumeRow, volumeStatusLabel } from "@/lib/commercial-packages";
 import type { CalcPosition, GprStage } from "@/lib/types";
 
 export function VorWorkplace({
@@ -31,8 +30,7 @@ export function VorWorkplace({
       ) : (
         <div className="mt-3 space-y-2">
           {rows.map((row) => {
-            const key = foldNormSearch(row.name);
-            const stage = stages.find((item) => item.durationBasis && foldNormSearch(item.workName ?? item.name) === key);
+            const stage = stages.find((item) => item.durationBasis && stageTracksVolumeRow(item, row));
             const status = volumeStatusLabel(row.volumeStatus);
             return (
               <div key={row.id} className="grid gap-2 rounded-lg border border-[var(--tk-line)] p-3 md:grid-cols-[minmax(0,1.4fr)_6rem_9rem_auto]" data-testid={`vor-row-${row.id}`}>
@@ -49,6 +47,7 @@ export function VorWorkplace({
                   value={row.quantity}
                   ariaLabel={`Объём ${row.name}`}
                   testId={`vor-qty-${row.id}`}
+                  disabled={locked}
                   onCommit={(volume) => onVolume(row.id, volume)}
                 />
                 <div className="flex items-center text-sm" data-testid={`vor-status-${row.id}`}>{status}</div>

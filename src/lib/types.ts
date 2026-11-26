@@ -653,6 +653,12 @@ export interface GprStage {
   durationDays?: number | null;
   /** Numerator of the duration formula, in the same units as the output norm. */
   formulaVolume?: number | null;
+  /** formulaVolume per physical unit. Kept when the volume is set back to zero. */
+  formulaPerPhysical?: number | null;
+  /** VOR rows that supplied this stage volume. An estimate work line does not set this. */
+  volumeRowIds?: string[];
+  /** Which quantity built the duration. An estimate line is not rescaled by a VOR edit. */
+  volumeSource?: "vor" | "estimate";
   outputPerShift11h?: number | null;
   /** File-4 output of the stated crew for one day. Not a per-shift figure. */
   dailyOutput?: number | null;

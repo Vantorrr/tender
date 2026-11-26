@@ -8,10 +8,13 @@ import {
   deadlineView,
   durationDaysFromOutput,
   endAfterWorkingDays,
+  formulaAfterVolumeChange,
   gesnHoursHint,
   matchSiteWorkKind,
   placeByDuration,
   planCommercialStage,
+  shiftsForDeadline,
+  stageTracksVolumeRow,
   volumeStatusLabel,
   type ShiftOutputCandidate,
 } from "@/lib/commercial-packages";
@@ -199,10 +202,65 @@ describe("commercial package duration", () => {
 
   it("rejects a stage measured in millions of days without walking them", () => {
     expect(endAfterWorkingDays("2026-12-01", 10, [])).toBe("2026-12-10");
+    expect(endAfterWorkingDays("2026-12-01", 10, [0, 6])).toBe("2026-12-14");
     expect(endAfterWorkingDays("2026-12-01", MAX_SCHEDULE_DAYS, []).startsWith("20")).toBe(true);
     expect(() => endAfterWorkingDays("2026-12-01", MAX_SCHEDULE_DAYS + 1, [])).toThrow(/слишком большой/);
     expect(() => endAfterWorkingDays("2026-12-01", 1e15, [])).toThrow(/слишком большой/);
     expect(() => endAfterWorkingDays("2026-12-01", 2, [0, 1, 2, 3, 4, 5, 6])).toThrow(/рабочих дней/);
+  });
+
+  it("does not offer another shift when the stages already use two", () => {
+    const stage = {
+      start: "2026-12-01",
+      end: "2026-12-10",
+      durationBasis: "output_shift" as const,
+      durationDays: 10,
+      durationShifts: 2,
+    };
+    expect(shiftsForDeadline([stage], undefined)).toBe(2);
+    expect(shiftsForDeadline([stage], 1)).toBe(2);
+    expect(shiftsForDeadline([], undefined)).toBe(2);
+    expect(shiftsForDeadline([], 1)).toBe(1);
+    const view = deadlineView({
+      stages: [stage],
+      deadline: { start: "2026-12-01", end: "2026-12-05" },
+      shiftsPerDay: 1,
+    });
+    expect(view.overrunDays).toBe(5);
+    expect(view.shiftAvailable).toBe(false);
+    expect(view.mechanismAvailable).toBe(true);
+  });
+
+  it("keeps a VOR edit inside its section and restores duration after zero", () => {
+    const norm = {
+      durationBasis: "output_shift" as const,
+      outputPerShift11h: 1,
+      statedLinks: 1,
+      statedShifts: 1,
+      mechanismCount: 1,
+      durationShifts: 2,
+      formulaVolume: 10,
+      planVolume: 10,
+      formulaPerPhysical: 1,
+    };
+    expect(stageTracksVolumeRow(
+      { name: "Земля", workName: "Земля", sectionName: "Раздел 2", volumeRowIds: ["vor-b"], volumeSource: "vor" },
+      { id: "vor-a", name: "Земля", sourceSectionName: "Раздел 1" },
+    )).toBe(false);
+    expect(stageTracksVolumeRow(
+      { name: "Земля", workName: "Земля", sectionName: "Раздел 1", volumeSource: "estimate" },
+      { id: "vor-a", name: "Земля", sourceSectionName: "Раздел 1" },
+    )).toBe(false);
+    expect(stageTracksVolumeRow(
+      { name: "Земля", workName: "Земля", sectionName: "Раздел 1", volumeRowIds: ["vor-a"], volumeSource: "vor" },
+      { id: "vor-a", name: "Земля", sourceSectionName: "Раздел 1" },
+    )).toBe(true);
+    expect(formulaAfterVolumeChange(norm, 0)).toMatchObject({ formulaVolume: 0, durationDays: 0, formulaPerPhysical: 1, planVolume: 0 });
+    expect(formulaAfterVolumeChange({ ...norm, formulaVolume: 0, planVolume: 0, formulaPerPhysical: 1 }, 20)).toMatchObject({
+      formulaVolume: 20,
+      durationDays: 10,
+      planVolume: 20,
+    });
   });
 
   it("keeps a volume row unconfirmed until someone confirms it", () => {

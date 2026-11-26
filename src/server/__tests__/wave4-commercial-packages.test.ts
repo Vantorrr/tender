@@ -486,8 +486,208 @@ describe("wave 4 commercial packages", () => {
     expect(readAppData().schedules.find((item) => item.id === "g-foreign-lever")!.stages[0]!.end).toBe("2026-12-10");
     expect(readAppData().schedules.find((item) => item.id === "g-foreign-lever")!.calendar!.shiftsPerDay).toBe(1);
     updateSchedule("u-ruk", "g-foreign-lever", { calculationId: draft.id });
-    expect(readAppData().schedules.find((item) => item.id === "g-foreign-lever")!.calculationId).toBe("c-beta-foreign");
+    expect(readAppData().schedules.find((item) => item.id === "g-foreign-lever")!.calculationId).toBe(draft.id);
+    expect(() => updateSchedule("u-ruk", "g-foreign-lever", { calculationId: "c-beta-foreign" })).toThrow(/другой организации/);
+    expect(readAppData().schedules.find((item) => item.id === "g-foreign-lever")!.calculationId).toBe(draft.id);
     expect(() => updateVorVolume("u-ruk", draft.id, "vor-soil", { volume: 1e15 })).toThrow(/объём/i);
     expect(readAppData().calculations.find((item) => item.id === draft.id)!.positions.find((position) => position.id === "vor-soil")!.quantity).toBe(10);
+  });
+
+  it("rescales only the VOR package, survives zero, and ignores a shift that is already two", () => {
+    const created = createManualProcurement("u-ruk", { title: "Разделы ВОР", region: "Ямал" });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const procurement = readAppData().procurements.find((item) => item.id === created.id)!;
+    const draft = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "resource_draft")!;
+    const norm = {
+      durationBasis: "output_shift" as const,
+      outputPerShift11h: 1,
+      statedLinks: 1,
+      statedShifts: 1,
+      mechanismCount: 1,
+      durationShifts: 2,
+      formulaPerPhysical: 1,
+    };
+    mutateAppData((data) => {
+      const calc = data.calculations.find((item) => item.id === draft.id)!;
+      calc.resourceScheduleParams = {
+        personHourRate: 1400,
+        personnelShiftsPerDay: 2,
+        hoursPerShift: 11,
+        equipmentShiftsPerDay: 2,
+        overheadRate: 0.43,
+        profitMarkupOnCostWithOh: 0.4,
+      };
+      calc.positions.push(
+        {
+          id: "vor-a",
+          code: "ВОР",
+          costRole: "commercial",
+          name: "Земля",
+          unit: "м3",
+          quantity: 10,
+          rate: 100,
+          rateMissing: false,
+          sourceSectionName: "Раздел 1",
+          sourceWorkName: "Земля",
+        },
+        {
+          id: "vor-b",
+          code: "ВОР",
+          costRole: "commercial",
+          name: "Земля",
+          unit: "м3",
+          quantity: 40,
+          rate: 50,
+          rateMissing: false,
+          sourceSectionName: "Раздел 2",
+          sourceWorkName: "Земля",
+        },
+      );
+      data.schedules.unshift({
+        id: "g-sections",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        calculationId: draft.id,
+        title: "ГПР разделы",
+        status: "v_rabote",
+        version: 1,
+        authorId: "u-ruk",
+        updatedAt: new Date().toISOString(),
+        deadline: { start: "2026-12-01", end: "2026-12-03" },
+        stages: [
+          {
+            id: "st-a",
+            name: "Земля",
+            workName: "Земля",
+            sectionName: "Раздел 1",
+            start: "2026-12-01",
+            end: "2026-12-05",
+            sequence: 1,
+            crewSize: 0,
+            ...norm,
+            formulaVolume: 10,
+            planVolume: 10,
+            durationDays: 5,
+            volumeSource: "vor",
+            volumeRowIds: ["vor-a"],
+          },
+          {
+            id: "st-b",
+            name: "Земля",
+            workName: "Земля",
+            sectionName: "Раздел 2",
+            start: "2026-12-06",
+            end: "2026-12-25",
+            sequence: 2,
+            crewSize: 0,
+            ...norm,
+            formulaVolume: 40,
+            planVolume: 40,
+            durationDays: 20,
+            volumeSource: "vor",
+            volumeRowIds: ["vor-b"],
+          },
+          {
+            id: "st-estimate",
+            name: "Земля",
+            workName: "Земля",
+            sectionName: "Раздел 1",
+            start: "2026-12-01",
+            end: "2026-12-20",
+            sequence: 3,
+            crewSize: 0,
+            ...norm,
+            formulaVolume: 100,
+            planVolume: 100,
+            durationDays: 50,
+            volumeSource: "estimate",
+          },
+        ],
+      });
+      data.calculations.unshift({
+        id: "c-shifts-only",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        title: "Смены",
+        status: "v_rabote",
+        positions: [],
+        assumptions: [],
+        scenario: "bazovyy",
+        scenarioFactor: 1,
+        participateDecision: null,
+        directoryVersionId: "dir-rascenki-1",
+        version: 1,
+        authorId: "u-ruk",
+        updatedAt: new Date().toISOString(),
+        kind: "resource_draft",
+        resourceScheduleParams: {
+          personHourRate: 1400,
+          personnelShiftsPerDay: 2,
+          hoursPerShift: 11,
+          equipmentShiftsPerDay: 2,
+          overheadRate: 0.43,
+          profitMarkupOnCostWithOh: 0.4,
+        },
+      });
+      data.schedules.unshift({
+        id: "g-two-shifts",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        calculationId: "c-shifts-only",
+        title: "ГПР без календаря",
+        status: "v_rabote",
+        version: 1,
+        authorId: "u-ruk",
+        updatedAt: new Date().toISOString(),
+        deadline: { start: "2026-12-01", end: "2026-12-02" },
+        stages: [{
+          id: "st-two",
+          name: "Уже две смены",
+          start: "2026-12-01",
+          end: "2026-12-10",
+          sequence: 1,
+          crewSize: 0,
+          durationBasis: "output_shift",
+          durationDays: 10,
+          durationShifts: 2,
+          formulaVolume: 20,
+          outputPerShift11h: 1,
+          mechanismCount: 1,
+          statedLinks: 1,
+          statedShifts: 1,
+        }],
+      });
+      return data;
+    });
+    updateVorVolume("u-ruk", draft.id, "vor-a", { volume: 0 });
+    const zeroed = readAppData().schedules.find((item) => item.id === "g-sections")!;
+    expect(zeroed.stages.find((stage) => stage.id === "st-a")).toMatchObject({
+      formulaVolume: 0,
+      durationDays: 0,
+      planVolume: 0,
+      formulaPerPhysical: 1,
+      start: "2026-12-01",
+      end: "2026-12-01",
+    });
+    expect(zeroed.stages.find((stage) => stage.id === "st-b")!.planVolume).toBe(40);
+    expect(zeroed.stages.find((stage) => stage.id === "st-b")!.durationDays).toBe(20);
+    expect(zeroed.stages.find((stage) => stage.id === "st-estimate")!.planVolume).toBe(100);
+    expect(zeroed.stages.find((stage) => stage.id === "st-estimate")!.durationDays).toBe(50);
+    updateVorVolume("u-ruk", draft.id, "vor-a", { volume: 20 });
+    const restored = readAppData().schedules.find((item) => item.id === "g-sections")!;
+    expect(restored.stages.find((stage) => stage.id === "st-a")).toMatchObject({
+      formulaVolume: 20,
+      durationDays: 10,
+      planVolume: 20,
+    });
+    expect(restored.stages.find((stage) => stage.id === "st-b")!.durationDays).toBe(20);
+    expect(restored.stages.find((stage) => stage.id === "st-estimate")).toMatchObject({
+      planVolume: 100,
+      formulaVolume: 100,
+      durationDays: 50,
+    });
+    expect(() => applyScheduleAcceleration("u-ruk", "g-two-shifts", "shift")).toThrow(/Смен уже две/);
+    expect(readAppData().schedules.find((item) => item.id === "g-two-shifts")!.stages[0]!.end).toBe("2026-12-10");
+    expect(readAppData().schedules.find((item) => item.id === "g-two-shifts")!.calendar).toBeUndefined();
   });
 });

@@ -41,12 +41,13 @@ import {
   GPR_UNCONFIRMED_DURATION,
   applyLeverToStored,
   deadlineView,
-  durationFromStored,
   placeByDuration,
-  scaleFormulaVolume,
+  MAX_VOR_VOLUME,
+  formulaAfterVolumeChange,
+  shiftsForDeadline,
+  stageTracksVolumeRow,
   type AccelerationLever,
 } from "@/lib/commercial-packages";
-import { foldNormSearch } from "@/lib/client-norms";
 import { listShiftOutputCandidates } from "@/server/client-norms";
 import { COMPANY_RATE_RULE, composeAnalyticalNote, dependencyWouldCycle, inclusiveDays, migratePlanBundle, northernAdditionLines, recognizedRowsPhrase, rowCountGenitive, rowCountNominative, scheduleAfterPredecessor } from "@/lib/wave23";
 import {
@@ -1456,6 +1457,15 @@ export function updateSchedule(
     const item = data.schedules.find((s) => s.id === id);
     if (!item) throw new Error("ГПР не найден");
     assertOrgAccess(actor, item.orgId, "ГПР");
+    let linkedCalculationId = item.calculationId;
+    if (patch.calculationId && patch.calculationId !== item.calculationId) {
+      const linked = data.calculations.find((row) => row.id === patch.calculationId);
+      if (!linked || linked.orgId !== item.orgId) {
+        throw new Error("Нет доступа к данным другой организации (расчёта)");
+      }
+      assertOrgAccess(actor, linked.orgId, "расчёта");
+      linkedCalculationId = linked.id;
+    }
     const { orgId: _o, id: _i, calculationId: _c, procurementId: _p, ...safe } = patch;
     void _o;
     void _i;
@@ -1484,7 +1494,13 @@ export function updateSchedule(
             return { ...stage, createdBy: stage.createdBy ?? actorId };
           }), calc?.positions ?? [])
         : s.stages;
-      return { ...s, ...safe, stages, updatedAt: new Date().toISOString() };
+      return {
+        ...s,
+        ...safe,
+        calculationId: linkedCalculationId,
+        stages,
+        updatedAt: new Date().toISOString(),
+      };
     });
     // Only resync explicit resource-linked drafts — never rewrite unrelated/legacy positions.
     const updated = data.schedules.find((s) => s.id === id)!;
@@ -2851,7 +2867,7 @@ export function applyScheduleAcceleration(actorId: string, scheduleId: string, l
     const item = data.schedules.find((row) => row.id === scheduleId);
     if (!item) throw new Error("ГПР не найден");
     assertOrgAccess(actor, item.orgId, "ГПР");
-    const shifts = item.calendar?.shiftsPerDay ?? 1;
+    const shifts = shiftsForDeadline(item.stages, item.calendar?.shiftsPerDay);
     const view = deadlineView({ stages: item.stages, deadline: item.deadline ?? null, shiftsPerDay: shifts });
     if (!view.applicable) throw new Error("В этом графике нет длительности по выработке");
     if (!(view.overrunDays && view.overrunDays > 0)) throw new Error("Критический путь укладывается в срок ТЗ");
@@ -2919,21 +2935,28 @@ export function updateVorVolume(
     const nextQty = patch.volume;
     const volumeChanged = nextQty != null && Number.isFinite(nextQty) && nextQty !== previousQty;
     if (nextQty != null) {
-      if (!Number.isFinite(nextQty) || nextQty < 0 || nextQty > 1e12) throw new Error("Укажите объём");
+      if (!Number.isFinite(nextQty) || nextQty < 0 || nextQty > MAX_VOR_VOLUME) throw new Error("Укажите объём");
       position.quantity = nextQty;
     }
     if (volumeChanged) position.volumeStatus = "unconfirmed";
     else if (patch.status) position.volumeStatus = patch.status;
     if (volumeChanged && nextQty != null) {
-      const schedule = data.schedules.find((item) => item.calculationId === calc.id);
-      const key = foldNormSearch(position.name);
-      if (schedule?.stages.some((stage) => stage.durationBasis && foldNormSearch(stage.workName ?? stage.name) === key)) {
+      const schedule = data.schedules.find((item) => item.calculationId === calc.id && item.orgId === calc.orgId);
+      const tracked = schedule?.stages.filter((stage) => stage.durationBasis && stageTracksVolumeRow(stage, position)) ?? [];
+      if (schedule && tracked.length) {
         schedule.stages = schedule.stages.map((stage) => {
-          if (!stage.durationBasis || foldNormSearch(stage.workName ?? stage.name) !== key) return stage;
-          const formulaVolume = scaleFormulaVolume(stage.formulaVolume, previousQty, nextQty);
-          const next = { ...stage, formulaVolume, planVolume: nextQty };
-          next.durationDays = durationFromStored(next);
-          return next;
+          if (!tracked.some((item) => item.id === stage.id)) return stage;
+          const physical = stage.volumeRowIds?.length
+            ? stage.volumeRowIds.reduce((sum, id) => sum + (id === position.id ? nextQty : (calc.positions.find((row) => row.id === id)?.quantity ?? 0)), 0)
+            : nextQty;
+          const priced = formulaAfterVolumeChange(stage, physical);
+          return {
+            ...stage,
+            formulaVolume: priced.formulaVolume,
+            durationDays: priced.durationDays,
+            formulaPerPhysical: priced.formulaPerPhysical,
+            planVolume: priced.planVolume,
+          };
         });
         schedule.stages = repositionDurationStages(schedule.stages, schedule.calendar?.weekendDays ?? []);
         schedule.updatedAt = new Date().toISOString();

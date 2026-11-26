@@ -172,6 +172,7 @@ export function buildStagesFromEstimatePositions(
       : volumeSheet != null
         ? volumeRows[0]?.unit ?? null
         : null;
+    const volumeRowIds = workVolume == null && volumeSheet != null ? volumeRows.map((position) => position.id) : [];
     const resources: GprStageResource[] = rows.flatMap((position) => {
       if (position.isWorkItem) return [];
       const code = position.code.toLocaleUpperCase("ru-RU");
@@ -227,6 +228,11 @@ export function buildStagesFromEstimatePositions(
       durationBasis: plan.durationBasis,
       ...(plan.durationDays != null ? { durationDays: plan.durationDays } : {}),
       ...(plan.formulaVolume != null ? { formulaVolume: plan.formulaVolume } : {}),
+      ...(plan.formulaVolume != null && physicalVolume != null && physicalVolume > 0
+        ? { formulaPerPhysical: plan.formulaVolume / physicalVolume }
+        : {}),
+      ...(volumeRowIds.length ? { volumeRowIds, volumeSource: "vor" as const } : {}),
+      ...(workVolume != null ? { volumeSource: "estimate" as const } : {}),
       ...(plan.outputPerShift11h != null ? { outputPerShift11h: plan.outputPerShift11h } : {}),
       ...(plan.dailyOutput != null ? { dailyOutput: plan.dailyOutput } : {}),
       ...(plan.statedLinks != null ? { statedLinks: plan.statedLinks } : {}),
