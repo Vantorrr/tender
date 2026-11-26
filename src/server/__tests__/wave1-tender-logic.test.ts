@@ -402,7 +402,7 @@ describe("wave 1 tender logic", () => {
     const reserve = Math.round(cost * 0.1 * 100) / 100;
     const profit = Math.round(cost * 0.4 * 100) / 100;
     const price = Math.round((cost + reserve + profit) * 100) / 100;
-    const rollupTotal = Math.round(cost * 1.4 * 100) / 100;
+    const rollupTotal = price;
     createProcurementSchedule("u-ruk", created.id);
     recomputeCalculationCost("u-ruk", draft.id, {
       resourceScheduleParams: params,

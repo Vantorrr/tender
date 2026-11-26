@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -89,6 +89,12 @@ export function HierarchicalEstimatePanel({
   const [officeDraft, setOfficeDraft] = useState(officeOverhead);
   const [reserveDraft, setReserveDraft] = useState(costSummary?.reserve ?? 0);
   const [reserveEdited, setReserveEdited] = useState(false);
+  const reserveFocused = useRef(false);
+  useEffect(() => {
+    if (reserveFocused.current) return;
+    setReserveDraft(costSummary?.reserve ?? 0);
+    setReserveEdited(false);
+  }, [costSummary?.reserve]);
 
   const nodes = useMemo(
     () =>
@@ -476,6 +482,12 @@ export function HierarchicalEstimatePanel({
                     min={0}
                     step="1000"
                     value={String(value)}
+                    onFocus={() => {
+                      if (label.startsWith("Непредвиденные")) reserveFocused.current = true;
+                    }}
+                    onBlur={() => {
+                      if (label.startsWith("Непредвиденные")) reserveFocused.current = false;
+                    }}
                     onChange={(event) => {
                       const next = Math.max(0, Number(event.target.value) || 0);
                       setValue(next);

@@ -1483,6 +1483,7 @@ export function updateSchedule(
           replacePositions: true,
         });
         Object.assign(calc, synced.calc);
+        applyClientEconomics(calc);
       }
       if (previousPhysicalPlan !== physicalPlanSignature(updated.stages)) {
         syncProductionPlanFromSchedule(data, updated);
@@ -1550,6 +1551,7 @@ export function updateLinkedResourcesFromCalculation(
     if (isResourceLinkedDraft(calc)) {
       const synced = syncDraftFromStages(calc, schedule.stages, { replacePositions: true });
       Object.assign(calc, synced.calc);
+      applyClientEconomics(calc);
     }
     audit(data, actorId, "update", "calculation", calculationId, "Ресурсы расчёта синхронизированы с графиком");
     return data;
@@ -1614,6 +1616,7 @@ export function patchScheduleResourceAndSync(
         replacePositions: true,
       });
       Object.assign(calc, synced.calc);
+      applyClientEconomics(calc);
       calc.changeLog = [
         ...(calc.changeLog ?? []),
         {
@@ -3692,6 +3695,24 @@ function applyClientEconomics(calc: Calculation) {
     priceIncVat: next.priceIncVat,
     ...(next.direct != null ? { direct: next.direct } : {}),
     ...(next.overhead != null ? { overhead: next.overhead } : {}),
+    ...(summary.northernAdjustments ? {
+      northernAdjustments: {
+        ...summary.northernAdjustments,
+        total: next.priceExVat,
+      },
+    } : {}),
+    ...(summary.resourceSlices ? {
+      resourceSlices: {
+        ...summary.resourceSlices,
+        ...(next.manualLines.includes("overhead") && next.overhead != null
+          ? { overhead: next.overhead, costWithOh: next.C0 }
+          : {}),
+        ...(next.manualLines.includes("profit") || next.manualLines.includes("overhead")
+          ? { profit: next.profit }
+          : {}),
+        total: next.priceExVat,
+      },
+    } : {}),
     manualLines: next.manualLines,
   };
 }

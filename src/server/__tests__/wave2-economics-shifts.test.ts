@@ -107,6 +107,7 @@ describe("wave 2 client economics and shifts", () => {
     expect(priced.costSummary?.manualLines ?? []).toEqual([]);
     expect(priced.committeeSnapshot?.fullCost).toBeCloseTo(fullCost, 2);
     expect(priced.participateDecision).toBe("uchastvovat");
+    expect(priced.costSummary?.northernAdjustments?.total).toBeCloseTo(priced.costSummary?.priceExVat ?? 0, 2);
 
     recomputeCalculationCost("u-ruk", draft.id, {
       useResourceScheduleEconomics: true,
@@ -152,6 +153,59 @@ describe("wave 2 client economics and shifts", () => {
     expect(reset.costSummary?.reserve).toBeCloseTo(reserve, 2);
     expect(reset.costSummary?.profit).toBeCloseTo(profit, 2);
     expect(reset.costSummary?.priceExVat).toBeCloseTo(price, 2);
+
+    createProcurementSchedule("u-ruk", created.id);
+    mutateAppData((data) => {
+      const schedule = data.schedules.find((item) => item.procurementId === created.id)!;
+      const stage = schedule.stages[0]!;
+      stage.resources = [
+        ...(stage.resources ?? []),
+        {
+          id: "eq-wave2",
+          kind: "equipment",
+          name: "Кран",
+          unit: "маш",
+          quantity: 1,
+          rate: 100,
+          quantityBasis: "count_per_shift",
+        },
+      ];
+      return data;
+    });
+    recomputeCalculationCost("u-ruk", draft.id, { useResourceScheduleEconomics: true, vatPercent: 20 });
+    const scheduled = readAppData().calculations.find((item) => item.id === draft.id)!;
+    const officialPrice = scheduled.costSummary?.priceExVat ?? 0;
+    const slices = scheduled.costSummary?.resourceSlices;
+    expect(slices?.total).toBeCloseTo(officialPrice, 2);
+    expect((slices?.costWithOh ?? 0) + (slices?.profit ?? 0)).toBeLessThan(officialPrice);
+    expect(scheduled.costSummary?.northernAdjustments?.total).toBeCloseTo(officialPrice, 2);
+    const { buildCalculationXlsx, buildCalculationPdf } = await import("@/server/export");
+    const workbook = new (await import("exceljs")).Workbook();
+    await workbook.xlsx.load(await buildCalculationXlsx(draft.id) as unknown as import("exceljs").Buffer);
+    const sheet = workbook.getWorksheet("Расчёт")!;
+    let exportedZ: number | null = null;
+    let exportedPrice: number | null = null;
+    let exportedNorth: number | null = null;
+    sheet.eachRow((row) => {
+      const code = String(row.getCell(1).value ?? "");
+      const name = String(row.getCell(2).value ?? "");
+      const amount = Number(row.getCell(6).value);
+      if (code === "Z_total") exportedZ = amount;
+      if (name === "Цена без НДС") exportedPrice = amount;
+      if (name === "Итого с северными условиями") exportedNorth = amount;
+    });
+    expect(exportedZ).toBeCloseTo(officialPrice, 2);
+    expect(exportedNorth).toBeCloseTo(officialPrice, 2);
+    if (exportedPrice != null) expect(exportedPrice).toBeCloseTo(officialPrice, 2);
+    const pdfPath = path.join(process.cwd(), "data", `wave2-price-${draft.id}.pdf`);
+    fs.writeFileSync(pdfPath, await buildCalculationPdf(draft.id));
+    const pdfText = (await import("node:child_process")).spawnSync("pdftotext", ["-layout", pdfPath, "-"], { encoding: "utf8" }).stdout ?? "";
+    fs.rmSync(pdfPath, { force: true });
+    const compact = (value: string) => value.replace(/\s/g, "");
+    const formatted = compact(new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(officialPrice));
+    const pdfCompact = compact(pdfText);
+    expect(pdfCompact).toContain(`ИтогоресурсногочерновикаZ:${formatted}`);
+    expect(pdfCompact).toContain(`Итогоссевернымиусловиями:${formatted}`);
   });
 
   it("uses 2×11 without weekends for a new calculation and does not rewrite a saved profile", async () => {

@@ -507,7 +507,9 @@ describe("t25u shared dimensions (P1 #1)", () => {
     expect(slices.overhead).toBe(W);
     expect(slices.costWithOh).toBe(X);
     expect(slices.profit).toBe(Y);
-    expect(slices.total).toBe(Z);
+    const official = roundMoney(X + roundMoney(X * 0.1) + Y);
+    expect(slices.total).toBe(official);
+    expect(after.calculations.find((c) => c.id === T25U_TEST.calculationId)!.costSummary!.priceExVat).toBe(official);
 
     const treeLive = buildHierarchicalEstimate({
       stages: after.schedules.find((s) => s.id === T25U_TEST.scheduleId)!.stages,
@@ -534,14 +536,14 @@ describe("t25u shared dimensions (P1 #1)", () => {
     expect(cell("W_oh43")).toBe(W);
     expect(cell("X_cost_oh")).toBe(X);
     expect(cell("Y_markup40")).toBe(Y);
-    expect(cell("Z_total")).toBe(Z);
+    expect(cell("Z_total")).toBe(official);
 
     const pdfText = pdfExtractText(await buildCalculationPdf(T25U_TEST.calculationId));
     expectPdfAmount(pdfText, "Прямые затраты V:", V);
     expectPdfAmount(pdfText, "Накладные W:", W);
     expectPdfAmount(pdfText, "Себестоимость с накладными X:", X);
     expectPdfAmount(pdfText, "Прибыль Y:", Y);
-    expectPdfAmount(pdfText, "Итого ресурсного черновика Z:", Z);
+    expectPdfAmount(pdfText, "Итого ресурсного черновика Z:", official);
 
     const gpr = await loadXlsx(await buildGprXlsx(T25U_TEST.scheduleId));
     const res = gpr.getWorksheet("Ресурсы")!;
@@ -720,7 +722,9 @@ describe("t25u export PARTIAL + numerics (P1 #3 + evidence)", () => {
     expect(draft.costSummary!.resourceSlices!.overhead).toBe(W);
     expect(draft.costSummary!.resourceSlices!.costWithOh).toBe(X);
     expect(draft.costSummary!.resourceSlices!.profit).toBe(Y);
-    expect(draft.costSummary!.resourceSlices!.total).toBe(Z);
+    const official = roundMoney(X + roundMoney(X * 0.1) + Y);
+    expect(draft.costSummary!.resourceSlices!.total).toBe(official);
+    expect(draft.costSummary!.priceExVat).toBe(official);
 
     const xlsx = await buildCalculationXlsx(T25U_TEST.calculationId);
     const wb = await loadXlsx(xlsx);
@@ -736,7 +740,7 @@ describe("t25u export PARTIAL + numerics (P1 #3 + evidence)", () => {
     expect(cell("W_oh43")).toBe(W);
     expect(cell("X_cost_oh")).toBe(X);
     expect(cell("Y_markup40")).toBe(Y);
-    expect(cell("Z_total")).toBe(Z);
+    expect(cell("Z_total")).toBe(official);
 
     const pdfText = pdfExtractText(
       await buildCalculationPdf(T25U_TEST.calculationId)
@@ -745,7 +749,7 @@ describe("t25u export PARTIAL + numerics (P1 #3 + evidence)", () => {
     expectPdfAmount(pdfText, "Накладные W:", W);
     expectPdfAmount(pdfText, "Себестоимость с накладными X:", X);
     expectPdfAmount(pdfText, "Прибыль Y:", Y);
-    expectPdfAmount(pdfText, "Итого ресурсного черновика Z:", Z);
+    expectPdfAmount(pdfText, "Итого ресурсного черновика Z:", official);
 
     const gpr = await loadXlsx(await buildGprXlsx(T25U_TEST.scheduleId));
     const res = gpr.getWorksheet("Ресурсы")!;
@@ -773,7 +777,7 @@ describe("t25u export PARTIAL + numerics (P1 #3 + evidence)", () => {
     expect(findVal(/Накладные расходы в итоге/)).toBe(W);
     expect(findVal(/^Себестоимость с накладными/)).toBe(X);
     expect(findVal(/Прибыль Y/)).toBe(Y);
-    expect(findVal(/Итого Z/)).toBe(Z);
+    expect(findVal(/Итого Z/)).toBe(official);
   });
 });
 
