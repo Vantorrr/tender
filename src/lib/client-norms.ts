@@ -111,3 +111,10 @@ export function likePattern(value: string): string {
   const folded = foldNormSearch(value).replace(/[\\%_]/g, (ch) => `\\${ch}`);
   return `%${folded}%`;
 }
+
+/** Cell C55 is the 0-68 time study. It is not a figure for site 88-127. */
+export const C55_CHRONOMETRY_SITE = "0-68";
+
+export function siteShowsC55Warning(siteCode: string): boolean {
+  return siteCode === C55_CHRONOMETRY_SITE;
+}

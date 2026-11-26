@@ -166,6 +166,10 @@ describe("wave 3 client reference catalogs", () => {
     const typo = queryClientNormCatalog(db, { catalog: "sites", q: "118", limit: 20 });
     const cell = typo.rows.find((row) => "kind" in row && row.kind === "typo");
     expect(cell).toMatchObject({ fact: "118", siteCode: "0-68" });
+    const on68 = queryClientNormCatalog(db, { catalog: "sites", site: "0-68", q: "C55", limit: 20 });
+    expect(on68.rows.some((row) => "kind" in row && row.kind === "typo" && row.siteCode === "0-68")).toBe(true);
+    const on88 = queryClientNormCatalog(db, { catalog: "sites", site: "88-127", q: "C55", limit: 50 });
+    expect(on88.rows.filter((row) => "kind" in row && row.kind === "typo")).toEqual([]);
     expect(cell && "note" in cell ? cell.note : "").toContain("118 минут");
     expect(cell && "shiftHint" in cell ? cell.shiftHint : "").toContain("118 минут");
     const dayNight = queryClientNormCatalog(db, { catalog: "sites", site: "0-68", q: "ночь", limit: 20 });

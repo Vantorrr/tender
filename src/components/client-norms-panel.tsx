@@ -26,6 +26,7 @@ import type {
   OutputNormRow,
   SiteBenchmarkRow,
 } from "@/lib/client-norms";
+import { SiteNormCards } from "@/components/client-norms-site-cards";
 import { formatMoney } from "@/lib/format";
 
 const TAB_TITLE: Record<ClientNormKind, string> = {
@@ -237,7 +238,7 @@ export function ClientNormsPanel() {
           <WarningList warnings={warnings} />
           {kind === "tkm" ? <TkmBanner header={header} /> : null}
           {kind === "labor" ? <LaborBanner header={header} /> : null}
-          {kind === "sites" ? <SitesBanner header={header} /> : null}
+          {kind === "sites" ? <SiteNormCards header={header} /> : null}
 
           <div className="flex flex-wrap gap-2">
             <Input
@@ -475,43 +476,6 @@ function LaborBanner({ header }: { header: Record<string, unknown> }) {
         </p>
       ) : null}
       {cut ? <p className="mt-2 text-[var(--tk-muted)]">{cut}</p> : null}
-    </div>
-  );
-}
-
-function SitesBanner({ header }: { header: Record<string, unknown> }) {
-  const daily = header.daily as {
-    orchMountedPerDay_fromTimeStudy?: number;
-    supportsExtendedPerDay_fromTimeStudy?: number;
-    extendingOneRigelHoursPerZveno?: number;
-    pipeline?: {
-      note?: string;
-      oneWelderJointsPerDay?: number;
-      oneWelderMetersPerDay?: number;
-      fourWeldersJointsPerDay?: number;
-      fourWeldersMetersPerDay?: number;
-    };
-    project_0_68_resolution?: { februaryPlanOrch?: number; currentOutputOrchPerDay?: number; planOrchPerDay?: number; shiftsMentioned?: string };
-    project_88_127_resolution?: { februaryPlanOrch?: number; currentOutputOrchPerDay?: number; planOrchPerDay?: number };
-  } | undefined;
-  const typo = header.typo118 as { cell?: string; valueInCell?: number; valueIfDividedBy60Hours?: number; explanation?: string } | undefined;
-  if (!daily) return null;
-  return (
-    <div className="grid gap-3 md:grid-cols-2">
-      <div className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4 text-sm">
-        <h2 className="font-medium">Шифр 0-68</h2>
-        <p className="mt-2">ОРЧ по хронометражу: {showNum(daily.orchMountedPerDay_fromTimeStudy)} шт/сутки. Нарощено опор: {showNum(daily.supportsExtendedPerDay_fromTimeStudy)} шт/сутки. Наращивание ригеля (C38): {showNum(daily.extendingOneRigelHoursPerZveno)} ч.</p>
-        <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2" data-testid="client-norm-c55">
-          Хронометраж 0-68, ячейка {typo?.cell}: в ячейке {typo?.valueInCell}. Подпись говорит «час», формула суммирует минуты. Если разделить на 60, было бы около {showNum(typo?.valueIfDividedBy60Hours)} ч — исходное значение {typo?.valueInCell} не заменено. К шифру 88-127 эта ячейка не относится.
-        </p>
-        <p className="mt-2">{daily.pipeline?.note}</p>
-        <p className="mt-2">Резолюция: факт {showNum(daily.project_0_68_resolution?.currentOutputOrchPerDay)} шт/сутки, план {showNum(daily.project_0_68_resolution?.planOrchPerDay)}, февраль {showNum(daily.project_0_68_resolution?.februaryPlanOrch)}. {daily.project_0_68_resolution?.shiftsMentioned}</p>
-      </div>
-      <div className="rounded-xl border border-[var(--tk-line)] bg-white/80 p-4 text-sm">
-        <h2 className="font-medium">Шифр 88-127</h2>
-        <p className="mt-2">ОРЧ: факт {showNum(daily.project_88_127_resolution?.currentOutputOrchPerDay)} шт/сутки, план {showNum(daily.project_88_127_resolution?.planOrchPerDay)}, февраль {showNum(daily.project_88_127_resolution?.februaryPlanOrch)}. Бурение — в строках плана, не в общем ценнике.</p>
-        <p className="mt-2">День и ночь в резолюциях не перезаписывают профиль «2×11 без выходных».</p>
-      </div>
     </div>
   );
 }
