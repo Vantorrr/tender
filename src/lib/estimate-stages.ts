@@ -6,6 +6,7 @@ import {
   type ShiftOutputCandidate,
 } from "@/lib/commercial-packages";
 import { classifyDirectCostBucket, isWorkActivityName } from "@/lib/cost-engine";
+import { isUnusableEstimateLine } from "@/lib/estimate-noise";
 import { hoursOnPositions, lookupNormHours, type EstimateNormHours } from "@/lib/estimate-norm-hours";
 import { mergeStageResources } from "@/lib/resource-merge";
 import type { CalcPosition, GprStage, GprStageResource } from "@/lib/types";
@@ -141,6 +142,7 @@ export function buildStagesFromEstimatePositions(
 ): GprStage[] {
   const sections = new Map<string, { sectionName: string; workName: string; positions: CalcPosition[] }>();
   for (const position of positions) {
+    if (isUnusableEstimateLine(position)) continue;
     const section = position.sourceSectionName?.trim();
     const work = position.sourceWorkName?.trim();
     const activity = !section && !work && isWorkActivityName(position.name) ? position.name.trim() : "";

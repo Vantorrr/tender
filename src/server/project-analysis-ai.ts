@@ -156,11 +156,11 @@ export function selectAnalysisCitations(citations: Citation[], limit = 40): Cita
 /** Short facts taken from the whole package, not from the first hundred excerpts. */
 export function keyPackageFacts(citations: Citation[], limit = 12): string[] {
   const rules = [
-    /срок\s+подач[^\n.]{0,90}/iu,
-    /нмцк[^\n.]{0,80}/iu,
-    /аванс[^\n.]{0,70}/iu,
-    /гарантийн[^\n.]{0,70}/iu,
-    /обеспечен\p{L}*\s+заяв[^\n.]{0,70}/iu,
+    /срок\s+подач(?:[^\n.]|\.(?=\d)){0,90}/iu,
+    /нмцк(?:[^\n.]|\.(?=\d)){0,80}/iu,
+    /аванс(?:[^\n.]|\.(?=\d)){0,70}/iu,
+    /гарантийн(?:[^\n.]|\.(?=\d)){0,70}/iu,
+    /обеспечен\p{L}*\s+заяв(?:[^\n.]|\.(?=\d)){0,70}/iu,
   ];
   const facts: string[] = [];
   for (const citation of citations) {

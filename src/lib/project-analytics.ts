@@ -4,6 +4,7 @@
  */
 
 import { clipAtSentence, normalizeOcrText } from "@/lib/analytical-note";
+import { isUnusableEstimateLine } from "@/lib/estimate-noise";
 import { visibleProcurementNumber } from "@/lib/pipeline";
 import type {
   Citation,
@@ -216,7 +217,7 @@ export function visibleCheckItems(items: string[], documents: CheckDocument[]): 
   }).map((item) => {
     const clean = item.replace(/\s+/g, " ").trim();
     if (clean.length <= 180) return clean;
-    const sentence = clean.split(/(?<=[.!?])\s+/u)[0] ?? clean;
+    const sentence = clean.replace(/(\d)\.(?=\d)/gu, "$1\u0000").split(/(?<=[.!?])\s+/u)[0]?.replace(/\u0000/gu, ".") ?? clean;
     return sentence.length > 180 ? `${sentence.slice(0, 160).replace(/\s+\S*$/u, "")}.` : sentence;
   });
   if (unique.length <= 5) return unique;
@@ -274,7 +275,7 @@ export function filledOverviewBlocks(input: {
   const docs = input.documents.length;
   const excerpts = input.citations.length;
   const volumes = input.documents.flatMap((document) => document.estimatePositions ?? []).filter((row) =>
-    /[a-zа-яё]/iu.test(row.name) && row.unit.trim() && !/^[\d\s.,]+$/u.test(row.unit.trim())
+    /[a-zа-яё]/iu.test(row.name) && row.unit.trim() && !/^[\d\s.,]+$/u.test(row.unit.trim()) && !isUnusableEstimateLine(row)
   );
   const volumeText = volumes.length
     ? `Распознано позиций: ${volumes.length}. ${volumes.slice(0, 6).map((row) => `${row.name}: ${row.quantity} ${row.unit}`).join("; ")}.`

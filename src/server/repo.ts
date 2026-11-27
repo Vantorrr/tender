@@ -34,6 +34,7 @@ import { recentPaymentId } from "@/lib/duplicate-click";
 import { supplyNeedKey } from "@/lib/supply-need";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
 import { buildStagesFromEstimatePositions, calendarDurationDays, GPR_DATES_MISSING, periodFromDocumentText } from "@/lib/estimate-stages";
+import { estimatePositionsLookBroken, isUnusableEstimateLine } from "@/lib/estimate-noise";
 import {
   GPR_CREW_FROM_FILE4,
   GPR_DURATION_FROM_OUTPUT,
@@ -104,7 +105,7 @@ import {
   scenarioFactor,
   worksSubtotal,
 } from "@/lib/calc-math";
-import { stampCitationSourceVersion } from "@/server/grand-smeta";
+import { analyzeUpload, stampCitationSourceVersion } from "@/server/grand-smeta";
 import { parseContractRisks } from "@/server/contract-risk";
 import type { UploadAnalysis } from "@/server/grand-smeta";
 import { getDb, mutateAppData, readAppData, resetAppData } from "@/server/db";
@@ -2559,10 +2560,31 @@ export function recordProcurementAiFailure(actorId: string, procurementId: strin
   });
 }
 
+/** Re-read a saved estimate when its stored rows put a price in the unit column. */
+export async function repairBrokenEstimateDocuments(actorId: string, procurementId: string): Promise<number> {
+  const snapshot = readAppData();
+  const broken = snapshot.documents.filter((document) =>
+    document.procurementId === procurementId
+    && document.storedPath
+    && estimatePositionsLookBroken(document.estimatePositions ?? [])
+  );
+  let repaired = 0;
+  for (const document of broken) {
+    const bytes = readUpload(document.storedPath!);
+    if (!bytes?.length) continue;
+    const prepared = await analyzeUpload(document.fileName, document.fileType, bytes, { useLlm: false, heavyOcr: false });
+    if (!prepared.positions.length || estimatePositionsLookBroken(prepared.positions)) continue;
+    reanalyzeDocument(actorId, document.id, prepared);
+    repaired += 1;
+  }
+  return repaired;
+}
+
 export async function analyzeProcurementPackageWithAI(
   actorId: string,
   procurementId: string
 ): Promise<{ warning?: string; usedAi: boolean }> {
+  await repairBrokenEstimateDocuments(actorId, procurementId);
   // Opening, downloading and package analysis must not create a calculation
   // or GPR and must not move the procurement. That happens only on the
   // explicit «Сформировать расчёт» action.
@@ -3397,7 +3419,9 @@ export function sendProcurementToCalculation(
     // names stored as general documents). Use the same detector as manual attach.
     const estimateDocsWithData = estimateDocumentsForProcurement(data, p.id);
     const allEstimatePositions = estimateDocsWithData.flatMap((document) =>
-      (document.estimatePositions ?? []).map((position) => ({ document, position }))
+      (document.estimatePositions ?? [])
+        .filter((position) => !isUnusableEstimateLine(position))
+        .map((position) => ({ document, position }))
     );
     if (
       !p.originalCalculationId &&
