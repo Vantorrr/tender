@@ -3458,8 +3458,9 @@ export function sendProcurementToCalculation(
         !isEstimateHourRow(position) && (position.rateMissing || !(Number.isFinite(position.rate) && position.rate > 0))
       ).length;
       const lineItems = customerSourcePositions.filter((position) => position.code !== "CUST-TOTAL");
+      const totalsOnly = customerSourcePositions.filter((position) => position.code === "CUST-TOTAL").length;
       const originalNote = lineItems.length
-        ? `Неизменяемый снимок сметы заказчика: ${lineItems.length} распознанных позиций.`
+        ? `Неизменяемый снимок сметы заказчика: ${lineItems.length} распознанных позиций.${totalsOnly ? ` Ещё ${totalsOnly} смет без полных ставок записаны только итогом.` : ""}`
         : rowsWithoutSourceRates
           ? `${recognizedRowsPhrase(allEstimatePositions.length).replace(/^./u, (letter) => letter.toUpperCase())} по ${estimateDocsWithData.length} сметам; для ${rowCountGenitive(rowsWithoutSourceRates)} исходная ставка не извлечена надёжно, поэтому оригинал показывает подтверждённый итог каждой сметы без подмены ставок нулями.`
           : "Оригинал показывает итог сметы: расцененных работ нет, строки часов без ставки в позиции не записываются.";

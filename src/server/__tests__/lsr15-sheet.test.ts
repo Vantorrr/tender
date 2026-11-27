@@ -216,6 +216,72 @@ describe("15-column local estimate", () => {
     expect(original.assumptions?.join(" ") ?? "").toMatch(/расцененных работ нет/);
   });
 
+  it("mentions a total-only estimate next to a line snapshot", () => {
+    const created = createManualProcurement("u-ruk", { title: "Две сметы", region: "Ямал" });
+    const procurement = readAppData().procurements.find((item) => item.id === created.id)!;
+    mutateAppData((data) => {
+      data.documents.unshift({
+        id: "doc-lines",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        title: "Со строками",
+        fileName: "lines.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: "uploads/lines.xlsx",
+        estimatePositions: [
+          { id: "line-1", code: "ФЕР01", name: "Устройство щебня", unit: "м3", quantity: 2, rate: 100 },
+        ],
+      }, {
+        id: "doc-total",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        title: "Только итог",
+        fileName: "total.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: "uploads/total.xlsx",
+        analysis: {
+          vendor: "",
+          region: "",
+          zone: "",
+          estimateNumber: "",
+          workName: "Смета без ставок",
+          basis: "",
+          priceLevel: "",
+          costThousand: 12,
+          positionCount: 1,
+          profileMatch: false,
+        },
+        estimatePositions: [
+          { id: "gap-1", code: "ФЕР02", name: "Работа без ставки", unit: "м", quantity: 5, rate: 0, rateMissing: true },
+        ],
+      });
+      return data;
+    });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const original = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "customer_original")!;
+    const note = original.assumptions?.join(" ") ?? "";
+    expect(original.positions.some((row) => row.unit === "м3" && row.rate === 100)).toBe(true);
+    expect(original.positions.some((row) => row.code === "CUST-TOTAL")).toBe(true);
+    expect(note).toMatch(/распознанных позиций/);
+    expect(note).toMatch(/только итогом/);
+  });
+
   it("does not add a second copy of rows already seeded on a legacy draft", () => {
     const created = createManualProcurement("u-ruk", { title: "Старый черновик сметы", region: "Ямал" });
     const procurement = readAppData().procurements.find((item) => item.id === created.id)!;
