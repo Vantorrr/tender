@@ -1,5 +1,27 @@
 export type UploadQueueNote = { name: string; message: string };
 
+export type UploadQueueResult = {
+  uploaded: number;
+  errors: UploadQueueNote[];
+  /** Saved files whose local parse was incomplete. */
+  warnings: UploadQueueNote[];
+  /** Never uploaded: empty or junk names. */
+  skipped: UploadQueueNote[];
+};
+
+export function uploadBatchLabel(result: UploadQueueResult, prefix = ""): { tone: "success" | "warning"; text: string } {
+  const selected = result.uploaded + result.errors.length + result.skipped.length;
+  const head = `${prefix}Загружено ${result.uploaded} из ${selected}.`.trim();
+  const parts = [head];
+  if (result.errors.length) parts.push(`Ошибок: ${result.errors.length}.`);
+  if (result.skipped.length) parts.push(`Пропущено пустых и служебных: ${result.skipped.length}.`);
+  if (result.warnings.length) parts.push(`${result.warnings.length} файл(ов) сохранены, но не разобраны.`);
+  return {
+    tone: result.errors.length || result.skipped.length || result.warnings.length ? "warning" : "success",
+    text: parts.join(" "),
+  };
+}
+
 /**
  * Upload many files without putting every body in one request.
  * A few run at once; each file still hits the existing per-file limit.
@@ -36,14 +58,15 @@ export async function runUploadQueue(
   files: File[],
   upload: (file: File) => Promise<void | { warning?: string }>,
   opts?: { concurrency?: number; timeoutMs?: number; onProgress?: (done: number, total: number) => void },
-): Promise<{ uploaded: number; errors: UploadQueueNote[]; warnings: UploadQueueNote[] }> {
+): Promise<UploadQueueResult> {
   const total = files.length;
   const errors: UploadQueueNote[] = [];
   const warnings: UploadQueueNote[] = [];
+  const skipped: UploadQueueNote[] = [];
   const list = files.filter((file) => {
     const reason = skippedReason(file);
     if (!reason) return true;
-    warnings.push({ name: file.name, message: reason });
+    skipped.push({ name: file.name, message: reason });
     return false;
   });
   let cursor = 0;
@@ -71,7 +94,7 @@ export async function runUploadQueue(
     }
   }
   opts?.onProgress?.(done, total);
-  if (list.length === 0) return { uploaded: 0, errors, warnings };
+  if (list.length === 0) return { uploaded: 0, errors, warnings, skipped };
   await Promise.all(Array.from({ length: concurrency }, () => worker()));
-  return { uploaded: list.length - errors.length, errors, warnings };
+  return { uploaded: list.length - errors.length, errors, warnings, skipped };
 }

@@ -36,7 +36,7 @@ import { plainUserMessage } from "@/lib/plain-user-message";
 import { sanitizeSyncDetail } from "@/lib/wave23";
 import { KonturSearchPanel } from "@/components/kontur-search-panel";
 import { BatchUploadZone } from "@/components/batch-upload-zone";
-import { runUploadQueue } from "@/lib/upload-queue";
+import { runUploadQueue, uploadBatchLabel } from "@/lib/upload-queue";
 import type { KonturSearchFilters } from "@/server/procurement-source";
 
 export default function ZakupkiPage() {
@@ -206,14 +206,10 @@ export default function ZakupkiPage() {
           onProgress: (done, total) => setManualProgress({ done, total }),
         });
         setManualFailures(uploaded.errors);
-        setManualWarnings(uploaded.warnings);
-        if (uploaded.errors.length) {
-          toast.warning(`Закупка создана. Загружено ${uploaded.uploaded} из ${uploaded.uploaded + uploaded.errors.length}`);
-        } else if (uploaded.warnings.length) {
-          toast.warning(`Закупка создана. Загружено ${uploaded.uploaded} из ${uploaded.uploaded}. Часть файлов сохранена без разбора.`);
-        } else {
-          toast.success(`Закупка создана. Загружено ${uploaded.uploaded} из ${uploaded.uploaded}`);
-        }
+        setManualWarnings([...uploaded.warnings, ...uploaded.skipped]);
+        const label = uploadBatchLabel(uploaded, "Закупка создана. ");
+        if (label.tone === "warning") toast.warning(label.text);
+        else toast.success(label.text);
       } else {
         toast.success("Закупка создана. Добавьте документы в карточку.");
       }

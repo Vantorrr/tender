@@ -46,7 +46,7 @@ import { QuantityCommitField } from "@/components/quantity-commit-field";
 import { ProjectAiChat } from "@/components/project-ai-chat";
 import { BatchUploadZone } from "@/components/batch-upload-zone";
 import { OfficialModelCard } from "@/components/official-model-card";
-import { runUploadQueue } from "@/lib/upload-queue";
+import { runUploadQueue, uploadBatchLabel } from "@/lib/upload-queue";
 
 const SUPPLY_RU: Record<SupplyStatus, string> = {
   need: "Потребность",
@@ -748,17 +748,13 @@ export default function ZakupkaDetailPage() {
       });
       await refresh();
       setUploadFailures(result.errors);
-      setUploadWarnings(result.warnings);
-      const saved = result.uploaded;
-      const failed = result.errors.length;
-      if (failed) {
-        const message = `Загружено ${saved} из ${saved + failed}. Ошибок: ${failed}.`;
-        setUploadError(message);
-        toast.warning(message);
-      } else if (result.warnings.length) {
-        toast.warning(`Загружено ${saved} из ${saved}. ${result.warnings.length} файл(ов) сохранены, но не разобраны.`);
+      setUploadWarnings([...result.warnings, ...result.skipped]);
+      const label = uploadBatchLabel(result);
+      if (label.tone === "warning") {
+        setUploadError(label.text);
+        toast.warning(label.text);
       } else {
-        toast.success(`Загружено ${saved} из ${saved}`);
+        toast.success(label.text);
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Ошибка загрузки";

@@ -11,7 +11,7 @@ import { formatDateTime } from "@/lib/format";
 import { visibleProcurementNumber } from "@/lib/pipeline";
 import { useStore } from "@/lib/store";
 import { BatchUploadZone } from "@/components/batch-upload-zone";
-import { runUploadQueue } from "@/lib/upload-queue";
+import { runUploadQueue, uploadBatchLabel } from "@/lib/upload-queue";
 
 export default function DokumentyPage() {
   const { orgDocuments, user, createDocumentUpload, orgProcurements, refresh } =
@@ -54,10 +54,10 @@ export default function DokumentyPage() {
       });
       await refresh();
       setFailures(result.errors);
-      setWarnings(result.warnings);
-      if (result.errors.length) toast.warning(`Загружено ${result.uploaded} из ${result.uploaded + result.errors.length}`);
-      else if (result.warnings.length) toast.warning(`Загружено ${result.uploaded} из ${result.uploaded}. Часть файлов сохранена без разбора.`);
-      else toast.success(`Загружено ${result.uploaded} из ${result.uploaded}`);
+      setWarnings([...result.warnings, ...result.skipped]);
+      const label = uploadBatchLabel(result);
+      if (label.tone === "warning") toast.warning(label.text);
+      else toast.success(label.text);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка загрузки");
     } finally {

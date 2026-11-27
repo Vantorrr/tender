@@ -1,6 +1,6 @@
 import JSZip from "jszip";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { runUploadQueue } from "@/lib/upload-queue";
+import { runUploadQueue, uploadBatchLabel } from "@/lib/upload-queue";
 import { createSession } from "@/server/auth";
 import { config } from "@/server/config";
 import { closeDb, ensureReady, readAppData } from "@/server/db";
@@ -124,6 +124,17 @@ describe("upload does not call a model, and .gsfx stays one document", () => {
     expect(result.uploaded).toBe(2);
     expect(result.errors.map((item) => item.name)).toEqual(["slow.pdf"]);
     expect(result.errors[0]?.message).toMatch(/Таймаут/);
-    expect(result.warnings.map((item) => item.name)).toContain("empty.pdf");
+    expect(result.skipped.map((item) => item.name)).toContain("empty.pdf");
+    expect(result.warnings).toEqual([]);
+    expect(uploadBatchLabel(result).text).toBe("Загружено 2 из 4. Ошибок: 1. Пропущено пустых и служебных: 1.");
+  });
+
+  it("keeps a zip member stored as ./file when the dot is only the current directory", async () => {
+    const packed = await zipBytes([{ name: "./пояснение.txt", data: "договор поставки" }]);
+    const created = createManualProcurement("u-ruk", { title: "Точка в пути", region: "Ямал" });
+    const response = await postFile(created.id, "папка.zip", packed);
+    expect(response.status).toBe(200);
+    const docs = readAppData().documents.filter((document) => document.procurementId === created.id);
+    expect(docs.some((document) => /пояснение\.txt$/u.test(document.fileName))).toBe(true);
   });
 });

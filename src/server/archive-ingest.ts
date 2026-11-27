@@ -53,8 +53,8 @@ function memberBase(name: string): string {
 }
 
 function isJunkArchiveMember(name: string): boolean {
-  const parts = name.split("/");
-  if (parts.some((part) => part === "__MACOSX" || part.startsWith("."))) return true;
+  const parts = name.replace(/\\/g, "/").split("/");
+  if (parts.some((part) => part === "__MACOSX" || (part.startsWith(".") && part !== "." && part !== ".."))) return true;
   const base = memberBase(name);
   return base === "thumbs.db" || base === "ehthumbs.db" || base === "desktop.ini" || base === ".ds_store";
 }
