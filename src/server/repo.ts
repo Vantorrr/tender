@@ -3053,6 +3053,21 @@ function repositionDurationStages(stages: GprStage[], weekendDays: number[]): Gp
   });
 }
 
+function customerOriginalIsStale(
+  original: Calculation | undefined,
+  documents: Array<{ id: string }>,
+): boolean {
+  if (!original) return true;
+  const positions = original.positions ?? [];
+  const broken = positions.length === 0 || positions.every((position) =>
+    position.code === "CUST-TOTAL" || !(Number.isFinite(position.rate) && position.rate > 0)
+  );
+  const linked = new Set(positions.map((position) => position.sourceDocumentId).filter(Boolean));
+  const current = new Set(documents.map((document) => document.id));
+  const sameDocs = linked.size === current.size && [...current].every((id) => linked.has(id));
+  return broken || !sameDocs;
+}
+
 function estimateTotalsOnlyPhrase(count: number): string {
   const n = Math.abs(Math.trunc(count));
   const mod10 = n % 10;
@@ -3422,6 +3437,17 @@ export function sendProcurementToCalculation(
     // A tender package can contain several local estimates (often numeric PDF
     // names stored as general documents). Use the same detector as manual attach.
     const estimateDocsWithData = estimateDocumentsForProcurement(data, p.id);
+    if (p.originalCalculationId) {
+      const original = data.calculations.find((item) => item.id === p.originalCalculationId && item.kind === "customer_original");
+      if (customerOriginalIsStale(original, estimateDocsWithData)) {
+        const staleId = p.originalCalculationId;
+        data.calculations = data.calculations.filter((item) => item.id !== staleId);
+        for (const calc of data.calculations) {
+          if (calc.pairedCalculationId === staleId) delete calc.pairedCalculationId;
+        }
+        p.originalCalculationId = undefined;
+      }
+    }
     const allEstimatePositions = estimateDocsWithData.flatMap((document) =>
       (document.estimatePositions ?? [])
         .filter((position) => !isUnusableEstimateLine(position))

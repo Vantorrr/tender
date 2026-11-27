@@ -7,6 +7,7 @@ import { rollupWorkSections } from "@/server/estimate-rollup";
 import { refineNote } from "@/server/model-note";
 import { protectNumericDots, restoreNumericDots } from "@/lib/sentences";
 import { extractDocumentText, ocrConfigured } from "@/server/ocr";
+import { isNumericUnit } from "@/lib/estimate-noise";
 import { parseLsrWorkbook } from "@/server/lsr-sheet";
 import { readZipEntries } from "@/server/safe-archive";
 import type {
@@ -941,6 +942,12 @@ export async function analyzeUpload(
     try {
       const parsed = await parseGrandBuffer(workbook);
       if (parsed) {
+        const lsrPositions = await parseLsrWorkbook(workbook);
+        const numericUnits = parsed.positions.filter((position) => isNumericUnit(position.unit)).length;
+        const lsrHasPrices = lsrPositions.some((position) => position.rate > 0 && !isNumericUnit(position.unit));
+        if (lsrHasPrices && (parsed.positions.length === 0 || numericUnits >= 3 || numericUnits * 2 >= parsed.positions.length)) {
+          parsed.positions = lsrPositions;
+        }
         const analysis = analysisFromGrand(parsed, fileName);
         const largest = [...parsed.positions]
           .map((position) => ({
