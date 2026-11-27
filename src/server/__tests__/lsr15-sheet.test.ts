@@ -5,7 +5,7 @@ import { splitSentences } from "@/lib/sentences";
 import { closeDb, ensureReady, mutateAppData, readAppData } from "@/server/db";
 import { analysisFromScan, analyzeUpload } from "@/server/grand-smeta";
 import { parseLsrWorkbook } from "@/server/lsr-sheet";
-import { makeOfficialCalculationAndSchedule, repairBrokenEstimateDocuments, createManualProcurement } from "@/server/repo";
+import { makeOfficialCalculationAndSchedule, repairBrokenEstimateDocuments, createManualProcurement, sendProcurementToCalculation } from "@/server/repo";
 import { rollupWorkSections } from "@/server/estimate-rollup";
 import { saveUpload } from "@/server/uploads";
 import "./setup";
@@ -179,6 +179,58 @@ describe("15-column local estimate", () => {
     const original = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "customer_original")!;
     expect(original.positions.some((row) => row.rate === 1500 && row.unit === "м3")).toBe(true);
     expect(original.positions.some((row) => row.code === "CUST-TOTAL" && row.rate === 0)).toBe(false);
+    expect(original.assumptions?.join(" ") ?? "").not.toMatch(/подтверждённый итог/);
+  });
+
+  it("does not add a second copy of rows already seeded on a legacy draft", () => {
+    const created = createManualProcurement("u-ruk", { title: "Старый черновик сметы", region: "Ямал" });
+    const procurement = readAppData().procurements.find((item) => item.id === created.id)!;
+    mutateAppData((data) => {
+      data.documents.unshift({
+        id: "doc-legacy",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        title: "Старая смета",
+        fileName: "smeta.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: "uploads/legacy-smeta.xlsx",
+        estimatePositions: [
+          { id: "src-1", code: "LAB-1", name: "Плотник", unit: "чел.-ч", quantity: 10, rate: 100 },
+        ],
+      });
+      return data;
+    });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const draft = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "resource_draft")!;
+    mutateAppData((data) => {
+      const calc = data.calculations.find((item) => item.id === draft.id)!;
+      calc.positions = [{
+        id: "legacy-1",
+        code: "LAB-1",
+        name: "Плотник",
+        unit: "чел.-ч",
+        quantity: 10,
+        rate: 100,
+        sourceDocumentId: "doc-legacy",
+        sourcePositionId: "src-1",
+      }];
+      calc.dataFlags = ["legacy_estimate_seeded_cost", "seeded_from_customer_estimate"];
+      return data;
+    });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const again = readAppData().calculations.find((item) => item.id === draft.id)!;
+    const carpenters = again.positions.filter((row) => row.name === "Плотник");
+    expect(carpenters).toHaveLength(1);
+    expect(carpenters[0]?.costRole).toBeUndefined();
+    expect(carpenters[0]?.rate).toBe(100);
   });
 
   it("leaves an ordinary price column to the generic workbook reader", async () => {

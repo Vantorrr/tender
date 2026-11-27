@@ -1,4 +1,11 @@
-/** A row that is only a picket interval, not a work that mentions one. */
+/** Labor and machine hours may be unpriced without wiping the work prices. */
+export function isEstimateHourRow(row: { unit?: string; resourceKind?: string; name?: string }): boolean {
+  const unit = row.unit ?? "";
+  if (/чел\.?\s*[-.]?\s*ч|маш\.?\s*[-.]?\s*ч/iu.test(unit)) return true;
+  if (row.resourceKind === "labor") return true;
+  if (row.resourceKind === "equipment" && /маш/iu.test(unit)) return true;
+  return /^зтм?$/iu.test((row.name ?? "").trim());
+}
 function isPicketLabel(name: string): boolean {
   return /^пк\s*\d+.*\bдо\s*пк\b/iu.test(name.replace(/\s+/g, " ").trim());
 }

@@ -34,7 +34,7 @@ import { recentPaymentId } from "@/lib/duplicate-click";
 import { supplyNeedKey } from "@/lib/supply-need";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
 import { buildStagesFromEstimatePositions, calendarDurationDays, GPR_DATES_MISSING, periodFromDocumentText } from "@/lib/estimate-stages";
-import { estimatePositionsLookBroken, isUnusableEstimateLine } from "@/lib/estimate-noise";
+import { estimatePositionsLookBroken, isEstimateHourRow, isUnusableEstimateLine } from "@/lib/estimate-noise";
 import {
   GPR_CREW_FROM_FILE4,
   GPR_DURATION_FROM_OUTPUT,
@@ -3066,10 +3066,18 @@ function mergeEstimateRowsIntoDraft(
     if (position.sourceDocumentId && importedDocIds.has(position.sourceDocumentId)) return false;
     return true;
   });
-  void opts;
+  const seededSourceIds = new Set(
+    opts?.legacy
+      ? kept
+        .filter((position) => position.costRole !== "customer_source" && position.costRole !== "commercial" && position.sourcePositionId)
+        .map((position) => position.sourcePositionId)
+      : [],
+  );
   return [
     ...kept,
-    ...imported.map((position) => ({ ...position, costRole: "customer_source" as const })),
+    ...imported
+      .filter((position) => !(position.sourcePositionId && seededSourceIds.has(position.sourcePositionId)))
+      .map((position) => ({ ...position, costRole: "customer_source" as const })),
   ];
 }
 
@@ -3415,10 +3423,7 @@ export function sendProcurementToCalculation(
       const oid = `c-orig-${Date.now()}`;
       const customerSourcePositions = estimateDocsWithData.flatMap((document) => {
         const extracted = (document.estimatePositions ?? []).filter((position) => !isUnusableEstimateLine(position));
-        const hourRow = (position: { unit?: string; resourceKind?: string }) =>
-          /чел\.?\s*[-.]?\s*ч|маш\.?\s*[-.]?\s*ч/iu.test(position.unit ?? "")
-          || position.resourceKind === "labor";
-        const priced = extracted.filter((position) => !hourRow(position));
+        const priced = extracted.filter((position) => !isEstimateHourRow(position));
         const completeRates = priced.length > 0 && priced.every(
           (position) => !position.rateMissing && Number.isFinite(position.rate) && position.rate > 0
         );
@@ -3450,7 +3455,7 @@ export function sendProcurementToCalculation(
       });
       const sourceFileNames = estimateDocsWithData.map((document) => document.fileName);
       const rowsWithoutSourceRates = allEstimatePositions.filter(({ position }) =>
-        position.rateMissing || !(Number.isFinite(position.rate) && position.rate > 0)
+        !isEstimateHourRow(position) && (position.rateMissing || !(Number.isFinite(position.rate) && position.rate > 0))
       ).length;
       data.calculations.unshift({
         id: oid,
