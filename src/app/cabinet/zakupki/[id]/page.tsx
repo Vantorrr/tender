@@ -334,6 +334,7 @@ export default function ZakupkaDetailPage() {
   const [uploadProgress, setUploadProgress] = useState<{ done: number; total: number } | null>(null);
   const [uploadFailures, setUploadFailures] = useState<Array<{ name: string; message: string }>>([]);
   const [uploadWarnings, setUploadWarnings] = useState<Array<{ name: string; message: string }>>([]);
+  const [uploadSkipped, setUploadSkipped] = useState<Array<{ name: string; message: string }>>([]);
   const [payTitle, setPayTitle] = useState("");
   const [payType, setPayType] = useState<PaymentBucket>("postuplenie");
   const [payAmount, setPayAmount] = useState("");
@@ -725,6 +726,7 @@ export default function ZakupkaDetailPage() {
     setUploadError(null);
     setUploadFailures([]);
     setUploadWarnings([]);
+    setUploadSkipped([]);
     setUploadProgress({ done: 0, total: files.length });
     try {
       const result = await runUploadQueue(files, async (file) => {
@@ -748,14 +750,13 @@ export default function ZakupkaDetailPage() {
       });
       await refresh();
       setUploadFailures(result.errors);
-      setUploadWarnings([...result.warnings, ...result.skipped]);
+      setUploadWarnings(result.warnings);
+      setUploadSkipped(result.skipped);
       const label = uploadBatchLabel(result);
-      if (label.tone === "warning") {
-        setUploadError(label.text);
-        toast.warning(label.text);
-      } else {
-        toast.success(label.text);
-      }
+      if (result.errors.length) setUploadError(label.text);
+      else setUploadError(null);
+      if (label.tone === "warning") toast.warning(label.text);
+      else toast.success(label.text);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Ошибка загрузки";
       setUploadError(msg);
@@ -1007,10 +1008,13 @@ export default function ZakupkaDetailPage() {
           ))}
         </ul>
       ) : null}
-      {uploadWarnings.length ? (
+      {uploadWarnings.length || uploadSkipped.length ? (
         <ul className="mb-3 space-y-1 text-sm text-amber-900" data-testid="upload-warnings">
           {uploadWarnings.map((warning) => (
             <li key={`${warning.name}-${warning.message}`}>{warning.name}: сохранён, разбор не завершён. {warning.message}</li>
+          ))}
+          {uploadSkipped.map((item) => (
+            <li key={`${item.name}-${item.message}`}>{item.name}: пропущен, не загружался. {item.message}</li>
           ))}
         </ul>
       ) : null}

@@ -63,6 +63,7 @@ export default function ZakupkiPage() {
   const [manualProgress, setManualProgress] = useState<{ done: number; total: number } | null>(null);
   const [manualFailures, setManualFailures] = useState<Array<{ name: string; message: string }>>([]);
   const [manualWarnings, setManualWarnings] = useState<Array<{ name: string; message: string }>>([]);
+  const [manualSkipped, setManualSkipped] = useState<Array<{ name: string; message: string }>>([]);
   const [sourceHealth, setSourceHealth] = useState<{ status?: string; detail?: string; lastSuccessAt?: string | null } | null>(null);
   useEffect(() => {
     void fetch("/api/health")
@@ -206,7 +207,8 @@ export default function ZakupkiPage() {
           onProgress: (done, total) => setManualProgress({ done, total }),
         });
         setManualFailures(uploaded.errors);
-        setManualWarnings([...uploaded.warnings, ...uploaded.skipped]);
+        setManualWarnings(uploaded.warnings);
+        setManualSkipped(uploaded.skipped);
         const label = uploadBatchLabel(uploaded, "Закупка создана. ");
         if (label.tone === "warning") toast.warning(label.text);
         else toast.success(label.text);
@@ -288,9 +290,10 @@ export default function ZakupkiPage() {
                 {manualFailures.map((failure) => <li key={`${failure.name}-${failure.message}`}>{failure.name}: {failure.message}</li>)}
               </ul>
             ) : null}
-            {manualWarnings.length ? (
+            {manualWarnings.length || manualSkipped.length ? (
               <ul className="mt-2 space-y-1 text-sm text-amber-900" data-testid="manual-upload-warnings">
                 {manualWarnings.map((warning) => <li key={`${warning.name}-${warning.message}`}>{warning.name}: сохранён, разбор не завершён. {warning.message}</li>)}
+                {manualSkipped.map((item) => <li key={`${item.name}-${item.message}`}>{item.name}: пропущен, не загружался. {item.message}</li>)}
               </ul>
             ) : null}
           </div>
