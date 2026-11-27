@@ -240,26 +240,26 @@ function heuristicDaily(name: string, unit: string | null): { perDay: number; no
   const foldedUnit = foldUnit(unit ?? "");
   const area = foldedUnit.includes("м2");
   const rules: Array<{ test: RegExp; perDay: number; normUnit: string }> = [
-    { test: /бурен|скважин/u, perDay: 24, normUnit: "м" },
-    { test: /землян|транше|котлован|разработк\p{L}*\s+грунт/u, perDay: 180, normUnit: "м3" },
-    { test: /щебен|песок|песчан|геомат|геореш/u, perDay: area ? 300 : 120, normUnit: area ? "м2" : "м3" },
-    { test: /фундамент/u, perDay: 8, normUnit: "м3" },
-    { test: /кабел/u, perDay: 60, normUnit: "м" },
     { test: /заземл/u, perDay: 6, normUnit: "шт" },
+    { test: /кабел/u, perDay: 60, normUnit: "м" },
+    { test: /фундамент/u, perDay: 8, normUnit: "м3" },
+    { test: /щебен|песок|песчан|геомат|геореш/u, perDay: area ? 300 : 120, normUnit: area ? "м2" : "м3" },
+    { test: /бурен|скважин/u, perDay: 24, normUnit: "м" },
+    { test: /(?<![а-яё])земл|транше|котлован|разработк\p{L}*\s+грунт/u, perDay: 180, normUnit: "м3" },
   ];
   return rules.find((rule) => rule.test.test(text)) ?? null;
 }
 
 function heuristicCrew(name: string): BenchmarkCrewLine[] {
   const text = foldNormSearch(name);
+  if (/заземл|кабел/u.test(text)) return [{ role: "Электромонтажники", count: 4, kind: "labor" }];
   if (/бурен|скважин/u.test(text)) return DRILLING_CREW;
-  if (/землян|транше|котлован|щебен|песок|геомат/u.test(text)) {
+  if (/(?<![а-яё])земл|транше|котлован|щебен|песок|геомат/u.test(text)) {
     return [
       { role: "Машинист экскаватора", count: 2, kind: "labor" },
       { role: "Экскаватор", count: 1, kind: "equipment" },
     ];
   }
-  if (/кабел|заземл/u.test(text)) return [{ role: "Электромонтажники", count: 4, kind: "labor" }];
   if (/фундамент/u.test(text)) return [{ role: "Монтажники", count: 4, kind: "labor" }, { role: "Экскаватор", count: 1, kind: "equipment" }];
   return [];
 }
@@ -669,19 +669,25 @@ export function placeStagePhases(
     const indexes = rows.flatMap((row, index) => row.phase === phase ? [index] : []);
     let phaseEnd = cursor;
     let moved = false;
+    let driver: number | null = null;
     for (const index of indexes) {
       const duration = rows[index]?.durationDays ?? null;
       if (duration != null && duration > 0) {
         const end = endAfterWorkingDays(cursor, duration, weekendDays);
         spots[index] = { start: cursor, end, dependsOn: previousIndex };
-        if (end > phaseEnd) phaseEnd = end;
+        if (driver == null || end > phaseEnd) {
+          phaseEnd = end;
+          driver = index;
+        }
         moved = true;
       } else {
         spots[index] = { start: cursor, end: cursor, dependsOn: previousIndex };
       }
     }
-    if (moved) cursor = alignToWorkday(addDays(phaseEnd, 1), weekendDays);
-    if (indexes.length) previousIndex = indexes[0] ?? previousIndex;
+    if (moved) {
+      cursor = alignToWorkday(addDays(phaseEnd, 1), weekendDays);
+      previousIndex = driver;
+    }
   }
   return spots;
 }

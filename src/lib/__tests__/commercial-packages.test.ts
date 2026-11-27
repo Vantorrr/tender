@@ -12,6 +12,7 @@ import {
   gesnHoursHint,
   matchSiteWorkKind,
   placeByDuration,
+  placeStagePhases,
   planCommercialStage,
   shiftsForDeadline,
   stageTracksVolumeRow,
@@ -404,28 +405,38 @@ describe("commercial package duration", () => {
     });
     const stages = buildStagesFromEstimatePositions([
       line("earth-a", "Земляные работы", "Разработка грунта траншеи А", "м3", 1800),
-      line("earth-b", "Буровые работы", "Бурение скважин участка Б", "м", 240),
+      line("earth-b", "Буровые работы", "Бурение скважин участка Б", "м", 480),
       line("base", "Основание", "Устройство щебеночного основания", "м3", 1200),
-      line("cable", "Сети", "Прокладка кабеля", "м", 600),
+      line("cable", "Сети", "Прокладка кабеля в траншее", "м", 600),
       line("ground", "Электрика", "Монтаж заземления", "шт", 60),
     ], "2026-12-01T00:00:00.000Z", null, { weekendDays: [], shiftsPerDay: 2, hoursPerShift: 11, lookups: [] });
-    const earth = stages.find((stage) => stage.name.includes("траншеи"))!;
+    const earth = stages.find((stage) => stage.name.startsWith("Разработка"))!;
     const bore = stages.find((stage) => stage.name.includes("Бурение"))!;
     const base = stages.find((stage) => stage.name.includes("щебеноч"))!;
     const cable = stages.find((stage) => stage.name.includes("кабел"))!;
     const ground = stages.find((stage) => stage.name.includes("заземл"))!;
     expect(earth.durationDays).toBe(10);
-    expect(bore.durationDays).toBe(10);
+    expect(bore.durationDays).toBe(20);
     expect(earth.start).toBe(bore.start);
-    expect(base.start > earth.end).toBe(true);
+    expect(base.start > bore.end).toBe(true);
+    expect(cable.durationDays).toBe(10);
     expect(cable.start > base.end).toBe(true);
     expect(ground.start > cable.end).toBe(true);
-    expect(base.dependsOn).toBe(earth.id);
+    expect(base.dependsOn).toBe(bore.id);
     expect(cable.dependencyType).toBe("FS");
-    expect(earth.benchmarkCrew?.some((line) => line.kind === "equipment")).toBe(true);
-    expect(earth.resources?.some((resource) => resource.name.includes("Экскаватор"))).toBe(true);
-    expect(cable.resources?.some((resource) => resource.kind === "labor")).toBe(true);
+    expect(earth.benchmarkCrew?.some((crew) => crew.kind === "equipment")).toBe(true);
+    expect(cable.benchmarkCrew?.some((crew) => crew.role.includes("Электро"))).toBe(true);
+    expect(earth.resources ?? []).toHaveLength(0);
+    expect(cable.resources ?? []).toHaveLength(0);
     expect(new Set(stages.map((stage) => stage.start)).size).toBeGreaterThan(1);
+    const idle = placeStagePhases("2026-12-01", [], [
+      { phase: 1, durationDays: 10 },
+      { phase: 2, durationDays: null },
+      { phase: 3, durationDays: 5 },
+    ]);
+    expect(idle[2]?.start).toBe("2026-12-11");
+    expect(idle[2]?.dependsOn).toBe(0);
+    expect(idle[1]?.dependsOn).toBe(0);
   });
 });
 

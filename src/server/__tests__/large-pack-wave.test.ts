@@ -61,6 +61,7 @@ describe("large customer package calculation", () => {
     const draft = readAppData().calculations.find((item) => item.id === made.calculationId)!;
     const schedule = readAppData().schedules.find((item) => item.procurementId === created.id)!;
     expect(draft.positions.filter((position) => position.costRole === "customer_source")).toHaveLength(2);
+    expect(draft.positions.every((position) => position.costRole === "customer_source")).toBe(true);
     expect(made.shiftProfile).toMatchObject({
       personnelShiftsPerDay: 2,
       hoursPerShift: 11,
@@ -74,10 +75,15 @@ describe("large customer package calculation", () => {
     expect(draft.referenceReprice?.reserve).toBe(Math.round((direct + overhead) * 0.1 * 100) / 100);
     expect(draft.referenceReprice?.profit).toBeGreaterThan(0);
     expect(draft.referenceReprice?.C0).toBe(direct + overhead);
+    expect(draft.referenceReprice?.C).toBe((draft.referenceReprice?.C0 ?? 0) + (draft.referenceReprice?.reserve ?? 0));
     expect(draft.costSummary?.C0 ?? 0).not.toBeCloseTo(draft.referenceReprice!.C0, 0);
     expect(displayedEconomicsSummary(draft.costSummary, draft.referenceReprice)?.overhead).toBe(overhead);
     expect(schedule.stages.length).toBeGreaterThan(0);
     expect(schedule.stages.some((stage) => (stage.durationDays ?? 0) > 0)).toBe(true);
+    const cable = schedule.stages.find((stage) => stage.name.includes("кабел"));
+    expect(cable?.durationDays).toBe(10);
+    expect(cable?.resources ?? []).toHaveLength(0);
+    expect(cable?.benchmarkCrew?.some((crew) => crew.role.includes("Электро"))).toBe(true);
     expect(new Set(schedule.stages.map((stage) => stage.start)).size).toBeGreaterThan(1);
   });
 });

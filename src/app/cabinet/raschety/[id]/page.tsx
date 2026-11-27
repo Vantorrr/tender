@@ -1200,8 +1200,11 @@ export default function RaschetDetailPage() {
             });
             const policy = data.organizations.find((org) => org.id === user.orgId)?.tenderLogic?.nmckAtOrBelowCostPolicy ?? "warn";
             const margin = calc.resourceScheduleParams?.profitMarkupOnCostWithOh;
-            const referenceCost = !frame.fullCost && (calc.referenceReprice?.C0 ?? 0) > 0
-              ? `${formatMoney(calc.referenceReprice!.C0)} по смете заказчика`
+            const referenceFull = (calc.referenceReprice?.C ?? 0) > 0
+              ? calc.referenceReprice!.C
+              : (calc.referenceReprice?.C0 ?? 0);
+            const referenceCost = !frame.fullCost && referenceFull > 0
+              ? `${formatMoney(referenceFull)} по смете заказчика`
               : null;
             const cells: Array<[string, string]> = [
               ["НМЦК", frame.nmck == null ? COMMITTEE_UNSET : formatMoney(frame.nmck)],

@@ -459,5 +459,14 @@ describe("grounded project analysis", () => {
     expect(selected.map((item) => item.id)).toContain("deadline");
     expect(selected.every((item) => /[a-zа-яё]/iu.test(item.text))).toBe(true);
     expect(keyPackageFacts([...scraps, deadline])).toContain("Срок подачи заявок до 15 декабря 2026 года");
+    expect(keyPackageFacts([{
+      id: "dotted",
+      text: "Срок подачи заявок до 15.12.2026. НМЦК составляет 12.5 млн руб.",
+      page: 1,
+      sourceFile: "Извещение.pdf",
+    }])).toEqual(expect.arrayContaining([
+      "Срок подачи заявок до 15.12.2026",
+      "НМЦК составляет 12.5 млн руб",
+    ]));
   });
 });

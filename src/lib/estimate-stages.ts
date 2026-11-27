@@ -251,17 +251,7 @@ export function buildStagesFromEstimatePositions(
       ...(plan.gesnHoursHint != null ? { gesnHoursHint: plan.gesnHoursHint } : {}),
       ...(plan.benchmarkSource ? { benchmarkSource: plan.benchmarkSource } : {}),
       ...(plan.benchmarkCrew.length ? { benchmarkCrew: plan.benchmarkCrew } : {}),
-      resources: resourcesMerged.length
-        ? resourcesMerged
-        : plan.benchmarkCrew.map((line, lineIndex) => ({
-          id: `crew-${stageId}-${lineIndex + 1}`,
-          kind: line.kind,
-          name: line.role,
-          quantity: line.count,
-          unit: line.kind === "labor" ? "чел" : "шт",
-          rate: null,
-          quantityBasis: "count_per_shift" as const,
-        })),
+      resources: resourcesMerged,
     };
   });
   const placed = placeStagePhases(anchor, weekendDays, drafted.map((stage) => ({
