@@ -1,8 +1,14 @@
-/** Rows that are totals, overhead norms or picket labels, not work or resources. */
+/** A row that is only a picket interval, not a work that mentions one. */
+function isPicketLabel(name: string): boolean {
+  return /^пк\s*\d+.*\bдо\s*пк\b/iu.test(name.replace(/\s+/g, " ").trim());
+}
+
+/** Rows that are totals or overhead norms, not work or resources. */
 export function isEstimateNoiseRow(name: string, code = ""): boolean {
   const text = `${code} ${name}`.replace(/\s+/g, " ").trim();
   if (!text) return true;
-  return /накладн\p{L}*\s+расход|сметн\p{L}*\s+прибыл|(?:^|[\s(])(?:нр|сп)\b[^.\n]{0,40}%|%\s*фот|итого(?:\s+по)?(?:\s+поз|\s+раздел)|итоги\s+по\s+поз|всего\s+по\s+(?:смете|раздел|позиц)|лимитированн|взис|временн\p{L}*\s+(?:здан|сооруж)|зимн\p{L}*\s+удорож|снегоборьб|пк\s*\d+.*до\s*пк/iu.test(text);
+  if (isPicketLabel(name)) return true;
+  return /накладн\p{L}*\s+расход|сметн\p{L}*\s+прибыл|(?:^|[\s(])(?:нр|сп)\b[^.\n]{0,40}%|%\s*фот|итого(?:\s+по)?(?:\s+поз|\s+раздел)|итоги\s+по\s+поз|всего\s+по\s+(?:смете|раздел|позиц)|лимитированн|взис|временн\p{L}*\s+(?:здан|сооруж)|зимн\p{L}*\s+удорож|снегоборьб/iu.test(text);
 }
 
 /** A unit cell that is only a number is a price that landed in the wrong column. */
@@ -18,7 +24,6 @@ export function isNumericUnit(unit: string | null | undefined): boolean {
 export function isGluedQuantity(name: string, quantity: number | null | undefined): boolean {
   if (quantity == null || !Number.isFinite(quantity)) return false;
   if (isEstimateNoiseRow(name)) return true;
-  if (/пк\s*\d+/iu.test(name) && Math.abs(quantity) >= 1000) return true;
   return false;
 }
 

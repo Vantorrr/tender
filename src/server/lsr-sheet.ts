@@ -90,16 +90,18 @@ function detectColumns(ws: ExcelJS.Worksheet): Columns | null {
       if (!cols.total && /общ\p{L}*\s+стоим/u.test(text) && /всего/u.test(text)) cols.total = col;
     }
     if (cols.name && /обоснован|шифр/u.test(fold(columnText(ws, row, cols.name))) && !cols.code) cols.code = cols.name;
-    if (!cols.name || !cols.unit || !cols.quantity) continue;
-    if (!cols.rate) {
+    if (!cols.rate && cols.quantity) {
       for (let col = cols.quantity + 1; col <= cols.quantity + 6; col += 1) {
         const text = fold(columnText(ws, row, col));
-        if (/всего/u.test(text) && !/оплат|машин|материал/u.test(text)) {
+        if (/всего/u.test(text) && /стоим|единиц/u.test(text) && !/оплат|машин|материал/u.test(text)) {
           cols.rate = col;
           break;
         }
       }
     }
+    if (!cols.name || !cols.unit || !cols.quantity || !cols.rate) continue;
+    const lsrShape = /обоснован|шифр/u.test(joined) && /стоимост\p{L}*\s+единиц|на\s+единицу/u.test(joined);
+    if (!lsrShape) continue;
     let start = row + 1;
     for (let probe = row + 1; probe <= row + 4; probe += 1) {
       const probeText = fold(Array.from({ length: 8 }, (_, index) => cellText(ws.getRow(probe).getCell(index + 1).value)).join(" "));

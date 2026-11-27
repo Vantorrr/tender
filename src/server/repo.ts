@@ -3058,33 +3058,18 @@ function mergeEstimateRowsIntoDraft(
   imported: Calculation["positions"],
   opts?: { legacy?: boolean },
 ): Calculation["positions"] {
-  const importedBySourceId = new Map(
-    imported.filter((position) => position.sourcePositionId)
-      .map((position) => [position.sourcePositionId!, position])
-  );
-  const refreshed = existing.map((position) => {
-    if (position.costRole === "commercial") return position;
-    const source = position.sourcePositionId
-      ? importedBySourceId.get(position.sourcePositionId)
-      : undefined;
-    if (!source) return position;
-    if (opts?.legacy && position.costRole !== "customer_source") return position;
-    return {
-      ...position,
-      costRole: "customer_source" as const,
-      isWorkItem: source.isWorkItem ?? false,
-      ...(source.isWorkItem ? { rateMissing: false } : {}),
-      ...(source.resourceKind ? { resourceKind: source.resourceKind } : { resourceKind: undefined }),
-      ...(source.sourceSectionName ? { sourceSectionName: source.sourceSectionName } : {}),
-      ...(source.sourceWorkName ? { sourceWorkName: source.sourceWorkName } : {}),
-    };
+  const importedDocIds = new Set(imported.map((position) => position.sourceDocumentId).filter(Boolean));
+  const kept = existing.filter((position) => {
+    if (position.costRole !== "customer_source") return true;
+    if (isUnusableEstimateLine(position)) return false;
+    if ((position.priceSource === "manual" || position.priceSource === "quote") && !position.sourceDocumentId) return true;
+    if (position.sourceDocumentId && importedDocIds.has(position.sourceDocumentId)) return false;
+    return true;
   });
-  const known = new Set(refreshed.map((position) => position.sourcePositionId).filter(Boolean));
+  void opts;
   return [
-    ...refreshed,
-    ...imported
-      .filter((position) => !position.sourcePositionId || !known.has(position.sourcePositionId))
-      .map((position) => ({ ...position, costRole: "customer_source" as const })),
+    ...kept,
+    ...imported.map((position) => ({ ...position, costRole: "customer_source" as const })),
   ];
 }
 
@@ -3429,12 +3414,16 @@ export function sendProcurementToCalculation(
     ) {
       const oid = `c-orig-${Date.now()}`;
       const customerSourcePositions = estimateDocsWithData.flatMap((document) => {
-        const extracted = document.estimatePositions ?? [];
-        const completeRates = extracted.length > 0 && extracted.every(
+        const extracted = (document.estimatePositions ?? []).filter((position) => !isUnusableEstimateLine(position));
+        const hourRow = (position: { unit?: string; resourceKind?: string }) =>
+          /чел\.?\s*[-.]?\s*ч|маш\.?\s*[-.]?\s*ч/iu.test(position.unit ?? "")
+          || position.resourceKind === "labor";
+        const priced = extracted.filter((position) => !hourRow(position));
+        const completeRates = priced.length > 0 && priced.every(
           (position) => !position.rateMissing && Number.isFinite(position.rate) && position.rate > 0
         );
         if (completeRates) {
-          return extracted.map((position) => ({
+          return priced.map((position) => ({
             id: position.id,
             sourceDocumentId: document.id,
             sourcePositionId: position.id,
