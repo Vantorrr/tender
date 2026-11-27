@@ -3457,6 +3457,12 @@ export function sendProcurementToCalculation(
       const rowsWithoutSourceRates = allEstimatePositions.filter(({ position }) =>
         !isEstimateHourRow(position) && (position.rateMissing || !(Number.isFinite(position.rate) && position.rate > 0))
       ).length;
+      const lineItems = customerSourcePositions.filter((position) => position.code !== "CUST-TOTAL");
+      const originalNote = lineItems.length
+        ? `Неизменяемый снимок сметы заказчика: ${lineItems.length} распознанных позиций.`
+        : rowsWithoutSourceRates
+          ? `${recognizedRowsPhrase(allEstimatePositions.length).replace(/^./u, (letter) => letter.toUpperCase())} по ${estimateDocsWithData.length} сметам; для ${rowCountGenitive(rowsWithoutSourceRates)} исходная ставка не извлечена надёжно, поэтому оригинал показывает подтверждённый итог каждой сметы без подмены ставок нулями.`
+          : "Оригинал показывает итог сметы: расцененных работ нет, строки часов без ставки в позиции не записываются.";
       data.calculations.unshift({
         id: oid,
         orgId: p.orgId,
@@ -3467,9 +3473,7 @@ export function sendProcurementToCalculation(
           ? customerSourcePositions
           : [{ id: `cp-orig-${Date.now()}`, code: "CUST-TOTAL", name: "Итог сметы заказчика", unit: "компл", quantity: 1, rate: 0, rateMissing: true }],
         assumptions: [
-          rowsWithoutSourceRates
-            ? `${recognizedRowsPhrase(allEstimatePositions.length).replace(/^./u, (letter) => letter.toUpperCase())} по ${estimateDocsWithData.length} сметам; для ${rowCountGenitive(rowsWithoutSourceRates)} исходная ставка не извлечена надёжно, поэтому оригинал показывает подтверждённый итог каждой сметы без подмены ставок нулями.`
-            : `Неизменяемый снимок сметы заказчика: ${allEstimatePositions.length} распознанных позиций.`,
+          originalNote,
           `Источники: ${sourceFileNames.join("; ")}`,
           "Собственные ресурсы сюда не добавляются",
         ],

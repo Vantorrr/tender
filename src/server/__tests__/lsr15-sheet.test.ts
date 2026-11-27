@@ -180,6 +180,40 @@ describe("15-column local estimate", () => {
     expect(original.positions.some((row) => row.rate === 1500 && row.unit === "м3")).toBe(true);
     expect(original.positions.some((row) => row.code === "CUST-TOTAL" && row.rate === 0)).toBe(false);
     expect(original.assumptions?.join(" ") ?? "").not.toMatch(/подтверждённый итог/);
+    expect(original.assumptions?.join(" ") ?? "").toMatch(/распознанных позиций/);
+  });
+
+  it("does not call an hours-only original a snapshot of priced positions", () => {
+    const created = createManualProcurement("u-ruk", { title: "Только часы", region: "Ямал" });
+    const procurement = readAppData().procurements.find((item) => item.id === created.id)!;
+    mutateAppData((data) => {
+      data.documents.unshift({
+        id: "doc-hours-only",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        title: "Часы",
+        fileName: "smeta-hours.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: "uploads/smeta-hours.xlsx",
+        estimatePositions: [
+          { id: "hours-1", code: "ЗТ", name: "Затраты труда рабочих", unit: "чел.-ч", quantity: 10, rate: 0, rateMissing: true },
+        ],
+      });
+      return data;
+    });
+    sendProcurementToCalculation("u-ruk", created.id);
+    const original = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "customer_original")!;
+    expect(original.positions.every((row) => row.code === "CUST-TOTAL")).toBe(true);
+    expect(original.assumptions?.join(" ") ?? "").not.toMatch(/распознанных позиций/);
+    expect(original.assumptions?.join(" ") ?? "").toMatch(/расцененных работ нет/);
   });
 
   it("does not add a second copy of rows already seeded on a legacy draft", () => {
