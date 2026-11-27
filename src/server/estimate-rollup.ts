@@ -18,6 +18,18 @@ function isOverheadHeading(section: string): boolean {
   return /^(?:нр|сп)(?:\s|$)/iu.test(section.trim());
 }
 
+/** A unit or a name that is only digits is a cell scrap, not a volume line. */
+export function isRealVolumeRow(row: { name?: string; unit?: string; sectionName?: string }): boolean {
+  const name = row.name?.trim() ?? "";
+  const unit = row.unit?.trim() ?? "";
+  const section = row.sectionName?.trim() ?? "";
+  const hasWord = (value: string) => /[a-zа-яё]/iu.test(value);
+  if (/^[\d\s.,]+$/u.test(unit)) return false;
+  if (!hasWord(name) && !hasWord(section)) return false;
+  if (!hasWord(name) && /^без раздела$/iu.test(section)) return false;
+  return true;
+}
+
 /** Sum every work line by section. Resource rows are used only when the file has no work lines. Overhead norms are not sections. */
 export function rollupWorkSections(positions: Array<{
   sectionName?: string;
@@ -31,13 +43,18 @@ export function rollupWorkSections(positions: Array<{
   const rows = (works.length ? works : positions.filter((position) => !isOverheadPosition(position))).filter((position) =>
     typeof position.quantity === "number" && Number.isFinite(position.quantity) && position.quantity !== 0
     && !isOverheadHeading(position.sectionName?.trim() || "")
+    && isRealVolumeRow(position)
   );
   const sections: WorkSectionRollup["sections"] = [];
   const index = new Map<string, number>();
   const titled = new Map<string, number>();
   const seenTitle = new Set<string>();
   for (const row of rows) {
-    const section = row.sectionName?.trim() || "Без раздела";
+    const named = row.name?.trim() ?? "";
+    const sectionRaw = row.sectionName?.trim() ?? "";
+    const section = /[a-zа-яё]/iu.test(sectionRaw) && !/^без раздела$/iu.test(sectionRaw)
+      ? sectionRaw
+      : named;
     const unit = row.unit?.trim() || "ед.";
     const key = `${section}\u0001${unit}`;
     const at = index.get(key);

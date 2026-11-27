@@ -67,4 +67,13 @@ describe("estimate section rollup", () => {
     );
     expect(piles).toMatch(/установка свай/iu);
   });
+
+  it("drops bare numbers and keeps a named volume with its unit", () => {
+    const rollup = rollupWorkSections([
+      { sectionName: "Без раздела", name: "3", code: "1", unit: "4", quantity: 3, isWorkItem: true },
+      { sectionName: "", name: "1382.215", code: "2", unit: "81.52", quantity: 1382.215, isWorkItem: true },
+      { sectionName: "Раздел 2. Сети", name: "Прокладка кабеля", code: "ФЕР08", unit: "м", quantity: 600, isWorkItem: true },
+    ]);
+    expect(rollup.sections).toEqual([{ section: "Раздел 2. Сети", unit: "м", quantity: 600, rows: 1 }]);
+  });
 });

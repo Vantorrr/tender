@@ -273,9 +273,11 @@ export function filledOverviewBlocks(input: {
   });
   const docs = input.documents.length;
   const excerpts = input.citations.length;
-  const volumes = input.documents.flatMap((document) => document.estimatePositions ?? []);
+  const volumes = input.documents.flatMap((document) => document.estimatePositions ?? []).filter((row) =>
+    /[a-zа-яё]/iu.test(row.name) && row.unit.trim() && !/^[\d\s.,]+$/u.test(row.unit.trim())
+  );
   const volumeText = volumes.length
-    ? `Распознано позиций: ${volumes.length}. ${volumes.slice(0, 3).map((row) => `${row.name}: ${row.quantity} ${row.unit}`).join("; ")}.`
+    ? `Распознано позиций: ${volumes.length}. ${volumes.slice(0, 6).map((row) => `${row.name}: ${row.quantity} ${row.unit}`).join("; ")}.`
     : sentencesAbout(input.citations, /объ[её]м|количеств/iu, docs ? "Объёмы в загруженных документах не распознаны." : "Объёмы не из чего собрать: документов нет.");
   const passport = useful(parsed.get("Паспорт закупки и тайминг"))
     || useful(summary.split(/\n\n/u)[0])

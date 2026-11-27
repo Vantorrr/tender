@@ -235,6 +235,67 @@ function emptyPlan(gesnHoursHint: number | null, note: string | null, crew: Benc
   };
 }
 
+function heuristicDaily(name: string, unit: string | null): { perDay: number; normUnit: string } | null {
+  const text = foldNormSearch(name);
+  const foldedUnit = foldUnit(unit ?? "");
+  const area = foldedUnit.includes("м2");
+  const rules: Array<{ test: RegExp; perDay: number; normUnit: string }> = [
+    { test: /заземл/u, perDay: 6, normUnit: "шт" },
+    { test: /кабел/u, perDay: 60, normUnit: "м" },
+    { test: /фундамент/u, perDay: 8, normUnit: "м3" },
+    { test: /щебен|песок|песчан|геомат|геореш/u, perDay: area ? 300 : 120, normUnit: area ? "м2" : "м3" },
+    { test: /бурен|скважин/u, perDay: 24, normUnit: "м" },
+    { test: /(?<![а-яё])земл|транше|котлован|разработк\p{L}*\s+грунт/u, perDay: 180, normUnit: "м3" },
+  ];
+  return rules.find((rule) => rule.test.test(text)) ?? null;
+}
+
+function heuristicCrew(name: string): BenchmarkCrewLine[] {
+  const text = foldNormSearch(name);
+  if (/заземл|кабел/u.test(text)) return [{ role: "Электромонтажники", count: 4, kind: "labor" }];
+  if (/бурен|скважин/u.test(text)) return DRILLING_CREW;
+  if (/(?<![а-яё])земл|транше|котлован|щебен|песок|геомат/u.test(text)) {
+    return [
+      { role: "Машинист экскаватора", count: 2, kind: "labor" },
+      { role: "Экскаватор", count: 1, kind: "equipment" },
+    ];
+  }
+  if (/фундамент/u.test(text)) return [{ role: "Монтажники", count: 4, kind: "labor" }, { role: "Экскаватор", count: 1, kind: "equipment" }];
+  return [];
+}
+
+/** Orientation for a common construction line when the estimate has volume but no ЗТ and no catalog row. */
+function planFromWorkHeuristic(input: {
+  workName: string;
+  unit: string | null;
+  volume: number | null;
+  shifts: number;
+  gesnHoursHint: number | null;
+}): CommercialStagePlan | null {
+  const rule = heuristicDaily(input.workName, input.unit);
+  if (!rule || input.volume == null) return null;
+  const scaled = volumeInNormUnits(input.volume, input.unit, rule.normUnit);
+  if (scaled == null) return null;
+  const durationDays = scaled / rule.perDay;
+  if (!(durationDays >= 1)) return null;
+  const shifts = input.shifts > 0 ? input.shifts : 1;
+  return {
+    durationBasis: "output_shift",
+    durationDays,
+    formulaVolume: scaled,
+    outputPerShift11h: rule.perDay / shifts,
+    dailyOutput: rule.perDay,
+    statedLinks: 1,
+    statedShifts: 1,
+    mechanismCount: 1,
+    durationShifts: shifts,
+    benchmarkSource: `Ориентир типовой работы: ${rule.perDay} ${rule.normUnit}/день при смене 11 ч × ${shifts}. Это не цена и не нарезка срока ТЗ.`,
+    benchmarkCrew: heuristicCrew(input.workName),
+    gesnHoursHint: input.gesnHoursHint,
+    note: "Суточный ориентир уже включает число смен и повторно на календарь не умножается.",
+  };
+}
+
 function planFromNormHours(input: {
   hours: number | null | undefined;
   hoursPerShift: number;
@@ -293,7 +354,7 @@ export function planCommercialStage(input: {
       shiftsPerDay: shifts,
       mechanisms: 1,
     });
-    return {
+    if ((durationDays ?? 0) > 0) return {
       durationBasis: "output_shift",
       durationDays,
       formulaVolume,
@@ -317,6 +378,14 @@ export function planCommercialStage(input: {
     crew: site?.benchmarkCrew ?? [],
   });
   if (fromHours) return fromHours;
+  const heuristic = planFromWorkHeuristic({
+    workName: input.workName,
+    unit: input.unit,
+    volume: input.volume,
+    shifts,
+    gesnHoursHint: input.gesnHoursHint,
+  });
+  if (heuristic) return heuristic;
   if (picked.status === "ambiguous") {
     return emptyPlan(input.gesnHoursHint, "Несколько норм выработки, механизм или группа грунта не выбраны. Длительность не назначена.");
   }
@@ -559,6 +628,68 @@ export function placeByDuration(
     cursor = addDays(end, 1);
     return { start, end };
   });
+}
+
+const PHASE_RULES: Array<{ phase: number; test: RegExp }> = [
+  { phase: 0, test: /подготов|геодез|мобилиз|разбивк/iu },
+  { phase: 4, test: /заземл/iu },
+  { phase: 3, test: /кабел|лоток|трубопровод/iu },
+  { phase: 2, test: /щебен|песок|песч|геомат|геореш|основан|подушк|подсып/iu },
+  { phase: 3, test: /фундамент|свай/iu },
+  { phase: 1, test: /(?<![а-яё])земл|транше|котлован|(?<![а-яё])бурен|скважин/iu },
+  { phase: 4, test: /(?<![а-яё])электро|обвяз|(?<![а-яё])монтаж/iu },
+  { phase: 5, test: /испытан|благоустр|сдача|покраск/iu },
+];
+
+/** Technological phase. A more specific word wins, so «кабель в траншее» stays a cable route. */
+export function constructionPhase(name: string, section = ""): number {
+  const text = `${section} ${name}`;
+  return PHASE_RULES.find((rule) => rule.test.test(text))?.phase ?? 3;
+}
+
+/**
+ * Stages of one phase start together. The next phase starts the day after
+ * the longest predecessor. A stage without duration does not push the phase.
+ */
+export function placeStagePhases(
+  anchor: string,
+  weekendDays: number[],
+  rows: Array<{ phase: number; durationDays: number | null }>,
+): Array<{ start: string; end: string; dependsOn: number | null }> {
+  const aligned = placeByDuration(anchor, weekendDays, [null])[0]?.start ?? anchor;
+  const order = [...new Set(rows.map((row) => row.phase))].sort((left, right) => left - right);
+  const spots: Array<{ start: string; end: string; dependsOn: number | null }> = rows.map(() => ({
+    start: aligned,
+    end: aligned,
+    dependsOn: null,
+  }));
+  let cursor = aligned;
+  let previousIndex: number | null = null;
+  for (const phase of order) {
+    const indexes = rows.flatMap((row, index) => row.phase === phase ? [index] : []);
+    let phaseEnd = cursor;
+    let moved = false;
+    let driver: number | null = null;
+    for (const index of indexes) {
+      const duration = rows[index]?.durationDays ?? null;
+      if (duration != null && duration > 0) {
+        const end = endAfterWorkingDays(cursor, duration, weekendDays);
+        spots[index] = { start: cursor, end, dependsOn: previousIndex };
+        if (driver == null || end > phaseEnd) {
+          phaseEnd = end;
+          driver = index;
+        }
+        moved = true;
+      } else {
+        spots[index] = { start: cursor, end: cursor, dependsOn: previousIndex };
+      }
+    }
+    if (moved) {
+      cursor = alignToWorkday(addDays(phaseEnd, 1), weekendDays);
+      previousIndex = driver;
+    }
+  }
+  return spots;
 }
 
 export function inclusiveCalendarDays(start: string, end: string): number {

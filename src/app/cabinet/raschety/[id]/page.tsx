@@ -58,6 +58,7 @@ import {
   REFERENCE_REPRICE_DISCLAIMER,
   buildCommitteeSnapshot,
   committeeValueText,
+  displayedEconomicsSummary,
   customerSourcePositions,
   nmckAtOrBelowCostWarning,
   officialMoneyText,
@@ -1198,10 +1199,17 @@ export default function RaschetDetailPage() {
               officialConfirmed: confirmed,
             });
             const policy = data.organizations.find((org) => org.id === user.orgId)?.tenderLogic?.nmckAtOrBelowCostPolicy ?? "warn";
+            const margin = calc.resourceScheduleParams?.profitMarkupOnCostWithOh;
+            const referenceFull = (calc.referenceReprice?.C ?? 0) > 0
+              ? calc.referenceReprice!.C
+              : (calc.referenceReprice?.C0 ?? 0);
+            const referenceCost = !frame.fullCost && referenceFull > 0
+              ? `${formatMoney(referenceFull)} по смете заказчика`
+              : null;
             const cells: Array<[string, string]> = [
               ["НМЦК", frame.nmck == null ? COMMITTEE_UNSET : formatMoney(frame.nmck)],
-              ["Полная себестоимость", committeeValueText(frame.fullCost, true)],
-              ["Целевая маржа", COMMITTEE_UNSET],
+              ["Полная себестоимость", frame.fullCost != null ? committeeValueText(frame.fullCost, true) : referenceCost ?? COMMITTEE_UNSET],
+              ["Целевая маржа", margin != null ? `${Math.round(margin * 100)}% от себестоимости с накладными` : COMMITTEE_UNSET],
               ["Дно", COMMITTEE_UNSET],
             ];
             return (
@@ -1217,7 +1225,7 @@ export default function RaschetDetailPage() {
                     <EconomicsLinesEditor
                       key={`${calc.id}:${calc.updatedAt}:committee`}
                       calculationId={calc.id}
-                      summary={calc.costSummary}
+                      summary={displayedEconomicsSummary(calc.costSummary, calc.referenceReprice)}
                       manual={calc.economicsManual}
                       locked={locked}
                       onSaved={refresh}
@@ -1912,7 +1920,7 @@ export default function RaschetDetailPage() {
             <EconomicsLinesEditor
               key={`${calc.id}:${calc.updatedAt}:summary`}
               calculationId={calc.id}
-              summary={calc.costSummary}
+              summary={displayedEconomicsSummary(calc.costSummary, calc.referenceReprice)}
               manual={calc.economicsManual}
               locked={locked}
               onSaved={refresh}

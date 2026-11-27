@@ -1,6 +1,7 @@
 import {
   gesnHoursHint,
-  placeByDuration,
+  constructionPhase,
+  placeStagePhases,
   planCommercialStage,
   type ShiftOutputCandidate,
 } from "@/lib/commercial-packages";
@@ -233,7 +234,6 @@ export function buildStagesFromEstimatePositions(
       sequence: index + 1,
       crewSize: 0,
       ...(physicalVolume != null && physicalUnit ? { planVolume: physicalVolume, planUnit: physicalUnit } : {}),
-      resources: resourcesMerged,
       durationBasis: plan.durationBasis,
       ...(plan.durationDays != null ? { durationDays: plan.durationDays } : {}),
       ...(plan.formulaVolume != null ? { formulaVolume: plan.formulaVolume } : {}),
@@ -251,14 +251,23 @@ export function buildStagesFromEstimatePositions(
       ...(plan.gesnHoursHint != null ? { gesnHoursHint: plan.gesnHoursHint } : {}),
       ...(plan.benchmarkSource ? { benchmarkSource: plan.benchmarkSource } : {}),
       ...(plan.benchmarkCrew.length ? { benchmarkCrew: plan.benchmarkCrew } : {}),
+      resources: resourcesMerged,
     };
   });
-  const placed = placeByDuration(anchor, weekendDays, drafted.map((stage) => stage.durationDays ?? null));
-  return drafted.map((stage, index) => ({
-    ...stage,
-    start: placed[index]?.start ?? anchor,
-    end: placed[index]?.end ?? anchor,
-  }));
+  const placed = placeStagePhases(anchor, weekendDays, drafted.map((stage) => ({
+    phase: constructionPhase(stage.name, stage.sectionName ?? ""),
+    durationDays: stage.durationDays ?? null,
+  })));
+  return drafted.map((stage, index) => {
+    const spot = placed[index];
+    const predecessor = spot?.dependsOn;
+    return {
+      ...stage,
+      start: spot?.start ?? anchor,
+      end: spot?.end ?? anchor,
+      ...(predecessor != null ? { dependsOn: drafted[predecessor]?.id, dependencyType: "FS" as const } : {}),
+    };
+  });
 }
 
 export function signedQuantityBySection(

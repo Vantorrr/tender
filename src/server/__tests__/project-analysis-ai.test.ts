@@ -4,6 +4,7 @@ import {
   parseProjectAnalysisResult,
   validateProjectEvidence,
   selectAnalysisCitations,
+  keyPackageFacts,
   rewritesSourceMeasure,
   promptInjectionExcerpts,
   citationIdsForFact,
@@ -439,5 +440,33 @@ describe("grounded project analysis", () => {
       { id: "c-3", paragraph: 3, text: "Объём бурения 18544 м" },
     ]);
     expect(ids[0]).toBe("c-3");
+  });
+
+  it("keeps a late submission deadline when the package is mostly numeric scraps", () => {
+    const scraps = Array.from({ length: 300 }, (_, index) => ({
+      id: `scrap-${index}`,
+      text: `${index} ${index + 0.5}`,
+      page: 1,
+      sourceFile: `смета-${index % 40}.xlsx`,
+    }));
+    const deadline = {
+      id: "deadline",
+      text: "Срок подачи заявок до 15 декабря 2026 года.",
+      page: 2,
+      sourceFile: "Извещение.pdf",
+    };
+    const selected = selectAnalysisCitations([...scraps, deadline], 100);
+    expect(selected.map((item) => item.id)).toContain("deadline");
+    expect(selected.every((item) => /[a-zа-яё]/iu.test(item.text))).toBe(true);
+    expect(keyPackageFacts([...scraps, deadline])).toContain("Срок подачи заявок до 15 декабря 2026 года");
+    expect(keyPackageFacts([{
+      id: "dotted",
+      text: "Срок подачи заявок до 15.12.2026. НМЦК составляет 12.5 млн руб.",
+      page: 1,
+      sourceFile: "Извещение.pdf",
+    }])).toEqual(expect.arrayContaining([
+      "Срок подачи заявок до 15.12.2026",
+      "НМЦК составляет 12.5 млн руб",
+    ]));
   });
 });

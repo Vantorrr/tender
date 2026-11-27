@@ -48,7 +48,8 @@ describe("p-tpkp GPR duration from estimate hours", () => {
     const piles = stages.filter((stage) => /установка свай|оголовков свай/iu.test(stage.sectionName ?? ""));
     expect(piles.length).toBeGreaterThan(0);
     expect(piles.every((stage) => (stage.durationDays ?? 0) >= 1)).toBe(true);
-    expect(new Set(piles.map((stage) => stage.start)).size).toBeGreaterThan(1);
+    expect(new Set(piles.map((stage) => stage.start)).size).toBe(1);
+    expect(piles.every((stage) => stage.start > (firstBore?.end ?? stage.start))).toBe(true);
 
     const starts = new Set(withDuration.map((stage) => `${stage.start}..${stage.end}`));
     expect(starts.size).toBeGreaterThan(1);
