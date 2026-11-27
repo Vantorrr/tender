@@ -279,7 +279,7 @@ describe("15-column local estimate", () => {
     expect(original.positions.some((row) => row.unit === "м3" && row.rate === 100)).toBe(true);
     expect(original.positions.some((row) => row.code === "CUST-TOTAL")).toBe(true);
     expect(note).toMatch(/распознанных позиций/);
-    expect(note).toMatch(/только итогом/);
+    expect(note).toMatch(/1 смета без полных ставок записана только итогом/);
   });
 
   it("does not add a second copy of rows already seeded on a legacy draft", () => {

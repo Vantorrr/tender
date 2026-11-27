@@ -3053,6 +3053,17 @@ function repositionDurationStages(stages: GprStage[], weekendDays: number[]): Gp
   });
 }
 
+function estimateTotalsOnlyPhrase(count: number): string {
+  const n = Math.abs(Math.trunc(count));
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  const one = mod10 === 1 && mod100 !== 11;
+  const few = mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14);
+  const word = one ? "смета" : few ? "сметы" : "смет";
+  const verb = one ? "записана" : "записаны";
+  return `Ещё ${n} ${word} без полных ставок ${verb} только итогом.`;
+}
+
 function mergeEstimateRowsIntoDraft(
   existing: Calculation["positions"],
   imported: Calculation["positions"],
@@ -3460,7 +3471,7 @@ export function sendProcurementToCalculation(
       const lineItems = customerSourcePositions.filter((position) => position.code !== "CUST-TOTAL");
       const totalsOnly = customerSourcePositions.filter((position) => position.code === "CUST-TOTAL").length;
       const originalNote = lineItems.length
-        ? `Неизменяемый снимок сметы заказчика: ${lineItems.length} распознанных позиций.${totalsOnly ? ` Ещё ${totalsOnly} смет без полных ставок записаны только итогом.` : ""}`
+        ? `Неизменяемый снимок сметы заказчика: ${lineItems.length} распознанных позиций.${totalsOnly ? ` ${estimateTotalsOnlyPhrase(totalsOnly)}` : ""}`
         : rowsWithoutSourceRates
           ? `${recognizedRowsPhrase(allEstimatePositions.length).replace(/^./u, (letter) => letter.toUpperCase())} по ${estimateDocsWithData.length} сметам; для ${rowCountGenitive(rowsWithoutSourceRates)} исходная ставка не извлечена надёжно, поэтому оригинал показывает подтверждённый итог каждой сметы без подмены ставок нулями.`
           : "Оригинал показывает итог сметы: расцененных работ нет, строки часов без ставки в позиции не записываются.";
