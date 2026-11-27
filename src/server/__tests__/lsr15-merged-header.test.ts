@@ -134,6 +134,106 @@ describe("merged 15-column LSR with a GRAND title", () => {
     expect(original.positions.some((row) => row.code === "CUST-TOTAL" && row.rate === 0)).toBe(false);
   });
 
+  it("does not rebuild a priced original when another estimate file has only hours", () => {
+    const created = createManualProcurement("u-ruk", { title: "Не трогать живой оригинал", region: "Ямал" });
+    const procurement = readAppData().procurements.find((item) => item.id === created.id)!;
+    mutateAppData((data) => {
+      data.documents.unshift({
+        id: "doc-priced-keep",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        title: "Со ставкой",
+        fileName: "priced.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: "uploads/priced.xlsx",
+        estimatePositions: [
+          { id: "keep-1", code: "ФЕР01", name: "Устройство щебня", unit: "м3", quantity: 4, rate: 500 },
+        ],
+      }, {
+        id: "doc-hours-keep",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        title: "Часы",
+        fileName: "hours.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: "uploads/hours.xlsx",
+        estimatePositions: [
+          { id: "keep-h", code: "ЗТ", name: "Затраты труда рабочих", unit: "чел.-ч", quantity: 8, rate: 0, rateMissing: true },
+        ],
+      });
+      return data;
+    });
+    makeOfficialCalculationAndSchedule("u-ruk", created.id);
+    const first = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "customer_original")!;
+    makeOfficialCalculationAndSchedule("u-ruk", created.id);
+    const second = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "customer_original")!;
+    expect(second.id).toBe(first.id);
+    expect(second.positions.some((row) => row.rate === 500)).toBe(true);
+  });
+
+  it("does not rebuild a CUST-TOTAL original that already stores a positive total", () => {
+    const totaled = createManualProcurement("u-ruk", { title: "Итог со ставкой", region: "Ямал" });
+    const totaledCard = readAppData().procurements.find((item) => item.id === totaled.id)!;
+    mutateAppData((data) => {
+      data.documents.unshift({
+        id: "doc-lump",
+        orgId: totaledCard.orgId,
+        procurementId: totaled.id,
+        title: "Итог",
+        fileName: "lump.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: "uploads/lump.xlsx",
+        analysis: {
+          vendor: "",
+          region: "",
+          zone: "",
+          estimateNumber: "",
+          workName: "Смета без строк",
+          basis: "",
+          priceLevel: "",
+          costThousand: 12,
+          positionCount: 1,
+          profileMatch: false,
+        },
+        estimatePositions: [
+          { id: "lump-1", code: "ФЕР09", name: "Работа без ставки", unit: "м", quantity: 3, rate: 0, rateMissing: true },
+        ],
+      });
+      return data;
+    });
+    makeOfficialCalculationAndSchedule("u-ruk", totaled.id);
+    const lumpFirst = readAppData().calculations.find((item) => item.procurementId === totaled.id && item.kind === "customer_original")!;
+    expect(lumpFirst.positions.some((row) => row.code === "CUST-TOTAL" && row.rate === 12000)).toBe(true);
+    makeOfficialCalculationAndSchedule("u-ruk", totaled.id);
+    const lumpSecond = readAppData().calculations.find((item) => item.procurementId === totaled.id && item.kind === "customer_original")!;
+    expect(lumpSecond.id).toBe(lumpFirst.id);
+    expect(lumpSecond.positions.some((row) => row.code === "CUST-TOTAL" && row.rate === 12000)).toBe(true);
+  });
+
   it("keeps the burenie reference total when the workbook is read through analyzeUpload", async () => {
     const filePath = path.join(process.cwd(), "fixtures/grand-smeta/ls-02-02-01-burenie.xlsx");
     const bytes = fs.readFileSync(filePath);
