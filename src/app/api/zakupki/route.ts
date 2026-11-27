@@ -13,6 +13,7 @@ import {
   refreshProcurementAnalytics,
   createProcurementSchedule,
   makeOfficialCalculationAndSchedule,
+  repairBrokenEstimateDocuments,
   saveCustomerAnswer,
   sendProcurementToCalculation,
   setProcurementReview,
@@ -165,6 +166,7 @@ export async function POST(req: Request) {
       return json({ ...getBootstrap(user), scheduleOutcome: schedule.outcome });
     }
     if (body.action === "makeOfficialPackage") {
+      await repairBrokenEstimateDocuments(user.id, body.id!);
       const official = makeOfficialCalculationAndSchedule(user.id, body.id!);
       return json({
         ...getBootstrap(user),

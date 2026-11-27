@@ -34,6 +34,7 @@ import { recentPaymentId } from "@/lib/duplicate-click";
 import { supplyNeedKey } from "@/lib/supply-need";
 import { paymentAmountError, paymentTypeForSave } from "@/lib/money-payments";
 import { buildStagesFromEstimatePositions, calendarDurationDays, GPR_DATES_MISSING, periodFromDocumentText } from "@/lib/estimate-stages";
+import { estimatePositionsLookBroken, isEstimateHourRow, isUnusableEstimateLine } from "@/lib/estimate-noise";
 import {
   GPR_CREW_FROM_FILE4,
   GPR_DURATION_FROM_OUTPUT,
@@ -104,7 +105,7 @@ import {
   scenarioFactor,
   worksSubtotal,
 } from "@/lib/calc-math";
-import { stampCitationSourceVersion } from "@/server/grand-smeta";
+import { analyzeUpload, stampCitationSourceVersion } from "@/server/grand-smeta";
 import { parseContractRisks } from "@/server/contract-risk";
 import type { UploadAnalysis } from "@/server/grand-smeta";
 import { getDb, mutateAppData, readAppData, resetAppData } from "@/server/db";
@@ -2559,10 +2560,31 @@ export function recordProcurementAiFailure(actorId: string, procurementId: strin
   });
 }
 
+/** Re-read a saved estimate when its stored rows put a price in the unit column. */
+export async function repairBrokenEstimateDocuments(actorId: string, procurementId: string): Promise<number> {
+  const snapshot = readAppData();
+  const broken = snapshot.documents.filter((document) =>
+    document.procurementId === procurementId
+    && document.storedPath
+    && estimatePositionsLookBroken(document.estimatePositions ?? [])
+  );
+  let repaired = 0;
+  for (const document of broken) {
+    const bytes = readUpload(document.storedPath!);
+    if (!bytes?.length) continue;
+    const prepared = await analyzeUpload(document.fileName, document.fileType, bytes, { useLlm: false, heavyOcr: false });
+    if (!prepared.positions.length || estimatePositionsLookBroken(prepared.positions)) continue;
+    reanalyzeDocument(actorId, document.id, prepared);
+    repaired += 1;
+  }
+  return repaired;
+}
+
 export async function analyzeProcurementPackageWithAI(
   actorId: string,
   procurementId: string
 ): Promise<{ warning?: string; usedAi: boolean }> {
+  await repairBrokenEstimateDocuments(actorId, procurementId);
   // Opening, downloading and package analysis must not create a calculation
   // or GPR and must not move the procurement. That happens only on the
   // explicit «Сформировать расчёт» action.
@@ -3031,37 +3053,41 @@ function repositionDurationStages(stages: GprStage[], weekendDays: number[]): Gp
   });
 }
 
+function estimateTotalsOnlyPhrase(count: number): string {
+  const n = Math.abs(Math.trunc(count));
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  const one = mod10 === 1 && mod100 !== 11;
+  const few = mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14);
+  const word = one ? "смета" : few ? "сметы" : "смет";
+  const verb = one ? "записана" : "записаны";
+  return `Ещё ${n} ${word} без полных ставок ${verb} только итогом.`;
+}
+
 function mergeEstimateRowsIntoDraft(
   existing: Calculation["positions"],
   imported: Calculation["positions"],
   opts?: { legacy?: boolean },
 ): Calculation["positions"] {
-  const importedBySourceId = new Map(
-    imported.filter((position) => position.sourcePositionId)
-      .map((position) => [position.sourcePositionId!, position])
-  );
-  const refreshed = existing.map((position) => {
-    if (position.costRole === "commercial") return position;
-    const source = position.sourcePositionId
-      ? importedBySourceId.get(position.sourcePositionId)
-      : undefined;
-    if (!source) return position;
-    if (opts?.legacy && position.costRole !== "customer_source") return position;
-    return {
-      ...position,
-      costRole: "customer_source" as const,
-      isWorkItem: source.isWorkItem ?? false,
-      ...(source.isWorkItem ? { rateMissing: false } : {}),
-      ...(source.resourceKind ? { resourceKind: source.resourceKind } : { resourceKind: undefined }),
-      ...(source.sourceSectionName ? { sourceSectionName: source.sourceSectionName } : {}),
-      ...(source.sourceWorkName ? { sourceWorkName: source.sourceWorkName } : {}),
-    };
+  const importedDocIds = new Set(imported.map((position) => position.sourceDocumentId).filter(Boolean));
+  const kept = existing.filter((position) => {
+    if (position.costRole !== "customer_source") return true;
+    if (isUnusableEstimateLine(position)) return false;
+    if ((position.priceSource === "manual" || position.priceSource === "quote") && !position.sourceDocumentId) return true;
+    if (position.sourceDocumentId && importedDocIds.has(position.sourceDocumentId)) return false;
+    return true;
   });
-  const known = new Set(refreshed.map((position) => position.sourcePositionId).filter(Boolean));
+  const seededSourceIds = new Set(
+    opts?.legacy
+      ? kept
+        .filter((position) => position.costRole !== "customer_source" && position.costRole !== "commercial" && position.sourcePositionId)
+        .map((position) => position.sourcePositionId)
+      : [],
+  );
   return [
-    ...refreshed,
+    ...kept,
     ...imported
-      .filter((position) => !position.sourcePositionId || !known.has(position.sourcePositionId))
+      .filter((position) => !(position.sourcePositionId && seededSourceIds.has(position.sourcePositionId)))
       .map((position) => ({ ...position, costRole: "customer_source" as const })),
   ];
 }
@@ -3397,7 +3423,9 @@ export function sendProcurementToCalculation(
     // names stored as general documents). Use the same detector as manual attach.
     const estimateDocsWithData = estimateDocumentsForProcurement(data, p.id);
     const allEstimatePositions = estimateDocsWithData.flatMap((document) =>
-      (document.estimatePositions ?? []).map((position) => ({ document, position }))
+      (document.estimatePositions ?? [])
+        .filter((position) => !isUnusableEstimateLine(position))
+        .map((position) => ({ document, position }))
     );
     if (
       !p.originalCalculationId &&
@@ -3405,12 +3433,13 @@ export function sendProcurementToCalculation(
     ) {
       const oid = `c-orig-${Date.now()}`;
       const customerSourcePositions = estimateDocsWithData.flatMap((document) => {
-        const extracted = document.estimatePositions ?? [];
-        const completeRates = extracted.length > 0 && extracted.every(
+        const extracted = (document.estimatePositions ?? []).filter((position) => !isUnusableEstimateLine(position));
+        const priced = extracted.filter((position) => !isEstimateHourRow(position));
+        const completeRates = priced.length > 0 && priced.every(
           (position) => !position.rateMissing && Number.isFinite(position.rate) && position.rate > 0
         );
         if (completeRates) {
-          return extracted.map((position) => ({
+          return priced.map((position) => ({
             id: position.id,
             sourceDocumentId: document.id,
             sourcePositionId: position.id,
@@ -3437,8 +3466,15 @@ export function sendProcurementToCalculation(
       });
       const sourceFileNames = estimateDocsWithData.map((document) => document.fileName);
       const rowsWithoutSourceRates = allEstimatePositions.filter(({ position }) =>
-        position.rateMissing || !(Number.isFinite(position.rate) && position.rate > 0)
+        !isEstimateHourRow(position) && (position.rateMissing || !(Number.isFinite(position.rate) && position.rate > 0))
       ).length;
+      const lineItems = customerSourcePositions.filter((position) => position.code !== "CUST-TOTAL");
+      const totalsOnly = customerSourcePositions.filter((position) => position.code === "CUST-TOTAL").length;
+      const originalNote = lineItems.length
+        ? `Неизменяемый снимок сметы заказчика: ${lineItems.length} распознанных позиций.${totalsOnly ? ` ${estimateTotalsOnlyPhrase(totalsOnly)}` : ""}`
+        : rowsWithoutSourceRates
+          ? `${recognizedRowsPhrase(allEstimatePositions.length).replace(/^./u, (letter) => letter.toUpperCase())} по ${estimateDocsWithData.length} сметам; для ${rowCountGenitive(rowsWithoutSourceRates)} исходная ставка не извлечена надёжно, поэтому оригинал показывает подтверждённый итог каждой сметы без подмены ставок нулями.`
+          : "Оригинал показывает итог сметы: расцененных работ нет, строки часов без ставки в позиции не записываются.";
       data.calculations.unshift({
         id: oid,
         orgId: p.orgId,
@@ -3449,9 +3485,7 @@ export function sendProcurementToCalculation(
           ? customerSourcePositions
           : [{ id: `cp-orig-${Date.now()}`, code: "CUST-TOTAL", name: "Итог сметы заказчика", unit: "компл", quantity: 1, rate: 0, rateMissing: true }],
         assumptions: [
-          rowsWithoutSourceRates
-            ? `${recognizedRowsPhrase(allEstimatePositions.length).replace(/^./u, (letter) => letter.toUpperCase())} по ${estimateDocsWithData.length} сметам; для ${rowCountGenitive(rowsWithoutSourceRates)} исходная ставка не извлечена надёжно, поэтому оригинал показывает подтверждённый итог каждой сметы без подмены ставок нулями.`
-            : `Неизменяемый снимок сметы заказчика: ${allEstimatePositions.length} распознанных позиций.`,
+          originalNote,
           `Источники: ${sourceFileNames.join("; ")}`,
           "Собственные ресурсы сюда не добавляются",
         ],

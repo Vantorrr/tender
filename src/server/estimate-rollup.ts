@@ -1,3 +1,5 @@
+import { isUnusableEstimateLine } from "@/lib/estimate-noise";
+
 export type WorkSectionRollup = {
   sections: Array<{ section: string; unit: string; quantity: number; rows: number }>;
   totalsByUnit: Array<{ unit: string; quantity: number; rows: number }>;
@@ -25,6 +27,7 @@ export function isRealVolumeRow(row: { name?: string; unit?: string; sectionName
   const section = row.sectionName?.trim() ?? "";
   const hasWord = (value: string) => /[a-zа-яё]/iu.test(value);
   if (/^[\d\s.,]+$/u.test(unit)) return false;
+  if (isUnusableEstimateLine({ name, unit })) return false;
   if (!hasWord(name) && !hasWord(section)) return false;
   if (!hasWord(name) && /^без раздела$/iu.test(section)) return false;
   return true;

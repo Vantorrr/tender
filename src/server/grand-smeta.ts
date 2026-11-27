@@ -5,7 +5,9 @@ import { rowCountNominative } from "@/lib/wave23";
 import { OCR_CHUNK_CHARS, OCR_CHUNKS_PER_PAGE } from "@/server/ai-prompts";
 import { rollupWorkSections } from "@/server/estimate-rollup";
 import { refineNote } from "@/server/model-note";
+import { protectNumericDots, restoreNumericDots } from "@/lib/sentences";
 import { extractDocumentText, ocrConfigured } from "@/server/ocr";
+import { parseLsrWorkbook } from "@/server/lsr-sheet";
 import { readZipEntries } from "@/server/safe-archive";
 import type {
   CardStatus,
@@ -765,7 +767,8 @@ export function analysisFromScan(
   );
   const pageTexts = (ocr.pages?.length ? ocr.pages : hasText ? [text] : []).slice(0, 200);
   const citations: Citation[] = pageTexts.flatMap((pageText, pageIndex) => {
-    const sentences = pageText.match(/[^.!?]+(?:[.!?]+|$)/gu) ?? [pageText];
+    const hidden = protectNumericDots(pageText);
+    const sentences = (hidden.match(/[^.!?]+(?:[.!?]+|$)/gu) ?? [hidden]).map((sentence) => restoreNumericDots(sentence));
     const chunks: string[] = [];
     for (const sentence of sentences) {
       const words = sentence.trim().split(/\s+/u);
@@ -1201,8 +1204,12 @@ async function analyzeGenericWorkbook(fileName: string, buf: Buffer): Promise<Up
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.load(buf as unknown as ExcelJS.Buffer);
   const rows: Array<{ sheet: string; row: number; text: string; lastCol: number; priority: number }> = [];
+  const lsrPositions = await parseLsrWorkbook(buf);
   const positions: GrandPosition[] = [];
   const preferredMaterialPositions: GrandPosition[] = [];
+  if (lsrPositions.length) {
+    positions.push(...lsrPositions);
+  }
 
   for (const ws of wb.worksheets) {
     let header: { name?: number; unit?: number; quantity?: number; rate?: number; code?: number; preferredMaterials?: boolean } | null = null;
@@ -1224,6 +1231,7 @@ async function analyzeGenericWorkbook(fileName: string, buf: Buffer): Promise<Up
         (/работ|материал|ресурс|график|объем|объём/i.test(plain) ? 2 : 0) +
         (rowNumber <= 10 ? 1 : 0);
       rows.push({ sheet: ws.name, row: rowNumber, text: joined, lastCol: cells.at(-1)!.col, priority });
+      if (lsrPositions.length) return;
 
       if (!header) {
         const normalized = cells.map((cell) => cell.text.toLocaleLowerCase("ru-RU").replace(/ё/g, "е"));
