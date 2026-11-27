@@ -3053,6 +3053,48 @@ function repositionDurationStages(stages: GprStage[], weekendDays: number[]): Gp
   });
 }
 
+type CustomerOriginalDocument = {
+  id: string;
+  estimatePositions?: Array<{ name?: string; code?: string; unit?: string; quantity?: number; rate?: number; rateMissing?: boolean; resourceKind?: string }>;
+  analysis?: { costThousand?: number | null };
+};
+
+function rateIsPositive(rate: number | undefined): boolean {
+  return typeof rate === "number" && Number.isFinite(rate) && rate > 0;
+}
+
+function pricedOriginalRows(document: CustomerOriginalDocument) {
+  return (document.estimatePositions ?? []).filter((position) => !isUnusableEstimateLine(position) && !isEstimateHourRow(position));
+}
+
+/** Строки, которые сборка оригинала реально запишет: полный набор ставок или ненулевой итог. */
+function documentContributesCustomerOriginal(document: CustomerOriginalDocument): boolean {
+  const rows = pricedOriginalRows(document);
+  const completeRates = rows.length > 0 && rows.every((position) => !position.rateMissing && rateIsPositive(position.rate));
+  if (completeRates) return true;
+  const total = document.analysis?.costThousand;
+  return typeof total === "number" && Number.isFinite(total) && total > 0;
+}
+
+function customerOriginalIsStale(
+  original: Calculation | undefined,
+  documents: CustomerOriginalDocument[],
+): boolean {
+  if (!original) return true;
+  const positions = original.positions ?? [];
+  const zeroSum = positions.length === 0 || positions.every((position) => !rateIsPositive(position.rate));
+  if (zeroSum) {
+    return documents.some((document) => documentContributesCustomerOriginal(document));
+  }
+  const linked = new Set(positions.map((position) => position.sourceDocumentId).filter(Boolean));
+  if (documents.some((document) => documentContributesCustomerOriginal(document) && !linked.has(document.id))) return true;
+  const onlyLump = positions.every((position) => position.code === "CUST-TOTAL");
+  return onlyLump && documents.some((document) => {
+    const rows = pricedOriginalRows(document);
+    return rows.length > 0 && rows.every((position) => !position.rateMissing && rateIsPositive(position.rate));
+  });
+}
+
 function estimateTotalsOnlyPhrase(count: number): string {
   const n = Math.abs(Math.trunc(count));
   const mod10 = n % 10;
@@ -3422,6 +3464,17 @@ export function sendProcurementToCalculation(
     // A tender package can contain several local estimates (often numeric PDF
     // names stored as general documents). Use the same detector as manual attach.
     const estimateDocsWithData = estimateDocumentsForProcurement(data, p.id);
+    if (p.originalCalculationId) {
+      const original = data.calculations.find((item) => item.id === p.originalCalculationId && item.kind === "customer_original");
+      if (customerOriginalIsStale(original, estimateDocsWithData)) {
+        const staleId = p.originalCalculationId;
+        data.calculations = data.calculations.filter((item) => item.id !== staleId);
+        for (const calc of data.calculations) {
+          if (calc.pairedCalculationId === staleId) delete calc.pairedCalculationId;
+        }
+        p.originalCalculationId = undefined;
+      }
+    }
     const allEstimatePositions = estimateDocsWithData.flatMap((document) =>
       (document.estimatePositions ?? [])
         .filter((position) => !isUnusableEstimateLine(position))
@@ -3483,7 +3536,7 @@ export function sendProcurementToCalculation(
         status: "gotovo",
         positions: customerSourcePositions.length
           ? customerSourcePositions
-          : [{ id: `cp-orig-${Date.now()}`, code: "CUST-TOTAL", name: "Итог сметы заказчика", unit: "компл", quantity: 1, rate: 0, rateMissing: true }],
+          : [{ id: `cp-orig-${Date.now()}`, code: "CUST-TOTAL", name: "Итог сметы заказчика", unit: "компл", quantity: 1, rate: 0, rateMissing: true, ...(estimateDocsWithData.length === 1 ? { sourceDocumentId: estimateDocsWithData[0]!.id } : {}) }],
         assumptions: [
           originalNote,
           `Источники: ${sourceFileNames.join("; ")}`,

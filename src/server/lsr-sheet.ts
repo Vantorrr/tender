@@ -55,7 +55,11 @@ function fold(text: string): string {
 }
 
 function ownText(ws: ExcelJS.Worksheet, row: number, col: number): string {
-  return cellText(ws.getRow(row).getCell(col).value);
+  const cell = ws.getRow(row).getCell(col);
+  const direct = cellText(cell.value);
+  if (direct) return direct;
+  if (cell.master && cell.master !== cell) return cellText(cell.master.value);
+  return "";
 }
 
 function columnText(ws: ExcelJS.Worksheet, row: number, col: number): string {
