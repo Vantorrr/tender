@@ -33,6 +33,8 @@ export interface OcrProvider {
     fileName: string;
     buffer: Buffer;
     mimeHint?: string;
+    /** False on upload: text layer only, no page-by-page raster OCR. */
+    heavyOcr?: boolean;
   }): Promise<OcrResult>;
 }
 
@@ -133,6 +135,7 @@ export class TesseractOcrProvider implements OcrProvider {
     fileName: string;
     buffer: Buffer;
     mimeHint?: string;
+    heavyOcr?: boolean;
   }): Promise<OcrResult> {
     const tools = detectLocalOcrTools();
     const lower = input.fileName.toLowerCase();
@@ -189,6 +192,15 @@ export class TesseractOcrProvider implements OcrProvider {
               reason: "pdftotext (текстовый слой PDF)",
             };
           }
+        }
+        if (input.heavyOcr === false) {
+          return {
+            status: "empty",
+            text: null,
+            pageCount: countPdfPages(input.buffer),
+            provider: this.id,
+            reason: "Текстовый слой пуст. Распознавание скана при загрузке не запускается.",
+          };
         }
         if (!tools.tesseract) {
           return {
@@ -281,6 +293,15 @@ export class TesseractOcrProvider implements OcrProvider {
         };
       }
 
+      if (input.heavyOcr === false) {
+        return {
+          status: "empty",
+          text: null,
+          pageCount: 1,
+          provider: this.id,
+          reason: "Распознавание изображения при загрузке не запускается.",
+        };
+      }
       if (!tools.tesseract) {
         return {
           status: "unavailable",
@@ -379,6 +400,7 @@ export async function extractDocumentText(input: {
   fileName: string;
   buffer: Buffer;
   mimeHint?: string;
+  heavyOcr?: boolean;
 }): Promise<OcrResult> {
   return getOcrProvider().extractText(input);
 }

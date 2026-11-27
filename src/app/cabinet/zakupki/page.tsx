@@ -36,7 +36,7 @@ import { plainUserMessage } from "@/lib/plain-user-message";
 import { sanitizeSyncDetail } from "@/lib/wave23";
 import { KonturSearchPanel } from "@/components/kontur-search-panel";
 import { BatchUploadZone } from "@/components/batch-upload-zone";
-import { runUploadQueue } from "@/lib/upload-queue";
+import { runUploadQueue, uploadBatchLabel } from "@/lib/upload-queue";
 import type { KonturSearchFilters } from "@/server/procurement-source";
 
 export default function ZakupkiPage() {
@@ -63,6 +63,7 @@ export default function ZakupkiPage() {
   const [manualProgress, setManualProgress] = useState<{ done: number; total: number } | null>(null);
   const [manualFailures, setManualFailures] = useState<Array<{ name: string; message: string }>>([]);
   const [manualWarnings, setManualWarnings] = useState<Array<{ name: string; message: string }>>([]);
+  const [manualSkipped, setManualSkipped] = useState<Array<{ name: string; message: string }>>([]);
   const [sourceHealth, setSourceHealth] = useState<{ status?: string; detail?: string; lastSuccessAt?: string | null } | null>(null);
   useEffect(() => {
     void fetch("/api/health")
@@ -207,13 +208,10 @@ export default function ZakupkiPage() {
         });
         setManualFailures(uploaded.errors);
         setManualWarnings(uploaded.warnings);
-        if (uploaded.errors.length) {
-          toast.warning(`Закупка создана. Загружено ${uploaded.uploaded} из ${uploaded.uploaded + uploaded.errors.length}`);
-        } else if (uploaded.warnings.length) {
-          toast.warning(`Закупка создана. Загружено ${uploaded.uploaded} из ${uploaded.uploaded}. Часть файлов сохранена без разбора.`);
-        } else {
-          toast.success(`Закупка создана. Загружено ${uploaded.uploaded} из ${uploaded.uploaded}`);
-        }
+        setManualSkipped(uploaded.skipped);
+        const label = uploadBatchLabel(uploaded, "Закупка создана. ");
+        if (label.tone === "warning") toast.warning(label.text);
+        else toast.success(label.text);
       } else {
         toast.success("Закупка создана. Добавьте документы в карточку.");
       }
@@ -292,9 +290,10 @@ export default function ZakupkiPage() {
                 {manualFailures.map((failure) => <li key={`${failure.name}-${failure.message}`}>{failure.name}: {failure.message}</li>)}
               </ul>
             ) : null}
-            {manualWarnings.length ? (
+            {manualWarnings.length || manualSkipped.length ? (
               <ul className="mt-2 space-y-1 text-sm text-amber-900" data-testid="manual-upload-warnings">
                 {manualWarnings.map((warning) => <li key={`${warning.name}-${warning.message}`}>{warning.name}: сохранён, разбор не завершён. {warning.message}</li>)}
+                {manualSkipped.map((item) => <li key={`${item.name}-${item.message}`}>{item.name}: пропущен, не загружался. {item.message}</li>)}
               </ul>
             ) : null}
           </div>

@@ -11,7 +11,7 @@ import { formatDateTime } from "@/lib/format";
 import { visibleProcurementNumber } from "@/lib/pipeline";
 import { useStore } from "@/lib/store";
 import { BatchUploadZone } from "@/components/batch-upload-zone";
-import { runUploadQueue } from "@/lib/upload-queue";
+import { runUploadQueue, uploadBatchLabel } from "@/lib/upload-queue";
 
 export default function DokumentyPage() {
   const { orgDocuments, user, createDocumentUpload, orgProcurements, refresh } =
@@ -23,6 +23,7 @@ export default function DokumentyPage() {
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [failures, setFailures] = useState<Array<{ name: string; message: string }>>([]);
   const [warnings, setWarnings] = useState<Array<{ name: string; message: string }>>([]);
+  const [skipped, setSkipped] = useState<Array<{ name: string; message: string }>>([]);
   const [uploading, setUploading] = useState(false);
 
   const filtered = orgDocuments.filter((d) => {
@@ -38,6 +39,7 @@ export default function DokumentyPage() {
     setUploading(true);
     setFailures([]);
     setWarnings([]);
+    setSkipped([]);
     setProgress({ done: 0, total: files.length });
     try {
       const result = await runUploadQueue(files, async (file) => {
@@ -55,9 +57,10 @@ export default function DokumentyPage() {
       await refresh();
       setFailures(result.errors);
       setWarnings(result.warnings);
-      if (result.errors.length) toast.warning(`Загружено ${result.uploaded} из ${result.uploaded + result.errors.length}`);
-      else if (result.warnings.length) toast.warning(`Загружено ${result.uploaded} из ${result.uploaded}. Часть файлов сохранена без разбора.`);
-      else toast.success(`Загружено ${result.uploaded} из ${result.uploaded}`);
+      setSkipped(result.skipped);
+      const label = uploadBatchLabel(result);
+      if (label.tone === "warning") toast.warning(label.text);
+      else toast.success(label.text);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Ошибка загрузки");
     } finally {
@@ -140,9 +143,10 @@ export default function DokumentyPage() {
             {failures.map((failure) => <li key={`${failure.name}-${failure.message}`}>{failure.name}: {failure.message}</li>)}
           </ul>
         ) : null}
-        {warnings.length ? (
+        {warnings.length || skipped.length ? (
           <ul className="mt-2 space-y-1 text-sm text-amber-900" data-testid="documents-upload-warnings">
             {warnings.map((warning) => <li key={`${warning.name}-${warning.message}`}>{warning.name}: сохранён, разбор не завершён. {warning.message}</li>)}
+            {skipped.map((item) => <li key={`${item.name}-${item.message}`}>{item.name}: пропущен, не загружался. {item.message}</li>)}
           </ul>
         ) : null}
       </div>

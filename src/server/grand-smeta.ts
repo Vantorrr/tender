@@ -6,6 +6,7 @@ import { OCR_CHUNK_CHARS, OCR_CHUNKS_PER_PAGE } from "@/server/ai-prompts";
 import { rollupWorkSections } from "@/server/estimate-rollup";
 import { refineNote } from "@/server/model-note";
 import { extractDocumentText, ocrConfigured } from "@/server/ocr";
+import { readZipEntries } from "@/server/safe-archive";
 import type {
   CardStatus,
   Citation,
@@ -847,9 +848,50 @@ export function analysisFromScan(
 }
 
 export type AnalyzeUploadOptions = {
-  /** Paid OpenRouter refine — only when caller explicitly requests it. */
+  /** Paid OpenRouter refine — only an explicit reanalyze, never a file upload. */
   useLlm?: boolean;
+  /** Raster OCR of scans. Upload and archive ingest pass false. */
+  heavyOcr?: boolean;
 };
+
+function analyzeGsfx(fileName: string, buf: Buffer): UploadAnalysis {
+  let inside = "";
+  try {
+    const names = readZipEntries(buf).flatMap((entry) => (
+      "data" in entry ? [entry.name.split("/").pop()?.toLowerCase() ?? ""] : []
+    ));
+    const found = ["properties.txt", "data.xml", "data.sign"].filter((name) => names.includes(name));
+    inside = found.length ? ` В контейнере: ${found.join(", ")}.` : "";
+  } catch {
+    inside = "";
+  }
+  return {
+    title: fileName.replace(/\.gsfx$/i, "") || fileName,
+    analyticalNote: `Контейнер ГРАНД-Смета (.gsfx) сохранён одним файлом. Properties.txt, Data.xml и Data.sign не выносятся отдельными документами и не считаются ошибкой разбора.${inside} Для строк сметы используйте выгрузку .xlsx или .pdf, если она лежит рядом.`,
+    citations: [],
+    highlights: [{
+      id: "h-gsfx",
+      text: "Формат ГРАНД-Смета .gsfx",
+      reason: "Служебные файлы контейнера оставлены внутри. Это не ошибка извлечения.",
+      severity: "info",
+      page: 1,
+    }],
+    status: "trebuet_proverki",
+    positions: [],
+    analysis: {
+      vendor: "ГРАНД-Смета",
+      region: "",
+      zone: "",
+      estimateNumber: "",
+      workName: "",
+      basis: "Контейнер .gsfx",
+      priceLevel: "",
+      costThousand: null,
+      positionCount: 0,
+      profileMatch: false,
+    },
+  };
+}
 
 async function maybeRefineNote<T extends UploadAnalysis>(
   analysis: T,
@@ -878,6 +920,8 @@ export async function analyzeUpload(
   options: AnalyzeUploadOptions = {}
 ): Promise<UploadAnalysis> {
   const useLlm = Boolean(options.useLlm);
+  const heavyOcr = options.heavyOcr !== false;
+  if (fileName.toLowerCase().endsWith(".gsfx")) return analyzeGsfx(fileName, buf);
   const legacyXls = fileType === "xls" || (fileName.toLowerCase().endsWith(".xls") && !fileName.toLowerCase().endsWith(".xlsx"));
   const modernSheet = fileType === "xlsx" || fileName.toLowerCase().endsWith(".xlsx") || fileName.toLowerCase().endsWith(".xlsm");
   if (legacyXls || modernSheet) {
@@ -1033,7 +1077,7 @@ export async function analyzeUpload(
       imageExtension.startsWith("jpeg") ? "image/jpeg" :
         imageExtension === "tif" || imageExtension === "tiff" ? "image/tiff" :
           `image/${imageExtension}`;
-    const ocr = await extractDocumentText({ fileName, buffer: buf, mimeHint });
+    const ocr = await extractDocumentText({ fileName, buffer: buf, mimeHint, heavyOcr });
     const scan = analysisFromScan(fileName, ocr);
     return maybeRefineNote(
       scan,
@@ -1054,6 +1098,7 @@ export async function analyzeUpload(
       fileName,
       buffer: buf,
       mimeHint: "application/pdf",
+      heavyOcr,
     });
     if (isKmDrawingFileName(fileName)) {
       const analysis = analysisFromDrawing(fileName, ocr.pageCount ?? 24);
