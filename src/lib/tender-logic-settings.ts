@@ -204,6 +204,16 @@ export function nmckAtOrBelowCostWarning(policy: NmckAtOrBelowCostPolicy): strin
   return `${reason} Это предупреждение. ${decision}`;
 }
 
+/** Official lines when they exist. Otherwise the customer-estimate reprice, so a filled package is not shown as zero. */
+export function displayedEconomicsSummary<T extends { method?: string; C0?: number }>(
+  official: T | null | undefined,
+  reference: T | null | undefined,
+): T | null | undefined {
+  const officialEmpty = !official || (official.method ?? "").includes("no-commercial-rows") || !((official.C0 ?? 0) > 0);
+  if (officialEmpty && reference && (reference.C0 ?? 0) > 0) return reference;
+  return official;
+}
+
 export function committeeValueText(value: number | null | undefined, money = false): string {
   if (value == null || !Number.isFinite(value)) return COMMITTEE_UNSET;
   return money ? formatMoney(value) : String(value);

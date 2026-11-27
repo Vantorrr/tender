@@ -396,6 +396,37 @@ describe("commercial package duration", () => {
     expect(gesnHoursHint([{ quantity: 88, unit: "чел.-ч", quantityBasis: "total_hours" }])).toBe(88);
     expect(gesnHoursHint([{ quantity: 10, unit: "м3", quantityBasis: "material_qty" }])).toBeNull();
   });
+
+  it("gives a large earth, cable and grounding package a duration, a crew and a phase order", () => {
+    const line = (id: string, section: string, name: string, unit: string, quantity: number) => ({
+      id, code: id, name, unit, quantity, rate: 0, isWorkItem: true,
+      sourceSectionName: section, sourceWorkName: name,
+    });
+    const stages = buildStagesFromEstimatePositions([
+      line("earth-a", "Земляные работы", "Разработка грунта траншеи А", "м3", 1800),
+      line("earth-b", "Буровые работы", "Бурение скважин участка Б", "м", 240),
+      line("base", "Основание", "Устройство щебеночного основания", "м3", 1200),
+      line("cable", "Сети", "Прокладка кабеля", "м", 600),
+      line("ground", "Электрика", "Монтаж заземления", "шт", 60),
+    ], "2026-12-01T00:00:00.000Z", null, { weekendDays: [], shiftsPerDay: 2, hoursPerShift: 11, lookups: [] });
+    const earth = stages.find((stage) => stage.name.includes("траншеи"))!;
+    const bore = stages.find((stage) => stage.name.includes("Бурение"))!;
+    const base = stages.find((stage) => stage.name.includes("щебеноч"))!;
+    const cable = stages.find((stage) => stage.name.includes("кабел"))!;
+    const ground = stages.find((stage) => stage.name.includes("заземл"))!;
+    expect(earth.durationDays).toBe(10);
+    expect(bore.durationDays).toBe(10);
+    expect(earth.start).toBe(bore.start);
+    expect(base.start > earth.end).toBe(true);
+    expect(cable.start > base.end).toBe(true);
+    expect(ground.start > cable.end).toBe(true);
+    expect(base.dependsOn).toBe(earth.id);
+    expect(cable.dependencyType).toBe("FS");
+    expect(earth.benchmarkCrew?.some((line) => line.kind === "equipment")).toBe(true);
+    expect(earth.resources?.some((resource) => resource.name.includes("Экскаватор"))).toBe(true);
+    expect(cable.resources?.some((resource) => resource.kind === "labor")).toBe(true);
+    expect(new Set(stages.map((stage) => stage.start)).size).toBeGreaterThan(1);
+  });
 });
 
 function inclusive(start: string, end: string): number {

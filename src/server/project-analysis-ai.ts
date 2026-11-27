@@ -98,26 +98,82 @@ function formatDeadlineForBrief(value: string): string {
   }).format(date);
 }
 
-/** Cover important subjects across the document instead of only its first rows. */
+const CITATION_BUCKETS: Array<{ re: RegExp; take: number }> = [
+  { re: /срок\s+подач|подач\p{L}*\s+заяв|окончан\p{L}*\s+(?:при[её]ма|подач)/iu, take: 6 },
+  { re: /извещен|документац\p{L}*\s+о\s+закупк/iu, take: 4 },
+  { re: /техническ\p{L}*\s+задан|ведомост\p{L}*\s+объ[её]м/iu, take: 6 },
+  { re: /проект\s+договор|договор|контракт/iu, take: 4 },
+  { re: /нмцк|начальн\p{L}*\s+\(?максимальн|сметн\p{L}*\s+стоимост/iu, take: 4 },
+  { re: /аванс|гарантий|обеспечен\p{L}*\s+заяв/iu, take: 4 },
+  { re: /требован\p{L}*\s+к\s+участ|лиценз|допуск|опыт\s+работ/iu, take: 4 },
+  { re: /коэффициент|индекс\s+изменени/iu, take: 3 },
+  { re: /срок|календар|начал\p{L}*\s+работ|окончан/iu, take: 6 },
+  { re: /объ[её]м|количеств|перечень работ|ведомость/iu, take: 8 },
+  { re: /оплат|отсроч/iu, take: 3 },
+  { re: /штраф|пен[яи]|неустойк|ответственност/iu, take: 3 },
+];
+
+function citationLetters(text: string): number {
+  return text.replace(/[^a-zа-яё]/giu, "").length;
+}
+
+/** A bare number row is not a fact the note can use. */
+export function isUsefulAnalysisCitation(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < 12) return false;
+  return citationLetters(trimmed) >= 8;
+}
+
+function sourceRank(fileName: string | undefined): number {
+  const name = fileName ?? "";
+  if (/извещ|техническ|тз|договор|контракт/iu.test(name)) return 3;
+  if (/смет|лс-|xlsx|xls/iu.test(name)) return 1;
+  return 0;
+}
+
+/** Cover notice, TZ, contract, deadlines, NMCK and volumes before filler rows. */
 export function selectAnalysisCitations(citations: Citation[], limit = 40): Citation[] {
+  const pool = citations.filter((item) => isUsefulAnalysisCitation(item.text));
   const selected = new Set<Citation>();
-  const topics = [/объ[её]м|количеств|перечень работ|ведомость/iu, /срок|календар|начал|окончан/iu,
-    /оплат|аванс|отсроч/iu, /штраф|пен[яи]|неустойк|ответственност/iu,
-    /север|вахт|доставк|проживан|транспорт/iu, /требован|допуск|лицензи|обеспечен/iu];
-  for (const topic of topics) {
-    const matches = citations.filter((item) => topic.test(item.text));
-    const spread = Array.from({ length: Math.min(4, matches.length) }, (_, index) =>
-      matches[Math.floor(index * (matches.length - 1) / Math.max(1, Math.min(4, matches.length) - 1))]
-    );
-    for (const citation of spread) {
-      if (selected.size < limit) selected.add(citation);
+  for (const bucket of CITATION_BUCKETS) {
+    const matches = pool
+      .filter((item) => !selected.has(item) && bucket.re.test(`${item.sourceFile ?? ""} ${item.text}`))
+      .sort((left, right) => sourceRank(right.sourceFile) - sourceRank(left.sourceFile));
+    for (const item of matches.slice(0, bucket.take)) {
+      if (selected.size < limit) selected.add(item);
     }
   }
-  for (const citation of citations) {
+  const rest = pool
+    .filter((item) => !selected.has(item))
+    .sort((left, right) => sourceRank(right.sourceFile) - sourceRank(left.sourceFile));
+  for (const item of rest) {
     if (selected.size >= limit) break;
-    selected.add(citation);
+    selected.add(item);
   }
   return [...selected];
+}
+
+/** Short facts taken from the whole package, not from the first hundred excerpts. */
+export function keyPackageFacts(citations: Citation[], limit = 12): string[] {
+  const rules = [
+    /срок\s+подач[^\n.]{0,90}/iu,
+    /нмцк[^\n.]{0,80}/iu,
+    /аванс[^\n.]{0,70}/iu,
+    /гарантийн[^\n.]{0,70}/iu,
+    /обеспечен\p{L}*\s+заяв[^\n.]{0,70}/iu,
+  ];
+  const facts: string[] = [];
+  for (const citation of citations) {
+    if (!isUsefulAnalysisCitation(citation.text)) continue;
+    for (const rule of rules) {
+      const match = citation.text.match(rule);
+      const line = match?.[0]?.replace(/\s+/g, " ").trim();
+      if (!line || facts.includes(line)) continue;
+      facts.push(line);
+      if (facts.length >= limit) return facts;
+    }
+  }
+  return facts;
 }
 
 export { draftCostPhrase };
@@ -672,6 +728,7 @@ export async function analyzeProjectPackageWithModel(
   const packageRegion = procurement.region.trim() || packageDocuments.map((document) => document.analysis?.region.trim()).find(Boolean) || regionFromCitations(deterministic.citations) || "не указан";
   const packageDeadline = formatDeadlineForBrief(procurement.deadline.trim() || submissionDeadlineFromCitations(deterministic.citations) || "не найден в загруженных документах");
   const selectedPackageCitations = selectAnalysisCitations(deterministic.citations, PROJECT_ANALYSIS_CITATION_LIMIT);
+  const keyFacts = keyPackageFacts(deterministic.citations);
   const { byDocument: documentCitations, byPromptId } = packDocumentCitations(
     packageDocuments,
     selectedPackageCitations,
@@ -688,6 +745,7 @@ export async function analyzeProjectPackageWithModel(
       nmck: procurement.nmck,
       deadline: packageDeadline,
     },
+    keyFacts,
     coverage: {
       missingInputs: deterministic.missingInputs,
       localRecommendation: deterministic.recommendation,

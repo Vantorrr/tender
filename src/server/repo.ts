@@ -3229,6 +3229,7 @@ export function makeOfficialCalculationAndSchedule(actorId: string, procurementI
     upgradeCalculationToOfficialLogic(actorId, draft.id);
   }
   const schedule = createProcurementSchedule(actorId, procurementId, { replaceUntagged: true });
+  recomputeCalculationCost(actorId, procurement.calculationId, { useResourceScheduleEconomics: true });
   const after = readAppData();
   const nextDraft = after.calculations.find((item) => item.id === procurement.calculationId);
   return {
@@ -3472,6 +3473,8 @@ export function sendProcurementToCalculation(
     // Customer estimate is a price ceiling, not our cost. translation_table
     // keeps a source sheet; empty_packages leaves the commercial draft empty of those rows.
     const logic = resolveTenderLogicSettings(data.organizations.find((org) => org.id === p.orgId));
+    const customerRates: number[] = [];
+    const directoryHits: boolean[] = [];
     const positionsFromEstimate = logic.importEstimateRowsMode === "empty_packages"
       ? []
       : allEstimatePositions
@@ -3489,6 +3492,9 @@ export function sendProcurementToCalculation(
           isWorkItem: position.isWorkItem,
         }, EXCEL_RESOURCE_SCHEDULE_DEFAULTS.personHourRate);
         const unitCompatible = Boolean(hit);
+        const customerRate = typeof position.rate === "number" && position.rate > 0 ? position.rate : 0;
+        customerRates.push(customerRate);
+        directoryHits.push(unitCompatible);
         return {
           id: `draft-${position.id}`,
           costRole: "customer_source" as const,
@@ -3511,6 +3517,16 @@ export function sendProcurementToCalculation(
           } : {}),
         };
       });
+    const useCustomerPrices = positionsFromEstimate.length > 0
+      && directoryHits.every((hit) => !hit)
+      && customerRates.some((rate) => rate > 0);
+    if (useCustomerPrices) {
+      positionsFromEstimate.forEach((row, index) => {
+        const rate = customerRates[index] ?? 0;
+        row.rate = rate;
+        row.rateMissing = rate <= 0 && !row.isWorkItem;
+      });
+    }
     let draftId = p.calculationId;
     const linked = draftId
       ? data.calculations.find((c) => c.id === draftId)
@@ -3921,22 +3937,26 @@ function attachReferenceReprice(
   const buckets = bucketsFromPositions(source, item.scenarioFactor || 1, { includeCustomerSource: true });
   const northern = northernInputsForEngine(item);
   const rs = item.resourceScheduleParams;
-  const direct = buckets.labor + buckets.materials + buckets.equipment + buckets.other;
+  let direct = buckets.labor + buckets.materials + buckets.equipment + buckets.other;
+  if (direct <= 0) {
+    direct = source.reduce((sum, row) => row.isWorkItem ? sum + row.quantity * row.rate : sum, 0);
+  }
   const site = useRs
     ? patch?.siteOverhead ?? Math.round(direct * (rs?.overheadRate ?? 0.43) * 100) / 100
     : patch?.siteOverhead ?? overheadsFromWorks(buckets.labor + buckets.equipment).nr;
   const profitRate = useRs
     ? patch?.profitRate ?? rs?.profitMarkupOnCostWithOh ?? 0.4
     : patch?.profitRate ?? 0.08;
+  const reserve = patch?.reserve ?? (useRs ? Math.round((direct + site) * 0.1 * 100) / 100 : 0);
   const engine = runCostEngine({
-    directLabor: buckets.labor,
+    directLabor: direct > buckets.labor + buckets.materials + buckets.equipment + buckets.other ? direct : buckets.labor,
     directMaterials: buckets.materials,
     directEquipment: buckets.equipment,
     directSubcontract: buckets.other,
     logisticsIncludingBus: 0,
     siteOverhead: site,
     officeOverhead: 0,
-    reserve: 0,
+    reserve,
     profitMethod: patch?.profitMethod ?? "markup",
     profitRate,
     includeReserveInPriceBase: patch?.includeReserveInPriceBase ?? (useRs ? false : true),
@@ -3959,6 +3979,8 @@ function attachReferenceReprice(
     C: engine.C,
     reserve: engine.reserve,
     profit: engine.profit,
+    direct,
+    overhead: site,
     priceExVat: engine.priceExVat,
     vatAmount: engine.vatAmount,
     priceIncVat: engine.priceIncVat,
