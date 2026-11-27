@@ -11,7 +11,7 @@ import {
 } from "@/server/repo";
 import { assertOrgAccess } from "@/server/acl";
 import { archiveResultStatus } from "@/server/upload-package-analysis";
-import { analyzeUpload } from "@/server/grand-smeta";
+import { analyzeUpload, type UploadAnalysis } from "@/server/grand-smeta";
 import {
   archiveExtractDir,
   extractArchiveSafely,
@@ -48,6 +48,56 @@ function isNestedArchiveName(name: string): boolean {
   return /\.(zip|rar|7z|tar|gz|tgz)$/i.test(name) || /\.tar\.gz$/i.test(name);
 }
 
+function memberBase(name: string): string {
+  return (name.split("/").pop() ?? name).toLowerCase();
+}
+
+function isJunkArchiveMember(name: string): boolean {
+  const parts = name.split("/");
+  if (parts.some((part) => part === "__MACOSX" || part.startsWith("."))) return true;
+  const base = memberBase(name);
+  return base === "thumbs.db" || base === "ehthumbs.db" || base === "desktop.ini" || base === ".ds_store";
+}
+
+function isGsfxName(name: string): boolean {
+  return memberBase(name).endsWith(".gsfx");
+}
+
+function isCalmSidecar(name: string): boolean {
+  const base = memberBase(name);
+  if (base === "properties.txt" || base === "data.xml" || base === "data.sign") return true;
+  return /\.(sign|sig|p7s)$/i.test(base);
+}
+
+function sidecarAnalysis(fileName: string): UploadAnalysis {
+  return {
+    title: fileName,
+    analyticalNote: "Служебный файл архива сохранён. Подпись или описание контейнера не разбираются как смета и не являются ошибкой загрузки.",
+    citations: [],
+    highlights: [{
+      id: "h-sidecar",
+      text: "Служебный файл",
+      reason: "Файл подписи или описания сохранён без автоматического разбора.",
+      severity: "info",
+      page: 1,
+    }],
+    status: "gotovo",
+    positions: [],
+    analysis: {
+      vendor: "",
+      region: "",
+      zone: "",
+      estimateNumber: "",
+      workName: "",
+      basis: "",
+      priceLevel: "",
+      costThousand: null,
+      positionCount: 0,
+      profileMatch: false,
+    },
+  };
+}
+
 function inferCategory(raw: string | null, fileName: string): DocumentCategory {
   if (raw === "estimate" || raw === "contract" || raw === "tz" || raw === "archive" || raw === "other" || raw === "general") {
     return raw;
@@ -55,6 +105,7 @@ function inferCategory(raw: string | null, fileName: string): DocumentCategory {
   if (/smeta|смет/i.test(fileName)) return "estimate";
   if (/dogovor|договор|контракт/i.test(fileName)) return "contract";
   if (/tz|тз|извещ|техническ.{0,12}задан/i.test(fileName)) return "tz";
+  if (/\.gsfx$/i.test(fileName)) return "estimate";
   if (isNestedArchiveName(fileName)) return "archive";
   return "general";
 }
@@ -135,7 +186,41 @@ export async function ingestArchiveMembers(input: {
       analyzedFiles.push({ name: extractedFile.relativePath, documentId: prior.id, status: "already_indexed" });
       continue;
     }
-    if (isNestedArchiveName(extractedFile.name)) {
+    if (isJunkArchiveMember(extractedFile.relativePath)) {
+      analyzedFiles.push({ name: extractedFile.relativePath, documentId: "", status: "skipped_system" });
+      continue;
+    }
+    if (isCalmSidecar(extractedFile.name)) {
+      const stored = prior?.storedPath
+        ? { storedPath: prior.storedPath, fileSize: prior.fileSize ?? childBytes.length }
+        : await saveUpload(childId, extractedFile.name, childBytes);
+      const prepared = sidecarAnalysis(extractedFile.name);
+      const documentId = prior?.id ?? createDocument(input.userId, {
+        orgId: input.orgId,
+        procurementId: input.procurementId,
+        title: extractedFile.name,
+        fileName: extractedFile.name,
+        fileType: "other",
+        category: "other",
+        storedPath: stored.storedPath,
+        fileSize: stored.fileSize,
+        prepared,
+        parentDocumentId: input.parentDocumentId,
+        archiveMemberPath,
+      }).documentId;
+      if (prior) {
+        reanalyzeDocument(input.userId, prior.id, prepared);
+        updateDocument(input.userId, prior.id, {
+          extractionErrors: [],
+          status: "gotovo",
+          parentDocumentId: input.parentDocumentId,
+          archiveMemberPath,
+        });
+      }
+      analyzedFiles.push({ name: extractedFile.relativePath, documentId, status: "saved_sidecar" });
+      continue;
+    }
+    if (isNestedArchiveName(extractedFile.name) && !isGsfxName(extractedFile.name)) {
       const hash = createHash("sha256").update(childBytes).digest("hex");
       const overBudget = input.budget.files >= TREE_FILE_CAP || input.budget.bytes + childBytes.length > TREE_BYTE_CAP;
       let childExtracted: ArchiveExtractResult;
@@ -229,7 +314,7 @@ export async function ingestArchiveMembers(input: {
       continue;
     }
 
-    if (!canAnalyze(extractedFile.name)) {
+    if (!canAnalyze(extractedFile.name) && !isGsfxName(extractedFile.name)) {
       const stored = prior?.storedPath
         ? { storedPath: prior.storedPath, fileSize: prior.fileSize ?? childBytes.length }
         : await saveUpload(childId, extractedFile.name, childBytes);
@@ -266,7 +351,7 @@ export async function ingestArchiveMembers(input: {
         extractedFile.name,
         IMAGE_EXTENSIONS.has(ext) ? "other" : ext === "xlsm" ? "xlsx" : ext,
         childBytes,
-        { useLlm: input.useLlm },
+        { useLlm: false, heavyOcr: false },
       );
       const stored = prior?.storedPath
         ? { storedPath: prior.storedPath, fileSize: prior.fileSize ?? childBytes.length }

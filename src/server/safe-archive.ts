@@ -324,6 +324,11 @@ function extractZipEntries(
   return out;
 }
 
+/** In-memory ZIP members. Used to look inside a .gsfx without creating child documents. */
+export function readZipEntries(bytes: Buffer): Array<{ name: string; data: Buffer } | { name: string; error: string }> {
+  return extractZipEntries(bytes);
+}
+
 export function detectArchiveFormat(
   fileName: string,
   bytes: Buffer
@@ -331,7 +336,7 @@ export function detectArchiveFormat(
   const lower = fileName.toLowerCase();
   // XLSX/DOCX and OpenDocument files are ZIP containers internally, but they
   // must go through their document parsers instead of archive extraction.
-  if (/\.(xlsx|xlsm|xlsb|docx|docm|dotx|dotm|pptx|pptm|ppsx|ppsm|potx|potm|ods|odt|odp)$/i.test(lower)) {
+  if (/\.(xlsx|xlsm|xlsb|docx|docm|dotx|dotm|pptx|pptm|ppsx|ppsm|potx|potm|ods|odt|odp|gsfx)$/i.test(lower)) {
     return "none";
   }
   if (isZip(bytes) || lower.endsWith(".zip")) return "zip";

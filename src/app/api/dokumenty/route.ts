@@ -35,6 +35,7 @@ function inferCategory(
   if (/smeta|смет/i.test(fileName)) return "estimate";
   if (/dogovor|договор|контракт/i.test(fileName)) return "contract";
   if (/tz|тз|извещ|техническ.{0,12}задан/i.test(fileName)) return "tz";
+  if (/\.gsfx$/i.test(fileName)) return "estimate";
   if (/\.(zip|rar|7z|tar|gz|tgz)$/i.test(fileName) || /\.tar\.gz$/i.test(fileName)) return "archive";
   return "general";
 }
@@ -57,10 +58,6 @@ export async function POST(req: Request) {
         String(form.get("category") ?? "") || null,
         file instanceof File ? file.name : ""
       );
-      const wantLlm =
-        String(form.get("useLlm") ?? "") === "1" ||
-        String(form.get("useLlm") ?? "").toLowerCase() === "true";
-      const useLlm = wantLlm && config.openRouterOnUpload;
       if (!procurementId) {
         return json({ error: "Укажите закупку" }, 400);
       }
@@ -107,7 +104,7 @@ export async function POST(req: Request) {
           orgId: user.orgId,
           procurementId,
           files: extracted.files,
-          useLlm,
+          useLlm: false,
           depth: 0,
           seenHashes: new Set([createHash("sha256").update(buf).digest("hex")]),
           budget: {
@@ -149,7 +146,7 @@ export async function POST(req: Request) {
         });
         try {
           prepared = await Promise.race([
-            analyzeUpload(file.name, fileType, buf, { useLlm }),
+            analyzeUpload(file.name, fileType, buf, { useLlm: false, heavyOcr: false }),
             timeout,
           ]);
         } finally {
