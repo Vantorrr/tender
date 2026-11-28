@@ -3067,11 +3067,14 @@ function pricedOriginalRows(document: CustomerOriginalDocument) {
   return (document.estimatePositions ?? []).filter((position) => !isUnusableEstimateLine(position) && !isEstimateHourRow(position));
 }
 
+function documentHasCompleteRates(document: CustomerOriginalDocument): boolean {
+  const rows = pricedOriginalRows(document);
+  return rows.length > 0 && rows.every((position) => !position.rateMissing && rateIsPositive(position.rate));
+}
+
 /** Строки, которые сборка оригинала реально запишет: полный набор ставок или ненулевой итог. */
 function documentContributesCustomerOriginal(document: CustomerOriginalDocument): boolean {
-  const rows = pricedOriginalRows(document);
-  const completeRates = rows.length > 0 && rows.every((position) => !position.rateMissing && rateIsPositive(position.rate));
-  if (completeRates) return true;
+  if (documentHasCompleteRates(document)) return true;
   const total = document.analysis?.costThousand;
   return typeof total === "number" && Number.isFinite(total) && total > 0;
 }
@@ -3088,11 +3091,10 @@ function customerOriginalIsStale(
   }
   const linked = new Set(positions.map((position) => position.sourceDocumentId).filter(Boolean));
   if (documents.some((document) => documentContributesCustomerOriginal(document) && !linked.has(document.id))) return true;
-  const onlyLump = positions.every((position) => position.code === "CUST-TOTAL");
-  return onlyLump && documents.some((document) => {
-    const rows = pricedOriginalRows(document);
-    return rows.length > 0 && rows.every((position) => !position.rateMissing && rateIsPositive(position.rate));
-  });
+  return documents.some((document) =>
+    documentHasCompleteRates(document) &&
+    positions.some((position) => position.code === "CUST-TOTAL" && position.sourceDocumentId === document.id)
+  );
 }
 
 function estimateTotalsOnlyPhrase(count: number): string {
