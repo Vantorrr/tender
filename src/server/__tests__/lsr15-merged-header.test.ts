@@ -234,6 +234,155 @@ describe("merged 15-column LSR with a GRAND title", () => {
     expect(lumpSecond.positions.some((row) => row.code === "CUST-TOTAL" && row.rate === 12000)).toBe(true);
   });
 
+  it("replaces one estimate's CUST-TOTAL with its priced rows and keeps the other estimate", () => {
+    const created = createManualProcurement("u-ruk", { title: "Смешанный оригинал", region: "Ямал" });
+    const procurement = readAppData().procurements.find((item) => item.id === created.id)!;
+    const lumpAnalysis = {
+      vendor: "",
+      region: "",
+      zone: "",
+      estimateNumber: "",
+      workName: "Кабель",
+      basis: "",
+      priceLevel: "",
+      costThousand: 12,
+      positionCount: 1,
+      profileMatch: false,
+    };
+    mutateAppData((data) => {
+      data.documents.unshift({
+        id: "doc-lines",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        title: "Со строками",
+        fileName: "lines.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: "uploads/lines.xlsx",
+        estimatePositions: [
+          { id: "line-1", code: "ФЕР01", name: "Устройство щебня", unit: "м3", quantity: 4, rate: 500 },
+        ],
+      }, {
+        id: "doc-lump-mixed",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        title: "Пока итог",
+        fileName: "lump-mixed.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: "uploads/lump-mixed.xlsx",
+        analysis: lumpAnalysis,
+        estimatePositions: [
+          { id: "lump-mixed-1", code: "ФЕР08", name: "Прокладка кабеля", unit: "м", quantity: 10, rate: 0, rateMissing: true },
+        ],
+      });
+      return data;
+    });
+    makeOfficialCalculationAndSchedule("u-ruk", created.id);
+    const first = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "customer_original")!;
+    expect(first.positions.some((row) => row.name.includes("щебн") && row.rate === 500)).toBe(true);
+    expect(first.positions.some((row) => row.code === "CUST-TOTAL" && row.rate === 12000 && row.sourceDocumentId === "doc-lump-mixed")).toBe(true);
+    mutateAppData((data) => {
+      const document = data.documents.find((item) => item.id === "doc-lump-mixed")!;
+      document.estimatePositions = [
+        { id: "cable-1", code: "ФЕР08", name: "Прокладка кабеля", unit: "м", quantity: 10, rate: 2150 },
+      ];
+      document.analysis = { ...lumpAnalysis, positionCount: 1 };
+      return data;
+    });
+    makeOfficialCalculationAndSchedule("u-ruk", created.id);
+    const upgraded = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "customer_original")!;
+    expect(upgraded.id).not.toBe(first.id);
+    expect(upgraded.positions.some((row) => row.name.includes("щебн") && row.unit === "м3" && row.rate === 500 && row.sourceDocumentId === "doc-lines")).toBe(true);
+    expect(upgraded.positions.some((row) => row.name.includes("кабел") && row.unit === "м" && row.rate === 2150 && row.sourceDocumentId === "doc-lump-mixed")).toBe(true);
+    expect(upgraded.positions.some((row) => row.code === "CUST-TOTAL")).toBe(false);
+    makeOfficialCalculationAndSchedule("u-ruk", created.id);
+    const again = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "customer_original")!;
+    expect(again.id).toBe(upgraded.id);
+    expect(again.positions.some((row) => row.rate === 500)).toBe(true);
+    expect(again.positions.some((row) => row.rate === 2150)).toBe(true);
+  });
+
+  it("keeps a mixed original when the lump estimate still has no priced rows", () => {
+    const created = createManualProcurement("u-ruk", { title: "Смешанный без новых ставок", region: "Ямал" });
+    const procurement = readAppData().procurements.find((item) => item.id === created.id)!;
+    mutateAppData((data) => {
+      data.documents.unshift({
+        id: "doc-lines-keep",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        title: "Со строками",
+        fileName: "lines-keep.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: "uploads/lines-keep.xlsx",
+        estimatePositions: [
+          { id: "line-keep-1", code: "ФЕР01", name: "Устройство щебня", unit: "м3", quantity: 4, rate: 500 },
+        ],
+      }, {
+        id: "doc-lump-keep",
+        orgId: procurement.orgId,
+        procurementId: created.id,
+        title: "Итог",
+        fileName: "lump-keep.xlsx",
+        fileType: "xlsx",
+        category: "estimate",
+        status: "gotovo",
+        versions: [],
+        analyticalNote: "",
+        citations: [],
+        highlights: [],
+        uploadedBy: "u-ruk",
+        uploadedAt: new Date().toISOString(),
+        storedPath: "uploads/lump-keep.xlsx",
+        analysis: {
+          vendor: "",
+          region: "",
+          zone: "",
+          estimateNumber: "",
+          workName: "Без строк",
+          basis: "",
+          priceLevel: "",
+          costThousand: 12,
+          positionCount: 1,
+          profileMatch: false,
+        },
+        estimatePositions: [
+          { id: "lump-keep-1", code: "ФЕР09", name: "Работа без ставки", unit: "м", quantity: 3, rate: 0, rateMissing: true },
+        ],
+      });
+      return data;
+    });
+    makeOfficialCalculationAndSchedule("u-ruk", created.id);
+    const first = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "customer_original")!;
+    makeOfficialCalculationAndSchedule("u-ruk", created.id);
+    const second = readAppData().calculations.find((item) => item.procurementId === created.id && item.kind === "customer_original")!;
+    expect(second.id).toBe(first.id);
+    expect(second.positions.some((row) => row.name.includes("щебн") && row.rate === 500)).toBe(true);
+    expect(second.positions.some((row) => row.code === "CUST-TOTAL" && row.rate === 12000 && row.sourceDocumentId === "doc-lump-keep")).toBe(true);
+  });
+
   it("keeps the burenie reference total when the workbook is read through analyzeUpload", async () => {
     const filePath = path.join(process.cwd(), "fixtures/grand-smeta/ls-02-02-01-burenie.xlsx");
     const bytes = fs.readFileSync(filePath);
